@@ -93,7 +93,10 @@ OP_PAYLOADS: dict[str, dict] = {
     "rename_edge_properties": {"renames": {"purchases": {"amt": "amount"}}},
     "remove_edge_properties": {"removals": {"purchases": ["scratch"]}},
     "add_edge_properties": {"additions": {"purchases": ["note"]}},
-    "add_inverse_edges": {"inverses": {"purchases": "purchased_by"}},
+    "add_inverse_edges": {"relations": ["purchases"]},
+    "declare_edge_inverses": {"inverses": {"purchases": "purchased_by"}},
+    "retract_edge_inverses": {"relations": ["purchases"]},
+    "set_native_inverses": {"relations": ["purchases"]},
     "add_resource_transforms": {
         "additions": {
             "crm": [
@@ -152,7 +155,8 @@ SCHEMA_ONLY_FIXTURE: dict = {
                 "edges": [
                     {**_PURCHASES, "properties": ["ref", "note"]},
                     {"source": "order", "target": "invoice", "relation": "billed"},
-                ]
+                ],
+                "inverses": [{"relation": "billed", "inverse": "bills"}],
             },
         },
         "db_profile": {
@@ -190,11 +194,15 @@ SCHEMA_ONLY_PAYLOADS: dict[str, dict] = {
         "vertices": [{"name": "audit", "properties": ["aid"], "identity": ["aid"]}]
     },
     "change_field_types": {"vertices": {"party": {"amount": {"type": "FLOAT"}}}},
+    "declare_edge_inverses": {"inverses": {"purchases": "purchased_by"}},
     "remove_edge_indexes": {"edges": [{**_PURCHASES, "fields": [["ref"]]}]},
     "remove_secondary_identities": {"removals": {"party": ["by_email"]}},
     "remove_vertex_indexes": {"indexes": {"party": [["amount"]]}},
+    "retract_edge_inverses": {"relations": ["billed"]},
     "replace_edge_identities": {"edges": [{**_PURCHASES, "identities": [["ref"]]}]},
     "set_edge_directed": {"edges": [_PURCHASES], "directed": False},
+    # The fixture targets Arango, where only withdrawing is accepted.
+    "set_native_inverses": {"relations": ["purchases"], "enabled": False},
     "set_bindings": {"bindings": None},
     "set_db_profile": {"profile": {"db_flavor": "neo4j"}},
     "set_edge_semantics": {
@@ -231,7 +239,6 @@ LEGACY_FIELD_NAMES: list[tuple[str, str, str, Any]] = [
     ("rename_vertices", "vertices", "renames", {"a": "b"}),
     ("rename_relations", "relations", "renames", {"a": "b"}),
     ("rename_resources", "resources", "renames", {"a": "b"}),
-    ("add_inverse_edges", "relations", "inverses", {"a": "b"}),
     (
         "replace_identity",
         "vertices",
@@ -282,7 +289,6 @@ class TestParseTimeValidation:
             ("rename_vertices", "vertices"),
             ("rename_relations", "relations"),
             ("rename_resources", "resources"),
-            ("add_inverse_edges", "relations"),
         ],
     )
     def test_an_empty_map_is_rejected(self, name: str, field: str) -> None:
@@ -297,11 +303,34 @@ class TestParseTimeValidation:
         with pytest.raises(ValidationError, match="more than once"):
             op_from_dict({"op": name, "sources": ["a", "a"], "into": "b"})
 
-    def test_add_inverse_edges_rejects_a_collapsing_or_self_map(self) -> None:
-        with pytest.raises(ValidationError, match="not injective"):
-            op_from_dict({"op": "add_inverse_edges", "inverses": {"a": "x", "b": "x"}})
-        with pytest.raises(ValidationError, match="its own inverse"):
-            op_from_dict({"op": "add_inverse_edges", "inverses": {"a": "a"}})
+    def test_add_inverse_edges_takes_a_non_empty_unique_relation_list(self) -> None:
+        with pytest.raises(ValidationError):
+            op_from_dict({"op": "add_inverse_edges", "relations": []})
+        with pytest.raises(ValidationError, match="unique"):
+            op_from_dict({"op": "add_inverse_edges", "relations": ["a", "a"]})
+
+    def test_declare_edge_inverses_rejects_a_collapsing_or_self_map(self) -> None:
+        with pytest.raises(ValidationError, match="at most one inverse"):
+            op_from_dict(
+                {"op": "declare_edge_inverses", "inverses": {"a": "x", "b": "x"}}
+            )
+        with pytest.raises(ValidationError, match="declare them as symmetric"):
+            op_from_dict({"op": "declare_edge_inverses", "inverses": {"a": "a"}})
+        with pytest.raises(ValidationError, match="at most one inverse"):
+            op_from_dict(
+                {
+                    "op": "declare_edge_inverses",
+                    "inverses": {"a": "b"},
+                    "symmetric": ["a"],
+                }
+            )
+
+    def test_declare_edge_inverses_accepts_both_orders_of_one_pair(self) -> None:
+        op_from_dict({"op": "declare_edge_inverses", "inverses": {"a": "b", "b": "a"}})
+
+    def test_set_native_inverses_takes_unique_relations(self) -> None:
+        with pytest.raises(ValidationError, match="unique"):
+            op_from_dict({"op": "set_native_inverses", "relations": ["a", "a"]})
 
     def test_index_lists_must_be_non_empty(self) -> None:
         with pytest.raises(ValidationError):
@@ -392,13 +421,16 @@ class TestUnionCoverage:
             "add_vertex_properties",
             "add_vertices",
             "change_field_types",
+            "declare_edge_inverses",
             "merge_manifests",
             "remove_edge_indexes",
             "remove_secondary_identities",
             "remove_vertex_indexes",
             "replace_edge_identities",
+            "retract_edge_inverses",
             "set_edge_directed",
             "set_edge_semantics",
+            "set_native_inverses",
             "set_field_semantics",
             "set_vertex_semantics",
             "set_bindings",
@@ -448,8 +480,8 @@ class TestUnionCoverage:
             if name.endswith("Op")
             and hasattr(getattr(ops_module, name), "model_fields")
         }
-        assert len(exported) == 40
-        assert len(_union_members()) == 39  # 40 minus the binary merge op
+        assert len(exported) == 43
+        assert len(_union_members()) == 42  # 43 minus the binary merge op
 
 
 class TestRoundTrip:

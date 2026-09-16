@@ -77,3 +77,14 @@ def test_ensure_does_not_overwrite_memgraph_database_when_set() -> None:
     cfg = MemgraphConfig(uri="bolt://localhost:7687", database="already_set")
     _ensure_graph_target_namespace(schema, cfg, None)
     assert cfg.database == "already_set"
+
+
+def test_ensure_derives_a_valid_namespace_from_a_merged_label() -> None:
+    manifest = _minimal_manifest("cmdb+discovery")
+    schema = manifest.require_schema()
+    tg = TigergraphConfig(uri="http://localhost:14240")
+    _ensure_graph_target_namespace(schema, tg, None)
+    assert tg.schema_name == "cmdb_discovery"
+    arango = ArangoConfig(uri="http://localhost:8529", username="u", password="p")
+    _ensure_graph_target_namespace(schema, arango, None)
+    assert arango.database == "cmdb_discovery"

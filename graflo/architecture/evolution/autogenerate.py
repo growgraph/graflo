@@ -52,6 +52,7 @@ from .ops import (
     AddVertexPropertiesOp,
     AddVerticesOp,
     ChangeFieldTypesOp,
+    DeclareEdgeInversesOp,
     EdgeFieldSemanticsTarget,
     EdgeIndexEntry,
     EdgeSelector,
@@ -71,11 +72,13 @@ from .ops import (
     RenameVertexPropertiesOp,
     RenameVerticesOp,
     ReplaceIdentityOp,
+    RetractEdgeInversesOp,
     SetBindingsOp,
     SetDbProfileOp,
     SetEdgeDirectedOp,
     SetEdgeSemanticsOp,
     SetFieldSemanticsOp,
+    SetNativeInversesOp,
     SetVertexSemanticsOp,
     validate_rename_map_is_injective,
 )
@@ -163,14 +166,18 @@ def diff_manifests(
     warnings: list[str] = []
     ops: list[ManifestOp] = []
 
+    profile_replaced = _profile_needs_replacing(base, target)
     ops += _rename_ops(hints)
+    ops += _inverse_withdrawal_ops(base, target, hints)
     ops += _vertex_structure_ops(base, target, hints, warnings)
     ops += _edge_structure_ops(base, target, hints, warnings)
     ops += _vertex_property_ops(base, target, hints)
     ops += _edge_property_ops(base, target, hints, warnings)
     ops += _identity_ops(base, target, hints, warnings)
     ops += _semantics_ops(base, target, hints)
-    profile_replaced = _profile_needs_replacing(base, target)
+    ops += _inverse_declaration_ops(
+        base, target, hints, profile_replaced=profile_replaced
+    )
     if not profile_replaced:
         # A profile replacement carries the indexes too, so emitting both would
         # be redundant and order-sensitive.
@@ -286,6 +293,84 @@ def _edge_structure_ops(
     for directed, selectors in flipped.items():
         if selectors:
             ops.append(SetEdgeDirectedOp(edges=selectors, directed=directed))
+    return ops
+
+
+def _declared_inverses(
+    manifest: GraphManifest, relations: dict[str, str] | None = None
+) -> set[frozenset[str]]:
+    """Declared pairs and symmetric relations as unordered name sets, renamed by *relations*."""
+    schema = manifest.graph_schema
+    if schema is None:
+        return set()
+    edge_config = schema.core_schema.edge_config
+    rename = relations or {}
+    return {
+        frozenset(rename.get(name, name) for name in (pair.relation, pair.inverse))
+        for pair in edge_config.inverses
+    } | {frozenset((rename.get(name, name),)) for name in edge_config.symmetric}
+
+
+def _native_inverses(
+    manifest: GraphManifest, relations: dict[str, str] | None = None
+) -> set[str]:
+    profile = _profile(manifest)
+    if profile is None:
+        return set()
+    rename = relations or {}
+    return {rename.get(name, name) for name in profile.native_inverses}
+
+
+def _inverse_withdrawal_ops(
+    base: GraphManifest, target: GraphManifest, hints: RenameHints
+) -> list[ManifestOp]:
+    """Withdraw native inverses, then retract declarations, before any edge changes.
+
+    A declaration constrains ``directed`` (a pair forbids undirected edges, a
+    symmetric relation requires them) and a native inverse pins its pair, so
+    both go before ``set_edge_directed`` and removals can trip over them.
+    """
+    ops: list[ManifestOp] = []
+    withdrawn = sorted(
+        _native_inverses(base, hints.relations) - _native_inverses(target)
+    )
+    if withdrawn:
+        ops.append(SetNativeInversesOp(relations=withdrawn, enabled=False))
+    retracted = sorted(
+        min(declared)
+        for declared in _declared_inverses(base, hints.relations)
+        - _declared_inverses(target)
+    )
+    if retracted:
+        ops.append(RetractEdgeInversesOp(relations=retracted))
+    return ops
+
+
+def _inverse_declaration_ops(
+    base: GraphManifest,
+    target: GraphManifest,
+    hints: RenameHints,
+    *,
+    profile_replaced: bool,
+) -> list[ManifestOp]:
+    """Declare, then enable native inverses, once the edges they name are in place.
+
+    Enabling is left to ``set_db_profile`` when the profile is replaced wholesale
+    anyway.
+    """
+    ops: list[ManifestOp] = []
+    new = _declared_inverses(target) - _declared_inverses(base, hints.relations)
+    pairs = {min(names): max(names) for names in new if len(names) == 2}
+    symmetric = sorted(next(iter(names)) for names in new if len(names) == 1)
+    if pairs or symmetric:
+        ops.append(
+            DeclareEdgeInversesOp(
+                inverses=dict(sorted(pairs.items())), symmetric=symmetric
+            )
+        )
+    enabled = sorted(_native_inverses(target) - _native_inverses(base, hints.relations))
+    if enabled and not profile_replaced:
+        ops.append(SetNativeInversesOp(relations=enabled))
     return ops
 
 
@@ -800,20 +885,34 @@ def _profile_differences_outside_the_index_ops(
     """Profile keys that differ once the index-addressable parts are set aside.
 
     ``vertex_indexes`` and the ``indexes`` of each edge spec are what the index
-    ops author; everything else on the profile has no op yet.
+    ops author, and ``native_inverses`` what ``set_native_inverses`` authors;
+    everything else on the profile has no op yet.
     """
+
+    authored_by_ops = {"indexes"}
+    spec_defaults = EdgePhysicalSpec(source="_", target="_").to_dict(
+        skip_defaults=False
+    )
 
     def _comparable(profile: DatabaseProfile) -> dict[str, Any]:
         data = profile.to_dict(skip_defaults=False)
         data.pop("vertex_indexes", None)
-        data["edge_specs"] = sorted(
-            (
-                json.dumps(
-                    {k: v for k, v in spec.items() if k != "indexes"}, sort_keys=True
-                )
-                for spec in data.get("edge_specs") or []
-            ),
-        )
+        # Authored by `set_native_inverses`.
+        data.pop("native_inverses", None)
+        specs = []
+        for spec in data.get("edge_specs") or []:
+            rest = {k: v for k, v in spec.items() if k not in authored_by_ops}
+            # A spec carrying nothing beyond what the ops author is, for this
+            # comparison, the same as no spec: the index ops create and empty
+            # exactly such specs.
+            if all(
+                rest.get(k) == spec_defaults.get(k)
+                for k in rest
+                if k not in {"source", "target", "relation"}
+            ):
+                continue
+            specs.append(json.dumps(rest, sort_keys=True))
+        data["edge_specs"] = sorted(specs)
         return data
 
     left, right = _comparable(base_profile), _comparable(target_profile)

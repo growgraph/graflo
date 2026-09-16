@@ -89,6 +89,7 @@ class EdgeActor(Actor):
             self._static_source = None
             self._static_target = None
             self._relation_map: dict[str, str] = {}
+            self._relation_map_only = False
             self._strict_edge_types = False
             self._edge_cache: dict[tuple[str, str, str | None], Edge] = {}
             self._init_ctx: ActorInitContext | None = None
@@ -109,6 +110,7 @@ class EdgeActor(Actor):
         self._static_source = config.source
         self._static_target = config.target
         self._relation_map = config.relation_map or {}
+        self._relation_map_only = config.relation_map_only
         self._strict_edge_types = config.strict_edge_types
         self._edge_cache = {}
         self._init_ctx = None
@@ -406,6 +408,8 @@ class EdgeActor(Actor):
             raw_relation = None
 
         if raw_relation is not None:
+            if self._relation_map_only and raw_relation not in self._relation_map:
+                return ctx
             relation: str | None = self._relation_map.get(raw_relation, raw_relation)
         else:
             relation = self._static_relation

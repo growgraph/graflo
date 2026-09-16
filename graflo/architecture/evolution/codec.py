@@ -32,6 +32,7 @@ from .ops import (
     AddVerticesOp,
     CanonicalizeOp,
     ChangeFieldTypesOp,
+    DeclareEdgeInversesOp,
     EnsureExtractedFieldsOp,
     ManifestOp,
     MergeEdgesOp,
@@ -54,12 +55,14 @@ from .ops import (
     ReplaceEdgeIdentitiesOp,
     ReplaceIdentityOp,
     RetargetEdgesOp,
+    RetractEdgeInversesOp,
     SanitizeOp,
     SetBindingsOp,
     SetDbProfileOp,
     SetEdgeDirectedOp,
     SetEdgeSemanticsOp,
     SetFieldSemanticsOp,
+    SetNativeInversesOp,
     SetVertexSemanticsOp,
 )
 
@@ -101,7 +104,10 @@ RevisionOp = Annotated[
     | RenameEdgePropertiesOp
     | RemoveEdgePropertiesOp
     | AddEdgePropertiesOp
+    | DeclareEdgeInversesOp
+    | RetractEdgeInversesOp
     | AddInverseEdgesOp
+    | SetNativeInversesOp
     | ProjectManifestOp
     | ReplaceIdentityOp
     | SanitizeOp,

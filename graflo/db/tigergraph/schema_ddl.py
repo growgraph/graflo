@@ -252,29 +252,21 @@ class SchemaDdlBuilder:
     def _edge_ddl_keyword(kind: Literal["directed", "undirected"]) -> str:
         return "UNDIRECTED" if kind == "undirected" else "DIRECTED"
 
-    def _tigergraph_reverse_edge_name(
-        self,
-        edge: Edge,
-        db_profile: DatabaseProfile | None,
-    ) -> str | None:
-        if db_profile is None or db_profile.db_flavor != DBType.TIGERGRAPH:
-            return None
-        return db_profile.edge_reverse_edge_name(edge.edge_id)
-
     def _validate_tigergraph_edge_ddl_config(
         self,
         edge: Edge,
-        db_profile: DatabaseProfile | None,
+        native_inverse: str | None,
     ) -> tuple[Literal["directed", "undirected"], str | None]:
         kind = self._tigergraph_edge_ddl_kind(edge)
-        reverse_edge = self._tigergraph_reverse_edge_name(edge, db_profile)
-        if reverse_edge is not None:
+        if native_inverse is not None:
+            # Schema.finish_init refuses this at load time; kept for callers that
+            # hand-build edges without a schema.
             if kind == "undirected":
                 raise ValueError(
-                    f"reverse_edge cannot be set for undirected edge {edge.edge_id!r}"
+                    f"native inverse cannot be set for undirected edge {edge.edge_id!r}"
                 )
-            validate_tigergraph_schema_name(reverse_edge, "reverse_edge")
-        return kind, reverse_edge
+            validate_tigergraph_schema_name(native_inverse, "native inverse")
+        return kind, native_inverse
 
     def _get_edge_add_statement(
         self,
@@ -284,11 +276,15 @@ class SchemaDdlBuilder:
         source_vertex: str,
         target_vertex: str,
         db_profile: DatabaseProfile | None = None,
+        native_inverse: str | None = None,
     ) -> str:
         """Generate ADD DIRECTED/UNDIRECTED EDGE statement for a schema change job.
 
         Args:
             edge: Edge object to generate statement for
+            native_inverse: Declared inverse relation the database maintains for
+                this edge (``WITH REVERSE_EDGE``), resolved by
+                :meth:`DatabaseProfile.native_inverse_of`
 
         Returns:
             str: GSQL ADD edge statement (optionally with WITH REVERSE_EDGE)
@@ -359,12 +355,14 @@ class SchemaDdlBuilder:
         # Combine FROM/TO and discriminator with commas
         from_to_line = ",\n".join(from_to_parts)
 
-        ddl_kind, reverse_edge = self._validate_tigergraph_edge_ddl_config(
-            edge, db_profile
+        ddl_kind, native_inverse = self._validate_tigergraph_edge_ddl_config(
+            edge, native_inverse
         )
         ddl_keyword = self._edge_ddl_keyword(ddl_kind)
         reverse_suffix = (
-            f' WITH REVERSE_EDGE="{reverse_edge}"' if reverse_edge is not None else ""
+            f' WITH REVERSE_EDGE="{native_inverse}"'
+            if native_inverse is not None
+            else ""
         )
 
         # Build the complete statement
@@ -387,6 +385,7 @@ class SchemaDdlBuilder:
         source_vertices: dict[int, str],
         target_vertices: dict[int, str],
         db_profile: DatabaseProfile | None = None,
+        native_inverse: str | None = None,
     ) -> str:
         """Generate ADD DIRECTED EDGE statement for a group of edges with the same relation.
 
@@ -462,12 +461,14 @@ class SchemaDdlBuilder:
         # Join all FROM/TO pairs with |
         all_from_to = " |\n".join(from_to_lines)
 
-        ddl_kind, reverse_edge = self._validate_tigergraph_edge_ddl_config(
-            first_edge, db_profile
+        ddl_kind, native_inverse = self._validate_tigergraph_edge_ddl_config(
+            first_edge, native_inverse
         )
         ddl_keyword = self._edge_ddl_keyword(ddl_kind)
         reverse_suffix = (
-            f' WITH REVERSE_EDGE="{reverse_edge}"' if reverse_edge is not None else ""
+            f' WITH REVERSE_EDGE="{native_inverse}"'
+            if native_inverse is not None
+            else ""
         )
 
         # Build the complete statement
@@ -616,20 +617,37 @@ class SchemaDdlBuilder:
             validate_tigergraph_schema_name(edge_dbname, "edge")
             self._validate_tigergraph_edge_property_names(edge, db_schema.edge_config)
 
-        # Group edges by DDL kind, relation name, and reverse_edge pairing
+        # Group edges by DDL kind and relation name. The native inverse is a
+        # property of the relation (``db_profile.native_inverses``), and so of
+        # the whole edge type: it never splits a group.
+        vertex_dbnames = {
+            db_schema.vertex_config.vertex_dbname(v.name)
+            for v in vertex_config.vertices
+        }
+        edge_type_names = set(relation_names.values())
         edges_by_group: dict[tuple[str, str, str | None], list[Edge]] = defaultdict(
             list
         )
         for edge in edges_to_create:
             ddl_kind = self._tigergraph_edge_ddl_kind(edge)
-            reverse_edge = self._tigergraph_reverse_edge_name(
-                edge, db_schema.db_profile
+            native_inverse = db_schema.db_profile.native_inverse_of(
+                edge.relation, edge_config
             )
-            key = (ddl_kind, relation_names[id(edge)], reverse_edge)
+            # The logical check in Schema.finish_init compares logical names; the
+            # physical names (relation_name overrides, storage names) are only
+            # known here, and TigerGraph type names share one namespace.
+            if native_inverse is not None and (
+                native_inverse in edge_type_names or native_inverse in vertex_dbnames
+            ):
+                raise ValueError(
+                    f"native inverse {native_inverse!r} of relation {edge.relation!r} "
+                    "collides with a TigerGraph vertex or edge type of that name"
+                )
+            key = (ddl_kind, relation_names[id(edge)], native_inverse)
             edges_by_group[key].append(edge)
 
         # Create one statement per group with all FROM/TO pairs
-        for (_ddl_kind, relation, _reverse_edge), edge_group in edges_by_group.items():
+        for (_ddl_kind, relation, native_inverse), edge_group in edges_by_group.items():
             ddl_edges = [
                 self._edge_for_tigergraph_ddl(e, db_schema.edge_config)
                 for e in edge_group
@@ -648,6 +666,7 @@ class SchemaDdlBuilder:
                 source_vertices=ddl_source_vertices,
                 target_vertices=ddl_target_vertices,
                 db_profile=db_schema.db_profile,
+                native_inverse=native_inverse,
             )
             edge_stmts.append(stmt)
 

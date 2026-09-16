@@ -13,7 +13,14 @@ from graflo.architecture.graph_types import EdgeId
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.core import CoreSchema
 from graflo.architecture.schema.database_features import DatabaseProfile
-from graflo.architecture.schema.edge import Edge, EdgeConfig
+from graflo.architecture.schema.edge import (
+    Edge,
+    EdgeConfig,
+    EdgeInverse,
+    inverse_map,
+    normalize_inverse_table,
+    remap_inverses,
+)
 from graflo.architecture.schema.vertex import (
     Field,
     FieldMergeConflict,
@@ -37,16 +44,13 @@ from .db_profile import (
     apply_vertex_rename_to_db_profile,
     merge_relation_entries_in_db_profile,
     remap_vertices_in_db_profile,
+    retain_native_inverses,
 )
 from .inverse_edges import (
-    _append_inverse_flat_specs,
-    _append_inverses_for_nested_edges,
-    _as_dict_list,
-    _schema_edges_with_inverses,
-    append_inverses_to_pipeline,
+    append_inverses_to_resource,
+    plan_inverse_edges,
 )
 from .merge_core import (
-    edge_config_from_edges,
     merge_vertex_models,
     redirect_and_merge_edges,
     remap_relation_and_merge_edges,
@@ -64,6 +68,7 @@ from .ops import (
     AddVerticesOp,
     CanonicalizeOp,
     ChangeFieldTypesOp,
+    DeclareEdgeInversesOp,
     EnsureExtractedFieldsOp,
     ManifestOp,
     MergeEdgesOp,
@@ -86,12 +91,14 @@ from .ops import (
     ReplaceEdgeIdentitiesOp,
     ReplaceIdentityOp,
     RetargetEdgesOp,
+    RetractEdgeInversesOp,
     SanitizeOp,
     SetBindingsOp,
     SetDbProfileOp,
     SetEdgeDirectedOp,
     SetEdgeSemanticsOp,
     SetFieldSemanticsOp,
+    SetNativeInversesOp,
     SetVertexSemanticsOp,
 )
 from .project import compute_projection
@@ -234,6 +241,10 @@ def _apply_keep_resources(manifest: GraphManifest, allowed: set[str]) -> None:
         )
 
 
+def _relations_of(edges: Sequence[Edge]) -> set[str]:
+    return {edge.relation for edge in edges if edge.relation is not None}
+
+
 def _bump_schema_version(
     manifest: GraphManifest, mode: bool | Literal["minor"]
 ) -> None:
@@ -264,9 +275,10 @@ def apply_remove_vertices(manifest: GraphManifest, op: RemoveVerticesOp) -> None
         for e in core.edge_config.edges
         if e.source not in removed and e.target not in removed
     ]
+    retain_native_inverses(schema.db_profile, _relations_of(filtered_edges))
     schema.core_schema = CoreSchema(
         vertex_config=core.vertex_config,
-        edge_config=EdgeConfig(edges=filtered_edges),
+        edge_config=core.edge_config.with_edges(filtered_edges),
     )
 
     apply_vertex_removal_to_db_profile(schema.db_profile, removed)
@@ -510,7 +522,7 @@ def apply_merge_vertices(
 
     schema.core_schema = CoreSchema(
         vertex_config=new_vc,
-        edge_config=edge_config_from_edges(merged_edges),
+        edge_config=core.edge_config.with_edges(merged_edges),
     )
     apply_vertex_merge_to_db_profile(schema.db_profile, sset, into)
     schema.db_profile = _revalidate_db_profile(schema.db_profile)
@@ -778,8 +790,19 @@ def apply_canonicalize(manifest: GraphManifest, op: CanonicalizeOp) -> None:
         remap_vertices_in_db_profile(schema.db_profile, vertex_map)
         apply_relation_rename_to_db_profile(schema.db_profile, relation_map)
         merge_relation_entries_in_db_profile(schema.db_profile)
+        inverses, symmetric = remap_inverses(
+            core.edge_config.inverses,
+            core.edge_config.symmetric,
+            relation_map,
+            kind="canonicalize",
+        )
+        remapped = EdgeConfig(
+            edges=list(core.edge_config.edges),
+            inverses=inverses,
+            symmetric=symmetric,
+        )
         schema.core_schema = CoreSchema(
-            vertex_config=new_vc, edge_config=edge_config_from_edges(edges)
+            vertex_config=new_vc, edge_config=remapped.with_edges(edges)
         )
         schema.db_profile = _revalidate_db_profile(schema.db_profile)
         schema.finish_init()
@@ -1172,6 +1195,19 @@ def _apply_rename_entities(
 
             edge_config = graph_payload.get("edge_config")
             if isinstance(edge_config, dict):
+                inverses_payload = edge_config.get("inverses")
+                symmetric_payload = edge_config.get("symmetric")
+                if edge_map and (inverses_payload or symmetric_payload):
+                    inverses, symmetric = remap_inverses(
+                        [EdgeInverse.model_validate(p) for p in inverses_payload or []],
+                        list(symmetric_payload or []),
+                        edge_map,
+                        kind="rename_relations",
+                    )
+                    edge_config["inverses"] = [
+                        pair.to_dict(skip_defaults=False) for pair in inverses
+                    ]
+                    edge_config["symmetric"] = symmetric
                 edges_payload = edge_config.get("edges")
                 if isinstance(edges_payload, list):
                     for edge in edges_payload:
@@ -1451,8 +1487,8 @@ def apply_remove_edges(manifest: GraphManifest, op: RemoveEdgesOp) -> None:
     schema.db_profile = _revalidate_db_profile(schema.db_profile)
     schema.core_schema = CoreSchema(
         vertex_config=schema.core_schema.vertex_config,
-        edge_config=EdgeConfig(
-            edges=[
+        edge_config=schema.core_schema.edge_config.with_edges(
+            [
                 edge
                 for edge in schema.core_schema.edge_config.edges
                 if edge.relation not in removed
@@ -1510,17 +1546,17 @@ def apply_remove_edge_ids(
     if schema is None:
         raise ValueError("remove_edge_ids requires graph_schema")
 
+    surviving = [
+        edge
+        for edge in schema.core_schema.edge_config.edges
+        if edge.edge_id not in removed_edge_ids
+    ]
     apply_edge_id_removal_to_db_profile(schema.db_profile, removed_edge_ids)
+    retain_native_inverses(schema.db_profile, _relations_of(surviving))
     schema.db_profile = _revalidate_db_profile(schema.db_profile)
     schema.core_schema = CoreSchema(
         vertex_config=schema.core_schema.vertex_config,
-        edge_config=EdgeConfig(
-            edges=[
-                edge
-                for edge in schema.core_schema.edge_config.edges
-                if edge.edge_id not in removed_edge_ids
-            ]
-        ),
+        edge_config=schema.core_schema.edge_config.with_edges(surviving),
     )
     schema.finish_init()
 
@@ -1587,12 +1623,22 @@ def apply_merge_edges(manifest: GraphManifest, op: MergeEdgesOp) -> None:
         # because assigning `core_schema` revalidates the profile against it.
         apply_relation_rename_to_db_profile(schema.db_profile, relation_map)
         merge_relation_entries_in_db_profile(schema.db_profile)
-        merged_edges = remap_relation_and_merge_edges(
-            schema.core_schema.edge_config.edges, relation_map
+        edge_config = schema.core_schema.edge_config
+        merged_edges = remap_relation_and_merge_edges(edge_config.edges, relation_map)
+        inverses, symmetric = remap_inverses(
+            edge_config.inverses,
+            edge_config.symmetric,
+            relation_map,
+            kind="merge_edges",
+        )
+        remapped = EdgeConfig(
+            edges=list(edge_config.edges),
+            inverses=inverses,
+            symmetric=symmetric,
         )
         schema.core_schema = CoreSchema(
             vertex_config=schema.core_schema.vertex_config,
-            edge_config=edge_config_from_edges(merged_edges),
+            edge_config=remapped.with_edges(merged_edges),
         )
         schema.db_profile = _revalidate_db_profile(schema.db_profile)
     # Deliberately non-injective, so this takes the unguarded internal path. Schema and
@@ -1776,67 +1822,104 @@ def apply_add_edge_properties(manifest: GraphManifest, op: AddEdgePropertiesOp) 
     schema.finish_init()
 
 
-def apply_add_inverse_edges(manifest: GraphManifest, op: AddInverseEdgesOp) -> None:
-    """Add inverse edges for mapped relations across schema and ingestion resources."""
-    relation_map = {
-        source: target
-        for source, target in op.inverses.items()
-        if isinstance(source, str) and isinstance(target, str)
-    }
-    if not relation_map:
-        return
+def _replace_edge_config(schema: Schema, edge_config: EdgeConfig) -> None:
+    schema.core_schema = CoreSchema(
+        vertex_config=schema.core_schema.vertex_config, edge_config=edge_config
+    )
 
+
+def apply_declare_edge_inverses(
+    manifest: GraphManifest, op: DeclareEdgeInversesOp
+) -> None:
+    """Record inverse pairs and symmetric relations; creates no edge.
+
+    Restating a declaration, in either order, is a no-op; giving a relation a
+    second inverse is refused by the one table rule.
+    """
+    schema = manifest.graph_schema
+    if schema is None:
+        raise ValueError("declare_edge_inverses requires graph_schema")
+    edge_config = schema.core_schema.edge_config
+    inverses, symmetric = normalize_inverse_table(
+        [(p.relation, p.inverse) for p in edge_config.inverses]
+        + list(op.inverses.items()),
+        [*edge_config.symmetric, *op.symmetric],
+        kind="declare_edge_inverses",
+    )
+    _replace_edge_config(
+        schema,
+        EdgeConfig(
+            edges=list(edge_config.edges), inverses=inverses, symmetric=symmetric
+        ),
+    )
+    schema.finish_init()
+
+
+def apply_retract_edge_inverses(
+    manifest: GraphManifest, op: RetractEdgeInversesOp
+) -> None:
+    """Withdraw declarations by relation name; refused while a native inverse realizes one."""
+    schema = manifest.graph_schema
+    if schema is None:
+        raise ValueError("retract_edge_inverses requires graph_schema")
+    edge_config = schema.core_schema.edge_config
+    declared = inverse_map(edge_config.inverses, edge_config.symmetric)
+    unknown = sorted(set(op.relations) - set(declared))
+    if unknown:
+        raise ValueError(
+            f"retract_edge_inverses: no declared inverse for relations: {unknown}"
+        )
+    retracted = {name for r in op.relations for name in (r, declared[r])}
+    native = sorted(retracted & set(schema.db_profile.native_inverses))
+    if native:
+        raise ValueError(
+            "retract_edge_inverses: pairs are still realized by native inverses of "
+            f"{native}; withdraw them first (set_native_inverses enabled=false)"
+        )
+    _replace_edge_config(
+        schema,
+        EdgeConfig(
+            edges=list(edge_config.edges),
+            inverses=[
+                pair.model_copy(deep=True)
+                for pair in edge_config.inverses
+                if pair.relation not in retracted
+            ],
+            symmetric=[name for name in edge_config.symmetric if name not in retracted],
+        ),
+    )
+    schema.finish_init()
+
+
+def apply_add_inverse_edges(manifest: GraphManifest, op: AddInverseEdgesOp) -> None:
+    """Realize declared inverses as explicit edges across schema, profile and ingestion."""
     schema = manifest.graph_schema
     if schema is None:
         raise ValueError("add_inverse_edges requires graph_schema")
+    edge_config = schema.core_schema.edge_config
 
-    new_edges = _schema_edges_with_inverses(
-        list(schema.core_schema.edge_config.edges),
-        relation_map,
-        schema.db_profile,
-    )
-    schema.core_schema = CoreSchema(
-        vertex_config=schema.core_schema.vertex_config,
-        edge_config=edge_config_from_edges(new_edges),
-    )
-    apply_inverse_edges_to_db_profile(schema.db_profile, relation_map, new_edges)
+    relation_map, added = plan_inverse_edges(schema, op.relations)
+    created = {edge.edge_id for edge in added}
+    new_edges = [*edge_config.edges, *added]
+
+    _replace_edge_config(schema, edge_config.with_edges(new_edges))
+    apply_inverse_edges_to_db_profile(schema.db_profile, relation_map, created)
     schema.db_profile = _revalidate_db_profile(schema.db_profile)
     schema.finish_init()
 
-    if manifest.ingestion_model is None:
+    if manifest.ingestion_model is None or not created:
         return
 
     from graflo.architecture.contract.ingestion.resource import Resource
 
-    resources: list[Resource] = []
-    for resource in manifest.ingestion_model.resources:
-        payload = resource.to_dict(skip_defaults=False)
-
-        pipeline_steps = _as_dict_list(payload.get("pipeline"))
-        if pipeline_steps:
-            payload["pipeline"] = append_inverses_to_pipeline(
-                pipeline_steps,
-                relation_map,
-                new_edges,
+    manifest.ingestion_model.resources = [
+        Resource.model_validate(
+            append_inverses_to_resource(
+                resource.to_dict(skip_defaults=False), relation_map, created
             )
-
-        for spec_key in ("infer_edge_only", "infer_edge_except"):
-            spec_dicts = _as_dict_list(payload.get(spec_key))
-            if spec_dicts:
-                payload[spec_key] = _append_inverse_flat_specs(spec_dicts, relation_map)
-
-        extra_entries = _as_dict_list(payload.get("extra_weights"))
-        if extra_entries:
-            payload["extra_weights"] = _append_inverses_for_nested_edges(
-                extra_entries,
-                relation_map,
-                edge_key="edge",
-                schema_edges=new_edges,
-            )
-
-        resources.append(Resource.model_validate(payload))
-
-    manifest.ingestion_model.resources = resources
+        )
+        for resource in manifest.ingestion_model.resources
+    ]
     manifest.ingestion_model = IngestionModel.model_validate(
         manifest.ingestion_model.to_dict(skip_defaults=False)
     )
@@ -1932,8 +2015,16 @@ def _dispatch_op(manifest: GraphManifest, op: Any) -> None:
         apply_remove_edge_properties(manifest, op)
     elif isinstance(op, AddEdgePropertiesOp):
         apply_add_edge_properties(manifest, op)
+    elif isinstance(op, DeclareEdgeInversesOp):
+        apply_declare_edge_inverses(manifest, op)
+    elif isinstance(op, RetractEdgeInversesOp):
+        apply_retract_edge_inverses(manifest, op)
     elif isinstance(op, AddInverseEdgesOp):
         apply_add_inverse_edges(manifest, op)
+    elif isinstance(op, SetNativeInversesOp):
+        from .physical import apply_set_native_inverses
+
+        apply_set_native_inverses(manifest, op)
     elif isinstance(op, ProjectManifestOp):
         apply_project_manifest(manifest, op)
     elif isinstance(op, ReplaceIdentityOp):
@@ -2030,6 +2121,13 @@ def _dispatch_op(manifest: GraphManifest, op: Any) -> None:
         raise TypeError(f"Unsupported evolution op: {type(op)!r}")
 
 
+def _inverse_advisories(manifest: GraphManifest) -> set[str]:
+    schema = manifest.graph_schema
+    if schema is None:
+        return set()
+    return set(schema.core_schema.edge_config.inverse_advisories())
+
+
 def apply_manifest_ops_inplace(
     manifest: GraphManifest,
     ops: Sequence[ManifestOp],
@@ -2064,9 +2162,13 @@ def apply_evolution(
     :func:`~graflo.architecture.evolution.merge.merge_manifests` instead.
     """
     out = manifest.model_copy(deep=True)
+    advisories_before = _inverse_advisories(manifest)
 
     for op in ops:
         _dispatch_op(out, op)
+
+    for advisory in _inverse_advisories(out) - advisories_before:
+        logger.warning("declared inverses: %s", advisory)
 
     _bump_schema_version(out, bump_version)
 

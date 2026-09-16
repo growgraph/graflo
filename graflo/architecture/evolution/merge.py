@@ -19,9 +19,10 @@ from graflo.architecture.schema.database_features import (
     append_index,
 )
 from graflo.architecture.schema.document import Schema
-from graflo.architecture.schema.edge import Edge
+from graflo.architecture.schema.edge import Edge, EdgeConfig, union_inverses
 from graflo.architecture.schema.identity_funnel import IdentityBranch, IdentityFunnel
 from graflo.architecture.schema.metadata import GraphMetadata
+from graflo.architecture.schema.namespace import validate_namespace
 from graflo.architecture.schema.naming import NamingConvention, canonical_slug
 from graflo.architecture.schema.semantics import merge_semantics
 from graflo.architecture.schema.vertex import SecondaryIdentity, Vertex, VertexConfig
@@ -44,7 +45,6 @@ from .canonical import (
 from .db_profile import union_default_property_values
 from .equivalence import Cluster, ClusterIndex, Side, subject
 from .merge_core import (
-    edge_config_from_edges,
     merge_edge_pair,
     merge_vertex_models,
 )
@@ -59,6 +59,7 @@ from .ops import (
     RenameVerticesOp,
     SideIdentity,
 )
+from .version import semver_core
 
 logger = logging.getLogger(__name__)
 
@@ -680,11 +681,43 @@ def _cluster_retire_ops(
     ]
 
 
+#: Separator :func:`_fold_name` joins two differing labels with.
+_NAME_FOLD_SEP = "+"
+
+
 def _fold_name(left: str | None, right: str | None) -> str | None:
-    """The shared name when the two sides agree, ``left+right`` when they differ."""
-    if left and right and left != right:
-        return f"{left}+{right}"
-    return left or right
+    """The shared name when the two sides agree, ``left+right`` when they differ.
+
+    The fold is flat: a side that is itself a fold contributes its parts, and
+    a part already present is not repeated, so re-merging a source into a
+    union keeps the union's name (``a+b`` with ``a`` stays ``a+b``) instead of
+    growing on every round. The result is a label, not an identifier -- the
+    namespace it deploys into is derived by
+    :meth:`~graflo.architecture.schema.document.Schema.effective_namespace`.
+    """
+    if not (left and right) or left == right:
+        return left or right
+    parts: list[str] = []
+    for part in (*left.split(_NAME_FOLD_SEP), *right.split(_NAME_FOLD_SEP)):
+        if part not in parts:
+            parts.append(part)
+    return _NAME_FOLD_SEP.join(parts)
+
+
+def _fold_version(left: str | None, right: str | None) -> str | None:
+    """The higher of the two sides' versions, by ``MAJOR.MINOR.PATCH``.
+
+    The merged schema supersedes both inputs, so the base a bump starts from
+    is whichever side is further along; taking the left's alone would version
+    a merge with a ``3.0.0`` right side below that side. Ties and unparsable
+    versions keep the left's.
+    """
+    if left is None or right is None:
+        return left if right is None else right
+    left_key, right_key = semver_core(left), semver_core(right)
+    if left_key is not None and right_key is not None and right_key > left_key:
+        return right
+    return left
 
 
 def _fold_description(left: str | None, right: str | None) -> str | None:
@@ -719,15 +752,14 @@ def _merge_graph_metadata(left: GraphMetadata, right: GraphMetadata) -> GraphMet
     side's prose, anchors and convention is wrong in the same way carrying only
     one side's vertices would be.
 
-    Two fields are deliberately not folded. ``version`` stays the left side's
-    because it is the base :func:`_bump_schema_version` bumps from, and
-    ``provenance`` is dropped because the merged schema is a new artifact
+    ``version`` is the higher of the two (:func:`_fold_version`) because it is
+    the base :func:`_bump_schema_version` bumps from. ``provenance`` is dropped because the merged schema is a new artifact
     with a new content address — stamping it is a commit point's job, not
     merge's.
     """
     return GraphMetadata(
         name=_fold_name(left.name, right.name) or left.name,
-        version=left.version,
+        version=_fold_version(left.version, right.version),
         description=_fold_description(left.description, right.description),
         semantics=merge_semantics(left.semantics, right.semantics),
         naming=_merge_naming(left.naming, right.naming),
@@ -777,9 +809,14 @@ def _merge_declared_scalar(
     if field not in right_declared:
         return left_declared[field]
     if left_declared[field] != right_declared[field]:
+        hint = (
+            " (set MergeManifestsOp.target_namespace to choose one)"
+            if field == "target_namespace"
+            else ""
+        )
         raise ValueError(
             f"merge_manifests: conflicting {field}: "
-            f"{left_declared[field]!r} vs {right_declared[field]!r}"
+            f"{left_declared[field]!r} vs {right_declared[field]!r}{hint}"
         )
     return left_declared[field]
 
@@ -822,6 +859,9 @@ def _merge_db_profiles(
     edge_specs = list(data.get("edge_specs") or [])
     edge_specs.extend(list(right_data.get("edge_specs") or []))
     data["edge_specs"] = edge_specs
+    data["native_inverses"] = sorted(
+        set(left.native_inverses) | set(right.native_inverses)
+    )
 
     defaults = union_default_property_values(
         left.default_property_values, right.default_property_values
@@ -929,12 +969,19 @@ def _union_schema(
     meta = _merge_graph_metadata(left.metadata, right.metadata)
 
     db_profile = _merge_db_profiles(left.db_profile, right.db_profile)
+    inverses, symmetric = union_inverses(
+        left.core_schema.edge_config, right.core_schema.edge_config
+    )
 
     schema = Schema(
         metadata=meta,
         core_schema=CoreSchema(
             vertex_config=VertexConfig(vertices=out_vertices, force_types=force_types),
-            edge_config=edge_config_from_edges(list(by_id.values())),
+            edge_config=EdgeConfig(
+                edges=list(by_id.values()),
+                inverses=inverses,
+                symmetric=symmetric,
+            ),
         ),
         db_profile=db_profile,
     )
@@ -1159,6 +1206,12 @@ def merge_manifests(
 
     left_schema = _schema_of(out_left)
     right_schema = _schema_of(out_right)
+    if op.target_namespace is not None:
+        # The op's choice supersedes both sides' declarations, so a
+        # disagreement between them is resolved rather than refused.
+        for schema in (left_schema, right_schema):
+            if schema is not None:
+                schema.db_profile.target_namespace = None
     for side, schema in (("left", left_schema), ("right", right_schema)):
         if schema is None:
             logger.info(
@@ -1200,10 +1253,9 @@ def merge_manifests(
 
     alignment_labels = {alignment.vertex for alignment in op.identity_alignments}
     # Three-way, deliberately: a fabricated empty Schema would not be neutral.
-    # `_merge_db_profiles` takes every scalar from the left and
-    # `_merge_graph_metadata` takes the left's version, so an empty left would
-    # silently retarget the merged manifest to the `DatabaseProfile` default
-    # flavor and drop the right's namespace and schema version.
+    # Its `DatabaseProfile` declares nothing, but it would still fold a
+    # fabricated label into the merged name, and a side that declared the
+    # default flavor could not be told from one that never spoke.
     post_left = _schema_of(out_left)
     post_right = _schema_of(out_right)
     retire_ops: list[ManifestOp] = []
@@ -1259,12 +1311,39 @@ def merge_manifests(
             dynamic_edge_feedback=dynamic_edge_feedback,
         )
 
+    _apply_merge_naming(result, op)
+
     if finish_init:
         result.finish_init(
             strict_references=strict_references,
             dynamic_edge_feedback=dynamic_edge_feedback,
         )
     return result
+
+
+def _apply_merge_naming(manifest: GraphManifest, op: MergeManifestsOp) -> None:
+    """Apply the op's explicit ``name`` / ``target_namespace`` to the merged manifest.
+
+    ``name`` replaces the folded label on both the manifest and its schema.
+    ``target_namespace`` is validated against the merged flavor here, at the
+    merge, rather than at the first deploy that would reject it.
+    """
+    schema = manifest.graph_schema
+    if op.name is not None:
+        if manifest.metadata is None:
+            manifest.metadata = ManifestMetadata(name=op.name)
+        else:
+            manifest.metadata.name = op.name
+        if schema is not None:
+            schema.metadata.name = op.name
+    if op.target_namespace is not None:
+        if schema is None:
+            raise ValueError(
+                "merge_manifests: target_namespace was given but neither side "
+                "carries a schema to deploy"
+            )
+        validate_namespace(op.target_namespace, schema.db_profile.db_flavor)
+        schema.db_profile.target_namespace = op.target_namespace
 
 
 def _apply_identity_alignments(

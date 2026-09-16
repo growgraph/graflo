@@ -23,6 +23,7 @@ from .ops import (
     SetBindingsOp,
     SetDbProfileOp,
     SetEdgeDirectedOp,
+    SetNativeInversesOp,
 )
 
 logger = logging.getLogger(__name__)
@@ -305,6 +306,38 @@ def apply_set_edge_directed(manifest: GraphManifest, op: SetEdgeDirectedOp) -> N
         by_edge_id[selector.edge_id()].directed = op.directed
 
     schema.finish_init()
+
+
+def apply_set_native_inverses(manifest: GraphManifest, op: SetNativeInversesOp) -> None:
+    """Add relations to, or withdraw them from, ``db_profile.native_inverses``.
+
+    The rules (declared pair, not symmetric, no explicit inverse edges, one
+    physical edge type, TigerGraph) are the schema's own and are checked by
+    :meth:`Schema.finish_init`; this op only names itself in the refusal.
+    """
+    schema = manifest.graph_schema
+    if schema is None:
+        raise ValueError("set_native_inverses requires graph_schema")
+
+    known = {
+        edge.relation
+        for edge in schema.core_schema.edge_config.edges
+        if edge.relation is not None
+    }
+    unknown = sorted(set(op.relations) - known)
+    if unknown:
+        raise ValueError(f"set_native_inverses: unknown relations: {unknown}")
+
+    profile = schema.db_profile
+    current = set(profile.native_inverses)
+    selected = set(op.relations)
+    profile.native_inverses = sorted(
+        current | selected if op.enabled else current - selected
+    )
+    try:
+        schema.finish_init()
+    except ValueError as exc:
+        raise ValueError(f"set_native_inverses: {exc}") from exc
 
 
 def apply_set_bindings(manifest: GraphManifest, op: SetBindingsOp) -> None:

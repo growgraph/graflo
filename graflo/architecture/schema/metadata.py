@@ -29,7 +29,12 @@ class GraphMetadata(ConfigBaseModel):
 
     name: str = PydanticField(
         ...,
-        description="Name of the schema (e.g. graph or database identifier).",
+        description=(
+            "Label of the schema. Free-form, not an identifier: merges fold it "
+            "into ``left+right``. The database / graph / space it deploys into "
+            "is ``db_profile.target_namespace`` when set, else this label "
+            "sanitized per flavor (see ``Schema.effective_namespace``)."
+        ),
     )
     version: str | None = PydanticField(
         default=None,

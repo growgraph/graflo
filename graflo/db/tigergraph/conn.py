@@ -388,7 +388,14 @@ class TigerGraphConnection(Connection):
         )
 
     def _get_edge_add_statement(
-        self, edge, *, relation_name, source_vertex, target_vertex, db_profile=None
+        self,
+        edge,
+        *,
+        relation_name,
+        source_vertex,
+        target_vertex,
+        db_profile=None,
+        native_inverse=None,
     ) -> str:
         return self._ddl._get_edge_add_statement(
             edge,
@@ -396,6 +403,7 @@ class TigerGraphConnection(Connection):
             source_vertex=source_vertex,
             target_vertex=target_vertex,
             db_profile=db_profile,
+            native_inverse=native_inverse,
         )
 
     def _get_edge_group_create_statement(self, *args, **kwargs) -> str:

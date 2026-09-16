@@ -36,13 +36,20 @@ def _manifest(
     db_profile: dict | None = None,
     resources: list[dict] | None = None,
     extra_edges: list[dict] | None = None,
+    inverses: dict[str, str] | None = None,
 ):
     payload: dict = {
         "schema": {
             "metadata": {"name": "inverse-demo", "version": "1.0.0"},
             "graph": {
                 "vertex_config": {"vertices": [PARTY, ORDER, INVOICE]},
-                "edge_config": {"edges": [PLACES, *(extra_edges or [])]},
+                "edge_config": {
+                    "edges": [PLACES, *(extra_edges or [])],
+                    "inverses": [
+                        {"relation": r, "inverse": i}
+                        for r, i in (inverses or {}).items()
+                    ],
+                },
             },
         }
     }
@@ -130,8 +137,8 @@ REVERSIBLE_CASES = {
             }
         ],
     },
-    "add_inverse_edges": {
-        "op": "add_inverse_edges",
+    "declare_edge_inverses": {
+        "op": "declare_edge_inverses",
         "inverses": {"places": "placed_by"},
     },
     "replace_identity": {
@@ -150,6 +157,63 @@ class TestReversibleRoundTrip:
     @pytest.mark.parametrize("name", sorted(REVERSIBLE_CASES))
     def test_op_then_inverse_restores_the_manifest(self, name: str) -> None:
         _assert_round_trips(REVERSIBLE_CASES[name])
+
+    def test_add_inverse_edges_round_trips(self) -> None:
+        declared = _manifest(inverses={"places": "placed_by"})
+        _assert_round_trips(
+            {"op": "add_inverse_edges", "relations": ["places"]}, manifest=declared
+        )
+        _assert_round_trips({"op": "add_inverse_edges"}, manifest=declared)
+
+    def test_retract_edge_inverses_round_trips(self) -> None:
+        _assert_round_trips(
+            {"op": "retract_edge_inverses", "relations": ["placed_by"]},
+            manifest=_manifest(inverses={"places": "placed_by"}),
+        )
+
+    def test_set_native_inverses_round_trips_both_ways(self) -> None:
+        tigergraph = {"db_flavor": "tigergraph"}
+        declared = _manifest(db_profile=tigergraph, inverses={"places": "placed_by"})
+        _assert_round_trips(
+            {"op": "set_native_inverses", "relations": ["places"]}, manifest=declared
+        )
+        native = apply_evolution(
+            declared,
+            [op_from_dict({"op": "set_native_inverses", "relations": ["places"]})],
+            bump_version=False,
+        )
+        _assert_round_trips(
+            {"op": "set_native_inverses", "relations": ["places"], "enabled": False},
+            manifest=native,
+        )
+
+    def test_declaring_a_pair_in_both_orders_round_trips(self) -> None:
+        _assert_round_trips(
+            {
+                "op": "declare_edge_inverses",
+                "inverses": {"places": "placed_by", "placed_by": "places"},
+            }
+        )
+
+    def test_symmetric_declarations_round_trip(self) -> None:
+        linked = {
+            "source": "party",
+            "target": "party",
+            "relation": "knows",
+            "directed": False,
+        }
+        manifest = _manifest(extra_edges=[linked])
+        _assert_round_trips(
+            {"op": "declare_edge_inverses", "symmetric": ["knows"]}, manifest=manifest
+        )
+        declared = apply_evolution(
+            manifest,
+            [op_from_dict({"op": "declare_edge_inverses", "symmetric": ["knows"]})],
+            bump_version=False,
+        )
+        _assert_round_trips(
+            {"op": "retract_edge_inverses", "relations": ["knows"]}, manifest=declared
+        )
 
     def test_rename_resources_round_trips(self) -> None:
         manifest = _manifest(
@@ -331,10 +395,11 @@ class TestAdditiveInversesUndoOnlyWhatWasAdded:
         manifest = _manifest(
             extra_edges=[
                 {"source": "invoice", "target": "order", "relation": "placed_by"}
-            ]
+            ],
+            inverses={"places": "placed_by"},
         )
         inverse = _assert_round_trips(
-            {"op": "add_inverse_edges", "inverses": {"places": "placed_by"}},
+            {"op": "add_inverse_edges", "relations": ["places"]},
             manifest=manifest,
         )
         assert [s.edge_id() for s in inverse.edges] == [("order", "party", "placed_by")]

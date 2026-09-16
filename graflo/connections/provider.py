@@ -6,6 +6,7 @@ This module defines a connector-centric runtime indirection:
 
 from __future__ import annotations
 
+import os
 from typing import Protocol
 
 from pydantic import BaseModel, Field
@@ -46,12 +47,92 @@ __all__ = [
     "S3GeneralizedConnConfig",
     "SparqlAuth",
     "SparqlGeneralizedConnConfig",
+    "proxy_env_prefix",
+    "resolve_secrets_from_env",
 ]
 
 
 def _proxy_to_env_prefix(conn_proxy: str) -> str:
     """Map a ``conn_proxy`` label to an environment-variable prefix."""
     return conn_proxy.upper().replace("-", "_") + "_"
+
+
+def proxy_env_prefix(conn_proxy: str) -> str:
+    """Public form of the ``conn_proxy`` → environment-variable prefix convention.
+
+    ``user_service`` → ``USER_SERVICE_``. Every env-backed resolution in this
+    module derives its prefix from this function unless one is passed explicitly.
+    """
+    return _proxy_to_env_prefix(conn_proxy)
+
+
+def resolve_secrets_from_env(
+    config: GeneralizedConnConfig,
+    conn_proxy: str,
+    env_prefix: str | None = None,
+) -> GeneralizedConnConfig:
+    """Fill a stored source config's missing credentials from the environment.
+
+    A registry stores source connections without secrets; the secret behind a
+    ``conn_proxy`` label arrives at run time. This reads
+    ``{prefix}USERNAME`` / ``{prefix}PASSWORD`` for database and SPARQL sources,
+    plus ``{prefix}TOKEN`` for REST API sources, where *prefix* defaults to
+    :func:`proxy_env_prefix`. A value already present on *config* is kept: the
+    environment fills gaps and never overrides a stored setting.
+
+    Configs of other kinds (Kafka, S3) are returned unchanged.
+
+    Args:
+        config: Generalized config as resolved from storage.
+        conn_proxy: The label the config is registered under.
+        env_prefix: Explicit prefix overriding the proxy-derived one.
+
+    Returns:
+        A copy of *config* with missing credentials filled, or *config* itself
+        when nothing was filled.
+    """
+    prefix = env_prefix if env_prefix is not None else _proxy_to_env_prefix(conn_proxy)
+
+    def _env(name: str) -> str | None:
+        return os.environ.get(f"{prefix}{name}") or None
+
+    if isinstance(config, (PostgresGeneralizedConnConfig, SparqlGeneralizedConnConfig)):
+        inner = config.config
+        update = {
+            field: value
+            for field, value in (
+                ("username", _env("USERNAME")),
+                ("password", _env("PASSWORD")),
+            )
+            if value is not None and getattr(inner, field) is None
+        }
+        if not update:
+            return config
+        return config.model_copy(update={"config": inner.model_copy(update=update)})
+
+    if isinstance(config, ApiGeneralizedConnConfig):
+        inner = config.config
+        auth = inner.auth or ApiAuth()
+        update = {
+            field: value
+            for field, value in (
+                ("token", _env("TOKEN")),
+                ("username", _env("USERNAME")),
+                ("password", _env("PASSWORD")),
+            )
+            if value is not None and getattr(auth, field) is None
+        }
+        if not update:
+            return config
+        return config.model_copy(
+            update={
+                "config": inner.model_copy(
+                    update={"auth": auth.model_copy(update=update)}
+                )
+            }
+        )
+
+    return config
 
 
 class ConnectionProvider(Protocol):

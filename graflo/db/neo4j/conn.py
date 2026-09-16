@@ -141,7 +141,7 @@ class Neo4jConnection(Connection):
             Exception: If database creation fails and it's not a Community Edition limitation
         """
         try:
-            self.execute(f"CREATE DATABASE {name}")
+            self.execute(f"CREATE DATABASE `{name}`")
             logger.info(f"Successfully created Neo4j database '{name}'")
         except Exception as e:
             # Check if this is a Neo4j Community Edition limitation
@@ -386,7 +386,7 @@ class Neo4jConnection(Connection):
     def _resolve_db_name(self, schema: Schema) -> str:
         db_name = self.config.database
         if not db_name:
-            db_name = schema.metadata.name
+            db_name = schema.effective_namespace(DBType.NEO4J)
             self.config.database = db_name
         return db_name
 

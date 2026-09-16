@@ -81,7 +81,7 @@ def test_tigergraph_reverse_traversal_allowed_with_an_escape_hatch():
         DBType.TIGERGRAPH, EdgeDirection.ANY, edge_is_undirected=True
     )
     assert_direction_supported(
-        DBType.TIGERGRAPH, EdgeDirection.IN, has_reverse_edge=True
+        DBType.TIGERGRAPH, EdgeDirection.IN, has_native_inverse=True
     )
 
 

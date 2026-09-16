@@ -218,10 +218,10 @@ class GraphAdmin:
     def _resolve_graph_name(self, schema: Schema) -> str:
         graph_name = self._conn._configured_graph_name()
         if not graph_name:
-            graph_name = schema.metadata.name
+            graph_name = schema.effective_namespace(DBType.TIGERGRAPH)
             self._conn.config.database = graph_name
             self._conn.config.schema_name = graph_name
-            logger.info("Using schema name '%s' from schema.metadata.name", graph_name)
+            logger.info("Using graph name '%s' resolved from the schema", graph_name)
         validate_tigergraph_schema_name(graph_name, "graph")
         return graph_name
 
@@ -887,7 +887,7 @@ class GraphAdmin:
         Deletes vertices (and their edges) for all vertex types in the schema.
         """
         vc = schema.resolve_db_aware(DBType.TIGERGRAPH).vertex_config
-        graph_name = self._conn._configured_graph_name() or schema.metadata.name
+        graph_name = self._resolve_graph_name(schema)
         vertex_types = tuple(vc.vertex_dbname(v) for v in vc.vertex_set)
         if not vertex_types:
             return

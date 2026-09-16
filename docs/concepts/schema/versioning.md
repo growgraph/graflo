@@ -149,7 +149,7 @@ out the parent commit is always exact and is the better tool.
 |---|---|
 | add ↔ remove: vertices, edges, vertex/edge properties, indexes | `merge_vertices`, `merge_edges` |
 | rename: vertices, relations, resources, properties; `canonicalize` that only renames | `change_field_types`, `canonicalize` that merges |
-| `set_edge_directed`, `add_inverse_edges`, `retarget_edges` | `sanitize`, `project_manifest` |
+| `set_edge_directed`, `retarget_edges`, `add_inverse_edges`, `set_native_inverses`; `declare_edge_inverses` ↔ `retract_edge_inverses` | `sanitize`, `project_manifest` |
 | `replace_identity` (with `retire: keep`), secondary identities | `merge_manifests` (binary) |
 
 ## Merging two branches
@@ -204,7 +204,12 @@ containment is what lets the two families see each other, so removing a
 relation on one side conflicts with flipping one of its edges on the other. A
 relation-wide property edit (`relation/knows/field`) and a per-edge edit stay
 disjoint, which is right: they merge. An edge with no relation keeps its own
-root (`edge/person/company`), since no relation-addressed op can reach it.
+root (`edge/person/company`), since no relation-addressed op can reach it. A declared inverse sits under both of its relations
+(`relation/knows/inverse`), so renaming or removing a relation conflicts with
+declaring or retracting its inverse on the other side; a symmetric declaration
+sits under its one relation. A native inverse is a relation slot
+(`relation/knows/native_inverse`), matching TigerGraph, where the reverse type
+belongs to the relation's edge type.
 
 ### Determinism
 

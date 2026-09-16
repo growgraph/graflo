@@ -83,6 +83,7 @@ def _make_dynamic_ea(
     relation: str | None = None,
     relation_field: str | None = None,
     relation_map: dict[str, str] | None = None,
+    relation_map_only: bool = False,
     strict_edge_types: bool = False,
 ) -> EdgeActor:
     cfg = EdgeActorConfig.model_validate(
@@ -93,6 +94,7 @@ def _make_dynamic_ea(
             **({"relation": relation} if relation else {}),
             **({"relation_field": relation_field} if relation_field else {}),
             **({"relation_map": relation_map} if relation_map else {}),
+            **({"relation_map_only": True} if relation_map_only else {}),
             "strict_edge_types": strict_edge_types,
         }
     )
@@ -337,6 +339,40 @@ def test_dynamic_with_relation_map() -> None:
     ea(ctx, base, doc={"rt": "raw_rel"})
 
     assert ctx.edge_intents[0].edge.relation == "canonical"
+
+
+@pytest.mark.parametrize(
+    ("relation_map_only", "expected"),
+    [(False, ["canonical", "unmapped"]), (True, ["canonical"])],
+)
+def test_relation_map_only_drops_unmapped_raw_values(
+    relation_map_only: bool, expected: list[str]
+) -> None:
+    """By default an unmapped raw value passes through as the relation name."""
+    vc = _vc("server", "database")
+    ea = _make_dynamic_ea(
+        "S",
+        "T",
+        relation_field="rt",
+        relation_map={"raw_rel": "canonical"},
+        relation_map_only=relation_map_only,
+    )
+    ea.finish_init(_init(vc))
+
+    ctx = ExtractionContext()
+    base = _lindex(0)
+    _populate_slot(ctx, base, "S", "server", {"id": "s1"})
+    _populate_slot(ctx, base, "T", "database", {"id": "d1"})
+
+    ea(ctx, base, doc={"rt": "raw_rel"})
+    ea(ctx, base, doc={"rt": "unmapped"})
+
+    assert [intent.edge.relation for intent in ctx.edge_intents] == expected
+
+
+def test_relation_map_only_requires_a_relation_map() -> None:
+    with pytest.raises(ValueError, match="relation_map_only requires"):
+        _make_dynamic_ea("S", "T", relation_field="rt", relation_map_only=True)
 
 
 def test_dynamic_skips_when_slot_empty() -> None:

@@ -28,7 +28,7 @@ def graflo() -> None:
 
 
 # Version control for world models. Registered as a *group* rather than
-# flattened, so `graflo commit`, `graflo log`, `graflo merge` and friends share
+# flattened, so `graflo commit`, `graflo log`, `graflo merge3` and friends share
 # the `--store` option and one help page.
 for _name, _command in commit_group().items():
     graflo.add_command(_command, name=_name)

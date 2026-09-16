@@ -13,7 +13,6 @@ from graflo.architecture.schema.database_features import (
     EdgePhysicalSpec,
     EdgePropertyDefaults,
 )
-from graflo.architecture.schema.edge import Edge
 from graflo.onto import DBType
 
 logger = logging.getLogger(__name__)
@@ -95,7 +94,6 @@ def apply_vertex_rename_to_db_profile(
                 relation_name=s.relation_name,
                 indexes=list(s.indexes),
                 indexes_mode=s.indexes_mode,
-                reverse_edge=s.reverse_edge,
             )
         )
     profile.edge_specs = new_specs
@@ -180,7 +178,6 @@ def remap_vertices_in_db_profile(
                 relation_name=s.relation_name,
                 indexes=list(s.indexes),
                 indexes_mode=s.indexes_mode,
-                reverse_edge=s.reverse_edge,
             )
         )
     profile.edge_specs = new_specs
@@ -394,7 +391,6 @@ def apply_field_rename_to_db_profile(
                 relation_name=spec.relation_name,
                 indexes=_rewrite_index_fields(list(spec.indexes), merged),
                 indexes_mode=spec.indexes_mode,
-                reverse_edge=spec.reverse_edge,
             )
         )
     profile.edge_specs = new_specs
@@ -433,6 +429,9 @@ def apply_relation_rename_to_db_profile(
             )
         )
     profile.edge_specs = new_specs
+    profile.native_inverses = [
+        relation_renames.get(relation, relation) for relation in profile.native_inverses
+    ]
 
     dpv = profile.default_property_values
     if dpv is None:
@@ -465,6 +464,7 @@ def apply_relation_removal_to_db_profile(
     profile.edge_specs = [
         spec for spec in profile.edge_specs if spec.relation not in removed_relations
     ]
+    retain_native_inverses(profile, set(profile.native_inverses) - removed_relations)
     dpv = profile.default_property_values
     if dpv is None:
         return
@@ -473,6 +473,17 @@ def apply_relation_removal_to_db_profile(
         "edges",
         [edge for edge in dpv.edges if edge.relation not in removed_relations],
     )
+
+
+def retain_native_inverses(profile: DatabaseProfile, relations: set[str]) -> None:
+    """Keep only the native inverses of ``relations``.
+
+    A native inverse is keyed by relation, so removing edges drops it only once
+    the relation has no edge left; callers pass the relations that survive.
+    """
+    kept = [relation for relation in profile.native_inverses if relation in relations]
+    if kept != profile.native_inverses:
+        profile.native_inverses = kept
 
 
 def apply_edge_id_removal_to_db_profile(
@@ -621,67 +632,64 @@ def apply_edge_property_removal_to_db_profile(
 def apply_inverse_edges_to_db_profile(
     profile: DatabaseProfile,
     relation_map: dict[str, str],
-    edges: list[Edge],
+    created: set[EdgeId],
 ) -> None:
-    """Append inverse edge_specs and default_property_values for directed forward edges."""
-    if not relation_map:
+    """Give each created inverse edge a copy of its forward edge's specs and defaults.
+
+    Only edges the op created are touched: an inverse edge that already existed
+    keeps whatever physical profile its author gave it. ``relation_name`` is not
+    copied -- it is the storage type name, and copying it would store the
+    forward and inverse relations as one physical type. Native inverses are keyed by relation
+    and are refused alongside explicit inverse edges, so there is none to copy.
+    """
+    if not relation_map or not created:
         return
 
-    edge_by_id: dict[EdgeId, Edge] = {edge.edge_id: edge for edge in edges}
+    def _created_inverse(
+        source: str, target: str, relation: str | None
+    ) -> EdgeId | None:
+        if relation is None or relation not in relation_map:
+            return None
+        inverse_id: EdgeId = (target, source, relation_map[relation])
+        return inverse_id if inverse_id in created else None
+
     existing_spec_keys = {spec.physical_key for spec in profile.edge_specs}
     new_specs = list(profile.edge_specs)
-
     for spec in profile.edge_specs:
-        forward_edge = edge_by_id.get(spec.edge_id)
-        if forward_edge is None or not forward_edge.directed:
+        inverse_id = _created_inverse(spec.source, spec.target, spec.relation)
+        if inverse_id is None:
             continue
-        if spec.reverse_edge is not None:
-            continue
-        if spec.relation is None or spec.relation not in relation_map:
-            continue
-        inverse_relation = relation_map[spec.relation]
-        # inverse_edge_id: EdgeId = (spec.target, spec.source, inverse_relation)
         inverse_spec = EdgePhysicalSpec(
-            source=spec.target,
-            target=spec.source,
-            relation=inverse_relation,
+            source=inverse_id[0],
+            target=inverse_id[1],
+            relation=inverse_id[2],
             purpose=spec.purpose,
-            relation_name=spec.relation_name,
             indexes=[idx.model_copy(deep=True) for idx in spec.indexes],
             indexes_mode=spec.indexes_mode,
         )
         if inverse_spec.physical_key not in existing_spec_keys:
             new_specs.append(inverse_spec)
             existing_spec_keys.add(inverse_spec.physical_key)
-
     profile.edge_specs = new_specs
 
     dpv = profile.default_property_values
     if dpv is None:
         return
-
     existing_default_ids = {entry.edge_id for entry in dpv.edges}
     new_defaults = list(dpv.edges)
     for entry in dpv.edges:
-        if entry.relation is None or entry.relation not in relation_map:
-            continue
-        forward_edge = edge_by_id.get(entry.edge_id)
-        if forward_edge is not None and not forward_edge.directed:
-            continue
-        inverse_relation = relation_map[entry.relation]
-        inverse_id: EdgeId = (entry.target, entry.source, inverse_relation)
-        if inverse_id in existing_default_ids:
+        inverse_id = _created_inverse(entry.source, entry.target, entry.relation)
+        if inverse_id is None or inverse_id in existing_default_ids:
             continue
         new_defaults.append(
             EdgePropertyDefaults(
-                source=entry.target,
-                target=entry.source,
-                relation=inverse_relation,
+                source=inverse_id[0],
+                target=inverse_id[1],
+                relation=inverse_id[2],
                 values=dict(entry.values),
             )
         )
         existing_default_ids.add(inverse_id)
-
     object.__setattr__(dpv, "edges", new_defaults)
 
 

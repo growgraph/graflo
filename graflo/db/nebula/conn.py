@@ -471,7 +471,7 @@ class NebulaConnection(Connection):
     def _resolve_space_name(self, schema: Schema) -> str:
         space_name = self.config.schema_name
         if not space_name:
-            space_name = schema.metadata.name
+            space_name = schema.effective_namespace(DBType.NEBULA)
             self.config.schema_name = space_name
         return space_name
 

@@ -6,7 +6,163 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [Unreleased]
+## [1.13.3]
+
+### Added
+
+- **Namespace resolution: `Schema.effective_namespace(db_flavor)`** and
+  `graflo.architecture.schema.namespace` (`resolve_namespace`,
+  `sanitize_namespace`, `validate_namespace`). `metadata.name` is a label, not
+  an identifier; the database / graph / space a schema deploys into is now
+  resolved in one place: an explicit override, then
+  `db_profile.target_namespace` (validated against the flavor and refused with
+  a suggested spelling, never rewritten), then `metadata.name` projected onto
+  the flavor's identifier rules. Only what the flavor rejects is rewritten
+  (`cmdb+discovery` → `cmdb_discovery`, `cmdb-discovery` on Neo4j), the
+  projection is idempotent, and over-long names keep a stable hash suffix. The
+  derived name is not stored on the profile, so renaming a schema still does
+  not move its content hash.
+- **`MergeManifestsOp.name` and `MergeManifestsOp.target_namespace`.** Name the
+  merged manifest instead of accepting the `left+right` fold, and choose its
+  namespace; an op namespace supersedes both sides' declarations (resolving a
+  conflict between them) and is validated against the merged flavor at merge
+  time.
+
+- **`resolve_secrets_from_env` and `proxy_env_prefix`** in
+  `graflo.connections.provider`. A registry stores source connections without
+  secrets, and until now only the in-process `register_api_config_from_env`
+  path could supply them. The new helper fills a stored config's missing
+  credentials from `{PREFIX}USERNAME` / `{PREFIX}PASSWORD` (database and SPARQL
+  sources) and `{PREFIX}TOKEN` (REST API sources), where the prefix is derived
+  from the `conn_proxy` label (`helix_discovery` → `HELIX_DISCOVERY_`). A stored
+  value always wins over the environment.
+
+- **Declared edge inverses: `edge_config.inverses` and `edge_config.symmetric`.**
+  `inverses` is a list of unordered `{relation, inverse}` pairs of two distinct
+  relation names reading one fact from its two endpoints; `symmetric` lists
+  relations that are their own inverse. Both are logical only and create
+  nothing. Together they define the inverse of each relation, and the one rule
+  checked when the schema loads is that no relation has two: a pair restated
+  in either order is kept once (stored with its names sorted, so orientation
+  does not move the content hash), while a chain (`a-b` with `b-c`), a relation
+  both paired and symmetric, or a pair of one name (declare it symmetric) is
+  refused. A declaration must name a declared edge (unless a relation-less
+  template edge admits ingest-time relations); a paired relation cannot name an
+  undirected edge, and a symmetric relation must name only undirected ones --
+  undirected is its realization. The declarations survive every op that
+  rebuilds the edge config (renames follow them, merges refuse to collapse a
+  pair onto one name or give a relation two inverses, removals prune what names
+  nothing), union across `merge_manifests` (a conflict is refused), round-trip
+  through RDF, and are sorted in the canonical form.
+- **Native inverses: `db_profile.native_inverses`.** The TigerGraph realization
+  of a declared pair, keyed by relation because TigerGraph sets
+  `WITH REVERSE_EDGE` on the edge type, which spans every `(source, target)`
+  pair of the relation; the reverse type is named by the declaration. The
+  schema refuses a native inverse without a declared pair, for a symmetric
+  relation, next to explicit edges named by the inverse (one fact stored twice,
+  and one type name taken twice), on both sides of one pair, on a non-TigerGraph
+  profile, when the inverse name shadows a vertex type, and when `relation_name`
+  overrides split the relation across several edge types. The DDL builder emits
+  one statement per edge type and re-checks the name against physical type
+  names.
+- **Ops `declare_edge_inverses` / `retract_edge_inverses` / `set_native_inverses`.**
+  `declare_edge_inverses` takes `inverses: {R: R_inv}` (either order, both
+  orders accepted) and `symmetric: [R, ...]`; `retract_edge_inverses` withdraws
+  a pair by either side or a symmetric declaration by name;
+  `set_native_inverses` takes `relations: [R, ...]` and `enabled`. Retracting a
+  natively realized pair is refused. All three are schema-only, have exact
+  inverses and their own merge slots (`relation/<r>/inverse`,
+  `relation/<r>/native_inverse`), and `diff_manifests` emits them instead of a
+  wholesale `set_db_profile` -- withdrawals before `set_edge_directed` and edge
+  removals, declarations after the edges they name exist.
+- **`EdgeConfig.inverse_advisories()`.** Non-fatal findings about explicit
+  realizations of declared pairs: an inverse edge whose properties or identity
+  keys drifted from its forward edge, a relation realized for some endpoint
+  pairs but not others, and a pair read from the same side. `apply_evolution`
+  logs the findings its ops introduce.
+- **`EdgeActorConfig.relation_map_only`.** When set, a raw `relation_field`
+  value missing from `relation_map` emits no edge. By default it still passes
+  through as the relation name.
+- Meta-ontology **1.7.0** (additive): `gf:EdgeInverse`, `gf:hasInverse`,
+  `gf:inverseRelation`, `gf:symmetricRelation`, `gf:nativeInverseRelation`,
+  mirrored in
+  `graflo-context.jsonld` and `rdf/namespace.py`; docs viz regenerated.
+
+### Changed
+
+- **`add_inverse_edges` realizes declared inverses; it no longer takes a
+  map.** `inverses: {R: R_inv}` (and its `relations` alias) is replaced by
+  `relations: [R, ...]`, naming declared relations on either side of a pair.
+  Omitted, it realizes every declared pair both ways, skipping relations whose
+  inverse is native. The op never declares: an undeclared relation is refused
+  (declare it with `declare_edge_inverses` first), as is a symmetric relation
+  (its edges are undirected) and a named relation whose inverse is native, and
+  the inverse op always removes exactly the edges it created.
+- **`edge_specs[*].reverse_edge` is removed**, replaced by listing the relation
+  in `db_profile.native_inverses` plus a declared pair in
+  `edge_config.inverses`. A manifest that still carries `reverse_edge` fails
+  validation (`extra="forbid"`).
+- TigerGraph read path: `fetch_edges(..., reverse_edge_type=...)` is
+  `native_inverse_type=...`, and `assert_direction_supported(...,
+  has_reverse_edge=...)` is `has_native_inverse=...`. The internal
+  `_get_edge_add_statement` / `_get_edge_group_create_statement` take the
+  resolved `native_inverse` name instead of reading it from the profile.
+
+### Fixed
+
+- **Every backend honours `db_profile.target_namespace`.** The Arango, Neo4j,
+  FalkorDB, Nebula, TigerGraph and Memgraph connections fell back to
+  `schema.metadata.name` directly, so the profile's namespace applied only when
+  going through `GraphEngine`, and a merged name such as `a+b` reached
+  `CREATE DATABASE` / `CREATE GRAPH` verbatim. They now resolve through
+  `Schema.effective_namespace`, and Neo4j quotes the name in `CREATE DATABASE`.
+  **Behaviour change:** a schema whose name the backend rejects (e.g.
+  `academic_kg` on Neo4j, `kg-v1` on TigerGraph) deploys into the sanitized
+  namespace; pin `db_profile.target_namespace` to keep a specific one.
+- **Merged names no longer grow on every re-merge.** The `left+right` fold is
+  flat and deduplicated, so merging a source back into its union keeps `a+b`
+  instead of producing `a+b+a`.
+- **A merged schema is no longer versioned below its inputs.** The version bump
+  starts from the higher of the two sides' `MAJOR.MINOR.PATCH` rather than
+  always from the left.
+- **Plot filenames** use a filename-safe slug of the schema name.
+- **An API connector's declared `page_size` is no longer overridden by the
+  default batch size.** Registering an `APIConnector` with `pagination` passed
+  `IngestionParams.batch_size` as the page size unconditionally, so an authored
+  `page_size: 100` became the default `10000`; an endpoint that caps its limit
+  rejected every request and the resource yielded nothing but a logged failure.
+  The declared page size now stands unless `batch_size` is set explicitly.
+- **`add_inverse_edges` wrote edges the schema did not declare.** When the
+  forward edge had a TigerGraph reverse edge, or was undirected, the schema
+  inverse was skipped but a reversed ingestion step was still appended, and
+  (with `strict_edge_types` off by default) it registered the undeclared type
+  at runtime. Ingestion is now derived only from the inverse edges the op
+  actually creates.
+- **`add_inverse_edges` duplicated an explicit inverse step.** Deduplication
+  compared step dicts, so an existing `{source, target}` step and a generated
+  `{from, to}` step for the same triple both ran. Steps are now compared by
+  the triple they write, and an inverse edge that already existed keeps its own
+  ingestion untouched.
+- **A partially inverted `relation_map` wrote reversed forward relations.** The
+  inverse step kept `relation_field` with only the mapped entries, and unmapped
+  raw values passed through as relation names with swapped endpoints. Inverse
+  steps set `relation_map_only`. Steps that cannot be restricted this way
+  (`relation_field` with static endpoints, `relation_from_key`, links reading
+  `relation_field`) are no longer inverted, and a warning names the resource.
+- **The inverse edge's spec copied the forward `relation_name`**, storing both
+  relations as one physical type. It is no longer copied.
+- **The inverse edge copied the forward `semantics` and `description`**,
+  grounding the inverse relation to the forward IRI. It no longer does.
+- **`add_inverse_edges` added a swapped twin of every directed relation-less
+  template edge**, whether or not the map applied through it. It no longer does.
+- **The TigerGraph reverse edge was dropped by the RDF round trip.** Its
+  replacement, `native_inverse`, is serialized.
+
+- **`graflo log` pointed forked heads at the wrong verb.** Two heads in one
+  history share an ancestor, so they are reconciled by the three-way -- but the
+  hint still read ``Use `graflo merge` to reconcile them``, which the rename had
+  turned into the binary operation. It names `graflo merge3`. The same stale
+  spelling was in the comment listing the verbs mounted from `commit_group()`.
 
 ## [1.13.2]
 
