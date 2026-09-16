@@ -6,7 +6,95 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [Unreleased]
+## [1.13.3]
+
+### Added
+
+- **Declared edge inverses: `edge_config.inverses`.** A list of
+  `{relation, inverse}` pairs recording that two relation names read one fact
+  from its two endpoints. It is logical only and creates nothing, and it is
+  validated when the schema loads: a relation belongs to at most one pair (no
+  restated or chained pairs), no relation is its own inverse (that is
+  `directed: false`), a pair must name a declared edge (unless a relation-less
+  template edge admits ingest-time relations), and an undirected edge has no
+  inverse. The table survives every op that rebuilds the edge config (renames
+  rename both columns, merges refuse to collapse a pair or give a relation two
+  inverses, removals prune pairs that name nothing), unions across
+  `merge_manifests` (a conflicting pair is refused), round-trips through RDF,
+  and is sorted in the canonical form.
+- **Native inverses: `db_profile.edge_specs[*].native_inverse`.** The
+  TigerGraph realization of a declared inverse: the database maintains the pair
+  (`WITH REVERSE_EDGE`), and the paired type is named by the declaration rather
+  than on the spec. The schema refuses a native inverse without a declared pair,
+  next to the explicit inverse edge `(target, source, inverse)` (one fact stored
+  twice), on an undirected edge, on a non-TigerGraph profile, and when the
+  inverse name shadows a vertex or another edge type. The DDL builder re-checks
+  the name against physical type names (`relation_name` overrides).
+- **Ops `declare_edge_inverses` / `retract_edge_inverses` / `set_native_inverses`.**
+  Declare and withdraw pairs, and switch the native realization on or off.
+  Retracting a natively realized pair is refused. All three are schema-only,
+  have exact inverses and their own merge slots
+  (`relation/<r>/inverse`, `relation/<r>/edge/<s>/<t>/native_inverse`), and
+  `diff_manifests` emits them instead of a wholesale `set_db_profile`.
+- **`EdgeActorConfig.relation_map_only`.** When set, a raw `relation_field`
+  value missing from `relation_map` emits no edge. By default it still passes
+  through as the relation name.
+- Meta-ontology **1.7.0** (additive): `gf:EdgeInverse`, `gf:hasInverse`,
+  `gf:inverseRelation`, `gf:specNativeInverse`, mirrored in
+  `graflo-context.jsonld` and `rdf/namespace.py`; docs viz regenerated.
+
+### Changed
+
+- **`add_inverse_edges` realizes declared inverses; it no longer takes a
+  map.** `inverses: {R: R_inv}` (and its `relations` alias) is replaced by
+  `relations: [R, ...]`, naming declared relations on either side of a pair.
+  Omitted, it realizes every declared relation both ways, skipping edges whose
+  inverse is native. The op never declares: an undeclared relation is refused
+  (declare it with `declare_edge_inverses` first), a named edge whose inverse
+  is native is refused, and the inverse op always removes exactly the edges it
+  created.
+- **`edge_specs[*].reverse_edge` is removed**, replaced by `native_inverse: true`
+  plus a declared pair in `edge_config.inverses`. A manifest that still carries
+  `reverse_edge` fails validation (`extra="forbid"`).
+- TigerGraph read path: `fetch_edges(..., reverse_edge_type=...)` is
+  `native_inverse_type=...`, and `assert_direction_supported(...,
+  has_reverse_edge=...)` is `has_native_inverse=...`. The internal
+  `_get_edge_add_statement` / `_get_edge_group_create_statement` take the
+  resolved `native_inverse` name instead of reading it from the profile.
+
+### Fixed
+
+- **`add_inverse_edges` wrote edges the schema did not declare.** When the
+  forward edge had a TigerGraph reverse edge, or was undirected, the schema
+  inverse was skipped but a reversed ingestion step was still appended, and
+  (with `strict_edge_types` off by default) it registered the undeclared type
+  at runtime. Ingestion is now derived only from the inverse edges the op
+  actually creates.
+- **`add_inverse_edges` duplicated an explicit inverse step.** Deduplication
+  compared step dicts, so an existing `{source, target}` step and a generated
+  `{from, to}` step for the same triple both ran. Steps are now compared by
+  the triple they write, and an inverse edge that already existed keeps its own
+  ingestion untouched.
+- **A partially inverted `relation_map` wrote reversed forward relations.** The
+  inverse step kept `relation_field` with only the mapped entries, and unmapped
+  raw values passed through as relation names with swapped endpoints. Inverse
+  steps set `relation_map_only`. Steps that cannot be restricted this way
+  (`relation_field` with static endpoints, `relation_from_key`, links reading
+  `relation_field`) are no longer inverted, and a warning names the resource.
+- **The inverse edge's spec copied the forward `relation_name`**, storing both
+  relations as one physical type. It is no longer copied.
+- **The inverse edge copied the forward `semantics` and `description`**,
+  grounding the inverse relation to the forward IRI. It no longer does.
+- **`add_inverse_edges` added a swapped twin of every directed relation-less
+  template edge**, whether or not the map applied through it. It no longer does.
+- **The TigerGraph reverse edge was dropped by the RDF round trip.** Its
+  replacement, `native_inverse`, is serialized.
+
+- **`graflo log` pointed forked heads at the wrong verb.** Two heads in one
+  history share an ancestor, so they are reconciled by the three-way -- but the
+  hint still read ``Use `graflo merge` to reconcile them``, which the rename had
+  turned into the binary operation. It names `graflo merge3`. The same stale
+  spelling was in the comment listing the verbs mounted from `commit_group()`.
 
 ## [1.13.2]
 

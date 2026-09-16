@@ -22,7 +22,7 @@ from graflo.architecture.contract.bindings.connectors import (
 )
 
 GF_ONTOLOGY_IRI = "https://ontology.growgraph.dev/graflo"
-GF_VERSION = "1.6.0"
+GF_VERSION = "1.7.0"
 GF_VERSION_IRI = f"{GF_ONTOLOGY_IRI}/{GF_VERSION}"
 GF_BASE = "https://ontology.growgraph.dev/graflo/"
 GF = Namespace(GF_BASE)
@@ -37,6 +37,7 @@ Schema = GF.Schema
 CoreSchema = GF.CoreSchema
 VertexConfig = GF.VertexConfig
 EdgeConfig = GF.EdgeConfig
+EdgeInverse = GF.EdgeInverse
 GraphMetadata = GF.GraphMetadata
 DatabaseProfile = GF.DatabaseProfile
 Vertex = GF.Vertex
@@ -84,6 +85,7 @@ hasMetadata = GF.hasMetadata
 hasDatabaseProfile = GF.hasDatabaseProfile
 hasVertex = GF.hasVertex
 hasEdge = GF.hasEdge
+hasInverse = GF.hasInverse
 hasField = GF.hasField
 hasIdentity = GF.hasIdentity
 hasHashIdentity = GF.hasHashIdentity
@@ -191,6 +193,8 @@ specRelation = GF.specRelation
 specPurpose = GF.specPurpose
 specRelationName = GF.specRelationName
 specIndexesMode = GF.specIndexesMode
+specNativeInverse = GF.specNativeInverse
+inverseRelation = GF.inverseRelation
 
 # Actor step type mapping
 ACTOR_STEP_CLASSES: dict[str, object] = {

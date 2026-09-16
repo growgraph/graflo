@@ -617,6 +617,16 @@ class EdgeActorConfig(EdgeEndpointMatchOptionsConfig):
         default=None,
         description="Map raw relation values to canonical relation names.",
     )
+    relation_map_only: bool = PydanticField(
+        default=False,
+        description=(
+            "When True, a raw relation value absent from ``relation_map`` emits no "
+            "edge. By default it passes through as the relation name, which is "
+            "wrong for a step that must write only the mapped relations -- e.g. an "
+            "inverse step, where a passed-through forward name would be written "
+            "with swapped endpoints."
+        ),
+    )
     strict_edge_types: bool = PydanticField(
         default=False,
         description=(
@@ -746,6 +756,12 @@ class EdgeActorConfig(EdgeEndpointMatchOptionsConfig):
         if self.target is not None and self.target_role is not None:
             raise ValueError("'to' and target_type_field are mutually exclusive.")
         # Mixed mode (one static + one dynamic) is valid; both-static is pure static mode.
+        if self.relation_map_only and (
+            self.relation_field is None or not self.relation_map
+        ):
+            raise ValueError(
+                "relation_map_only requires relation_field and a non-empty relation_map."
+            )
         return self
 
     @property

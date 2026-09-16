@@ -24,6 +24,7 @@ from typing import Any
 
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.graph_types import Index
+from graflo.architecture.schema.edge import inverse_map
 
 from .ops import (
     AddEdgeIndexesOp,
@@ -36,6 +37,7 @@ from .ops import (
     AddVertexPropertiesOp,
     AddVerticesOp,
     CanonicalizeOp,
+    DeclareEdgeInversesOp,
     EdgeFieldSemanticsTarget,
     EdgeIdentitiesEntry,
     EdgeIndexEntry,
@@ -59,11 +61,13 @@ from .ops import (
     ReplaceEdgeIdentitiesOp,
     ReplaceIdentityOp,
     RetargetEdgesOp,
+    RetractEdgeInversesOp,
     SetBindingsOp,
     SetDbProfileOp,
     SetEdgeDirectedOp,
     SetEdgeSemanticsOp,
     SetFieldSemanticsOp,
+    SetNativeInversesOp,
     SetVertexSemanticsOp,
 )
 
@@ -535,27 +539,75 @@ def _invert_retarget_edges(op: RetargetEdgesOp, _manifest: GraphManifest) -> Man
     )
 
 
+def _declared_inverses(manifest: GraphManifest) -> dict[str, str]:
+    schema = manifest.graph_schema
+    if schema is None:
+        return {}
+    return inverse_map(schema.core_schema.edge_config.inverses)
+
+
+def _invert_declare_edge_inverses(
+    op: DeclareEdgeInversesOp, manifest: GraphManifest
+) -> ManifestOp | None:
+    """Retract exactly the pairs the op newly declared."""
+    declared = _declared_inverses(manifest)
+    new = [relation for relation in op.inverses if relation not in declared]
+    return RetractEdgeInversesOp(relations=new) if new else None
+
+
+def _invert_retract_edge_inverses(
+    op: RetractEdgeInversesOp, manifest: GraphManifest
+) -> ManifestOp | None:
+    """Re-declare the retracted pairs in their authored orientation."""
+    schema = manifest.graph_schema
+    if schema is None:
+        return None
+    named = set(op.relations)
+    pairs = {
+        pair.relation: pair.inverse
+        for pair in schema.core_schema.edge_config.inverses
+        if pair.relation in named or pair.inverse in named
+    }
+    return DeclareEdgeInversesOp(inverses=pairs) if pairs else None
+
+
 def _invert_add_inverse_edges(
     op: AddInverseEdgesOp, manifest: GraphManifest
 ) -> ManifestOp | None:
-    """Remove exactly the edges the forward op would create against this pre-state.
+    """Remove exactly the edges the forward op creates against this pre-state.
 
-    Derived with the forward op's own edge derivation, so an inverse relation
-    that already existed elsewhere, or a reverse edge synthesized for a
-    relation-less directed edge, is accounted for the same way in both
-    directions.
+    Planned by the forward op's own derivation, so an inverse edge that already
+    existed, or one realized natively, is accounted for the same way both ways.
+    The declared pairs are not the op's to undo: it never declares.
     """
-    from .inverse_edges import _schema_edges_with_inverses
+    from .inverse_edges import plan_inverse_edges
 
-    before = _edges(manifest)
-    existing = {edge.edge_id for edge in before}
-    after = _schema_edges_with_inverses(
-        list(before), dict(op.inverses), _profile(manifest)
-    )
-    created = [edge for edge in after if edge.edge_id not in existing]
+    if manifest.graph_schema is None:
+        return None
+    try:
+        _, created = plan_inverse_edges(manifest.graph_schema, op.relations)
+    except ValueError:
+        return None
     if not created:
         return None
     return RemoveEdgesOp(edges=_selectors(created))
+
+
+def _invert_set_native_inverses(
+    op: SetNativeInversesOp, manifest: GraphManifest
+) -> ManifestOp | None:
+    """Restore the prior flag on the selected edges that actually change."""
+    profile = _profile(manifest)
+    if profile is None:
+        return None
+    changed = [
+        selector
+        for selector in op.edges
+        if profile.edge_has_native_inverse(selector.edge_id()) != op.enabled
+    ]
+    if not changed:
+        return None
+    return SetNativeInversesOp(edges=changed, enabled=not op.enabled)
 
 
 def _invert_replace_identity(
@@ -729,6 +781,9 @@ _HANDLERS: dict[str, Any] = {
     "remove_secondary_identities": _invert_remove_secondary_identities,
     "retarget_edges": _invert_retarget_edges,
     "add_inverse_edges": _invert_add_inverse_edges,
+    "declare_edge_inverses": _invert_declare_edge_inverses,
+    "retract_edge_inverses": _invert_retract_edge_inverses,
+    "set_native_inverses": _invert_set_native_inverses,
     "replace_identity": _invert_replace_identity,
     "replace_edge_identities": _invert_replace_edge_identities,
     "add_resources": _invert_add_resources,

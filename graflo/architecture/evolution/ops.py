@@ -892,35 +892,116 @@ class AddEdgePropertiesOp(ConfigBaseModel):
         ]
 
 
-class AddInverseEdgesOp(ConfigBaseModel):
-    """Add inverse edge relations for matching relations across schema and ingestion."""
+def _validate_inverse_pairs(pairs: Mapping[str, str], *, kind: str) -> None:
+    """One name per pair, no self-inverse: the rules ``edge_config.inverses`` enforces."""
+    self_inverse = sorted(r for r, inv in pairs.items() if r == inv)
+    if self_inverse:
+        raise ValueError(
+            f"{kind}: a relation cannot be its own inverse: {self_inverse}; a "
+            "symmetric relationship is modeled with `directed: false`"
+        )
+    names = [name for pair in pairs.items() for name in pair]
+    repeated = sorted({name for name in names if names.count(name) > 1})
+    if repeated:
+        raise ValueError(
+            f"{kind}: each relation may appear in at most one inverse pair "
+            f"(either side); repeated: {repeated}"
+        )
 
-    op: Literal["add_inverse_edges"] = "add_inverse_edges"
+
+class DeclareEdgeInversesOp(ConfigBaseModel):
+    """Declare inverse relation pairs in ``edge_config.inverses``.
+
+    Purely logical: it records that two relation names read one fact from its
+    two endpoints and creates nothing. Realize a declared pair with
+    :class:`AddInverseEdgesOp` (explicit, portable inverse edges) or
+    :class:`SetNativeInversesOp` (TigerGraph maintains the pair) -- never both
+    for one edge.
+    """
+
+    op: Literal["declare_edge_inverses"] = "declare_edge_inverses"
     inverses: dict[str, str] = PydanticField(
         ...,
-        validation_alias=AliasChoices("inverses", "relations"),
+        description="Pairs to declare: ``{relation: inverse_relation}``.",
+        min_length=1,
+    )
+
+    @model_validator(mode="after")
+    def _validate_pairs(self) -> DeclareEdgeInversesOp:
+        _validate_inverse_pairs(self.inverses, kind="declare_edge_inverses")
+        return self
+
+
+class RetractEdgeInversesOp(ConfigBaseModel):
+    """Withdraw declared inverse pairs, addressed by either relation of the pair.
+
+    Refused while a pair is still realized by a native inverse: that would leave
+    the database maintaining a type the schema no longer names. Explicit inverse
+    edges are ordinary edges and survive a retraction.
+    """
+
+    op: Literal["retract_edge_inverses"] = "retract_edge_inverses"
+    relations: list[str] = PydanticField(
+        ...,
+        description="Relations whose declared pair is withdrawn (either side).",
+        min_length=1,
+    )
+
+
+class AddInverseEdgesOp(ConfigBaseModel):
+    """Realize declared inverses as explicit logical edges (portable to every backend).
+
+    For each directed edge ``(S, T, r)`` whose relation has a declared inverse
+    ``inv`` (``edge_config.inverses``, either side of the pair), adds the
+    logical edge ``(T, S, inv)`` unless it exists, its physical spec, and
+    ingestion steps that write it from the same rows. The pair must be declared
+    first (:class:`DeclareEdgeInversesOp`); this op never declares. Refused for
+    an edge whose inverse is already native (:class:`SetNativeInversesOp`),
+    since both would store the same fact.
+    """
+
+    op: Literal["add_inverse_edges"] = "add_inverse_edges"
+    relations: list[str] | None = PydanticField(
+        default=None,
         description=(
-            "Relation inverse map: ``{relation_name: inverse_relation_name}``. "
-            "Must be injective, and no relation may be its own inverse. "
-            "``relations`` is accepted as a legacy alias."
+            "Declared relations whose edges get their inverse edge. Omitted: "
+            "every relation in ``edge_config.inverses``, both sides."
         ),
         min_length=1,
     )
 
     @model_validator(mode="after")
-    def _reject_collapsing_map(self) -> AddInverseEdgesOp:
-        # Two relations sharing one inverse name would create two edge types
-        # under it -- the collapse the rename ops refuse, reached sideways.
-        validate_rename_map_is_injective(
-            self.inverses,
-            kind="add_inverse_edges",
-            merge_hint="one inverse relation name per source relation",
-        )
-        self_inverse = sorted(r for r, inv in self.inverses.items() if r == inv)
-        if self_inverse:
-            raise ValueError(
-                f"add_inverse_edges: a relation cannot be its own inverse: {self_inverse}"
-            )
+    def _validate_unique(self) -> AddInverseEdgesOp:
+        if self.relations is not None and len(set(self.relations)) != len(
+            self.relations
+        ):
+            raise ValueError("add_inverse_edges: relations must be unique")
+        return self
+
+
+class SetNativeInversesOp(ConfigBaseModel):
+    """Have the database maintain declared inverses (TigerGraph ``WITH REVERSE_EDGE``).
+
+    Physical, not logical: sets ``db_profile.edge_specs[*].native_inverse``. The
+    paired type is named by the declared inverse, so the pair must be declared
+    (:class:`DeclareEdgeInversesOp`). Refused where the inverse is already an
+    explicit logical edge, on undirected edges, and on non-TigerGraph profiles.
+    """
+
+    op: Literal["set_native_inverses"] = "set_native_inverses"
+    edges: list[EdgeSelector] = PydanticField(
+        ...,
+        description="Forward edges whose declared inverse the database maintains.",
+        min_length=1,
+    )
+    enabled: bool = PydanticField(
+        default=True,
+        description="``False`` withdraws the native inverse.",
+    )
+
+    @model_validator(mode="after")
+    def _validate_unique_selectors(self) -> SetNativeInversesOp:
+        _validate_unique_edge_selectors(self.edges, kind="set_native_inverses")
         return self
 
 
@@ -2529,7 +2610,10 @@ ManifestOp = Annotated[
     | RenameEdgePropertiesOp
     | RemoveEdgePropertiesOp
     | AddEdgePropertiesOp
+    | DeclareEdgeInversesOp
+    | RetractEdgeInversesOp
     | AddInverseEdgesOp
+    | SetNativeInversesOp
     | ProjectManifestOp
     | ReplaceIdentityOp
     | SanitizeOp

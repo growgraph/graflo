@@ -773,7 +773,7 @@ class TigerGraphDataOps:
         return_keys: list[str] | None = None,
         unset_keys: list[str] | None = None,
         direction: EdgeDirection = EdgeDirection.OUT,
-        reverse_edge_type: str | None = None,
+        native_inverse_type: str | None = None,
         edge_is_undirected: bool = False,
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
@@ -788,7 +788,7 @@ class TigerGraphDataOps:
         orientation of undirected ones. Reaching a *directed* edge backwards is
         only possible through the paired type created by
         ``WITH REVERSE_EDGE``, so ``IN`` / ``ANY`` require either
-        ``edge_is_undirected`` or an explicit ``reverse_edge_type``; otherwise
+        ``edge_is_undirected`` or an explicit ``native_inverse_type``; otherwise
         this raises rather than silently returning a half-neighbourhood.
 
         Args:
@@ -802,9 +802,10 @@ class TigerGraphDataOps:
             return_keys: Keys to return (projection)
             unset_keys: Keys to exclude (projection)
             direction: Orientations to follow from the anchor
-            reverse_edge_type: Paired reverse type name from
-                ``db_profile.edge_specs[*].reverse_edge``, required for IN / ANY
-                on a directed edge
+            native_inverse_type: Name of the database-maintained inverse type
+                (the declared inverse of an edge with
+                ``db_profile.edge_specs[*].native_inverse``), required for IN /
+                ANY on a directed edge
             edge_is_undirected: Whether ``edge_type`` was created as
                 ``UNDIRECTED EDGE``, in which case REST already answers both ways
             **kwargs: Additional parameters
@@ -825,7 +826,7 @@ class TigerGraphDataOps:
             assert_direction_supported(
                 DBType.TIGERGRAPH,
                 direction,
-                has_reverse_edge=reverse_edge_type is not None,
+                has_native_inverse=native_inverse_type is not None,
                 edge_is_undirected=edge_is_undirected,
             )
 
@@ -843,10 +844,12 @@ class TigerGraphDataOps:
             if direction is EdgeDirection.OUT or edge_is_undirected:
                 edges = self._conn._get_edges(from_type, from_id, edge_type_str)
             elif direction is EdgeDirection.IN:
-                edges = self._conn._get_edges(from_type, from_id, reverse_edge_type)
+                edges = self._conn._get_edges(from_type, from_id, native_inverse_type)
             else:
                 forward = self._conn._get_edges(from_type, from_id, edge_type_str)
-                backward = self._conn._get_edges(from_type, from_id, reverse_edge_type)
+                backward = self._conn._get_edges(
+                    from_type, from_id, native_inverse_type
+                )
                 edges = list(forward or []) + list(backward or [])
 
             # Parse REST API response format

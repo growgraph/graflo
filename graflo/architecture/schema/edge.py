@@ -138,9 +138,8 @@ class Edge(ConfigBaseModel):
             "may follow it either way. This asserts something about the model, not "
             "about storage — only TigerGraph has an undirected edge type, and every "
             "other backend honours it to the extent it can (see "
-            "``graflo.db.edge_direction_support``). Mutually exclusive with "
-            "``EdgePhysicalSpec.reverse_edge``, which pairs a *directed* type with a "
-            "generated reverse one."
+            "``graflo.db.edge_direction_support``). An undirected edge has no "
+            "declared inverse, and so no native inverse either."
         ),
     )
 
@@ -303,6 +302,118 @@ class Edge(ConfigBaseModel):
         return [f.name for f in self.properties]
 
 
+class EdgeInverse(ConfigBaseModel):
+    """Declared inverse: ``relation`` and ``inverse`` name one fact read both ways.
+
+    For every *directed* edge ``(S, T, relation)`` the inverse is
+    ``(T, S, inverse)``, and symmetrically. The declaration is purely logical and
+    creates nothing. It is realized in one of two ways, never both for one edge:
+
+    - an **inverse edge**: an explicit logical edge ``(T, S, inverse)`` in
+      ``edge_config.edges``, portable to every backend (``add_inverse_edges``);
+    - a **native inverse**: ``db_profile.edge_specs[*].native_inverse``, where the
+      database maintains the paired type itself (TigerGraph only).
+    """
+
+    relation: str = PydanticField(
+        ..., min_length=1, description="Relation read in the declared direction."
+    )
+    inverse: str = PydanticField(
+        ...,
+        min_length=1,
+        description="Relation name of the same fact read from the target endpoint.",
+    )
+
+    @model_validator(mode="after")
+    def _reject_self_inverse(self) -> EdgeInverse:
+        if self.relation == self.inverse:
+            raise ValueError(
+                f"relation {self.relation!r} cannot be its own inverse; a symmetric "
+                "relationship is modeled with `directed: false`"
+            )
+        return self
+
+
+def inverse_map(inverses: list[EdgeInverse]) -> dict[str, str]:
+    """Both directions of a declared inverse table: ``{name: its inverse}``."""
+    out: dict[str, str] = {}
+    for pair in inverses:
+        out[pair.relation] = pair.inverse
+        out[pair.inverse] = pair.relation
+    return out
+
+
+def remap_inverses(
+    inverses: list[EdgeInverse], relation_map: dict[str, str], *, kind: str
+) -> list[EdgeInverse]:
+    """Carry a declared inverse table through a relation rename or merge.
+
+    A merge (non-injective map) can collapse a pair onto itself, or give one
+    relation two different inverses; both are refused, since there is no single
+    inverse left to declare. Pairs that become identical are kept once.
+
+    Raises:
+        ValueError: naming the pairs the remap would corrupt.
+    """
+    out: list[EdgeInverse] = []
+    seen: set[frozenset[str]] = set()
+    for pair in inverses:
+        relation = relation_map.get(pair.relation, pair.relation)
+        inverse = relation_map.get(pair.inverse, pair.inverse)
+        if relation == inverse:
+            raise ValueError(
+                f"{kind}: declared inverses {pair.relation!r} and {pair.inverse!r} "
+                f"would both become {relation!r}; retract the pair first"
+            )
+        key = frozenset((relation, inverse))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(EdgeInverse(relation=relation, inverse=inverse))
+    counts = Counter(name for pair in out for name in (pair.relation, pair.inverse))
+    repeated = sorted(name for name, count in counts.items() if count > 1)
+    if repeated:
+        raise ValueError(
+            f"{kind}: relations would end up with two different declared "
+            f"inverses: {repeated}; retract one pair first"
+        )
+    return out
+
+
+def union_inverses(
+    left: list[EdgeInverse], right: list[EdgeInverse]
+) -> list[EdgeInverse]:
+    """Union two declared inverse tables, refusing a relation with two inverses.
+
+    Raises:
+        ValueError: when the sides declare different inverses for one relation.
+    """
+    table = [pair.model_copy(deep=True) for pair in left]
+    declared = inverse_map(table)
+    conflicts: list[str] = []
+    for pair in right:
+        if declared.get(pair.relation) == pair.inverse:
+            continue
+        clashing = [
+            f"{name!r}: {declared[name]!r} vs {other!r}"
+            for name, other in (
+                (pair.relation, pair.inverse),
+                (pair.inverse, pair.relation),
+            )
+            if name in declared
+        ]
+        if clashing:
+            conflicts.extend(clashing)
+            continue
+        table.append(pair.model_copy(deep=True))
+        declared[pair.relation], declared[pair.inverse] = pair.inverse, pair.relation
+    if conflicts:
+        raise ValueError(
+            "conflicting declared inverses: " + "; ".join(sorted(set(conflicts)))
+        )
+    return table
+
+
 class EdgeConfig(ConfigBaseModel):
     """Configuration for managing collections of edges.
 
@@ -311,13 +422,91 @@ class EdgeConfig(ConfigBaseModel):
 
     Attributes:
         edges: List of edge configurations
+        inverses: Declared inverse relation pairs (see :class:`EdgeInverse`)
     """
 
     edges: list[Edge] = PydanticField(
         default_factory=list,
         description="List of edge definitions (source, target, identities, properties, relation, etc.).",
     )
+    inverses: list[EdgeInverse] = PydanticField(
+        default_factory=list,
+        description=(
+            "Declared inverse relation pairs. Logical only: realizing a pair is "
+            "either an explicit inverse edge or a native inverse on the db_profile."
+        ),
+    )
     _edges_map: dict[EdgeId, Edge] = PrivateAttr()
+
+    @model_validator(mode="after")
+    def _validate_inverse_table(self) -> EdgeConfig:
+        # A name in two pairs is either a duplicate ((a, b) with (b, a)) or a
+        # chain (a -> b, b -> c); in both cases "the inverse of b" has no single
+        # answer, and every consumer of the table assumes it does.
+        counts = Counter(
+            name for pair in self.inverses for name in (pair.relation, pair.inverse)
+        )
+        repeated = sorted(name for name, count in counts.items() if count > 1)
+        if repeated:
+            raise ValueError(
+                "edge_config.inverses: each relation may appear in at most one "
+                f"inverse pair (either column); repeated: {repeated}"
+            )
+        return self
+
+    def inverse_of(self, relation: str | None) -> str | None:
+        """Declared inverse of ``relation`` (either column), or ``None``."""
+        if relation is None:
+            return None
+        return inverse_map(self.inverses).get(relation)
+
+    def with_edges(self, edges: list[Edge]) -> EdgeConfig:
+        """A config over ``edges`` that keeps the declared inverse table.
+
+        Pairs whose two relations both vanished are dropped: the declaration is
+        about relations, and one naming nothing is dangling. Every rebuild of an
+        edge config inside the evolution machinery must go through here, or the
+        table is silently lost.
+        """
+        relations = {e.relation for e in edges if e.relation is not None}
+        inverses = [
+            pair.model_copy(deep=True)
+            for pair in self.inverses
+            if pair.relation in relations or pair.inverse in relations
+        ]
+        return EdgeConfig(edges=edges, inverses=inverses)
+
+    def validate_inverses(self) -> None:
+        """Check the declared inverse table against the declared edges.
+
+        Raises:
+            ValueError: when a pair names no edge at all, or names an undirected
+                edge (an undirected relationship already reads both ways).
+        """
+        relations = {e.relation for e in self.edges if e.relation is not None}
+        # A relation-less template edge admits relations named only at ingest
+        # time (``relation_field``), so a pair can legitimately name none yet.
+        has_template = any(e.relation is None for e in self.edges)
+        dangling = sorted(
+            (pair.relation, pair.inverse)
+            for pair in self.inverses
+            if pair.relation not in relations and pair.inverse not in relations
+        )
+        if dangling and not has_template:
+            raise ValueError(
+                f"edge_config.inverses: pairs name no declared edge: {dangling}"
+            )
+        declared = inverse_map(self.inverses)
+        undirected = sorted(
+            str(e.edge_id)
+            for e in self.edges
+            if not e.directed and e.relation is not None and e.relation in declared
+        )
+        if undirected:
+            raise ValueError(
+                "edge_config.inverses: an undirected edge has no inverse "
+                f"(it already reads both ways): {undirected}"
+            )
 
     @model_validator(mode="after")
     def _build_edges_map(self) -> EdgeConfig:
@@ -342,6 +531,7 @@ class EdgeConfig(ConfigBaseModel):
         """Complete initialization of all logical edges."""
         for e in self.edges:
             e.finish_init(vertex_config=vc)
+        self.validate_inverses()
 
     def values(self) -> Iterator[Edge]:
         """Iterate over edge configurations."""

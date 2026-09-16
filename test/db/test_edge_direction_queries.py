@@ -140,7 +140,7 @@ def test_nebula_other_endpoint_predicate_survives_direction() -> None:
 
 
 @pytest.mark.parametrize("direction", [EdgeDirection.IN, EdgeDirection.ANY])
-def test_tigergraph_rejects_reverse_read_without_reverse_edge(
+def test_tigergraph_rejects_reverse_read_without_native_inverse(
     direction: EdgeDirection,
 ) -> None:
     with pytest.raises(UnsupportedEdgeDirectionError, match="fixed when the edge type"):
@@ -148,10 +148,10 @@ def test_tigergraph_rejects_reverse_read_without_reverse_edge(
 
 
 @pytest.mark.parametrize("direction", [EdgeDirection.IN, EdgeDirection.ANY])
-def test_tigergraph_accepts_reverse_read_with_reverse_edge(
+def test_tigergraph_accepts_reverse_read_with_native_inverse(
     direction: EdgeDirection,
 ) -> None:
-    assert_direction_supported(DBType.TIGERGRAPH, direction, has_reverse_edge=True)
+    assert_direction_supported(DBType.TIGERGRAPH, direction, has_native_inverse=True)
 
 
 @pytest.mark.parametrize("direction", [EdgeDirection.IN, EdgeDirection.ANY])

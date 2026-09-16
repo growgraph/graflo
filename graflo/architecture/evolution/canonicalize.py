@@ -77,6 +77,9 @@ LIST_ORDER: dict[tuple[str, str], ListOrder] = {
     # Declaration sets, matched by name or endpoints everywhere they are read.
     ("VertexConfig", "vertices"): SORTED,
     ("EdgeConfig", "edges"): SORTED,
+    # A declaration set: each relation appears in at most one pair, and pairs
+    # are looked up by name, never by position.
+    ("EdgeConfig", "inverses"): SORTED,
     ("Vertex", "properties"): SORTED,
     ("Edge", "properties"): SORTED,
     ("Vertex", "secondary_identities"): SORTED,

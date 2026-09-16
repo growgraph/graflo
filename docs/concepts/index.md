@@ -214,7 +214,7 @@ Full reference: [Graph export and migration](operations/graph_export_migration.m
 GraFlo targets the LPG model:
 
 - **Vertices** — nodes with typed **properties** and logical **identity** keys for upserts. Identity fallback from all properties is opt-in via `VertexConfig.identity_from_all_properties` (disabled by default). See [Vertex identity modes](schema/vertex_identity.md).
-- **Edges** — relationships between vertices (`directed: true` by default); relationship attributes are declared as **`properties`** on the logical edge. TigerGraph is the only backend with an undirected edge *type* — it projects `directed: false` as `UNDIRECTED EDGE`, and pairs directed edges via **`db_profile.edge_specs[*].reverse_edge`**. Elsewhere `directed: false` is a modeling assertion the backend stores as a directed edge; see [Directed, undirected, and bidirectional edges](architecture/core_components.md#directed-undirected-and-bidirectional-edges).
+- **Edges** — relationships between vertices (`directed: true` by default); relationship attributes are declared as **`properties`** on the logical edge. TigerGraph is the only backend with an undirected edge *type* — it projects `directed: false` as `UNDIRECTED EDGE`, and maintains a declared inverse (**`edge_config.inverses`**) natively via **`db_profile.edge_specs[*].native_inverse`**. Elsewhere `directed: false` is a modeling assertion the backend stores as a directed edge; see [Directed, undirected, and bidirectional edges](architecture/core_components.md#directed-undirected-and-bidirectional-edges).
 
 ### Schema and ingestion
 

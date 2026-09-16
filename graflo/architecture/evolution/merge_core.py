@@ -8,7 +8,7 @@ from functools import reduce
 
 from graflo.architecture.graph_types import EdgeId
 from graflo.architecture.refusal import Refusal
-from graflo.architecture.schema.edge import Edge, EdgeConfig
+from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.identity_funnel import IdentityFunnel
 from graflo.architecture.schema.semantics import merge_semantics
 from graflo.architecture.schema.vertex import (
@@ -364,11 +364,6 @@ def redirect_and_merge_edges(edges: list[Edge], mapping: dict[str, str]) -> list
         else:
             by_id[eid] = merge_edge_pair(by_id[eid], e)
     return list(by_id.values())
-
-
-def edge_config_from_edges(edges: list[Edge]) -> EdgeConfig:
-    """Build a fresh :class:`EdgeConfig` from a list of edges."""
-    return EdgeConfig(edges=edges)
 
 
 def remap_relation_and_merge_edges(

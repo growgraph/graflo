@@ -10,6 +10,7 @@ from graflo.architecture.evolution import (
     AddInverseEdgesOp,
     AddVertexPropertiesOp,
     ChangeFieldTypesOp,
+    DeclareEdgeInversesOp,
     MergeEdgesOp,
     RemoveEdgePropertiesOp,
     RemoveEdgesOp,
@@ -497,7 +498,10 @@ def test_add_inverse_edges_updates_schema_and_ingestion_with_dedup() -> None:
 
     out = apply_evolution(
         manifest,
-        [AddInverseEdgesOp(inverses={"works_at": "employs"})],
+        [
+            DeclareEdgeInversesOp(inverses={"works_at": "employs"}),
+            AddInverseEdgesOp(relations=["works_at"]),
+        ],
         bump_version=False,
     )
 

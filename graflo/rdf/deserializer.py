@@ -92,11 +92,23 @@ class ManifestRdfDeserializer:
             ns.hasEdge,
             self._parse_edge,
         )
+        inverses = self._ordered_nodes(
+            graph,
+            edge_config_uri,
+            ns.hasInverse,
+            lambda g, node: {
+                "relation": self._literal(g, node, ns.relation),
+                "inverse": self._literal(g, node, ns.inverseRelation),
+            },
+        )
+        edge_config: dict[str, Any] = {"edges": edges}
+        if inverses:
+            edge_config["inverses"] = inverses
         return {
             "vertex_config": self._parse_vertex_config(
                 graph, vertex_config_uri, vertices
             ),
-            "edge_config": {"edges": edges},
+            "edge_config": edge_config,
         }
 
     def _parse_vertex_config(
@@ -430,6 +442,9 @@ class ManifestRdfDeserializer:
             indexes_mode = self._literal(graph, spec_node, ns.specIndexesMode)
             if indexes_mode is not None:
                 spec_payload["indexes_mode"] = indexes_mode
+            native_inverse = self._literal(graph, spec_node, ns.specNativeInverse)
+            if native_inverse is not None:
+                spec_payload["native_inverse"] = native_inverse.lower() == "true"
             indexes = [
                 self._parse_index(graph, index_node)
                 for index_node in self._related_nodes(graph, spec_node, ns.hasIndex)

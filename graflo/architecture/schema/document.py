@@ -57,6 +57,9 @@ class Schema(ConfigBaseModel):
         # a replayed manifest compare unequal to an identically-authored one.
         self.db_profile.prune_empty_vertex_indexes()
         self.db_profile.validate_against_schema(self.core_schema.edge_config)
+        self.db_profile.validate_native_inverses(
+            self.core_schema.edge_config, self.core_schema.vertex_config.vertex_set
+        )
 
     def remove_disconnected_vertices(self) -> set[str]:
         return self.core_schema.remove_disconnected_vertices()

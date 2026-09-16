@@ -228,7 +228,7 @@ def log_cmd(store: Path, graph: bool) -> None:
     if len(heads) > 1:
         click.echo(
             f"\nhistory has {len(heads)} heads -- it has forked. "
-            "Use `graflo merge` to reconcile them."
+            "Use `graflo merge3` to reconcile them."
         )
 
 

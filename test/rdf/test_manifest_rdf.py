@@ -787,3 +787,61 @@ def test_ontology_declares_item_type() -> None:
     assert (ns.itemType, RDF.type, OWL.ObjectProperty) in ontology
     assert ns.Field in set(ontology.objects(ns.itemType, RDFS.domain))
     assert ns.GF.FieldType in set(ontology.objects(ns.itemType, RDFS.range))
+
+
+def _inverse_manifest(*, native: bool) -> GraphManifest:
+    forward = {"source": "person", "target": "institution", "relation": "employed_by"}
+    return GraphManifest.from_dict(
+        {
+            "schema": {
+                "metadata": {"name": "inverses", "version": "1.0.0"},
+                "graph": {
+                    "vertex_config": {
+                        "vertices": [
+                            {
+                                "name": "person",
+                                "properties": ["id"],
+                                "identity": ["id"],
+                            },
+                            {
+                                "name": "institution",
+                                "properties": ["id"],
+                                "identity": ["id"],
+                            },
+                        ]
+                    },
+                    "edge_config": {
+                        "edges": [forward],
+                        "inverses": [{"relation": "employed_by", "inverse": "employs"}],
+                    },
+                },
+                "db_profile": {
+                    "db_flavor": "tigergraph",
+                    "edge_specs": [{**forward, "native_inverse": native}]
+                    if native
+                    else [],
+                },
+            }
+        }
+    )
+
+
+@pytest.mark.parametrize("native", [False, True], ids=["declared", "native"])
+def test_round_trip_preserves_declared_and_native_inverses(native: bool) -> None:
+    manifest = _inverse_manifest(native=native)
+    assert _canonical(_round_trip(manifest)) == _canonical(manifest)
+
+
+def test_ontology_and_context_declare_inverse_terms() -> None:
+    ontology = load_ontology_graph()
+    for term in (
+        ns.EdgeInverse,
+        ns.hasInverse,
+        ns.inverseRelation,
+        ns.specNativeInverse,
+    ):
+        assert (term, RDF.type, None) in ontology, term
+    context_path = pathlib.Path(ontology_path()).parent / "graflo-context.jsonld"
+    context = json.loads(context_path.read_text(encoding="utf-8"))["@context"]
+    for key in ("EdgeInverse", "hasInverse", "inverseRelation", "specNativeInverse"):
+        assert key in context

@@ -135,6 +135,16 @@ class ManifestRdfSerializer:
             add_literal(graph, edge_uri, ns.artifactIndex, index)
             self._emit_edge(graph, edge_uri, edge, vertex_uri_by_name)
 
+        for index, pair in enumerate(schema.core_schema.edge_config.inverses):
+            inverse_uri = URIRef(
+                join_uri(str(core_uri), "inverse", pair.relation, pair.inverse)
+            )
+            graph.add((edge_config_uri, ns.hasInverse, inverse_uri))
+            graph.add((inverse_uri, RDF.type, ns.EdgeInverse))
+            add_literal(graph, inverse_uri, ns.artifactIndex, index)
+            add_literal(graph, inverse_uri, ns.relation, pair.relation)
+            add_literal(graph, inverse_uri, ns.inverseRelation, pair.inverse)
+
         profile_uri = URIRef(join_uri(str(schema_uri), "db-profile"))
         graph.add((schema_uri, ns.hasDatabaseProfile, profile_uri))
         self._emit_database_profile(
@@ -452,6 +462,8 @@ class ManifestRdfSerializer:
             add_literal(graph, spec_uri, ns.specPurpose, edge_spec.purpose)
             add_literal(graph, spec_uri, ns.specRelationName, edge_spec.relation_name)
             add_literal(graph, spec_uri, ns.specIndexesMode, edge_spec.indexes_mode)
+            if edge_spec.native_inverse:
+                add_literal(graph, spec_uri, ns.specNativeInverse, True)
             if edge_uri_by_id is not None:
                 edge_uri = edge_uri_by_id.get(
                     (edge_spec.source, edge_spec.target, edge_spec.relation)

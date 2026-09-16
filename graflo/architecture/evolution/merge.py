@@ -19,7 +19,7 @@ from graflo.architecture.schema.database_features import (
     append_index,
 )
 from graflo.architecture.schema.document import Schema
-from graflo.architecture.schema.edge import Edge
+from graflo.architecture.schema.edge import Edge, EdgeConfig, union_inverses
 from graflo.architecture.schema.identity_funnel import IdentityBranch, IdentityFunnel
 from graflo.architecture.schema.metadata import GraphMetadata
 from graflo.architecture.schema.naming import NamingConvention, canonical_slug
@@ -44,7 +44,6 @@ from .canonical import (
 from .db_profile import union_default_property_values
 from .equivalence import Cluster, ClusterIndex, Side, subject
 from .merge_core import (
-    edge_config_from_edges,
     merge_edge_pair,
     merge_vertex_models,
 )
@@ -934,7 +933,13 @@ def _union_schema(
         metadata=meta,
         core_schema=CoreSchema(
             vertex_config=VertexConfig(vertices=out_vertices, force_types=force_types),
-            edge_config=edge_config_from_edges(list(by_id.values())),
+            edge_config=EdgeConfig(
+                edges=list(by_id.values()),
+                inverses=union_inverses(
+                    left.core_schema.edge_config.inverses,
+                    right.core_schema.edge_config.inverses,
+                ),
+            ),
         ),
         db_profile=db_profile,
     )

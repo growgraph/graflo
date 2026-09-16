@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>GraFlo Ontology (v1.6.0)</title>
+  <title>GraFlo Ontology (v1.7.0)</title>
   <link rel="stylesheet" href="graph-view.css" />
 </head>
 <body class="embed">
@@ -119,6 +119,13 @@
       "kind": "subClassOf",
       "label": "subClassOf",
       "source": "https://ontology.growgraph.dev/graflo/EdgeInferSpec",
+      "target": "https://ontology.growgraph.dev/graflo/GrafloArtifact"
+    },
+    {
+      "id": "sub:https://ontology.growgraph.dev/graflo/EdgeInverse->https://ontology.growgraph.dev/graflo/GrafloArtifact",
+      "kind": "subClassOf",
+      "label": "subClassOf",
+      "source": "https://ontology.growgraph.dev/graflo/EdgeInverse",
       "target": "https://ontology.growgraph.dev/graflo/GrafloArtifact"
     },
     {
@@ -428,6 +435,13 @@
       "label": "hasEdge",
       "source": "https://ontology.growgraph.dev/graflo/EdgeConfig",
       "target": "https://ontology.growgraph.dev/graflo/Edge"
+    },
+    {
+      "id": "prop:https://ontology.growgraph.dev/graflo/hasInverse",
+      "kind": "objectProperty",
+      "label": "hasInverse",
+      "source": "https://ontology.growgraph.dev/graflo/EdgeConfig",
+      "target": "https://ontology.growgraph.dev/graflo/EdgeInverse"
     },
     {
       "id": "prop:https://ontology.growgraph.dev/graflo/refinesEdge",
@@ -1003,11 +1017,29 @@
       "local": "EdgeInferSpec"
     },
     {
+      "comment": "Declared inverse pair: two relation names reading one fact from its two endpoints. Logical only; realized by an explicit inverse edge or by a native inverse on an edge physical spec.",
+      "datatypeProperties": [
+        {
+          "label": "inverseRelation",
+          "range": "string"
+        }
+      ],
+      "group": "schema",
+      "id": "https://ontology.growgraph.dev/graflo/EdgeInverse",
+      "kind": "gf",
+      "label": "EdgeInverse",
+      "local": "EdgeInverse"
+    },
+    {
       "comment": null,
       "datatypeProperties": [
         {
           "label": "specIndexesMode",
           "range": "string"
+        },
+        {
+          "label": "specNativeInverse",
+          "range": "boolean"
         },
         {
           "label": "specPurpose",
@@ -1599,7 +1631,7 @@
     }
   ],
   "universalRoot": "https://ontology.growgraph.dev/graflo/GrafloArtifact",
-  "version": "1.6.0"
+  "version": "1.7.0"
 };</script>
   <script src="graph-view.js"></script>
 </body>

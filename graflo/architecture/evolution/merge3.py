@@ -238,8 +238,24 @@ def op_slots(op: ManifestOp) -> set[Slot]:
         for old, new in op.renames.items():
             slots |= {_relation_slot(old), _relation_slot(new)}
     elif isinstance(op, ops.AddInverseEdgesOp):
+        if op.relations is None:
+            # Realizes whatever is declared at replay time, so it depends on the
+            # whole table.
+            slots.add(("edge_inverses",))
+        else:
+            slots |= {_relation_slot(relation) for relation in op.relations}
+    elif isinstance(op, ops.DeclareEdgeInversesOp):
         for relation, inverse in op.inverses.items():
-            slots |= {_relation_slot(relation), _relation_slot(inverse)}
+            slots |= {
+                (*_relation_slot(relation), "inverse"),
+                (*_relation_slot(inverse), "inverse"),
+            }
+    elif isinstance(op, ops.RetractEdgeInversesOp):
+        slots |= {(*_relation_slot(relation), "inverse") for relation in op.relations}
+    elif isinstance(op, ops.SetNativeInversesOp):
+        slots |= {
+            (*_edge_slot(*entry.edge_id()), "native_inverse") for entry in op.edges
+        }
     elif isinstance(op, ops.MergeEdgesOp):
         slots |= {_relation_slot(relation) for relation in op.sources}
         slots.add(_relation_slot(op.into))

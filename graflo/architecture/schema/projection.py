@@ -23,7 +23,6 @@ from graflo.architecture.schema.database_features import (
     DefaultPropertyValues,
 )
 from graflo.architecture.schema.document import Schema
-from graflo.architecture.schema.edge import EdgeConfig
 from graflo.architecture.schema.vertex import VertexConfig
 
 Connectivity = Literal["induced", "induced_prune"]
@@ -192,8 +191,8 @@ def build_subschema(
         },
         identity_from_all_properties=source_core.vertex_config.identity_from_all_properties,
     )
-    edge_config = EdgeConfig(
-        edges=[
+    edge_config = source_core.edge_config.with_edges(
+        [
             edge.model_copy(deep=True)
             for edge in source_core.edge_config.edges
             if edge.edge_id in selection.surviving_edge_ids

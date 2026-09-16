@@ -8,6 +8,7 @@
         "CoreSchema": "gf:CoreSchema",
         "VertexConfig": "gf:VertexConfig",
         "EdgeConfig": "gf:EdgeConfig",
+        "EdgeInverse": "gf:EdgeInverse",
         "GraphMetadata": "gf:GraphMetadata",
         "DatabaseProfile": "gf:DatabaseProfile",
         "Vertex": "gf:Vertex",
@@ -80,6 +81,10 @@
         },
         "hasEdge": {
             "@id": "gf:hasEdge",
+            "@type": "@id"
+        },
+        "hasInverse": {
+            "@id": "gf:hasInverse",
             "@type": "@id"
         },
         "hasField": {
@@ -260,6 +265,11 @@
         "specPurpose": "gf:specPurpose",
         "specRelationName": "gf:specRelationName",
         "specIndexesMode": "gf:specIndexesMode",
+        "specNativeInverse": {
+            "@id": "gf:specNativeInverse",
+            "@type": "xsd:boolean"
+        },
+        "inverseRelation": "gf:inverseRelation",
         "blank": {
             "@id": "gf:blank",
             "@type": "xsd:boolean"

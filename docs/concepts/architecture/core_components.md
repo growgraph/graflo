@@ -219,7 +219,7 @@ An `Edge` describes edges and their logical identities. It allows:
 - Optional uniqueness semantics through **`identities`** (multiple candidate keys are allowed)
 - **`properties`**: relationship payload (names and optional types), same accepted forms as vertex properties (strings, `Field`, or dicts with at least `name`)
 - Optional static **`relation`** label (e.g. Neo4j relationship type) when it is not derived at ingest time
-- **`directed`** (default `true`): when `false`, the edge is logically undirected; `AddInverseEdgesOp` does not duplicate it. On TigerGraph, `directed: false` maps to `UNDIRECTED EDGE` DDL; bidirectional directed pairs can use `db_profile.edge_specs[*].reverse_edge` (`WITH REVERSE_EDGE`) instead of a second logical edge.
+- **`directed`** (default `true`): when `false`, the edge is logically undirected and has no inverse. On TigerGraph, `directed: false` maps to `UNDIRECTED EDGE` DDL; a directed edge with a declared inverse can instead be paired natively (`db_profile.edge_specs[*].native_inverse`, `WITH REVERSE_EDGE`).
 
 Ingestion-only controls (**`relation_field`**, **`relation_from_key`**, **`match_source`**, **`match_target`**, vertex-sourced edge payload) live on **`EdgeActor`** steps and **`EdgeDerivation`**, not on the logical `Edge` model.
 
@@ -244,7 +244,7 @@ Vertex fields that should appear on edges are configured via **edge actor** opti
 
 #### Edge behavior control
 - Edge physical variants should be modeled with `schema.db_profile.edge_specs[*].purpose` (YAML) / `db_profile.edge_specs[*].purpose` (in code).
-- TigerGraph bidirectional pairs: `schema.db_profile.edge_specs[*].reverse_edge` emits `WITH REVERSE_EDGE` in GSQL (see [Directed, undirected, and bidirectional edges](#directed-undirected-and-bidirectional-edges)).
+- TigerGraph native inverses: `schema.db_profile.edge_specs[*].native_inverse: true` emits `WITH REVERSE_EDGE="<declared inverse>"` in GSQL (see [Directed, undirected, and bidirectional edges](#directed-undirected-and-bidirectional-edges)).
 - `Edge.aux` is no longer a behavior switch.
 
 > DB-only physical edge metadata (including `purpose`) is configured under
@@ -253,13 +253,13 @@ Vertex fields that should appear on edges are configured via **edge actor** opti
 
 #### Directed, undirected, and bidirectional edges
 
-Logical edges are **directed by default** (`directed: true`). Direction matters for ingestion semantics and for evolution ops such as [`AddInverseEdgesOp`](../schema/manifest_evolution.md#5-add-inverse-edge-relations-bidirectional-modeling).
+Logical edges are **directed by default** (`directed: true`). Direction matters for ingestion semantics and for evolution ops such as [`AddInverseEdgesOp`](../schema/manifest_evolution.md#5-inverse-edges-and-native-inverses).
 
 | Modeling goal | GraFlo config | TigerGraph GSQL (when `db_flavor: tigergraph`) |
 |---------------|---------------|------------------------------------------------|
 | Single direction | `directed: true` (default), one logical edge | `ADD DIRECTED EDGE ...` |
-| Portable forward + reverse labels | Two logical directed edges, or one forward + `AddInverseEdgesOp` | Two `ADD DIRECTED EDGE` statements |
-| TG-native directed pair, one load path | One logical edge + `edge_specs[*].reverse_edge` | `ADD DIRECTED EDGE ... WITH REVERSE_EDGE="rev_name"` |
+| Portable forward + inverse labels (**inverse edge**) | Declared inverse + two logical directed edges (hand-authored, or `AddInverseEdgesOp`) | Two `ADD DIRECTED EDGE` statements |
+| Database-maintained pair, one load path (**native inverse**) | Declared inverse + one logical edge + `edge_specs[*].native_inverse` | `ADD DIRECTED EDGE ... WITH REVERSE_EDGE="<declared inverse>"` |
 | Symmetric / direction-agnostic | `directed: false` on one logical edge | `ADD UNDIRECTED EDGE ...` |
 
 **Undirected example:**
@@ -274,7 +274,7 @@ edge_config:
       properties: [on_date]
 ```
 
-**TigerGraph reverse pair example** (do not also add a second logical edge for the reverse relation):
+**Declared inverse, realized natively on TigerGraph** (do not also add the logical edge for the inverse relation — the schema refuses both):
 
 ```yaml
 edge_config:
@@ -282,27 +282,29 @@ edge_config:
     - source: user
       target: user
       relation: is_following
+  inverses:
+    - relation: is_following
+      inverse: is_followed_by
 db_profile:
   db_flavor: tigergraph
   edge_specs:
     - source: user
       target: user
       relation: is_following
-      relation_name: is_following
-      reverse_edge: is_followed_by
+      native_inverse: true
 ```
 
-`reverse_edge` is TigerGraph-only physical metadata on `EdgePhysicalSpec`. It is mutually exclusive with `directed: false` on the logical edge.
+`edge_config.inverses` is the logical declaration and backend-agnostic; `native_inverse` is TigerGraph-only physical metadata on `EdgePhysicalSpec` that names nothing itself — the paired type takes the declared inverse's name. A native inverse needs a declared pair, is refused next to an explicit `(target, source, inverse)` edge, and cannot sit on an undirected edge. See [Inverse edges and native inverses](../schema/manifest_evolution.md#5-inverse-edges-and-native-inverses) for the full rules and the ops that author them.
 
 **What the other backends do with `directed: false`**
 
-TigerGraph is the only target with an undirected edge *type*. Everywhere else the edge is **stored** directed, and `directed: false` is an assertion about the model: endpoint order carries no meaning, so `AddInverseEdgesOp` will not duplicate the edge, and a read may follow it either way.
+TigerGraph is the only target with an undirected edge *type*. Everywhere else the edge is **stored** directed, and `directed: false` is an assertion about the model: endpoint order carries no meaning, so it carries no declared inverse, and a read may follow it either way.
 
 Following it either way is what `Connection.fetch_edges(..., direction=...)` does. `EdgeDirection` names the orientations followed from the anchor vertex — `OUT` (the default, and the historical behaviour), `IN`, or `ANY` — and `to_type` / `to_id` constrain the vertex at the *other* end, whichever end that is. `default_direction_for_edge(edge)` derives it from the schema: an undirected edge reads as `ANY`.
 
 | Backend | Native undirected | Reverse read |
 |---------|-------------------|--------------|
-| TigerGraph | yes — `UNDIRECTED EDGE` | **schema-time only**: an `UNDIRECTED` type answers both ways; a *directed* type needs `WITH REVERSE_EDGE`, else the read raises |
+| TigerGraph | yes — `UNDIRECTED EDGE` | **schema-time only**: an `UNDIRECTED` type answers both ways; a *directed* type needs a native inverse (`WITH REVERSE_EDGE`), else the read raises |
 | ArangoDB | no | free — the edge index covers `_from` and `_to`, so `ANY` matches either orientation |
 | Neo4j / Memgraph / FalkorDB | no | cheap — the pattern drops or flips its arrow (`-[r]-`, `<-[r]-`) |
 | Nebula | no | cheap — `GO … REVERSELY` / `BIDIRECT` |

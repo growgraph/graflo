@@ -148,7 +148,7 @@ _UNDIRECTED_FALLBACK: dict[ReverseTraversalCost, tuple[str, str]] = {
             "is stored as a directed edge type; reverse reachability is fixed when "
             "the type is created and cannot be added by a query"
         ),
-        "Declare the edge type as undirected, or pair it with a reverse edge type.",
+        "Declare the edge type as undirected, or give its declared inverse a native inverse.",
     ),
 }
 
@@ -189,7 +189,7 @@ def assert_direction_supported(
     db_type: DBType,
     direction: EdgeDirection,
     *,
-    has_reverse_edge: bool = False,
+    has_native_inverse: bool = False,
     edge_is_undirected: bool = False,
 ) -> None:
     """Raise if ``db_type`` cannot answer a read in ``direction``.
@@ -197,8 +197,8 @@ def assert_direction_supported(
     Args:
         db_type: Backend being queried.
         direction: Requested orientation.
-        has_reverse_edge: Whether a paired reverse edge type is declared for the
-            edge (``EdgePhysicalSpec.reverse_edge``). Only consulted on backends
+        has_native_inverse: Whether the database maintains the edge's declared
+            inverse as a paired type (``EdgePhysicalSpec.native_inverse``). Only consulted on backends
             whose reverse reachability is decided at schema time.
         edge_is_undirected: Whether the edge type itself was created undirected.
             On a backend with native undirected edges that already answers both
@@ -216,7 +216,7 @@ def assert_direction_supported(
         is not ReverseTraversalCost.SCHEMA_TIME_ONLY
     ):
         return
-    if has_reverse_edge:
+    if has_native_inverse:
         return
     if edge_is_undirected and coerced in _UNDIRECTED_NATIVE_DBS:
         return
@@ -224,8 +224,8 @@ def assert_direction_supported(
         f"Backend '{_label(db_type)}' cannot read edges with direction "
         f"'{direction.value}': reverse reachability is fixed when the edge type "
         "is created and no query rewrite recovers it. Declare the edge type as "
-        "undirected (`directed: false`), or pair it with a reverse edge type via "
-        "`db_profile.edge_specs[*].reverse_edge`."
+        "undirected (`directed: false`), or declare its inverse in "
+        "`edge_config.inverses` and set `db_profile.edge_specs[*].native_inverse`."
     )
 
 

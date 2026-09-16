@@ -7,8 +7,8 @@
 @prefix prov: <http://www.w3.org/ns/prov#> .
 
 <https://ontology.growgraph.dev/graflo> a owl:Ontology ;
-    owl:versionIRI <https://ontology.growgraph.dev/graflo/1.6.0> ;
-    owl:versionInfo "1.6.0" ;
+    owl:versionIRI <https://ontology.growgraph.dev/graflo/1.7.0> ;
+    owl:versionInfo "1.7.0" ;
     rdfs:label "GraFlo Ontology"@en ;
     skos:prefLabel "GraFlo Ontology"@en ;
     rdfs:comment "OWL vocabulary describing GraFlo GraphManifest contracts: schema, ingestion, bindings, transforms, and pipeline actors."@en .
@@ -47,6 +47,12 @@ gf:EdgeConfig a owl:Class ;
     rdfs:label "Edge config"@en ;
     skos:prefLabel "EdgeConfig"@en ;
     rdfs:comment "Manifest-facing edge_config block containing edge declarations."@en .
+
+gf:EdgeInverse a owl:Class ;
+    rdfs:subClassOf gf:GrafloArtifact ;
+    rdfs:label "Edge inverse"@en ;
+    skos:prefLabel "EdgeInverse"@en ;
+    rdfs:comment "Declared inverse pair: two relation names reading one fact from its two endpoints. Logical only; realized by an explicit inverse edge or by a native inverse on an edge physical spec."@en .
 
 gf:GraphMetadata a owl:Class ;
     rdfs:subClassOf gf:GrafloArtifact ;
@@ -317,6 +323,11 @@ gf:hasEdge a owl:ObjectProperty ;
     rdfs:domain gf:EdgeConfig ;
     rdfs:range gf:Edge ;
     rdfs:comment "Manifest-facing edge from EdgeConfig to Edge items."@en .
+
+gf:hasInverse a owl:ObjectProperty ;
+    rdfs:domain gf:EdgeConfig ;
+    rdfs:range gf:EdgeInverse ;
+    rdfs:comment "Declared inverse pairs of an edge config."@en .
 
 gf:hasField a owl:ObjectProperty ;
     rdfs:domain gf:Vertex , gf:Edge ;
@@ -752,6 +763,16 @@ gf:specRelationName a owl:DatatypeProperty ;
 gf:specIndexesMode a owl:DatatypeProperty ;
     rdfs:domain gf:EdgePhysicalSpec ;
     rdfs:range xsd:string .
+
+gf:specNativeInverse a owl:DatatypeProperty ;
+    rdfs:domain gf:EdgePhysicalSpec ;
+    rdfs:range xsd:boolean ;
+    rdfs:comment "Whether the database maintains the declared inverse of the edge's relation as a paired type (TigerGraph WITH REVERSE_EDGE)."@en .
+
+gf:inverseRelation a owl:DatatypeProperty ;
+    rdfs:domain gf:EdgeInverse ;
+    rdfs:range xsd:string ;
+    rdfs:comment "Relation name of the declared inverse; the pair's other side is gf:relation."@en .
 
 gf:forceTypes a owl:DatatypeProperty ;
     rdfs:domain gf:VertexConfig ;
