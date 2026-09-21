@@ -290,3 +290,64 @@ def test_every_backend_supports_schema_introspection() -> None:
         if not cls.supports_schema_introspection
     ]
     assert missing == []
+
+
+# A `WITH REVERSE_EDGE` pair is listed as two edge types naming each other.
+SHOW_EDGE_WITH_REVERSE = """Using graph 'gf_rev'
+- DIRECTED EDGE issued_by(FROM instrument, TO issuer, share STRING) WITH REVERSE_EDGE="issues"
+- DIRECTED EDGE issues(FROM issuer, TO instrument, share STRING) WITH REVERSE_EDGE="issued_by"
+- UNDIRECTED EDGE peer_of(FROM issuer, TO issuer)
+- DIRECTED EDGE rated(FROM issuer, TO instrument) WITH STATS="x"
+"""
+
+
+def test_parse_edge_ddl_recovers_the_reverse_edge_clause() -> None:
+    edges = {e.name: e for e in parse_show_edge_ddl(SHOW_EDGE_WITH_REVERSE)}
+    assert edges["issued_by"].reverse_edge == "issues"
+    assert edges["issues"].reverse_edge == "issued_by"
+    assert edges["peer_of"].reverse_edge is None
+    # Another trailing clause is still storage detail, and still ends the body.
+    assert edges["rated"].reverse_edge is None
+    assert edges["rated"].endpoints == [("issuer", "instrument")]
+
+
+def test_a_maintained_reverse_type_is_not_a_second_logical_edge() -> None:
+    from graflo.db.tigergraph.gsql_parsers import forward_edge_ddl
+
+    forward = forward_edge_ddl(parse_show_edge_ddl(SHOW_EDGE_WITH_REVERSE))
+    assert [e.name for e in forward] == ["issued_by", "peer_of", "rated"]
+
+
+def test_a_stated_reverse_type_comes_back_as_a_native_inverse() -> None:
+    """A round trip through the database keeps the pair and how it is realized."""
+    from graflo.db.graph_introspection import (
+        GraphEdgeIntrospection,
+        GraphIntrospectionResult,
+        GraphSchemaInferencer,
+        GraphVertexIntrospection,
+    )
+    from graflo.onto import DBType
+
+    schema = GraphSchemaInferencer(db_flavor=DBType.TIGERGRAPH).infer_schema(
+        GraphIntrospectionResult(
+            name="gf_rev",
+            vertices=[
+                GraphVertexIntrospection(name=name, properties=["id"], identity=["id"])
+                for name in ("instrument", "issuer")
+            ],
+            edges=[
+                GraphEdgeIntrospection(
+                    source="instrument",
+                    target="issuer",
+                    relation="issued_by",
+                    native_inverse="issues",
+                )
+            ],
+        )
+    )
+    edge_config = schema.core_schema.edge_config
+    assert [(p.relation, p.inverse) for p in edge_config.inverses] == [
+        ("issued_by", "issues")
+    ]
+    assert schema.db_profile.native_inverses == ["issued_by"]
+    assert schema.db_profile.native_inverse_of("issued_by", edge_config) == "issues"

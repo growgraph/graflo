@@ -702,7 +702,9 @@ class Neo4jConnection(Connection):
         """
         # Build Cypher query to fetch edges
         # Match source node first
-        source_match = f"(source:{from_type} {{id: '{from_id}'}})"
+        # Ids come from callers and travel as parameters, never as query text.
+        params: dict[str, Any] = {"from_id": from_id}
+        source_match = f"(source:{from_type} {{id: $from_id}})"
         rel_pattern = cypher_rel_pattern(edge_type, direction)
 
         # Build target node match
@@ -714,7 +716,8 @@ class Neo4jConnection(Connection):
         # Add target ID filter if provided
         where_clauses: list[str] = []
         if to_id:
-            where_clauses.append(f"target.id = '{to_id}'")
+            where_clauses.append("target.id = $to_id")
+            params["to_id"] = to_id
 
         # Add additional filters if provided
         if filters is not None:
@@ -740,7 +743,7 @@ class Neo4jConnection(Connection):
             {limit_clause}
         """
 
-        cursor = self.execute(query)
+        cursor = self.execute(query, **params)
         result = [item["r"] for item in cursor.data()]
 
         # Note: unset_keys is not supported in Neo4j as we can't modify the result structure
@@ -915,7 +918,7 @@ class Neo4jConnection(Connection):
             edge_types=edge_types,
             limit=limit,
             schema=schema,
-            run=lambda query: self.execute(query).data(),
+            run=lambda query, params: self.execute(query, **params).data(),
         )
 
     def fetch_all_docs(

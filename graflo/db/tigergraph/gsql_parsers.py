@@ -198,9 +198,12 @@ VERTEX_DDL_PATTERN = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 
-#: `- DIRECTED EDGE knows(FROM person, TO person, since STRING)`
+#: `- DIRECTED EDGE knows(FROM person, TO person, since STRING)`, optionally
+#: followed by `WITH REVERSE_EDGE="known_by"` -- the one trailing clause that is
+#: part of the model rather than storage detail, so it is captured.
 EDGE_DDL_PATTERN = re.compile(
-    r"-\s*(DIRECTED|UNDIRECTED)\s+EDGE\s+(\w+)\s*\((.*?)\)\s*(?:WITH\b|$)",
+    r"-\s*(DIRECTED|UNDIRECTED)\s+EDGE\s+(\w+)\s*\((.*?)\)\s*"
+    r"(?:WITH\s+REVERSE_EDGE\s*=\s*\"(\w+)\"|WITH\b|$)",
     re.IGNORECASE | re.MULTILINE,
 )
 
@@ -236,6 +239,10 @@ class GsqlEdgeDdl:
     directed: bool
     endpoints: list[tuple[str, str]]
     attributes: list[GsqlAttribute]
+    #: The paired type the database maintains (``WITH REVERSE_EDGE="..."``), if
+    #: any. The reverse type is itself listed as an edge type naming this one
+    #: back, so a pair appears as two declarations pointing at each other.
+    reverse_edge: str | None = None
 
 
 def split_ddl_terms(body: str) -> list[str]:
@@ -320,9 +327,30 @@ def parse_show_edge_ddl(result_str: str) -> list[GsqlEdgeDdl]:
                 directed=keyword.upper() == "DIRECTED",
                 endpoints=endpoints,
                 attributes=attributes,
+                reverse_edge=match.group(4),
             )
         )
     return edges
+
+
+def forward_edge_ddl(edges: list[GsqlEdgeDdl]) -> list[GsqlEdgeDdl]:
+    """*edges* without the reverse types the database maintains for others.
+
+    A ``WITH REVERSE_EDGE`` pair is listed as two edge types naming each other,
+    and nothing in the listing says which one was authored. The one listed first
+    is taken as the forward type, and the type it names as its reverse is
+    dropped: it is derived, stores nothing of its own, and recovering it as a
+    second logical edge would describe one fact twice.
+    """
+    maintained: set[str] = set()
+    forward: list[GsqlEdgeDdl] = []
+    for ddl in edges:
+        if ddl.name in maintained:
+            continue
+        if ddl.reverse_edge is not None:
+            maintained.add(ddl.reverse_edge)
+        forward.append(ddl)
+    return forward
 
 
 def parse_installed_queries_from_ls(result_str: str) -> list[str]:

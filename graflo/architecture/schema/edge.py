@@ -15,23 +15,11 @@ Direction semantics:
     false, endpoint order carries no meaning and the two orientations denote one
     relationship. Backends express that to very different degrees, and only
     TigerGraph has an undirected edge type. What the flag costs elsewhere is a
-    read-path question — reaching an edge from its target endpoint:
-
-    =============  ==============  =============================================
-    Backend        Native          Reverse traversal
-    =============  ==============  =============================================
-    TigerGraph     yes             schema-time only (``WITH REVERSE_EDGE``)
-    Arango         no              free — both endpoints indexed
-    Neo4j          no              cheap — relationships are doubly linked
-    Memgraph       no              cheap
-    FalkorDB       no              cheap — matrices stored with transposes
-    Nebula         no              cheap, but needs an explicit reverse clause
-    PostgreSQL     no              needs an index on the target column
-    graflo backend no              direction is the storage partition key
-    =============  ==============  =============================================
-
-    The authoritative table lives in :mod:`graflo.db.edge_direction_support`,
-    which also reports per-schema diagnostics at schema-apply time.
+    read-path question — reaching an edge from its target endpoint — and the
+    per-backend answer is one table,
+    :mod:`graflo.architecture.schema.edge_direction`. Per-schema diagnostics
+    built on it are reported at schema-apply time by
+    :mod:`graflo.db.edge_direction_support`.
 
 Example:
     >>> edge = Edge(source="user", target="post")
@@ -600,56 +588,39 @@ class EdgeConfig(ConfigBaseModel):
         relation realized for some endpoint pairs but not others, and a pair
         read from the same side (``(S, T, a)`` next to ``(S, T, b)``), which
         usually means one of the two was modeled backwards.
+
+        The strings render the typed records of
+        :func:`graflo.architecture.schema.inverse_realization.edge_inverse_findings`,
+        which carry the relations, edges and severity a caller can act on.
         """
-        paired = inverse_map(self.inverses)
-        by_id = {edge.edge_id: edge for edge in self.edges}
-        findings: list[str] = []
+        # Deferred: the findings module builds on this one.
+        from graflo.architecture.schema.inverse_realization import (
+            edge_inverse_findings,
+        )
 
-        def _keys(edge: Edge) -> set[frozenset[str]]:
-            # Endpoints are always part of an edge key; only the rest can drift.
-            return {
-                frozenset(key) - {"source", "target", "relation"}
-                for key in edge.identities
-            }
-
-        realized: dict[str, list[bool]] = {}
-        for edge in self.edges:
-            relation = edge.relation
-            inverse = paired.get(relation) if relation is not None else None
-            if relation is None or inverse is None or not edge.directed:
-                continue
-            other = by_id.get((edge.target, edge.source, inverse))
-            realized.setdefault(relation, []).append(other is not None)
-            if (
-                edge.source != edge.target
-                and (edge.source, edge.target, inverse) in by_id
-                and relation < inverse
-            ):
-                findings.append(
-                    f"{edge.edge_id} and {(edge.source, edge.target, inverse)} read "
-                    "a declared pair from the same side; one of them is probably "
-                    "reversed"
-                )
-            if other is None or relation > inverse:
-                continue
-            if set(edge.property_names) != set(other.property_names):
-                findings.append(
-                    f"inverse edges {edge.edge_id} and {other.edge_id} declare "
-                    f"different properties: {sorted(edge.property_names)} vs "
-                    f"{sorted(other.property_names)}"
-                )
-            if _keys(edge) != _keys(other):
-                findings.append(
-                    f"inverse edges {edge.edge_id} and {other.edge_id} declare "
-                    "different identity keys"
-                )
-        for relation, flags in sorted(realized.items()):
-            if any(flags) and not all(flags):
-                findings.append(
-                    f"relation {relation!r} has explicit inverse edges for some "
-                    "endpoint pairs but not all; add_inverse_edges completes it"
-                )
-        return findings
+        position = {edge.edge_id: index for index, edge in enumerate(self.edges)}
+        per_edge = [
+            "same_side_pair",
+            "property_type_drift",
+            "property_drift",
+            "identity_drift",
+        ]
+        findings = [
+            finding
+            for finding in edge_inverse_findings(self)
+            if finding.kind in per_edge
+        ]
+        findings.sort(
+            key=lambda finding: (
+                position.get(finding.edges[0], len(position)),
+                per_edge.index(finding.kind),
+            )
+        )
+        return [finding.message for finding in findings] + [
+            finding.message
+            for finding in edge_inverse_findings(self)
+            if finding.kind == "partial_endpoint_pairs"
+        ]
 
     @model_validator(mode="after")
     def _build_edges_map(self) -> EdgeConfig:
@@ -670,10 +641,61 @@ class EdgeConfig(ConfigBaseModel):
     def _map_key(edge: Edge) -> EdgeId:
         return edge.edge_id
 
+    def validate_directedness(self) -> None:
+        """Refuse a relation whose edges disagree on ``directed``.
+
+        ``directed: false`` and ``symmetric`` state one fact at two
+        granularities -- per edge and per relation -- and they can only agree if
+        a relation is undirected everywhere or nowhere. A backend whose edge
+        type spans every endpoint pair of a relation cannot express the mix
+        either: it would need one type name both directed and undirected.
+
+        Raises:
+            ValueError: naming each mixed relation and its edges.
+        """
+        # Deferred: the findings module builds on this one.
+        from graflo.architecture.schema.inverse_realization import (
+            mixed_directed_relations,
+        )
+
+        mixed = mixed_directed_relations(self)
+        if mixed:
+            detail = "; ".join(
+                f"{relation!r}: "
+                + ", ".join(
+                    f"{edge_id} is "
+                    + (
+                        "directed"
+                        if self._edges_map[edge_id].directed
+                        else "undirected"
+                    )
+                    for edge_id in edge_ids
+                )
+                for relation, edge_ids in mixed.items()
+            )
+            raise ValueError(
+                "edge_config: edges of one relation must agree on `directed` (a "
+                f"relation is symmetric or it is not): {detail}"
+            )
+
+    def directed_for(self, relation: str | None) -> bool:
+        """The ``directed`` value a new edge of ``relation`` must take to agree with the rest.
+
+        Follows the declared edges of the relation, then a ``symmetric``
+        declaration, and defaults to directed.
+        """
+        if relation is None:
+            return True
+        for edge in self.edges:
+            if edge.relation == relation:
+                return edge.directed
+        return relation not in self.symmetric
+
     def finish_init(self, vc: VertexConfig):
         """Complete initialization of all logical edges."""
         for e in self.edges:
             e.finish_init(vertex_config=vc)
+        self.validate_directedness()
         self.validate_inverses()
 
     def values(self) -> Iterator[Edge]:

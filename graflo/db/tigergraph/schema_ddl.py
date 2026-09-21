@@ -646,6 +646,20 @@ class SchemaDdlBuilder:
             key = (ddl_kind, relation_names[id(edge)], native_inverse)
             edges_by_group[key].append(edge)
 
+        # Schema.finish_init refuses one *logical* relation that is directed for
+        # some endpoint pairs and undirected for others. A `relation_name`
+        # override can still store two relations as one type, and a type is
+        # created directed or undirected exactly once.
+        kinds_by_type: dict[str, set[str]] = defaultdict(set)
+        for ddl_kind, relation, _native_inverse in edges_by_group:
+            kinds_by_type[relation].add(ddl_kind)
+        mixed = sorted(name for name, kinds in kinds_by_type.items() if len(kinds) > 1)
+        if mixed:
+            raise ValueError(
+                f"TigerGraph edge types {mixed} are declared both directed and "
+                "undirected; edges stored as one type must agree on `directed`"
+            )
+
         # Create one statement per group with all FROM/TO pairs
         for (_ddl_kind, relation, native_inverse), edge_group in edges_by_group.items():
             ddl_edges = [

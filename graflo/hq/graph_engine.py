@@ -9,6 +9,7 @@ import asyncio
 import inspect
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from graflo.architecture.contract.bindings import Bindings
 from graflo.architecture.contract.ingestion import IngestionModel
@@ -33,6 +34,9 @@ from graflo.hq.resource_mapper import ResourceMapper
 from graflo.hq.sanitizer import Sanitizer
 from graflo.hq.sql_inferencer import SQLInferenceManager
 from graflo.onto import DBType
+
+if TYPE_CHECKING:
+    from graflo.migrate.drift import LiveSchemaDrift
 
 logger = logging.getLogger(__name__)
 
@@ -669,6 +673,42 @@ class GraphEngine:
             target_db_flavor if target_db_flavor is not None else self.target_db_flavor
         )
         return self._sanitize_schema_for_target(schema, flavor)
+
+    def diff_live_schema(
+        self,
+        conn_conf: DBConfig,
+        schema: Schema,
+        *,
+        sample_limit: int = 100,
+    ) -> "LiveSchemaDrift":
+        """What the live database holds that *schema* does not declare, and back.
+
+        Introspects the database behind *conn_conf* and compares it with
+        *schema* by presence only: vertex types, edge types and property names.
+        See :mod:`graflo.migrate.drift` for why types, identities and indexes
+        are left out.
+
+        Args:
+            conn_conf: The database to inspect.
+            schema: The schema it is supposed to follow.
+            sample_limit: Rows examined per type on backends that sample.
+
+        Returns:
+            LiveSchemaDrift: the differences, flagged as sampled when the
+            backend's introspection samples rows.
+        """
+        from graflo.migrate.drift import compare_live_schema
+
+        conn = ConnectionManager.open_read_connection(
+            conn_conf, require=ConnectionCapability.SCHEMA_INTROSPECTION
+        )
+        try:
+            observed = conn.introspect_graph_schema(sample_limit=sample_limit)
+            sampled = conn.schema_introspection_is_sampled
+            flavor = conn.flavor
+        finally:
+            conn.close()
+        return compare_live_schema(schema, observed, db_flavor=flavor, sampled=sampled)
 
     def export_graph(
         self,

@@ -151,3 +151,67 @@ def test_schema_ddl_refuses_a_native_inverse_shadowing_a_physical_type(
     schema = _schema(native_inverse=True, relation_name="written_by")
     with pytest.raises(ValueError, match="collides with a TigerGraph"):
         captured_gsql(schema)
+
+
+def test_one_relation_cannot_be_directed_for_some_endpoint_pairs_only() -> None:
+    """A TigerGraph edge type spans every FROM/TO pair, so it has one direction."""
+    with pytest.raises(ValueError, match="must agree on `directed`"):
+        _schema(
+            extra_edges=[
+                {
+                    "source": "user",
+                    "target": "comment",
+                    "relation": "wrote",
+                    "directed": False,
+                }
+            ]
+        )
+
+
+def test_two_relations_stored_as_one_type_must_agree_on_directed(
+    captured_gsql,
+) -> None:
+    """The logical check cannot see a shared physical name; the DDL builder can."""
+    schema = Schema.model_validate(
+        {
+            "metadata": {"name": "g"},
+            "graph": {
+                "vertex_config": {
+                    "vertices": [
+                        {"name": "user", "properties": ["id"], "identity": ["id"]},
+                        {"name": "post", "properties": ["id"], "identity": ["id"]},
+                    ]
+                },
+                "edge_config": {
+                    "edges": [
+                        {"source": "user", "target": "post", "relation": "wrote"},
+                        {
+                            "source": "user",
+                            "target": "user",
+                            "relation": "knows",
+                            "directed": False,
+                        },
+                    ],
+                },
+            },
+            "db_profile": {
+                "db_flavor": "tigergraph",
+                "edge_specs": [
+                    {
+                        "source": "user",
+                        "target": "post",
+                        "relation": "wrote",
+                        "relation_name": "link",
+                    },
+                    {
+                        "source": "user",
+                        "target": "user",
+                        "relation": "knows",
+                        "relation_name": "link",
+                    },
+                ],
+            },
+        }
+    )
+    with pytest.raises(ValueError, match="both directed and undirected"):
+        captured_gsql(schema)

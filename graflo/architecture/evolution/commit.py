@@ -351,6 +351,7 @@ def build_multi_parent_commit(
     created_at: str | None = None,
     notes: str | None = None,
     merge_recipe: MergeRecipeRef | None = None,
+    lead_ops: list[Any] | None = None,
 ) -> Commit:
     """Record a merge as the diff from its **first parent** to *merged*.
 
@@ -371,19 +372,39 @@ def build_multi_parent_commit(
         created_at: ISO-8601 timestamp.
         notes: Free-form annotation.
         merge_recipe: The recorded resolution, so a re-merge can replay it.
+        lead_ops: Ops the merge itself applied to the first parent, recorded
+            ahead of the derived diff. A merge relabels each side before the
+            union -- renames, and folds of several classes into one -- and a
+            plain diff can see a fold only as an unrelated add and remove. The
+            diff is then taken from the relabelled first parent.
 
     Raises:
-        CommitError: Fewer than two parents, or the derived diff does not
-            reproduce *merged*.
+        CommitError: Fewer than two parents, lead ops that do not apply, or
+            the derived diff does not reproduce *merged*.
     """
+    from .apply import apply_evolution
     from .autogenerate import diff_manifests_verified
+    from .hashing import manifest_hash
 
     if len(parents) < 2:
         raise CommitError(
             f"a {kind} commit needs at least two parents, got {len(parents)}"
         )
 
-    ops, warnings = diff_manifests_verified(first_parent, merged)
+    lead = list(lead_ops or [])
+    diff_base = first_parent
+    if lead:
+        try:
+            diff_base = apply_evolution(
+                first_parent, lead, bump_version=False, finish_init=False
+            )
+        except Exception as exc:
+            raise CommitError(
+                f"the merge's relabel of its first parent does not apply: {exc}"
+            ) from exc
+
+    derived, warnings = diff_manifests_verified(diff_base, merged)
+    ops = [*lead, *derived]
     if not ops:
         raise CommitError(
             "the merge result is identical to its first parent; there is "
@@ -393,6 +414,13 @@ def build_multi_parent_commit(
         raise CommitError(
             "the derived merge diff does not fully reproduce the merged "
             "manifest, so it would not replay: " + "; ".join(warnings)
+        )
+    if lead and manifest_hash(
+        apply_evolution(first_parent, ops, bump_version=False, finish_init=False)
+    ) != manifest_hash(merged):
+        raise CommitError(
+            "the merge's relabel followed by the derived diff does not reproduce "
+            "the merged manifest, so it would not replay"
         )
 
     return build_commit(

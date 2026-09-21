@@ -598,6 +598,7 @@ class TigerGraphConnection(Connection):
             GraphVertexIntrospection,
         )
         from graflo.db.tigergraph.gsql_parsers import (
+            forward_edge_ddl,
             parse_show_edge_ddl,
             parse_show_vertex_ddl,
         )
@@ -628,8 +629,12 @@ class TigerGraphConnection(Connection):
             for ddl in vertex_ddl
         ]
 
-        edge_ddl = parse_show_edge_ddl(
-            str(self._execute_gsql(f"USE GRAPH {graph_name}\nSHOW EDGE *"))
+        # A reverse type the database maintains is not a second logical edge; it
+        # comes back as the native inverse of the type it mirrors.
+        edge_ddl = forward_edge_ddl(
+            parse_show_edge_ddl(
+                str(self._execute_gsql(f"USE GRAPH {graph_name}\nSHOW EDGE *"))
+            )
         )
         edges = [
             GraphEdgeIntrospection(
@@ -640,6 +645,7 @@ class TigerGraphConnection(Connection):
                 property_types=_types(ddl.attributes),
                 directed=ddl.directed,
                 collection_name=ddl.name,
+                native_inverse=ddl.reverse_edge,
             )
             for ddl in edge_ddl
             for source, target in ddl.endpoints

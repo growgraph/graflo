@@ -17,6 +17,7 @@ import click
 from graflo.cli.canonical import canonical_check as canonical_check_cmd
 from graflo.cli.check import check as check_cmd
 from graflo.cli.commit import commit_group
+from graflo.cli.inverses import inverses as inverses_cmd
 from graflo.cli.lift import lift as lift_cmd
 from graflo.cli.merge import merge as merge_cmd
 
@@ -51,6 +52,11 @@ graflo.add_command(canonical_check_cmd, name="canonical-check")
 # vocabulary `graflo evolve` applies, so the conversion is reviewable before it
 # runs and invertible after.
 graflo.add_command(lift_cmd, name="lift")
+
+# Declared edge inverses: audit how each is realized, then realize, repair or
+# switch. Planners over the same op vocabulary, like `lift`; a group because the
+# verbs share one subject and one vocabulary of findings.
+graflo.add_command(inverses_cmd, name="inverses")
 
 
 def _mount_existing() -> None:

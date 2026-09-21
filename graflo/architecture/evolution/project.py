@@ -17,6 +17,9 @@ from graflo.architecture.schema.context.graph import (
     neighborhood_distances,
 )
 from graflo.architecture.schema.document import Schema
+from graflo.architecture.schema.inverse_realization import (
+    materialized_inverse_id,
+)
 from graflo.architecture.schema.projection import SubschemaSelection, select_induced
 
 from .ops import EdgeSelector, ProjectManifestOp
@@ -95,6 +98,16 @@ def compute_projection(
     keep_edge_ids = (
         _selector_edge_ids(op.keep_edges) if op.keep_edges is not None else None
     )
+    if keep_edge_ids is not None and op.keep_inverse_edges:
+        # A materialized pair is two declared edges; keeping one reading of the
+        # fact and dropping the other would leave a schema that states half of it.
+        edge_config = schema.core_schema.edge_config
+        keep_edge_ids = keep_edge_ids | {
+            mirror
+            for edge_id in keep_edge_ids
+            if (mirror := materialized_inverse_id(edge_config, edge_id)) is not None
+            and mirror in edge_config
+        }
     keep_vertices = op.keep_vertices
     if op.depth > 0:
         keep_vertices = _expand_seeds(schema, op, keep_edge_ids)

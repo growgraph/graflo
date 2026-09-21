@@ -220,6 +220,8 @@ def op_slots(op: ManifestOp) -> set[Slot]:
     # case rather than a conflict.
     elif isinstance(op, ops.SetVertexSemanticsOp):
         slots |= {(*_vertex_slot(name), "semantics") for name in op.semantics}
+    elif isinstance(op, ops.SetVertexDescriptionsOp):
+        slots |= {(*_vertex_slot(name), "description") for name in op.descriptions}
     elif isinstance(op, ops.SetFieldSemanticsOp):
         for target in op.targets:
             if isinstance(target, ops.FieldSemanticsTarget):
@@ -284,6 +286,10 @@ def op_slots(op: ManifestOp) -> set[Slot]:
             }
 
     # ── ingestion ───────────────────────────────────────────────────────────
+    elif isinstance(op, ops.SetInverseEmissionOp):
+        # Steps are addressed by position, and a position is only meaningful
+        # against the pipeline it was read from: one slot per resource.
+        slots |= {_resource_slot(name) for name in op.steps}
     elif isinstance(op, (ops.AddResourceTransformsOp, ops.EnsureExtractedFieldsOp)):
         # A pipeline is one slot per resource: an ordered program cannot be
         # half-merged, so it conflicts as a unit or merges as a unit.

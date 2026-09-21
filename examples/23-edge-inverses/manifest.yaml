@@ -1,0 +1,61 @@
+# Two sources describe who works where. `hr` reports both readings of the fact --
+# a person is employed_by an institution, and the institution employs the person.
+# `registry` reports only the first. Assembled into one manifest, the schema
+# declares both edges, and nothing says that `registry` never feeds `employs`.
+schema:
+    metadata:
+        name: staffing
+        version: 1.0.0
+    graph:
+        vertex_config:
+            vertices:
+            -   name: person
+                properties: [person_id, name]
+                identity: [person_id]
+            -   name: institution
+                properties: [institution_id, title]
+                identity: [institution_id]
+        edge_config:
+            edges:
+            -   source: person
+                target: institution
+                relation: employed_by
+                directed: true
+            # The inverse reading, stored: a *materialized* inverse.
+            -   source: institution
+                target: person
+                relation: employs
+                directed: true
+                properties: [since]
+            # No inverse edge for `alumnus_of`: that pair is only declared.
+            -   source: person
+                target: institution
+                relation: alumnus_of
+                directed: true
+            -   source: person
+                target: person
+                relation: collaborates_with
+                directed: false
+            inverses:
+            -   relation: employed_by
+                inverse: employs
+            -   relation: alumnus_of
+                inverse: has_alumnus
+    db_profile:
+        db_flavor: neo4j
+ingestion_model:
+    resources:
+    -   name: hr
+        infer_edges: false
+        pipeline:
+        -   vertex: person
+        -   vertex: institution
+        -   edge: {from: person, to: institution, relation: employed_by}
+        -   edge: {from: institution, to: person, relation: employs}
+    -   name: registry
+        infer_edges: false
+        pipeline:
+        -   vertex: person
+        -   vertex: institution
+        -   edge: {from: person, to: institution, relation: employed_by}
+        -   edge: {from: person, to: institution, relation: alumnus_of}

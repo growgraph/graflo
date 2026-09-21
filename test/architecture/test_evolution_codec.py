@@ -67,6 +67,7 @@ OP_PAYLOADS: dict[str, dict] = {
     "set_vertex_semantics": {
         "semantics": {"party": {"iri": "https://schema.org/Organization"}},
     },
+    "set_vertex_descriptions": {"descriptions": {"party": "A trading party."}},
     "set_edge_semantics": {
         "edges": [{"source": "party", "target": "order"}],
         "semantics": {"iri": "https://schema.org/seller"},
@@ -97,6 +98,7 @@ OP_PAYLOADS: dict[str, dict] = {
     "declare_edge_inverses": {"inverses": {"purchases": "purchased_by"}},
     "retract_edge_inverses": {"relations": ["purchases"]},
     "set_native_inverses": {"relations": ["purchases"]},
+    "set_inverse_emission": {"steps": {"crm": [{"at": [0], "step": 2, "link": 1}]}},
     "add_resource_transforms": {
         "additions": {
             "crm": [
@@ -221,6 +223,7 @@ SCHEMA_ONLY_PAYLOADS: dict[str, dict] = {
     "set_vertex_semantics": {
         "semantics": {"party": {"iri": "https://schema.org/Organization"}}
     },
+    "set_vertex_descriptions": {"descriptions": {"party": "A trading party."}},
 }
 
 
@@ -433,6 +436,7 @@ class TestUnionCoverage:
             "set_native_inverses",
             "set_field_semantics",
             "set_vertex_semantics",
+            "set_vertex_descriptions",
             "set_bindings",
             "set_db_profile",
         }
@@ -480,8 +484,8 @@ class TestUnionCoverage:
             if name.endswith("Op")
             and hasattr(getattr(ops_module, name), "model_fields")
         }
-        assert len(exported) == 43
-        assert len(_union_members()) == 42  # 43 minus the binary merge op
+        assert len(exported) == 45
+        assert len(_union_members()) == 44  # 45 minus the binary merge op
 
 
 class TestRoundTrip:

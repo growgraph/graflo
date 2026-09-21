@@ -57,14 +57,17 @@ def _graflo_version() -> str | None:
 def _registry() -> dict[str, Profile]:
     """The known profiles.
 
-    Built on call rather than at import so ``world_model`` can import the
+    Built on call rather than at import so a profile module can import the
     runner's types without a cycle.
     """
+    from graflo.architecture.profile.inverses import INVERSES_PROFILE
     from graflo.architecture.profile.world_model import (
         WORLD_MODEL_PROFILE,
     )
 
-    return {WORLD_MODEL_PROFILE.name: WORLD_MODEL_PROFILE}
+    return {
+        profile.name: profile for profile in (WORLD_MODEL_PROFILE, INVERSES_PROFILE)
+    }
 
 
 def list_profiles() -> list[tuple[str, str]]:

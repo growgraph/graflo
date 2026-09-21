@@ -47,8 +47,9 @@ from .db_profile import (
     retain_native_inverses,
 )
 from .inverse_edges import (
-    append_inverses_to_resource,
+    mirror_resource_selectors,
     plan_inverse_edges,
+    plan_inverse_emission,
 )
 from .merge_core import (
     merge_vertex_models,
@@ -98,7 +99,9 @@ from .ops import (
     SetEdgeDirectedOp,
     SetEdgeSemanticsOp,
     SetFieldSemanticsOp,
+    SetInverseEmissionOp,
     SetNativeInversesOp,
+    SetVertexDescriptionsOp,
     SetVertexSemanticsOp,
 )
 from .project import compute_projection
@@ -1551,6 +1554,7 @@ def apply_remove_edge_ids(
         for edge in schema.core_schema.edge_config.edges
         if edge.edge_id not in removed_edge_ids
     ]
+    edge_config_before = schema.core_schema.edge_config
     apply_edge_id_removal_to_db_profile(schema.db_profile, removed_edge_ids)
     retain_native_inverses(schema.db_profile, _relations_of(surviving))
     schema.db_profile = _revalidate_db_profile(schema.db_profile)
@@ -1564,6 +1568,16 @@ def apply_remove_edge_ids(
         return
 
     from graflo.architecture.contract.ingestion.resource import Resource
+
+    from .ingestion import set_emit_inverse_flags, stranded_emission_flags
+
+    # A step that mirrored into a removed inverse edge has nothing left to write
+    # into. Cleared before steps are dropped, while step positions still hold.
+    stranded = stranded_emission_flags(
+        manifest, edge_config_before, schema.core_schema.edge_config
+    )
+    if stranded:
+        set_emit_inverse_flags(manifest, stranded, False)
 
     resources: list[Resource] = []
     for resource in manifest.ingestion_model.resources:
@@ -1855,6 +1869,28 @@ def apply_declare_edge_inverses(
     schema.finish_init()
 
 
+def _steps_mirroring(manifest: GraphManifest, relations: set[str]) -> list[str]:
+    """Flagged steps that name exactly one edge of ``relations``, as ``resource:ref``.
+
+    Such a step is refused at load once its relation has no declared pair, so a
+    retraction that leaves one behind would produce a manifest that does not
+    load. A flagged step whose relation comes from the data simply stops
+    mirroring the retracted pair, and is not reported.
+    """
+    from graflo.architecture.contract.ingestion.steps.ref import iter_edge_steps
+
+    if manifest.ingestion_model is None:
+        return []
+    return [
+        f"{resource.name}:{view.ref}"
+        for resource in manifest.ingestion_model.resources
+        for view in iter_edge_steps(resource.pipeline)
+        if view.emit_inverse
+        and view.static_edge_id is not None
+        and view.static_edge_id[2] in relations
+    ]
+
+
 def apply_retract_edge_inverses(
     manifest: GraphManifest, op: RetractEdgeInversesOp
 ) -> None:
@@ -1875,6 +1911,14 @@ def apply_retract_edge_inverses(
         raise ValueError(
             "retract_edge_inverses: pairs are still realized by native inverses of "
             f"{native}; withdraw them first (set_native_inverses enabled=false)"
+        )
+    feeding = _steps_mirroring(manifest, retracted)
+    if feeding:
+        raise ValueError(
+            "retract_edge_inverses: edge steps still mirror these relations into "
+            f"their inverse (emit_inverse): {feeding}; clear the flags first "
+            "(set_inverse_emission enabled=false), or remove the inverse edges "
+            "(remove_edges), which clears them"
         )
     _replace_edge_config(
         schema,
@@ -1912,9 +1956,14 @@ def apply_add_inverse_edges(manifest: GraphManifest, op: AddInverseEdgesOp) -> N
 
     from graflo.architecture.contract.ingestion.resource import Resource
 
+    from .ingestion import set_emit_inverse_flags
+
+    # Which steps mirror is decided against the pipelines as they are; the
+    # selectors are extended first because they do not move step positions.
+    emission = plan_inverse_emission(manifest, relation_map, created)
     manifest.ingestion_model.resources = [
         Resource.model_validate(
-            append_inverses_to_resource(
+            mirror_resource_selectors(
                 resource.to_dict(skip_defaults=False), relation_map, created
             )
         )
@@ -1923,6 +1972,8 @@ def apply_add_inverse_edges(manifest: GraphManifest, op: AddInverseEdgesOp) -> N
     manifest.ingestion_model = IngestionModel.model_validate(
         manifest.ingestion_model.to_dict(skip_defaults=False)
     )
+    if emission:
+        set_emit_inverse_flags(manifest, emission, True)
 
 
 def apply_sanitize(manifest: GraphManifest, op: SanitizeOp) -> None:
@@ -2021,6 +2072,10 @@ def _dispatch_op(manifest: GraphManifest, op: Any) -> None:
         apply_retract_edge_inverses(manifest, op)
     elif isinstance(op, AddInverseEdgesOp):
         apply_add_inverse_edges(manifest, op)
+    elif isinstance(op, SetInverseEmissionOp):
+        from .ingestion import apply_set_inverse_emission
+
+        apply_set_inverse_emission(manifest, op)
     elif isinstance(op, SetNativeInversesOp):
         from .physical import apply_set_native_inverses
 
@@ -2091,6 +2146,10 @@ def _dispatch_op(manifest: GraphManifest, op: Any) -> None:
         from .semantics import apply_set_vertex_semantics
 
         apply_set_vertex_semantics(manifest, op)
+    elif isinstance(op, SetVertexDescriptionsOp):
+        from .semantics import apply_set_vertex_descriptions
+
+        apply_set_vertex_descriptions(manifest, op)
     elif isinstance(op, SetEdgeSemanticsOp):
         from .semantics import apply_set_edge_semantics
 

@@ -12,6 +12,7 @@ from .models import (
 )
 from .normalize import normalize_actor_step
 from .parse import (
+    canonical_actor_step,
     parse_root_config,
     validate_actor_step,
 )
@@ -25,6 +26,7 @@ __all__ = [
     "TransformGuardConfig",
     "VertexActorConfig",
     "VertexRouterActorConfig",
+    "canonical_actor_step",
     "normalize_actor_step",
     "parse_root_config",
     "validate_actor_step",

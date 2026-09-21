@@ -37,7 +37,7 @@ from graflo.architecture.schema import (
     Schema,
 )
 from graflo.architecture.schema.database_features import DatabaseProfile
-from graflo.architecture.schema.edge import Edge, EdgeConfig
+from graflo.architecture.schema.edge import Edge, EdgeConfig, EdgeInverse
 from graflo.architecture.schema.vertex import Field as VertexField
 from graflo.architecture.schema.vertex import Vertex, VertexConfig
 from graflo.onto import DBType
@@ -50,6 +50,63 @@ def _local_name(uri: str) -> str:
     if "#" in uri:
         return uri.rsplit("#", 1)[-1]
     return uri.rsplit("/", 1)[-1]
+
+
+def _declared_inverses(
+    g: Any, relations: set[str]
+) -> tuple[list[EdgeInverse], list[str]]:
+    """``owl:inverseOf`` and ``owl:SymmetricProperty`` as GraFlo declarations.
+
+    Only what the ontology *states* is carried over, restricted to relations
+    that label an inferred edge. A property that is its own ``owl:inverseOf``
+    is symmetric. Declarations are logical: nothing here decides whether an
+    inverse is stored.
+
+    An ontology can say more than the inverse table admits -- a property with
+    two inverses, or one both symmetric and paired. Those statements are dropped
+    with a log line rather than failing the inference: the edges are still
+    right, and the author can declare what they meant.
+    """
+    from rdflib import OWL, RDF
+
+    symmetric = {
+        name
+        for prop in g.subjects(RDF.type, OWL.SymmetricProperty)
+        if (name := _local_name(str(prop))) in relations
+    }
+    partners: dict[str, set[str]] = {}
+    for prop, _predicate, other in g.triples((None, OWL.inverseOf, None)):
+        left, right = _local_name(str(prop)), _local_name(str(other))
+        if left == right:
+            if left in relations:
+                symmetric.add(left)
+            continue
+        if left not in relations and right not in relations:
+            continue
+        partners.setdefault(left, set()).add(right)
+        partners.setdefault(right, set()).add(left)
+
+    ambiguous = {
+        name
+        for name, others in partners.items()
+        if len(others) > 1 or name in symmetric
+    }
+    pairs: set[tuple[str, str]] = set()
+    for name, others in partners.items():
+        for other in others:
+            if name in ambiguous or other in ambiguous:
+                continue
+            pairs.add((min(name, other), max(name, other)))
+    if ambiguous:
+        logger.warning(
+            "owl:inverseOf statements not carried over -- each relation has at "
+            "most one inverse, and a symmetric relation is its own: %s",
+            sorted(ambiguous),
+        )
+    return (
+        [EdgeInverse(relation=a, inverse=b) for a, b in sorted(pairs)],
+        sorted(symmetric),
+    )
 
 
 def _load_graph(
@@ -193,15 +250,27 @@ class RdfInferenceManager:
 
         vertex_config = VertexConfig(vertices=vertices)
 
+        inverses, symmetric = _declared_inverses(
+            g, {e["relation"] for e in edges if e.get("relation")}
+        )
         edge_objects = [
             Edge(
                 source=e["source"],
                 target=e["target"],
                 relation=e.get("relation"),
+                # A symmetric relation is realized by its edges being undirected.
+                directed=e.get("relation") not in symmetric,
             )
             for e in edges
         ]
-        edge_config = EdgeConfig(edges=edge_objects)
+        edge_config = EdgeConfig(
+            edges=edge_objects, inverses=inverses, symmetric=symmetric
+        )
+        logger.info(
+            "Declared %d inverse pair(s) and %d symmetric relation(s)",
+            len(inverses),
+            len(symmetric),
+        )
 
         # -- Build Resources (one per class) ----------------------------------
         edge_defs_by_source: dict[str, list[dict[str, str]]] = {}

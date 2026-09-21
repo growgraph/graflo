@@ -72,7 +72,7 @@ manifest is self-describing outside any registry.
 metadata:
     provenance:
         content_hash: "…64 hex…"
-        canon: graflo/canon@2
+        canon: graflo/canon@3
         parents: [a3f9c21e4b70, 9e11d02c55aa]
         commit: c4d1e9a2b3f0
         merge_recipe: "…"
@@ -149,7 +149,7 @@ out the parent commit is always exact and is the better tool.
 |---|---|
 | add ↔ remove: vertices, edges, vertex/edge properties, indexes | `merge_vertices`, `merge_edges` |
 | rename: vertices, relations, resources, properties; `canonicalize` that only renames | `change_field_types`, `canonicalize` that merges |
-| `set_edge_directed`, `retarget_edges`, `add_inverse_edges`, `set_native_inverses`; `declare_edge_inverses` ↔ `retract_edge_inverses` | `sanitize`, `project_manifest` |
+| `set_edge_directed`, `retarget_edges`, `add_inverse_edges`, `set_native_inverses`, `set_inverse_emission`; `declare_edge_inverses` ↔ `retract_edge_inverses` | `sanitize`, `project_manifest` |
 | `replace_identity` (with `retire: keep`), secondary identities | `merge_manifests` (binary) |
 
 ## Merging two branches

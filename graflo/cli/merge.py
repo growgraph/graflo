@@ -392,6 +392,7 @@ def _record(
             merged,
             parents=parents,
             recipe=recipe,
+            right=right_manifest,
             label=label,
             created_at=datetime.now(UTC).isoformat(),
         )

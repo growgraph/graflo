@@ -117,7 +117,9 @@ Grounding survives a fold. When two definitions of one type or property are comb
 
 **Declared, symmetric and native inverses** (added in 1.7.0)
 
-`gf:EdgeConfig` points at its declared inverse pairs through `gf:hasInverse`; each `gf:EdgeInverse` carries `gf:relation` and `gf:inverseRelation` (the pair is unordered), ordered by `gf:artifactIndex`. Relations declared as their own inverse are `gf:symmetricRelation` literals on the `gf:EdgeConfig`. A `gf:DatabaseProfile` names each relation whose inverse the database maintains with `gf:nativeInverseRelation`. The inverse type's name is not repeated on the profile — it is the declared pair's other relation.
+`gf:EdgeConfig` points at its declared inverse pairs through `gf:hasInverse`; each `gf:EdgeInverse` carries `gf:relation` and `gf:inverseRelation` (the pair is unordered), ordered by `gf:artifactIndex`. Relations declared as their own inverse are `gf:symmetricRelation` literals on the `gf:EdgeConfig`. A `gf:DatabaseProfile` names each relation whose inverse the database maintains with `gf:nativeInverseRelation`. The inverse type's name is not repeated on the profile — it is the declared pair's other relation. The third realization needs no term: a *materialized* inverse is an ordinary `gf:Edge`, and the `emit_inverse` flag that feeds it rides in the step's `gf:stepPayload` like every other step option.
+
+These are reified, string-valued terms describing a GraFlo contract, not OWL axioms over your relations. Going the other way, schema inference from an ontology does read `owl:inverseOf` and `owl:SymmetricProperty`, and turns them into `edge_config.inverses` and `edge_config.symmetric`.
 
 **List field types** (added in 1.6.0)
 

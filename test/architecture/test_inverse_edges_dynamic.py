@@ -93,19 +93,29 @@ def _edge_steps(manifest: GraphManifest) -> list[dict[str, Any]]:
     ]
 
 
+def _cast(manifest: GraphManifest, row: dict[str, Any]) -> dict[Any, list]:
+    manifest.finish_init()
+    entities = manifest.require_ingestion_model().fetch_resource("relations")(row)
+    return {key: docs for key, docs in entities.items() if isinstance(key, tuple)}
+
+
+ROW = {"source_type": "person", "target_type": "institution", "id": "x"}
+
+
 def test_inverse_edges_dynamic_edge_actor() -> None:
+    """The forward step is flagged to mirror; no second step is generated."""
     manifest = _manifest([FORWARD], _dynamic_pipeline({"EMPLOYED_BY": "employed_by"}))
     out = _apply(manifest, employed_by="employs")
 
-    edge_steps = _edge_steps(out)
-    assert len(edge_steps) == 2
-    inverse = edge_steps[1]
-    assert inverse["source_role"] == "target"
-    assert inverse["target_role"] == "source"
-    assert inverse["relation_field"] == "relation_type"
-    assert inverse["relation_map"] == {"EMPLOYED_BY": "employs"}
-    assert inverse["relation_map_only"] is True
+    (step,) = _edge_steps(out)
+    assert step["emit_inverse"] is True
+    assert step["source_role"] == "source"
+    assert step["relation_map"] == {"EMPLOYED_BY": "employed_by"}
     assert ("institution", "person", "employs") in _edge_ids(out)
+
+    edges = _cast(out, {**ROW, "relation_type": "EMPLOYED_BY"})
+    assert ("person", "institution", "employed_by") in edges
+    assert ("institution", "person", "employs") in edges
 
 
 def test_an_undeclared_relation_is_refused() -> None:
@@ -205,15 +215,58 @@ def test_an_already_declared_inverse_edge_keeps_its_own_ingestion() -> None:
     assert len(_edge_steps(out)) == 1
 
 
-def test_a_partial_relation_map_writes_only_the_mapped_inverse() -> None:
-    """Unmapped raw values used to pass through, reversed, under the forward name."""
+def test_a_relation_without_a_realized_inverse_is_written_one_way() -> None:
+    """The mirror is taken per resolved relation, so an unpaired one is left alone."""
     manifest = _manifest(
         [FORWARD, {"source": "person", "target": "institution", "relation": "funds"}],
         _dynamic_pipeline({"EMPLOYED_BY": "employed_by", "FUNDS": "funds"}),
     )
-    inverse = _edge_steps(_apply(manifest, employed_by="employs"))[1]
-    assert inverse["relation_map"] == {"EMPLOYED_BY": "employs"}
-    assert inverse["relation_map_only"] is True
+    out = _apply(manifest, employed_by="employs")
+
+    edges = _cast(out, {**ROW, "relation_type": "FUNDS"})
+    assert edges[("person", "institution", "funds")]
+    # Nothing is mirrored, and edge inference must not fill the gap with the
+    # inverse of a different relation.
+    assert [
+        key for key, docs in edges.items() if key[0] == "institution" and docs
+    ] == []
+
+
+@pytest.mark.parametrize(
+    "step",
+    [
+        {"from": "person", "to": "institution", "relation_field": "relation_type"},
+        {"links": [{"from": "person", "to": "institution", "relation_field": "r"}]},
+    ],
+    ids=["relation-field-with-fixed-endpoints", "link-reading-a-relation-field"],
+)
+def test_steps_that_name_their_relation_in_the_data_are_mirrored_too(
+    step: dict[str, Any],
+) -> None:
+    """A generated step could not be restricted to the mapped relations; a flag need not be."""
+    manifest = _manifest([FORWARD], [{"edge": step}])
+    (flagged,) = _edge_steps(_apply(manifest, employed_by="employs"))
+    holder = flagged["links"][0] if "links" in flagged else flagged
+    assert holder["emit_inverse"] is True
+
+
+def test_undoing_the_op_restores_the_pipeline_exactly() -> None:
+    from graflo.architecture.evolution import invert_ops
+    from graflo.architecture.evolution.hashing import manifest_hash
+
+    manifest = _manifest(
+        [FORWARD],
+        _dynamic_pipeline({"EMPLOYED_BY": "employed_by"}),
+        inverses=[{"relation": "employed_by", "inverse": "employs"}],
+    )
+    ops = [AddInverseEdgesOp(relations=["employed_by"])]
+    applied = apply_evolution(manifest, ops, bump_version=False)
+    undo, blockers = invert_ops(ops, manifest=manifest)
+    assert blockers == []
+
+    restored = apply_evolution(applied, undo, bump_version=False)
+    assert manifest_hash(restored) == manifest_hash(manifest)
+    assert "emit_inverse" not in _edge_steps(restored)[0]
 
 
 def test_the_inverse_spec_does_not_share_the_forward_physical_type() -> None:
@@ -271,3 +324,71 @@ def test_realizing_twice_changes_nothing(pipeline: list[dict[str, Any]]) -> None
     once = _apply(_manifest([FORWARD], pipeline), employed_by="employs")
     twice = apply_evolution(once, [AddInverseEdgesOp()], bump_version=False)
     assert manifest_hash(twice) == manifest_hash(once)
+
+
+class TestTheDifferReproducesARealization:
+    """A revision made with ``add_inverse_edges`` can be re-derived from its two manifests."""
+
+    @staticmethod
+    def _declared(pipeline: list[dict[str, Any]]) -> GraphManifest:
+        return _manifest(
+            [FORWARD],
+            pipeline,
+            inverses=[{"relation": "employed_by", "inverse": "employs"}],
+        )
+
+    @pytest.mark.parametrize(
+        "pipeline",
+        [
+            [STATIC_STEP],
+            _dynamic_pipeline({"EMPLOYED_BY": "employed_by"}),
+            [
+                {
+                    "key": "jobs",
+                    "pipeline": [
+                        {"edge": {"links": [dict(STATIC_STEP["edge"])]}},
+                    ],
+                }
+            ],
+        ],
+        ids=["fixed", "routed-and-mapped", "link-in-a-nested-pipeline"],
+    )
+    def test_realizing_and_withdrawing_both_replay(
+        self, pipeline: list[dict[str, Any]]
+    ) -> None:
+        from graflo.architecture.evolution.autogenerate import diff_manifests_verified
+        from graflo.architecture.evolution.hashing import manifest_hash
+
+        base = self._declared(pipeline)
+        realized = apply_evolution(base, [AddInverseEdgesOp()], bump_version=False)
+
+        forward, warnings = diff_manifests_verified(base, realized)
+        assert warnings == []
+        assert [op.op for op in forward] == ["add_edges", "set_inverse_emission"]
+        assert manifest_hash(
+            apply_evolution(base, forward, bump_version=False)
+        ) == manifest_hash(realized)
+
+        backward, warnings = diff_manifests_verified(realized, base)
+        assert warnings == []
+        assert backward[0].op == "set_inverse_emission"
+        assert backward[0].enabled is False  # type: ignore[union-attr]
+        assert manifest_hash(
+            apply_evolution(realized, backward, bump_version=False)
+        ) == manifest_hash(base)
+
+    def test_a_flag_flip_next_to_an_inexpressible_edit_is_not_guessed_at(self) -> None:
+        """Positions only correspond when nothing else moved; otherwise the differ says so."""
+        from graflo.architecture.evolution.autogenerate import diff_manifests
+
+        base = self._declared([STATIC_STEP])
+        realized = apply_evolution(base, [AddInverseEdgesOp()], bump_version=False)
+        assert realized.ingestion_model is not None
+        payload = realized.to_dict(skip_defaults=False)
+        resource = payload["ingestion_model"]["resources"][0]
+        resource["pipeline"] = [{"vertex": "person"}, *resource["pipeline"]]
+        edited = GraphManifest.from_dict(payload)
+
+        ops, warnings = diff_manifests(base, edited)
+        assert "set_inverse_emission" not in [op.op for op in ops]
+        assert any("differs" in warning for warning in warnings)

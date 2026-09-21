@@ -84,7 +84,7 @@ from urllib.parse import urlparse
 
 import mgclient
 
-from graflo.architecture.graph_types import EdgeDirection, Index
+from graflo.architecture.graph_types import EdgeDirection, GraphContainer, Index
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import VertexConfig
@@ -1127,6 +1127,43 @@ class MemgraphConnection(Connection):
             results.append(result)
         cursor.close()
         return results
+
+    def graph_neighbors(
+        self,
+        vertex_type: str,
+        key: str | dict[str, Any],
+        *,
+        hops: int = 1,
+        direction: EdgeDirection = EdgeDirection.OUT,
+        edge_types: Sequence[str] | None = None,
+        filters: Any | None = None,
+        limit: int | None = None,
+        schema: Schema | None = None,
+    ) -> GraphContainer:
+        """Bounded neighbourhood via a variable-length OpenCypher pattern.
+
+        Native for the same reason as Neo4j, and because the breadth-first
+        default goes through :meth:`fetch_edges`, which anchors on an ``id``
+        property: a vertex whose identity is named anything else could not be
+        an anchor at all.
+        """
+        from graflo.db.cypher.traversal import cypher_graph_neighbors
+
+        def run(query: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+            result = self.execute(query, **params)
+            return [dict(zip(result.columns, row)) for row in result.result_set]
+
+        return cypher_graph_neighbors(
+            self,
+            vertex_type=vertex_type,
+            key=key,
+            hops=hops,
+            direction=direction,
+            edge_types=edge_types,
+            limit=limit,
+            schema=schema,
+            run=run,
+        )
 
     def introspect_graph_schema(
         self,

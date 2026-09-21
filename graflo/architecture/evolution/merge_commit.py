@@ -19,10 +19,11 @@ from __future__ import annotations
 
 from graflo.architecture.contract.manifest import GraphManifest
 
-from .commit import Commit, MergeRecipeRef, build_multi_parent_commit
+from .commit import Commit, CommitError, MergeRecipeRef, build_multi_parent_commit
 from .hashing import manifest_hash
 from .history import History
 from .merge3 import MergeRecipe
+from .ops import ManifestOp
 
 
 def find_commit_by_tree(history: History, manifest: GraphManifest) -> Commit | None:
@@ -48,12 +49,42 @@ def find_commit_by_tree(history: History, manifest: GraphManifest) -> Commit | N
     return min(preferred, key=lambda commit: commit.id)
 
 
+def left_relabel_ops(
+    left: GraphManifest, right: GraphManifest, recipe: MergeRecipe
+) -> list[ManifestOp]:
+    """The relabel a merge applied to its left side, as ops.
+
+    ``merge_manifests`` resolves its declared clusters and canonical maps into
+    one composite ``canonicalize`` per side and applies it before the union.
+    The left one is part of how the merged manifest came from the left, so a
+    merge commit records it first. Resolved from the recorded declaration --
+    the whole op, canonical maps included -- against both sides, exactly as
+    the merge resolved it.
+    """
+    from .canonical import canonicalize_ops, resolve_clusters
+    from .ops import MergeManifestsOp
+
+    if recipe.kind != "merge":
+        return []
+    op = MergeManifestsOp.model_validate(recipe.equivalences)
+    try:
+        resolution = resolve_clusters(
+            op, left=left.model_copy(deep=True), right=right.model_copy(deep=True)
+        )
+    except Exception as exc:
+        raise CommitError(
+            f"the recorded merge declaration does not resolve against its inputs: {exc}"
+        ) from exc
+    return canonicalize_ops(resolution.side_maps["left"])
+
+
 def build_merge_commit(
     left: GraphManifest,
     merged: GraphManifest,
     *,
     parents: list[str],
     recipe: MergeRecipe,
+    right: GraphManifest | None = None,
     label: str | None = None,
     created_at: str | None = None,
     notes: str | None = None,
@@ -65,6 +96,10 @@ def build_merge_commit(
         merged: The merge result.
         parents: Parent commit ids, first parent first (at least two).
         recipe: The recorded declaration, so a re-merge can replay it.
+        right: The second input. When given, the relabel the merge applied to
+            *left* is recorded ahead of the diff (see :func:`left_relabel_ops`);
+            without it a merge that renamed or folded a left class can only be
+            diffed as an unrelated add and remove, which rarely replays.
         label: Short human-readable name.
         created_at: ISO-8601 timestamp.
         notes: Free-form annotation.
@@ -85,6 +120,7 @@ def build_merge_commit(
         merge_recipe=MergeRecipeRef(
             hash=recipe.content_hash(), kind=recipe.kind, payload=recipe.to_dict()
         ),
+        lead_ops=left_relabel_ops(left, right, recipe) if right is not None else None,
     )
 
 

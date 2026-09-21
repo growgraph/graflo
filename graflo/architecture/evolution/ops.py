@@ -20,6 +20,7 @@ from pydantic import Field as PydanticField
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.contract.bindings.core import Bindings
 from graflo.architecture.contract.ingestion.resource import ResourceConfig
+from graflo.architecture.contract.ingestion.steps.ref import EdgeStepRef
 from graflo.architecture.contract.ingestion.transform import ProtoTransform
 from graflo.architecture.graph_types import EdgeDirection, Index
 from graflo.architecture.schema.database_features import DatabaseProfile
@@ -953,12 +954,18 @@ class AddInverseEdgesOp(ConfigBaseModel):
 
     Edges are derived from the relation map: for each directed edge ``(S, T, r)``
     whose relation has a declared pair ``inv``, adds the logical edge
-    ``(T, S, inv)`` unless it exists, its physical spec, and ingestion steps that
-    write it from the same rows. The pair must be declared first
-    (:class:`DeclareEdgeInversesOp`); this op never declares. A symmetric
-    relation has no inverse edge to add -- its edges are undirected. Refused for a
-    relation whose inverse is native (:class:`SetNativeInversesOp`), since both
-    would store the same fact.
+    ``(T, S, inv)`` unless it exists and its physical spec, and sets
+    ``emit_inverse`` on the edge steps that write ``r``, so the same rows write
+    both. No step is generated: the inverse is mirrored at assembly, after the
+    relation is resolved, which covers every way a step can name its relation.
+    A resource that already writes the inverse with a step of its own is left
+    alone. The pair must be declared first (:class:`DeclareEdgeInversesOp`);
+    this op never declares. A symmetric relation has no inverse edge to add --
+    its edges are undirected. Refused for a relation whose inverse is native
+    (:class:`SetNativeInversesOp`), since both would store the same fact.
+
+    Withdraw with :class:`RemoveEdgesOp` on the inverse edges: removing an edge
+    clears the ``emit_inverse`` flags that fed it.
     """
 
     op: Literal["add_inverse_edges"] = "add_inverse_edges"
@@ -1008,6 +1015,45 @@ class SetNativeInversesOp(ConfigBaseModel):
     def _validate_unique(self) -> SetNativeInversesOp:
         if len(set(self.relations)) != len(self.relations):
             raise ValueError("set_native_inverses: relations must be unique")
+        return self
+
+
+class SetInverseEmissionOp(ConfigBaseModel):
+    """Set or clear ``emit_inverse`` on edge steps, addressed by position.
+
+    The ingestion half of a materialized inverse, as a primitive: which steps
+    mirror the edges they write into the declared inverse. A step is addressed
+    by resource and :class:`EdgeStepRef` (``at`` / ``step`` / ``link``), so the
+    op says exactly which steps change and nothing is inferred at replay time.
+
+    Enabling is refused where the flag could never write anything -- a step
+    naming exactly one edge whose relation has no declared pair, is symmetric,
+    or has no declared inverse edge. A step whose relation comes from the data
+    is accepted; it mirrors per document what has a materialized inverse.
+    """
+
+    op: Literal["set_inverse_emission"] = "set_inverse_emission"
+    steps: dict[str, list[EdgeStepRef]] = PydanticField(
+        ...,
+        description="Edge steps whose flag changes: ``{resource: [step ref, ...]}``.",
+        min_length=1,
+    )
+    enabled: bool = PydanticField(
+        default=True,
+        description="``False`` clears the flag.",
+    )
+
+    @model_validator(mode="after")
+    def _validate_steps(self) -> SetInverseEmissionOp:
+        empty = sorted(name for name, refs in self.steps.items() if not refs)
+        if empty:
+            raise ValueError(f"set_inverse_emission: no steps given for {empty}")
+        for name, refs in self.steps.items():
+            keys = [ref.sort_key for ref in refs]
+            if len(set(keys)) != len(keys):
+                raise ValueError(
+                    f"set_inverse_emission: steps of {name!r} must be unique"
+                )
         return self
 
 
@@ -1557,6 +1603,28 @@ class SetVertexSemanticsOp(ConfigBaseModel):
     )
 
 
+class SetVertexDescriptionsOp(ConfigBaseModel):
+    """Set or clear the human-readable description of existing vertex types.
+
+    A description was authorable only when a type was first written, so a
+    change to one -- a merge folding two types together and joining what each
+    side said about it, or a correction to what an inferred type means -- had no
+    operation and could only be diffed as inexpressible. Like grounding, a
+    description is never consulted at execution time: this op cannot change how
+    anything ingests or stores.
+    """
+
+    op: Literal["set_vertex_descriptions"] = "set_vertex_descriptions"
+    descriptions: dict[str, str | None] = PydanticField(
+        ...,
+        description=(
+            "Per-vertex description: ``{vertex_name: text}``. ``None`` clears it, "
+            "which is what makes the op invertible."
+        ),
+        min_length=1,
+    )
+
+
 class SetEdgeSemanticsOp(ConfigBaseModel):
     """Ground edge relations in an external vocabulary.
 
@@ -1673,6 +1741,16 @@ class AddResourcesOp(ConfigBaseModel):
         description="Full resource definitions.",
         min_length=1,
     )
+    transforms: list[ProtoTransform] = PydanticField(
+        default_factory=list,
+        description=(
+            "Named transforms to register in ``ingestion_model.transforms`` for "
+            "steps of the new resources that reference them via ``call.use``. "
+            "Unioned by name exactly as ``add_resource_transforms`` does: an "
+            "identical body already registered dedupes, a different one is an "
+            "error at apply time."
+        ),
+    )
 
     @model_validator(mode="after")
     def _validate_unique_names(self) -> AddResourcesOp:
@@ -1698,8 +1776,9 @@ class ProjectManifestOp(ConfigBaseModel):
 
     Keeps only the requested logical vertices and edges (and optionally resources).
     All schema, ``db_profile``, ingestion, and bindings references to removed
-    entities are pruned. Inverse edges are **not** auto-kept; list them explicitly
-    in ``keep_edges`` when needed.
+    entities are pruned. Inverse edges are **not** kept by default; list them in
+    ``keep_edges``, or set ``keep_inverse_edges`` to keep the declared mirror of
+    every edge that is kept.
 
     With ``connectivity=\"induced_prune\"`` (v1 default), when ``keep_vertices`` is
     set, vertex types from that list with no incident surviving edge are dropped.
@@ -1751,6 +1830,15 @@ class ProjectManifestOp(ConfigBaseModel):
     keep_resources: list[str] | None = PydanticField(
         default=None,
         description="Optional ingestion resource names to retain after graph slice.",
+    )
+    keep_inverse_edges: bool = PydanticField(
+        default=False,
+        description=(
+            "With ``keep_edges``: also keep the declared mirror ``(T, S, inv)`` of "
+            "each kept ``(S, T, r)``, so a materialized pair survives as a pair. "
+            "Without ``keep_edges`` every edge between surviving vertices is kept "
+            "already."
+        ),
     )
     strict: bool = PydanticField(
         default=True,
@@ -2618,6 +2706,7 @@ ManifestOp = Annotated[
     | SetBindingsOp
     | SetDbProfileOp
     | SetVertexSemanticsOp
+    | SetVertexDescriptionsOp
     | SetEdgeSemanticsOp
     | SetFieldSemanticsOp
     | MergeVerticesOp
@@ -2637,6 +2726,7 @@ ManifestOp = Annotated[
     | RetractEdgeInversesOp
     | AddInverseEdgesOp
     | SetNativeInversesOp
+    | SetInverseEmissionOp
     | ProjectManifestOp
     | ReplaceIdentityOp
     | SanitizeOp
@@ -2674,6 +2764,7 @@ INGESTION_REWRITING_OPS: frozenset[str] = frozenset(
         "replace_identity",
         "retarget_edges",
         "sanitize",
+        "set_inverse_emission",
     }
 )
 

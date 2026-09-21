@@ -27,6 +27,17 @@ jobs:
             uses: astral-sh/setup-uv@v7
             with:
                 version: "0.9.28"
+        # Publishing a version nobody tagged lets the release tag and the PyPI
+        # version drift apart unnoticed, so refuse to build on a mismatch.
+        -   name: Verify tag matches pyproject version
+            run: |
+                project_version="$(uv version --short)"
+                tag_version="${GITHUB_REF_NAME#v}"
+                echo "pyproject: ${project_version} / tag: ${tag_version}"
+                if [ "${project_version}" != "${tag_version}" ]; then
+                  echo "::error::Release tag ${GITHUB_REF_NAME} does not match pyproject version ${project_version}"
+                  exit 1
+                fi
         -   name: Build and publish
             run: |
                 uv build

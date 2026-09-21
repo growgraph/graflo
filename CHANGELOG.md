@@ -6,6 +6,151 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.13.4]
+
+### Added
+
+- **Example 23, *Edge inverses: audit, repair, realize*.** Assemble two
+  sources, audit declared pairs, repair omissions as ops, and preview writes
+  without a database.
+- **RDF schema inference** carries `owl:inverseOf` into `edge_config.inverses`
+  and `owl:SymmetricProperty` (or a self-`owl:inverseOf`) into
+  `edge_config.symmetric` with `directed: false`. Only relations that label an
+  inferred edge are kept; statements the inverse table cannot hold are logged
+  and dropped.
+- **TigerGraph introspection** recovers `WITH REVERSE_EDGE` as
+  `db_profile.native_inverses` instead of a second logical edge. The type
+  listed first is taken as the forward type.
+- **Inverse planners:** `plan_realize_inverses`, `plan_repair_inverses`,
+  `plan_switch_realization`, `plan_withdraw_realization`,
+  `plan_declare_symmetric`. Each returns an `InversePlan` (ops, skipped
+  relations, audit before/after) and applies nothing. `realize` takes
+  `native`, `materialized`, or `auto`.
+- **`graflo inverses audit | realize | repair | switch | withdraw`.** Shell
+  for the audit and planners (`-o`, `--emit-ops`, `--dry-run`). Exit 1 if
+  conflicts remain, 2 if the file is not a manifest.
+- **`set_inverse_emission`.** Set or clear `emit_inverse` on edge steps by
+  `{resource: [{at, step, link}]}`. Refused on a step that names exactly one
+  unpaired, symmetric, or undeclared-inverse relation.
+- **`project_manifest.keep_inverse_edges`.** With `keep_edges`, also keeps the
+  declared mirror of each kept edge. Off by default.
+- **`audit_inverses(manifest)`.** How a manifest realizes declared inverses
+  (schema, profile, pipelines). Findings split repairable vs conflict.
+  `InverseReport.introduced_since` / `to_lines()`. `manifest_for_audit` builds
+  a manifest that fails `finish_init` so it can still be audited.
+- **`graflo check --profile inverses`.** The audit as a conformance profile:
+  contradictions fail, omissions warn.
+- **`graflo.architecture.contract.ingestion.steps.ref`.** `iter_edge_steps`
+  yields `EdgeStepRef` (`at` / `step` / `link`); `with_emit_inverse` flips the
+  flag without rewriting the step's spelling.
+- **`emit_inverse` on an edge step (or one `links` entry).** Writes the
+  declared materialized inverse from the same row, after the relation is
+  resolved — including `relation_field`, `relation_map`, and
+  `relation_from_key`. Defaults off; does not change the hash of a manifest
+  that does not set it.
+- **Declared inverses are queryable.** `graph_neighbors(edge_types=[...])`
+  resolves names through `resolve_relation`: a stored name selects stored
+  edges; a name that is only a declared inverse is read from the target.
+  Results report the asked-for name and endpoint order.
+- **Edge cards and relation vocabulary** carry the inverse table.
+  `build_edge_card(edge, schema=...)` adds `inverse`, `inverse_state`,
+  `symmetric`; `SchemaGraph.relation_vocabulary()` lists declared inverse
+  names beside stored ones.
+- **`graflo.architecture.schema.inverse_realization`.** Typed findings:
+  `pair_realizations`, `edge_inverse_findings`, `schema_inverse_findings`
+  (`repairable` / `conflict` / `note`). Works on a schema that has not been
+  through `finish_init`. `EdgeConfig.inverse_advisories()` renders them.
+- **`native_inverse_violations(...)`.** Pre-check for native-inverse
+  eligibility without changing the profile. Same rules as
+  `DatabaseProfile.validate_native_inverses`.
+- **`set_vertex_descriptions`.** Change or clear `{vertex: text | null}` on an
+  existing vertex type. `diff_manifests` emits it when descriptions differ.
+- **`add_resources.transforms`.** Register named transforms the added
+  resources call (`call.use`); same-named transforms combine as in
+  `add_resource_transforms`. `diff_manifests` fills the field.
+- **Merge commits record left-side renames** as the first steps of the
+  commit. `graflo merge -m` passes the right side; `left_relabel_ops` returns
+  the rename steps; `build_multi_parent_commit` accepts `lead_ops`.
+- **`GraphEngine.diff_live_schema(conn_conf, schema)`.** Live vs declared
+  vertex types, edge types, and property names
+  (`graflo.migrate.compare_live_schema` → `LiveSchemaDrift`). Types,
+  identities, and indexes are not compared.
+- **PostgreSQL table and column comments** reach samples and profiles: table
+  comment as `ResourceSample.description`, column comments as
+  `field_descriptions` / `FieldProfile.description`.
+  `RawTableInfo.description` holds the table comment.
+- **`canonical_actor_step` and `ResourceConfig.canonical_field_payload`.**
+  Write a pipeline step in one standard form so equivalent spellings hash and
+  compare equal.
+
+### Changed
+
+- **Content hashes (`CANON_VERSION` is now `graflo/canon@3`).** Pipeline steps
+  are canonicalized before hashing (`{vertex: v}` vs `{vertex: v, type: vertex}`,
+  `from`/`to` vs `source`/`target`, wrapped vs flat `edge`). List order inside a
+  step still matters. Commits recorded under `canon@2` have outdated hashes;
+  regenerate them.
+- **`add_inverse_edges` sets `emit_inverse` instead of appending reversed
+  steps.** A resource that already writes the inverse is left alone. Earlier
+  generated steps keep working; a stored revision containing this op replays
+  to a different manifest — regenerate it.
+- **`remove_edges` / `project_manifest` clear `emit_inverse`** on steps that
+  mirrored into a removed inverse. `retract_edge_inverses` is refused while a
+  step naming exactly one edge of the pair still sets the flag.
+- **Refused edge steps name the rule** (`Invalid edge step:` …) instead of a
+  generic *Invalid actor step configuration*.
+- **Edges of one relation must agree on `directed`.** Mixed directed /
+  undirected no longer loads. **Migration:** give every edge of such a
+  relation the same `directed` value.
+- **Direction helpers moved to `graflo.architecture.schema.edge_direction`**
+  (`ReverseTraversalCost`, `reverse_traversal_cost`,
+  `supports_native_undirected`, `default_direction_for_edge`). PostgreSQL
+  reverse reads are recorded as free (target-column index already exists).
+- DOI badge cites the all-versions Zenodo DOI `10.5281/zenodo.15446131`.
+
+### Fixed
+
+- **SQL junction-table edges could come out backwards.** Foreign keys are now
+  read in column-declaration order (`foreign_keys_in_column_order`).
+- **`diff_manifests` can re-derive a revision that used `add_inverse_edges`.**
+  It emits `set_inverse_emission` (clear first, set last).
+- **Undo of `add_inverse_edges` left generated steps writing undeclared
+  relations.** Undo now clears the flags that fed the removed edges.
+- **`graph_neighbors` on TigerGraph** dropped undirected edges and ignored
+  native inverses; both now travel with every `fetch_edges` request. A
+  direction the backend cannot follow is raised, not swallowed.
+- **`graph_neighbors` followed a two-type edge from the wrong end.** `OUT`
+  leaves the anchor, `IN` arrives at it; `ANY` from one end of a two-type edge
+  narrows to the orientation that can exist.
+- **TigerGraph reverse reads swapped endpoints.** Inbound rows are restated
+  in the declared edge's orientation.
+- **Cypher `graph_neighbors` followed undirected edges one way.** Direction is
+  now decided per edge; mixed-direction walks go hop by hop.
+- **A merge that renamed or folded a class can be saved as a merge commit.**
+  Renames are recorded first; equivalent pipeline spellings no longer look
+  like edits; `add_resources` / `add_resource_transforms` cover new
+  transforms; secondary-identity indexes are left alone.
+- **`diff_manifests` applies rename hints before comparing**, so a hinted
+  rename no longer shows rewritten pipelines as extra edits.
+- **`rename_vertices` renames flat edge steps** (`{from, to, relation}`) that
+  previously kept writing the old vertex name.
+- **Multi-hop `graph_neighbors` crosses relation types** on Neo4j, FalkorDB,
+  and ArangoDB when `hops` > 1.
+- **`graph_neighbors` on Memgraph** works for vertices whose identity is not
+  called `id`.
+- **A neighbourhood no longer lists its own starting vertex** when a walk
+  returns along a cycle.
+- **PostgreSQL table samples are stable.** Ordered by primary key, or by the
+  whole row when there is none.
+
+### Security
+
+- **Graph queries no longer interpolate request values into query text.**
+  `graph_neighbors` anchors (Neo4j, Memgraph, FalkorDB, ArangoDB) and
+  `fetch_edges` ids (Neo4j, FalkorDB) are query parameters. A `{field: value}`
+  key must name a declared vertex property.
+
+
 ## [1.13.3]
 
 ### Added
@@ -158,11 +303,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The TigerGraph reverse edge was dropped by the RDF round trip.** Its
   replacement, `native_inverse`, is serialized.
 
-- **`graflo log` pointed forked heads at the wrong verb.** Two heads in one
-  history share an ancestor, so they are reconciled by the three-way -- but the
-  hint still read ``Use `graflo merge` to reconcile them``, which the rename had
-  turned into the binary operation. It names `graflo merge3`. The same stale
-  spelling was in the comment listing the verbs mounted from `commit_group()`.
+- **`graflo log` suggested the wrong command for forked histories.** When a
+  history has two heads, the hint said ``Use `graflo merge` to reconcile
+  them``, but after the rename `graflo merge` combines two unrelated manifests.
+  Two heads of one history need the three-way `graflo merge3`, which the hint
+  now names.
 
 ## [1.13.2]
 

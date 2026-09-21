@@ -194,11 +194,23 @@ class SqlAlchemyMetadataProvider(SqlMetadataProvider):
     def get_table_sample_rows(
         self, table_name: str, schema_name: str | None = None, limit: int = 5
     ) -> list[dict[str, Any]]:
+        """Rows ordered by the primary key when there is one, so a repeated
+        sample of unchanged data is the same sample."""
         qualified = self._qualified(table_name, schema_name)
+        try:
+            primary_key = self.get_primary_keys(table_name, schema_name)
+        except Exception:
+            primary_key = []
+        quote = self.engine.dialect.identifier_preparer.quote
+        order_clause = (
+            " ORDER BY " + ", ".join(quote(column) for column in primary_key)
+            if primary_key
+            else ""
+        )
         try:
             with self.engine.connect() as connection:
                 rows = connection.execute(
-                    text(f"SELECT * FROM {qualified} LIMIT {int(limit)}")
+                    text(f"SELECT * FROM {qualified}{order_clause} LIMIT {int(limit)}")
                 )
                 return [dict(row._mapping) for row in rows]
         except Exception as error:

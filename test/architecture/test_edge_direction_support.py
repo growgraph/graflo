@@ -92,7 +92,7 @@ def test_tigergraph_represents_undirected_natively() -> None:
         (DBType.MEMGRAPH, "info"),
         (DBType.FALKORDB, "info"),
         (DBType.NEBULA, "info"),
-        (DBType.POSTGRES, "warning"),
+        (DBType.POSTGRES, "info"),
         (DBType.GRAFLO_BACKEND, "warning"),
     ],
 )
@@ -105,6 +105,23 @@ def test_one_diagnostic_per_undirected_edge(db_type: DBType, severity: str) -> N
     assert diagnostic.severity == severity
     assert db_type.value in diagnostic.message
     assert diagnostic.remedy
+
+
+def test_postgres_reverse_read_is_indexed() -> None:
+    """Every edge table is defined with an index on its target column."""
+    assert reverse_traversal_cost(DBType.POSTGRES) is ReverseTraversalCost.FREE
+
+
+def test_the_capability_table_is_importable_below_the_backends() -> None:
+    """Schema-level reasoning consults the table without importing ``graflo.db``."""
+    from graflo.architecture.schema import edge_direction
+    from graflo.db import edge_direction_support
+
+    assert (
+        edge_direction.ReverseTraversalCost
+        is edge_direction_support.ReverseTraversalCost
+    )
+    assert set(edge_direction.REVERSE_TRAVERSAL_COST) == TARGET_DATABASES
 
 
 def test_graflo_backend_reports_the_materialization_tier() -> None:

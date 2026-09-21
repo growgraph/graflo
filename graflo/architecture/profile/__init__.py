@@ -15,6 +15,12 @@ from graflo.architecture.profile.context import (
     VocabularyResolver,
     VocabularyStatus,
 )
+from graflo.architecture.profile.inverses import (
+    INVERSES_PROFILE,
+    InverseReport,
+    PairStatus,
+    audit_inverses,
+)
 from graflo.architecture.profile.model import (
     AssertionResult,
     Finding,
@@ -36,11 +42,14 @@ from graflo.architecture.profile.runner import (
 from graflo.architecture.profile.world_model import WORLD_MODEL_PROFILE
 
 __all__ = [
+    "INVERSES_PROFILE",
     "WORLD_MODEL_PROFILE",
     "Assertion",
     "AssertionResult",
     "CheckContext",
     "Finding",
+    "InverseReport",
+    "PairStatus",
     "PrefixAllowListResolver",
     "Profile",
     "ProfileReport",
@@ -50,6 +59,7 @@ __all__ = [
     "VocabularyResolver",
     "VocabularyStatus",
     "Waiver",
+    "audit_inverses",
     "check_manifest",
     "check_manifest_config",
     "get_profile",

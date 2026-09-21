@@ -845,7 +845,9 @@ class FalkordbConnection(Connection):
             List of fetched edges as dictionaries
         """
         # Build anchor node match
-        source_match = f"(source:{from_type} {{id: '{from_id}'}})"
+        # Ids come from callers and travel as parameters, never as query text.
+        params: dict[str, Any] = {"from_id": from_id}
+        source_match = f"(source:{from_type} {{id: $from_id}})"
         rel_pattern = cypher_rel_pattern(edge_type, direction)
 
         # Build target node match
@@ -857,7 +859,8 @@ class FalkordbConnection(Connection):
         # Build WHERE clauses
         where_clauses: list[str] = []
         if to_id:
-            where_clauses.append(f"target.id = '{to_id}'")
+            where_clauses.append("target.id = $to_id")
+            params["to_id"] = to_id
 
         # Add additional filters if provided
         if filters is not None:
@@ -883,7 +886,7 @@ class FalkordbConnection(Connection):
             {limit_clause}
         """
 
-        result = self.execute(query)
+        result = self.execute(query, **params)
 
         # Convert results
         if return_keys is not None:
@@ -911,8 +914,8 @@ class FalkordbConnection(Connection):
         """
         from graflo.db.cypher.traversal import cypher_graph_neighbors
 
-        def run(query: str) -> list[dict[str, Any]]:
-            result = self.execute(query)
+        def run(query: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+            result = self.execute(query, **params)
             rows: list[dict[str, Any]] = []
             for row in result.result_set:
                 far = row[0]
@@ -921,7 +924,8 @@ class FalkordbConnection(Connection):
                     if hasattr(far, "properties")
                     else (dict(far) if isinstance(far, dict) else {})
                 )
-                rows.append({"far": properties})
+                labels = row[2] if len(row) > 2 else None
+                rows.append({"far": properties, "labels": labels})
             return rows
 
         return cypher_graph_neighbors(

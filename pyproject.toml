@@ -44,7 +44,7 @@ license-files = ["LICENSE", "NOTICE"]
 name = "graflo"
 readme = "README.md"
 requires-python = ">=3.11"
-version = "1.13.3"
+version = "1.13.4"
 
 [project.optional-dependencies]
 dev = [
@@ -80,6 +80,8 @@ run_tigergraph_queries = "graflo.cli.run_tigergraph_queries:run_tigergraph_queri
 xml2json = "graflo.cli.xml2json:xml2json"
 
 [project.urls]
+Changelog = "https://github.com/growgraph/graflo/blob/main/CHANGELOG.md"
+Documentation = "https://growgraph.github.io/graflo"
 Homepage = "https://github.com/growgraph/graflo"
 
 [tool.hatch.build.targets.sdist]

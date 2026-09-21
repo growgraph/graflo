@@ -527,7 +527,15 @@ class Connection(abc.ABC):
             unset_keys: Keys to exclude (projection)
             direction: Orientations to follow from the anchor. Defaults to
                 :attr:`EdgeDirection.OUT`, the historical behaviour.
-            **kwargs: Additional database-specific parameters
+            **kwargs: Additional database-specific parameters. Two are part of
+                the contract, passed by every schema-aware caller and ignored
+                by backends that do not need them: ``native_inverse_type``
+                (``str | None`` — the paired type the database maintains for
+                the edge's relation, see ``DatabaseProfile.native_inverse_of``)
+                and ``edge_is_undirected`` (``bool`` — the edge type was created
+                undirected). A backend whose reverse reachability is decided at
+                schema time answers ``IN`` / ``ANY`` from them; rows come back in
+                the orientation of the edge as declared, whichever type answered.
 
         Returns:
             list: List of fetched edges
