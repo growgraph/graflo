@@ -23,6 +23,7 @@ from .ops import (
     FieldSemanticsTarget,
     SetEdgeSemanticsOp,
     SetFieldSemanticsOp,
+    SetVertexDescriptionsOp,
     SetVertexSemanticsOp,
 )
 
@@ -47,6 +48,26 @@ def apply_set_vertex_semantics(
             continue
         value = op.semantics[vertex.name]
         vertex.semantics = value.model_copy(deep=True) if value is not None else None
+
+    schema.finish_init()
+
+
+def apply_set_vertex_descriptions(
+    manifest: GraphManifest, op: SetVertexDescriptionsOp
+) -> None:
+    """Set, replace or clear the description on selected vertex types."""
+    schema = manifest.graph_schema
+    if schema is None:
+        raise ValueError("set_vertex_descriptions requires graph_schema")
+
+    vertex_config = schema.core_schema.vertex_config
+    unknown = sorted(set(op.descriptions) - vertex_config.vertex_set)
+    if unknown:
+        raise ValueError(f"set_vertex_descriptions: unknown vertices: {unknown}")
+
+    for vertex in vertex_config.vertices:
+        if vertex.name in op.descriptions:
+            vertex.description = op.descriptions[vertex.name]
 
     schema.finish_init()
 
@@ -134,5 +155,6 @@ def apply_set_field_semantics(manifest: GraphManifest, op: SetFieldSemanticsOp) 
 __all__ = [
     "apply_set_edge_semantics",
     "apply_set_field_semantics",
+    "apply_set_vertex_descriptions",
     "apply_set_vertex_semantics",
 ]

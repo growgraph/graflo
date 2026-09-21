@@ -72,7 +72,7 @@ manifest is self-describing outside any registry.
 metadata:
     provenance:
         content_hash: "…64 hex…"
-        canon: graflo/canon@2
+        canon: graflo/canon@3
         parents: [a3f9c21e4b70, 9e11d02c55aa]
         commit: c4d1e9a2b3f0
         merge_recipe: "…"

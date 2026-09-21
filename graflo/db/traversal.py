@@ -16,7 +16,7 @@ backend that physically cannot follow the requested direction fails loudly
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from typing import TYPE_CHECKING, Any
 
 from graflo.architecture.graph_types import EdgeDirection, EdgeId, GraphContainer
@@ -271,6 +271,31 @@ def _anchor_side(
     return None
 
 
+def check_anchor_fields(
+    schema: Schema, db_aware: Any, vertex_type: str, fields: Iterable[str]
+) -> None:
+    """Refuse an anchor key that names a property *vertex_type* does not declare.
+
+    A native traversal writes the anchor's field name into its query text, and
+    the name arrives with the request, so an undeclared one is not merely a
+    miss: it is an injection point. Checking against the schema closes it for
+    every backend at once.
+
+    Raises:
+        ValueError: naming the undeclared field and the declared ones.
+    """
+    vertex = schema.core_schema.vertex_config[vertex_type]
+    declared = set(vertex.property_names) | set(
+        db_aware.vertex_config.identity_fields(vertex_type)
+    )
+    for field in fields:
+        if field not in declared:
+            raise ValueError(
+                f"Cannot match {vertex_type!r} on {field!r}: not a declared "
+                f"property; declared: {sorted(declared)}"
+            )
+
+
 def _resolve_anchor_id(
     conn: Connection,
     schema: Schema,
@@ -281,6 +306,7 @@ def _resolve_anchor_id(
     """Resolve *anchor_key* to the id string the backend indexes on."""
     if isinstance(anchor_key, str):
         return anchor_key
+    check_anchor_fields(schema, db_aware, anchor_type, anchor_key)
     storage = db_aware.vertex_config.vertex_dbname(anchor_type)
     leaves = [
         {"field": field, "cmp_operator": "==", "value": value}

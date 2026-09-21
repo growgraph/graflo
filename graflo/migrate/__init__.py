@@ -1,6 +1,7 @@
 """Migration planning and execution primitives."""
 
 from graflo.migrate.diff import SchemaDiff
+from graflo.migrate.drift import LiveSchemaDrift, compare_live_schema
 from graflo.migrate.models import (
     MigrationOperation,
     MigrationPlan,
@@ -13,6 +14,7 @@ from graflo.migrate.models import (
 from graflo.migrate.planner import MigrationPlanner
 
 __all__ = [
+    "LiveSchemaDrift",
     "MigrationOperation",
     "MigrationPlan",
     "MigrationPlanner",
@@ -22,4 +24,5 @@ __all__ = [
     "SchemaConflict",
     "SchemaDiff",
     "SchemaDiffResult",
+    "compare_live_schema",
 ]

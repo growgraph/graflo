@@ -383,6 +383,23 @@ class ResourceConfig(ConfigBaseModel):
                     names.add(weight.name)
         return names
 
+    def canonical_field_payload(self, field_name: str) -> Any | None:
+        """Canonical rendering of *field_name*, when it differs from its dump.
+
+        Consulted by content hashing and by the manifest differ. ``pipeline``
+        is stored as authored dicts, and a step has several equivalent
+        spellings; this renders each step in one spelling (see
+        :func:`~graflo.architecture.contract.ingestion.steps.parse.canonical_actor_step`).
+        ``None`` means the field's ordinary dump is already canonical.
+        """
+        if field_name != "pipeline":
+            return None
+        from graflo.architecture.contract.ingestion.steps.parse import (
+            canonical_actor_step,
+        )
+
+        return [canonical_actor_step(step) for step in self.pipeline]
+
     def pipeline_actor_count(self) -> int:
         """Count actors in the pipeline without binding schema context."""
         from graflo.architecture.pipeline.runtime.actor import ActorWrapper

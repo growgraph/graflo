@@ -50,7 +50,7 @@ from typing import Any
 #: Mixed into the hashed bytes so a future change to this module's rules is
 #: explicit and collision-free rather than a silent reinterpretation of old
 #: hashes. Bump it whenever :data:`LIST_ORDER` or the sort rule changes.
-CANON_VERSION: str = "graflo/canon@2"
+CANON_VERSION: str = "graflo/canon@3"
 
 
 class ListOrder(str, Enum):
@@ -258,9 +258,19 @@ def _canonicalize_node(obj: Any, payload: Any) -> Any:
     if fields is None or not isinstance(payload, dict):
         return payload
 
+    # A model may render a field canonically itself when its dump is not yet
+    # canonical -- a resource pipeline stores steps in whichever of several
+    # equivalent spellings they were authored in. Looked up on the instance so
+    # this module still imports no contract model.
+    override = getattr(obj, "canonical_field_payload", None)
+
     for name, info in fields.items():
         key = _dump_key(name, info)
         if key not in payload:
+            continue
+        rendered = override(name) if callable(override) else None
+        if rendered is not None:
+            payload[key] = rendered
             continue
         payload[key] = _canonicalize_value(
             getattr(obj, name, None),

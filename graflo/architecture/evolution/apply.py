@@ -99,6 +99,7 @@ from .ops import (
     SetEdgeSemanticsOp,
     SetFieldSemanticsOp,
     SetNativeInversesOp,
+    SetVertexDescriptionsOp,
     SetVertexSemanticsOp,
 )
 from .project import compute_projection
@@ -2091,6 +2092,10 @@ def _dispatch_op(manifest: GraphManifest, op: Any) -> None:
         from .semantics import apply_set_vertex_semantics
 
         apply_set_vertex_semantics(manifest, op)
+    elif isinstance(op, SetVertexDescriptionsOp):
+        from .semantics import apply_set_vertex_descriptions
+
+        apply_set_vertex_descriptions(manifest, op)
     elif isinstance(op, SetEdgeSemanticsOp):
         from .semantics import apply_set_edge_semantics
 

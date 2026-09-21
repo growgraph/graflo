@@ -67,6 +67,7 @@ from .ops import (
     SetEdgeSemanticsOp,
     SetFieldSemanticsOp,
     SetNativeInversesOp,
+    SetVertexDescriptionsOp,
     SetVertexSemanticsOp,
     SideIdentity,
     VertexEquivalence,
@@ -200,6 +201,7 @@ _SEMANTICS_EXPORTS = frozenset(
     {
         "apply_set_edge_semantics",
         "apply_set_field_semantics",
+        "apply_set_vertex_descriptions",
         "apply_set_vertex_semantics",
     }
 )
@@ -387,6 +389,7 @@ __all__ = [
     "SetEdgeSemanticsOp",
     "SetFieldSemanticsOp",
     "SetNativeInversesOp",
+    "SetVertexDescriptionsOp",
     "SetVertexSemanticsOp",
     "SharedDerivation",
     "SideIdentity",
@@ -435,6 +438,7 @@ __all__ = [
     "apply_set_edge_semantics",
     "apply_set_field_semantics",
     "apply_set_native_inverses",
+    "apply_set_vertex_descriptions",
     "apply_set_vertex_semantics",
     "build_commit",
     "build_merge_commit",

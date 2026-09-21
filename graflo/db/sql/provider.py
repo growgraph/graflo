@@ -69,5 +69,6 @@ class SqlMetadataProvider(Protocol):
     def get_table_sample_rows(
         self, table_name: str, schema_name: str | None = None, limit: int = 5
     ) -> list[dict[str, Any]]:
-        """A few rows, for column sampling. Empty list when unavailable."""
+        """A few rows, for column sampling, in a stable order where the engine
+        allows (primary key first). Empty list when unavailable."""
         ...

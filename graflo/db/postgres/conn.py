@@ -205,12 +205,14 @@ class PostgresConnection(PostgresTargetWriteMixin, Connection):
             schema_name: Schema name to query
 
         Returns:
-            List of table information dictionaries with keys: table_name, table_schema
+            List of table information dictionaries with keys: table_name,
+            table_schema, description (the table comment, empty when none)
         """
         query = """
             SELECT
                 c.relname as table_name,
-                n.nspname as table_schema
+                n.nspname as table_schema,
+                COALESCE(obj_description(c.oid, 'pg_class'), '') as description
             FROM pg_catalog.pg_class c
             JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
             WHERE n.nspname = %s
@@ -232,7 +234,8 @@ class PostgresConnection(PostgresTargetWriteMixin, Connection):
             schema_name: Schema name to query. If None, uses 'public' or config schema_name.
 
         Returns:
-            List of table information dictionaries with keys: table_name, table_schema
+            List of table information dictionaries with keys: table_name,
+            table_schema, description (the table comment, empty when none)
         """
         if schema_name is None:
             schema_name = self.config.schema_name or "public"
@@ -240,7 +243,16 @@ class PostgresConnection(PostgresTargetWriteMixin, Connection):
         # Try information_schema first
         try:
             query = """
-                SELECT table_name, table_schema
+                SELECT
+                    table_name,
+                    table_schema,
+                    COALESCE(
+                        obj_description(
+                            (quote_ident(table_schema) || '.' || quote_ident(table_name))::regclass,
+                            'pg_class'
+                        ),
+                        ''
+                    ) AS description
                 FROM information_schema.tables
                 WHERE table_schema = %s
                   AND table_type = 'BASE TABLE'
@@ -678,12 +690,28 @@ class PostgresConnection(PostgresTargetWriteMixin, Connection):
         schema_name: str | None = None,
         limit: int = 5,
     ) -> list[dict[str, Any]]:
-        """Return first `limit` rows from the table (no ORDER BY for speed)."""
+        """Return `limit` rows from the table, in a stable order.
+
+        Ordered by the primary key, or by the whole row's text when the table
+        has none, so sampling unchanged data returns the same rows every time.
+        Without an order PostgreSQL returns rows in storage order, which an
+        update or ``VACUUM FULL`` changes -- and a sample that feeds a prompt
+        then changes the prompt, and with it any response cache keyed on it.
+        Ordering a table without a key sorts it in full, which is the price of
+        a repeatable sample there.
+        """
         if schema_name is None:
             schema_name = self.config.schema_name or "public"
-        query = sql.SQL("SELECT * FROM {}.{} LIMIT %s").format(
+        primary_key = self.get_primary_keys(table_name, schema_name)
+        order_by = (
+            sql.SQL(", ").join(sql.Identifier("t", column) for column in primary_key)
+            if primary_key
+            else sql.SQL("t::text")
+        )
+        query = sql.SQL("SELECT * FROM {}.{} AS t ORDER BY {} LIMIT %s").format(
             sql.Identifier(schema_name),
             sql.Identifier(table_name),
+            order_by,
         )
         try:
             with self.conn.cursor(cursor_factory=RealDictCursor) as cursor:

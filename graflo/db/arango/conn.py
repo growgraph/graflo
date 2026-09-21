@@ -1424,7 +1424,11 @@ class ArangoConnection(Connection):
         *logical* identity. Resolving the anchor inside the traversal query keeps
         Arango's internal key out of the agent-facing contract entirely.
         """
-        from graflo.db.traversal import _vertex_identity_value, edge_query_name
+        from graflo.db.traversal import (
+            _vertex_identity_value,
+            check_anchor_fields,
+            edge_query_name,
+        )
 
         if hops < 1:
             raise ValueError(f"hops must be >= 1, got {hops}")
@@ -1444,28 +1448,37 @@ class ArangoConnection(Connection):
             db_aware.vertex_config.vertex_dbname(vertex_type)
         )
         identity_fields = db_aware.vertex_config.identity_fields(vertex_type)
+        # The anchor's field names and values travel as bind parameters, and a
+        # field name must be one the schema declares: both arrive with the
+        # request, so neither may become query text.
         if isinstance(key, dict):
-            anchor_filter = " AND ".join(
-                f"doc.`{field}` == {json.dumps(value)}" for field, value in key.items()
-            )
+            anchor_fields = list(key.items())
+            check_anchor_fields(schema, db_aware, vertex_type, key)
         else:
-            field = identity_fields[0] if identity_fields else "_key"
-            anchor_filter = f"doc.`{field}` == {json.dumps(key)}"
+            anchor_fields = [(identity_fields[0] if identity_fields else "_key", key)]
+        bind_vars: dict[str, Any] = {}
+        clauses: list[str] = []
+        for position, (field, value) in enumerate(anchor_fields):
+            bind_vars[f"field{position}"] = field
+            bind_vars[f"value{position}"] = value
+            clauses.append(f"doc.@field{position} == @value{position}")
+        anchor_filter = " AND ".join(clauses)
 
+        # Every allowed relation, not only those touching the anchor type: a
+        # walk of more than one hop crosses relations (change -> server <- app
+        # <- service), and a traversal restricted to the anchor's own edge
+        # collections stops at the first hop.
         allowed = set(edge_types) if edge_types is not None else None
         collections: list[str] = []
-        far_types: dict[str, str] = {}
         for edge in schema.core_schema.edge_config.edges:
-            if vertex_type not in (edge.source, edge.target):
-                continue
             if allowed is not None and edge.relation not in allowed:
                 continue
             name = edge_query_name(db_aware, edge, DBType.ARANGO)
             if name is None:
                 continue
             safe = _arango_safe_collection_name(name)
-            collections.append(safe)
-            far_types[safe] = edge.target if edge.source == vertex_type else edge.source
+            if safe not in collections:
+                collections.append(safe)
         if not collections:
             return GraphContainer()
 
@@ -1480,35 +1493,33 @@ class ArangoConnection(Connection):
                 FILTER {anchor_filter}
                 LIMIT 1
                 FOR v IN 1..{int(hops)} {aql_direction} doc {", ".join(collections)}
+                    FILTER v._id != doc._id
                     {limit_clause}
                     RETURN DISTINCT v
         """
-        rows = get_data_from_cursor(self.execute(query))
+        rows = get_data_from_cursor(self.conn.aql.execute(query, bind_vars=bind_vars))
 
-        # Every declared edge from this anchor lands in the same result set, so
-        # documents are attributed by the far type they can belong to.
-        candidate_types = list(dict.fromkeys(far_types.values()))
+        # A reached document's type is the collection it lives in, read from its
+        # ``_id`` (``collection/key``) before internal keys are stripped.
+        by_collection = {
+            db_aware.vertex_config.vertex_dbname(name): name
+            for name in schema.core_schema.vertex_config.vertex_set
+        }
         container = GraphContainer()
-        # Seed with the anchor so a cycle back to it does not report the vertex
-        # you asked about as its own neighbour — the other backends exclude it,
-        # and a neighbourhood that contains its own origin is not one answer.
-        anchor_identity = str(key) if isinstance(key, str) else None
-        if isinstance(key, dict) and identity_fields:
-            anchor_identity = str(key.get(identity_fields[0], ""))
-        seen: set[tuple[str, str]] = (
-            {(vertex_type, anchor_identity)} if anchor_identity else set()
-        )
+        seen: set[tuple[str, str]] = set()
         for doc in rows:
             if not isinstance(doc, dict):
                 continue
+            collection = str(doc.get("_id", "")).split("/", 1)[0]
+            far_type = by_collection.get(collection)
+            if far_type is None:
+                continue
             cleaned = strip_internal_properties(doc)
-            for far_type in candidate_types:
-                identity = _vertex_identity_value(self, schema, far_type, cleaned)
-                if identity is None or (far_type, identity) in seen:
-                    continue
-                seen.add((far_type, identity))
-                container.vertices.setdefault(far_type, []).append(cleaned)
-                break
+            identity = _vertex_identity_value(self, schema, far_type, cleaned)
+            if identity is None or (far_type, identity) in seen:
+                continue
+            seen.add((far_type, identity))
+            container.vertices.setdefault(far_type, []).append(cleaned)
         container.pick_unique()
         return container
 

@@ -8,6 +8,10 @@ A native override is not only a performance choice here. ``fetch_edges`` on this
 family returns ``RETURN r``, and a driver renders a bare relationship without its
 endpoints, so the generic breadth-first default has nothing to walk to. Returning
 the reached nodes directly is the only way the question is answerable at all.
+
+The anchor value always travels as the query parameter ``$anchor_id``, never in
+the query text: it comes from a request, and interpolating it would let a caller
+rewrite the query.
 """
 
 from __future__ import annotations
@@ -25,11 +29,18 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+#: Name of the query parameter carrying the anchor's key value.
+ANCHOR_PARAM = "anchor_id"
+
+
+def _quote_identifier(name: str) -> str:
+    """Backtick-quote a Cypher identifier, doubling any embedded backtick."""
+    return "`" + name.replace("`", "``") + "`"
+
 
 def cypher_neighbors_query(
     *,
     anchor_label: str,
-    anchor_id: str,
     anchor_key_field: str = "id",
     edge_type: str | None,
     far_label: str | None,
@@ -39,22 +50,62 @@ def cypher_neighbors_query(
 ) -> str:
     """Render a bounded neighbourhood query.
 
-    Returns the reached nodes and their distance, deduplicated. ``DISTINCT`` is
-    load-bearing: a graph with a cycle reaches the same node by several paths,
-    and without it the row count grows with path multiplicity rather than with
-    neighbourhood size.
+    The anchor value is not part of the text: bind it as the ``$anchor_id``
+    parameter when running the query.
+
+    Returns the reached nodes, their distance and their labels, deduplicated.
+    ``DISTINCT`` is load-bearing: a graph with a cycle reaches the same node by
+    several paths, and without it the row count grows with path multiplicity
+    rather than with neighbourhood size. The anchor itself is excluded, since a
+    walk in both directions can come back to it.
+
+    Args:
+        anchor_label: Storage label of the anchor node.
+        anchor_key_field: Property the anchor is matched on.
+        edge_type: Relationship type to follow, several joined with ``|``, or
+            None for any type.
+        far_label: Storage label the reached node must carry, or None for any.
+        direction: Orientation followed from the anchor.
+        hops: Maximum hop distance.
+        limit: Maximum reached nodes.
     """
     if hops < 1:
         raise ValueError(f"hops must be >= 1, got {hops}")
     pattern = cypher_rel_pattern(edge_type, direction, min_hops=1, max_hops=hops)
     far = f"(far:{far_label})" if far_label else "(far)"
     limit_clause = f"\nLIMIT {int(limit)}" if limit is not None else ""
+    key = _quote_identifier(anchor_key_field)
     return (
-        f"MATCH path = (anchor:{anchor_label} "
-        f"{{{anchor_key_field}: '{anchor_id}'}}){pattern}{far}\n"
-        f"RETURN DISTINCT properties(far) AS far, length(path) AS distance"
+        f"MATCH path = (anchor:{anchor_label} {{{key}: ${ANCHOR_PARAM}}})"
+        f"{pattern}{far}\n"
+        f"WHERE far <> anchor\n"
+        f"RETURN DISTINCT properties(far) AS far, length(path) AS distance, "
+        f"labels(far) AS labels"
         f"{limit_clause}"
     )
+
+
+def _anchor_key(
+    schema: Schema, db_aware: Any, vertex_type: str, key: str | dict[str, Any]
+) -> tuple[str, Any]:
+    """The property to match the anchor on, and the value to bind.
+
+    A mapping key names its own property, which must be one the schema declares
+    for *vertex_type*: the name is written into the query, so an arbitrary one
+    from a request would be an injection point.
+    """
+    identity_fields = db_aware.vertex_config.identity_fields(vertex_type)
+    if not isinstance(key, dict):
+        return (identity_fields[0] if identity_fields else "id"), key
+    if len(key) != 1:
+        raise ValueError(
+            f"Cypher graph_neighbors resolves a single-field anchor key; got {sorted(key)}"
+        )
+    from graflo.db.traversal import check_anchor_fields
+
+    field, value = next(iter(key.items()))
+    check_anchor_fields(schema, db_aware, vertex_type, [field])
+    return field, value
 
 
 def cypher_graph_neighbors(
@@ -67,25 +118,32 @@ def cypher_graph_neighbors(
     edge_types: Sequence[str] | None,
     limit: int | None,
     schema: Schema | None,
-    run: Callable[[str], list[dict[str, Any]]],
+    run: Callable[[str, dict[str, Any]], list[dict[str, Any]]],
 ) -> GraphContainer:
     """Run a bounded neighbourhood query and shape it as a ``GraphContainer``.
 
     Shared by Neo4j, Memgraph and FalkorDB; each supplies *run*, which is the
     only thing that differs between their drivers.
 
+    One hop fans out one pattern per relation that touches the anchor type.
+    More than one hop issues a single pattern over every allowed relation at
+    once, so a walk can cross relation types — change → server → application →
+    service — which a pattern per relation never could. The reached node's type
+    is then read from its labels.
+
     Args:
         conn: The live connection, for flavor-aware name resolution.
         vertex_type: Logical anchor type.
-        key: Anchor identity value, or a single-field mapping.
+        key: Anchor identity value, or a single-field mapping naming a declared
+            property.
         hops: Maximum hop distance.
         direction: Orientation followed from the anchor.
-        edge_types: Logical relation names to restrict to. One pattern is issued
-            per allowed relation, since a variable-length pattern takes a single
-            relationship type.
+        edge_types: Logical relation names to restrict to; None means every
+            relation.
         limit: Maximum reached nodes.
         schema: Required for logical -> storage naming.
-        run: Executes a query string and returns rows as dicts.
+        run: Executes a query string with its parameters and returns rows as
+            dicts carrying ``far`` (the node's properties) and ``labels``.
 
     Returns:
         GraphContainer: reached vertices, keyed by logical type.
@@ -99,55 +157,68 @@ def cypher_graph_neighbors(
             "graph_neighbors requires a schema: logical vertex and relation names "
             "cannot be resolved to storage names without one"
         )
-    if vertex_type not in schema.core_schema.vertex_config.vertex_set:
+    vertex_config = schema.core_schema.vertex_config
+    if vertex_type not in vertex_config.vertex_set:
         raise ValueError(
             f"Unknown vertex type {vertex_type!r}; declared: "
-            f"{sorted(schema.core_schema.vertex_config.vertex_set)}"
+            f"{sorted(vertex_config.vertex_set)}"
         )
 
     db_aware = schema.resolve_db_aware(conn.flavor)
     anchor_label = db_aware.vertex_config.vertex_dbname(vertex_type)
-    identity_fields = db_aware.vertex_config.identity_fields(vertex_type)
-    key_field = identity_fields[0] if identity_fields else "id"
-    if isinstance(key, dict):
-        if len(key) != 1:
-            raise ValueError(
-                "Cypher graph_neighbors resolves a single-field anchor key; "
-                f"got {sorted(key)}"
-            )
-        key_field, anchor_id = next(iter(key.items()))
-        anchor_id = str(anchor_id)
-    else:
-        anchor_id = key
+    key_field, anchor_value = _anchor_key(schema, db_aware, vertex_type, key)
+    params = {ANCHOR_PARAM: anchor_value}
 
     allowed = set(edge_types) if edge_types is not None else None
-    storage_edges: list[tuple[str, str]] = []
-    for edge in schema.core_schema.edge_config.edges:
-        if vertex_type not in (edge.source, edge.target):
-            continue
-        if allowed is not None and edge.relation not in allowed:
-            continue
-        storage = edge_query_name(db_aware, edge, conn.flavor)
-        if storage is None:
-            continue
-        far_type = edge.target if edge.source == vertex_type else edge.source
-        storage_edges.append((storage, far_type))
+    edges = [
+        edge
+        for edge in schema.core_schema.edge_config.edges
+        if allowed is None or edge.relation in allowed
+    ]
 
+    # Each entry is (relationship type(s), far label, far type). A far type of
+    # None means "read it from the reached node's labels".
+    queries: list[tuple[str, str | None, str | None]] = []
+    if hops == 1:
+        for edge in edges:
+            if vertex_type not in (edge.source, edge.target):
+                continue
+            storage = edge_query_name(db_aware, edge, conn.flavor)
+            if storage is None:
+                continue
+            far_type = edge.target if edge.source == vertex_type else edge.source
+            queries.append(
+                (storage, db_aware.vertex_config.vertex_dbname(far_type), far_type)
+            )
+    else:
+        storages = sorted(
+            {
+                storage
+                for edge in edges
+                if (storage := edge_query_name(db_aware, edge, conn.flavor)) is not None
+            }
+        )
+        if storages:
+            queries.append(("|".join(storages), None, None))
+
+    by_label = {
+        db_aware.vertex_config.vertex_dbname(name): name
+        for name in vertex_config.vertex_set
+    }
     container = GraphContainer()
-    seen: set[tuple[str, str]] = {(vertex_type, str(anchor_id))}
-    for storage, far_type in storage_edges:
+    seen: set[tuple[str, str]] = set()
+    for storage, far_label, far_type in queries:
         query = cypher_neighbors_query(
             anchor_label=anchor_label,
-            anchor_id=str(anchor_id),
             anchor_key_field=key_field,
             edge_type=storage,
-            far_label=db_aware.vertex_config.vertex_dbname(far_type),
+            far_label=far_label,
             direction=direction,
             hops=hops,
             limit=limit,
         )
         try:
-            rows = run(query)
+            rows = run(query, params)
         except Exception:
             logger.exception("cypher graph_neighbors failed for edge type %s", storage)
             continue
@@ -155,10 +226,20 @@ def cypher_graph_neighbors(
             doc = row.get("far")
             if not isinstance(doc, dict):
                 continue
-            identity = _vertex_identity_value(conn, schema, far_type, doc)
-            if identity is None or (far_type, identity) in seen:
+            row_type = far_type or next(
+                (
+                    by_label[label]
+                    for label in row.get("labels") or ()
+                    if label in by_label
+                ),
+                None,
+            )
+            if row_type is None:
                 continue
-            seen.add((far_type, identity))
-            container.vertices.setdefault(far_type, []).append(doc)
+            identity = _vertex_identity_value(conn, schema, row_type, doc)
+            if identity is None or (row_type, identity) in seen:
+                continue
+            seen.add((row_type, identity))
+            container.vertices.setdefault(row_type, []).append(doc)
     container.pick_unique()
     return container

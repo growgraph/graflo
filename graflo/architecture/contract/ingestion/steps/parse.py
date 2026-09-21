@@ -67,6 +67,29 @@ def validate_actor_step(
         _raise_step_validation_error(data, err)
 
 
+def canonical_actor_step(step: dict[str, Any]) -> dict[str, Any]:
+    """One spelling for a pipeline step, whatever spelling it was authored in.
+
+    A step accepts several equivalent spellings -- ``{"vertex": v}`` with or
+    without an explicit ``type``, ``{"edge": {...}}`` or its flat body,
+    ``from``/``to`` or ``source``/``target``, a ``descend`` with ``apply`` or
+    ``pipeline``. Stored as authored, two manifests meaning the same thing
+    compare and hash differently. This validates the step into its actor model
+    and renders the minimal canonical dict with the discriminator made explicit.
+
+    Lists inside a step keep their order: whether any of them is a set has not
+    been established, and preserving is the safe direction for a content hash.
+
+    A step that does not validate on its own is returned unchanged, so a
+    canonical form never fails where the raw one would have been accepted.
+    """
+    try:
+        model = _actor_config_adapter.validate_python(normalize_actor_step(step))
+    except (ValidationError, ValueError, TypeError):
+        return step
+    return {"type": model.type, **model.to_minimal_canonical_dict()}
+
+
 def parse_root_config(
     *args: Any,
     **kwargs: Any,

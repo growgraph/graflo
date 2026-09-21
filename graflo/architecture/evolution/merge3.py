@@ -220,6 +220,8 @@ def op_slots(op: ManifestOp) -> set[Slot]:
     # case rather than a conflict.
     elif isinstance(op, ops.SetVertexSemanticsOp):
         slots |= {(*_vertex_slot(name), "semantics") for name in op.semantics}
+    elif isinstance(op, ops.SetVertexDescriptionsOp):
+        slots |= {(*_vertex_slot(name), "description") for name in op.descriptions}
     elif isinstance(op, ops.SetFieldSemanticsOp):
         for target in op.targets:
             if isinstance(target, ops.FieldSemanticsTarget):

@@ -42,11 +42,13 @@ from graflo.architecture.schema.database_features import (
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import Field, Vertex
 
+from .canonicalize import canonical_payload
 from .ops import (
     AddEdgeIndexesOp,
     AddEdgePropertiesOp,
     AddEdgesOp,
     AddResourcesOp,
+    AddResourceTransformsOp,
     AddSecondaryIdentitiesOp,
     AddVertexIndexesOp,
     AddVertexPropertiesOp,
@@ -79,6 +81,7 @@ from .ops import (
     SetEdgeSemanticsOp,
     SetFieldSemanticsOp,
     SetNativeInversesOp,
+    SetVertexDescriptionsOp,
     SetVertexSemanticsOp,
     validate_rename_map_is_injective,
 )
@@ -166,8 +169,18 @@ def diff_manifests(
     warnings: list[str] = []
     ops: list[ManifestOp] = []
 
+    rename_ops = _rename_ops(hints)
+    renamed = _apply_renames(base, rename_ops)
+    if renamed is not None:
+        # Every later stage compares against the manifest the renames actually
+        # produce, rather than re-deriving each rename's reach by hand: a rename
+        # rewrites resource pipelines, secondary identities and index keys, and
+        # a stage that compared against the pre-rename base would report each
+        # of those as an edit -- or re-add what the rename already moved.
+        base, hints = renamed, RenameHints()
+
     profile_replaced = _profile_needs_replacing(base, target)
-    ops += _rename_ops(hints)
+    ops += rename_ops
     ops += _inverse_withdrawal_ops(base, target, hints)
     ops += _vertex_structure_ops(base, target, hints, warnings)
     ops += _edge_structure_ops(base, target, hints, warnings)
@@ -231,6 +244,25 @@ def diff_manifests_verified(
 
 
 # -- ordering stages ----------------------------------------------------
+
+
+def _apply_renames(
+    base: GraphManifest, rename_ops: list[ManifestOp]
+) -> GraphManifest | None:
+    """*base* with *rename_ops* applied, or ``None`` when there are none or they fail.
+
+    A failing rename is left for verification to report; the stages then fall
+    back to reading the hints against the unrenamed base.
+    """
+    if not rename_ops:
+        return None
+    from .apply import apply_evolution
+
+    try:
+        return apply_evolution(base, rename_ops, bump_version=False, finish_init=False)
+    except Exception:
+        logger.debug("rename hints do not apply to the base", exc_info=True)
+        return None
 
 
 def _rename_ops(hints: RenameHints) -> list[ManifestOp]:
@@ -559,6 +591,7 @@ def _semantics_ops(
     base_vertices = _vertices_after_renames(base, hints)
 
     vertex_semantics: dict[str, Any] = {}
+    vertex_descriptions: dict[str, str | None] = {}
     field_targets: list[FieldSemanticsTarget | EdgeFieldSemanticsTarget] = []
     for name, new_vertex in _vertices(target).items():
         old_vertex = base_vertices.get(name)
@@ -566,6 +599,8 @@ def _semantics_ops(
             continue
         if old_vertex.semantics != new_vertex.semantics:
             vertex_semantics[name] = new_vertex.semantics
+        if old_vertex.description != new_vertex.description:
+            vertex_descriptions[name] = new_vertex.description
         old_fields = {f.name: f for f in old_vertex.properties}
         for field in new_vertex.properties:
             old_field = old_fields.get(field.name)
@@ -577,6 +612,8 @@ def _semantics_ops(
                 )
     if vertex_semantics:
         ops.append(SetVertexSemanticsOp(semantics=vertex_semantics))
+    if vertex_descriptions:
+        ops.append(SetVertexDescriptionsOp(descriptions=vertex_descriptions))
 
     base_edges = _edges_after_renames(base, hints)
     groups: dict[str, tuple[Any, list[EdgeSelector]]] = {}
@@ -617,6 +654,14 @@ def _semantics_ops(
     return ops
 
 
+def _canonical_registry(transforms: Any) -> list[Any]:
+    """A transform registry as a set: resolved by name, so order is not an edit."""
+    return sorted(
+        (canonical_payload(t) for t in transforms),
+        key=lambda item: json.dumps(item, sort_keys=True, default=str),
+    )
+
+
 def _resource_ops(
     base: GraphManifest, target: GraphManifest, hints: RenameHints, warnings: list[str]
 ) -> list[ManifestOp]:
@@ -638,27 +683,75 @@ def _resource_ops(
     added = [r for r in target_ingestion.resources if r.name not in base_resources]
 
     def _body(resource: ResourceConfig) -> dict[str, Any]:
-        # The name is what the rename hint already accounts for.
-        return {
-            k: v for k, v in resource.to_minimal_canonical_dict().items() if k != "name"
-        }
+        # The name is what the rename hint already accounts for. Canonical, so
+        # two spellings of one step -- or a reordered membership set -- are not
+        # reported as a pipeline edit.
+        return {k: v for k, v in canonical_payload(resource).items() if k != "name"}
 
+    appended: dict[str, list[dict[str, Any]]] = {}
     for resource in target_ingestion.resources:
         old = base_resources.get(resource.name)
-        if old is not None and _body(old) != _body(resource):
+        if old is None or _body(old) == _body(resource):
+            continue
+        steps = _appended_root_transforms(old, resource)
+        if steps is None:
             warnings.append(
                 f"resource {resource.name!r} differs; no op expresses a pipeline "
                 "edit beyond add_resource_transforms"
             )
-    if base_ingestion is not None and (
-        [t.to_minimal_canonical_dict() for t in base_ingestion.transforms]
-        != [t.to_minimal_canonical_dict() for t in target_ingestion.transforms]
+        else:
+            appended[resource.name] = steps
+    # Transforms new to the registry ride on the op that adds the resources
+    # using them. Anything else -- a removed or redefined transform, or a new
+    # one no added resource brings -- has no op and is reported.
+    base_transforms = list(base_ingestion.transforms) if base_ingestion else []
+    base_names = {t.name for t in base_transforms}
+    registered = [t for t in target_ingestion.transforms if t.name not in base_names]
+    carried = registered if (added or appended) else []
+    if _canonical_registry([*base_transforms, *carried]) != _canonical_registry(
+        target_ingestion.transforms
     ):
         warnings.append(
             "the transform registry differs; no op expresses registry edits "
             "beyond add_resource_transforms"
         )
-    return [AddResourcesOp(resources=added)] if added else []
+
+    ops: list[ManifestOp] = []
+    # Appends go first and take the new registry entries with them: they touch
+    # only resources that already exist, so the registry then holds every
+    # transform an added resource's steps may name. `add_resource_transforms`
+    # is already irreversible, so carrying the transforms there costs
+    # `add_resources` nothing of its inverse.
+    if appended:
+        ops.append(AddResourceTransformsOp(additions=appended, transforms=carried))
+    if added:
+        ops.append(
+            AddResourcesOp(resources=added, transforms=[] if appended else carried)
+        )
+    return ops
+
+
+def _appended_root_transforms(
+    old: ResourceConfig, new: ResourceConfig
+) -> list[dict[str, Any]] | None:
+    """The transform steps *new* appends to *old*'s root pipeline, if that is all.
+
+    ``add_resource_transforms`` appends at the root unless told otherwise, so a
+    pipeline that is the old one plus trailing transform steps -- and differs in
+    nothing else -- is exactly that op. Anything else returns ``None``.
+    """
+    old_body = {k: v for k, v in canonical_payload(old).items() if k != "name"}
+    new_body = {k: v for k, v in canonical_payload(new).items() if k != "name"}
+    old_steps = old_body.pop("pipeline", [])
+    new_steps = new_body.pop("pipeline", [])
+    if old_body != new_body or len(new_steps) <= len(old_steps):
+        return None
+    if new_steps[: len(old_steps)] != old_steps:
+        return None
+    tail = new_steps[len(old_steps) :]
+    if any(step.get("type") != "transform" for step in tail):
+        return None
+    return [dict(step) for step in new.pipeline[len(old_steps) :]]
 
 
 def _identity_ops(
@@ -730,16 +823,34 @@ def _index_ops(
         for name, indexes in base_profile.vertex_indexes.items()
     }
 
+    # An index over a secondary identity's fields is registered by
+    # `finish_init` from the identity itself, so it is not an authored index:
+    # removing it is refused (the identity would re-register it) and adding it
+    # is redundant. It moves with its secondary identity, which the identity
+    # stage already diffs.
+    base_derived = _derived_index_field_sets(base, renamed)
+    target_derived = _derived_index_field_sets(target, {})
+
     added: dict[str, list[Index]] = {}
     removed: dict[str, list[list[str]]] = {}
     for name, indexes in target_profile.vertex_indexes.items():
         old = {tuple(ix.fields) for ix in base_vertex_indexes.get(name, [])}
-        new_ones = [ix for ix in indexes if tuple(ix.fields) not in old]
+        derived = target_derived.get(name, set())
+        new_ones = [
+            ix
+            for ix in indexes
+            if tuple(ix.fields) not in old and frozenset(ix.fields) not in derived
+        ]
         if new_ones:
             added[name] = new_ones
     for name, indexes in base_vertex_indexes.items():
         new = {tuple(ix.fields) for ix in target_profile.vertex_indexes.get(name, [])}
-        gone = [list(ix.fields) for ix in indexes if tuple(ix.fields) not in new]
+        derived = base_derived.get(name, set())
+        gone = [
+            list(ix.fields)
+            for ix in indexes
+            if tuple(ix.fields) not in new and frozenset(ix.fields) not in derived
+        ]
         if gone:
             removed[name] = gone
 
@@ -750,6 +861,21 @@ def _index_ops(
 
     ops += _edge_index_ops(base_profile, target_profile)
     return ops
+
+
+def _derived_index_field_sets(
+    manifest: GraphManifest, renamed: dict[str, str]
+) -> dict[str, set[frozenset[str]]]:
+    """Per vertex, the field sets whose indexes its secondary identities derive."""
+    schema = manifest.graph_schema
+    if schema is None:
+        return {}
+    return {
+        renamed.get(vertex.name, vertex.name): {
+            entry.field_set for entry in vertex.secondary_identities
+        }
+        for vertex in schema.core_schema.vertex_config.vertices
+    }
 
 
 def _edge_index_ops(

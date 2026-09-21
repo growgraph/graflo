@@ -271,7 +271,13 @@ class ResourceSampler:
                         ],
                         truncated=truncated,
                         total_estimate=table.row_count_estimate,
-                        description=f"Sampled from table {table.schema_name}.{table.name}",
+                        description=table.description
+                        or f"Sampled from table {table.schema_name}.{table.name}",
+                        field_descriptions={
+                            column.name: column.description
+                            for column in table.columns
+                            if column.description
+                        },
                     )
                 )
 

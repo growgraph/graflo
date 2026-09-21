@@ -427,6 +427,7 @@ def build_raw_tables(
             RawTableInfo(
                 name=table_name,
                 schema_name=schema_name or "",
+                description=table_info.get("description") or "",
                 columns=column_infos,
                 primary_key=pk_columns,
                 foreign_keys=fk_infos,

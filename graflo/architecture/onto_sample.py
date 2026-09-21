@@ -72,6 +72,12 @@ class ResourceSample(ConfigBaseModel):
     """Sampled documents, verbatim JSON. Flat rows for tables, nested for APIs."""
 
     description: str | None = None
+    """What the source says the resource is -- a SQL table comment, say."""
+
+    field_descriptions: dict[str, str] = PydanticField(default_factory=dict)
+    """What the source says each field is, keyed by field path -- SQL column
+    comments, for instance. Only declared text; never inferred."""
+
     primary_key: list[str] = PydanticField(default_factory=list)
     """Declared primary key, when the source has one."""
 
@@ -151,6 +157,8 @@ class FieldProfile(ConfigBaseModel):
     null_count: int = 0
     distinct: int = 0
     examples: list[str] = PydanticField(default_factory=list)
+    description: str | None = None
+    """The source's own description of the field, when it declares one."""
 
     @property
     def null_ratio(self) -> float:
@@ -169,6 +177,9 @@ class ResourceProfile(ConfigBaseModel):
 
     resource_name: str
     connector: str | None = None
+    description: str | None = None
+    """Carried from :attr:`ResourceSample.description`."""
+
     doc_count: int = 0
     max_depth: int = 0
     """Deepest nesting observed. ``> 0`` means ingestion needs ``descend`` steps."""
@@ -310,12 +321,14 @@ def profile_sample(
                 null_count=len(values) - len(non_null),
                 distinct=len(hashable),
                 examples=[_example(value) for value in non_null[:max_examples]],
+                description=sample.field_descriptions.get(path),
             )
         )
 
     return ResourceProfile(
         resource_name=sample.resource_name,
         connector=sample.connector,
+        description=sample.description,
         doc_count=len(sample.docs),
         max_depth=max(depths.values(), default=0),
         fields=fields,

@@ -1557,6 +1557,28 @@ class SetVertexSemanticsOp(ConfigBaseModel):
     )
 
 
+class SetVertexDescriptionsOp(ConfigBaseModel):
+    """Set or clear the human-readable description of existing vertex types.
+
+    A description was authorable only when a type was first written, so a
+    change to one -- a merge folding two types together and joining what each
+    side said about it, or a correction to what an inferred type means -- had no
+    operation and could only be diffed as inexpressible. Like grounding, a
+    description is never consulted at execution time: this op cannot change how
+    anything ingests or stores.
+    """
+
+    op: Literal["set_vertex_descriptions"] = "set_vertex_descriptions"
+    descriptions: dict[str, str | None] = PydanticField(
+        ...,
+        description=(
+            "Per-vertex description: ``{vertex_name: text}``. ``None`` clears it, "
+            "which is what makes the op invertible."
+        ),
+        min_length=1,
+    )
+
+
 class SetEdgeSemanticsOp(ConfigBaseModel):
     """Ground edge relations in an external vocabulary.
 
@@ -1672,6 +1694,16 @@ class AddResourcesOp(ConfigBaseModel):
         ...,
         description="Full resource definitions.",
         min_length=1,
+    )
+    transforms: list[ProtoTransform] = PydanticField(
+        default_factory=list,
+        description=(
+            "Named transforms to register in ``ingestion_model.transforms`` for "
+            "steps of the new resources that reference them via ``call.use``. "
+            "Unioned by name exactly as ``add_resource_transforms`` does: an "
+            "identical body already registered dedupes, a different one is an "
+            "error at apply time."
+        ),
     )
 
     @model_validator(mode="after")
@@ -2618,6 +2650,7 @@ ManifestOp = Annotated[
     | SetBindingsOp
     | SetDbProfileOp
     | SetVertexSemanticsOp
+    | SetVertexDescriptionsOp
     | SetEdgeSemanticsOp
     | SetFieldSemanticsOp
     | MergeVerticesOp

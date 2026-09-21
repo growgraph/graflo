@@ -100,3 +100,19 @@ def test_absent_constraint_reflection_is_not_fatal(sqlite_engine) -> None:
 
     # Tables and keys still reflect, so entities are still recovered.
     assert {t.name for t in detect_vertex_tables(provider)} == {"author", "field"}
+
+
+def test_samples_follow_the_primary_key_not_insertion_order(sqlite_engine) -> None:
+    """A sample feeds prompts; the same data must give the same sample."""
+    from sqlalchemy import text
+
+    from graflo.db.sql.alchemy import SqlAlchemyMetadataProvider
+
+    with sqlite_engine.begin() as connection:
+        connection.execute(text("CREATE TABLE ordered_text (k TEXT PRIMARY KEY)"))
+        for key in ("c", "a", "b"):
+            connection.execute(text("INSERT INTO ordered_text VALUES (:k)"), {"k": key})
+    provider = SqlAlchemyMetadataProvider(sqlite_engine)
+
+    rows = provider.get_table_sample_rows("ordered_text", limit=3)
+    assert [row["k"] for row in rows] == ["a", "b", "c"]

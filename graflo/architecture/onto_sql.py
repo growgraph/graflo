@@ -55,6 +55,8 @@ class RawTableInfo(BaseModel):
 
     name: str
     schema_name: str
+    description: str = ""
+    """The table's comment, when the engine stores one."""
     columns: list[ColumnInfo]
     primary_key: list[str]
     foreign_keys: list[ForeignKeyInfo]

@@ -45,6 +45,11 @@ def apply_add_resources(manifest: GraphManifest, op: AddResourcesOp) -> None:
         *payload.get("resources", []),
         *(resource.to_dict(skip_defaults=False) for resource in op.resources),
     ]
+    if op.transforms:
+        registry = _union_transforms(
+            list(im.transforms) if im is not None else [], list(op.transforms)
+        )
+        payload["transforms"] = [t.to_dict(skip_defaults=False) for t in registry]
     manifest.ingestion_model = IngestionModel.model_validate(payload)
 
 

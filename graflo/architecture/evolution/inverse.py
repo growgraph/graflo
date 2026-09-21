@@ -68,6 +68,7 @@ from .ops import (
     SetEdgeSemanticsOp,
     SetFieldSemanticsOp,
     SetNativeInversesOp,
+    SetVertexDescriptionsOp,
     SetVertexSemanticsOp,
 )
 
@@ -659,6 +660,23 @@ def _invert_set_vertex_semantics(
     return SetVertexSemanticsOp(semantics=prior)
 
 
+def _invert_set_vertex_descriptions(
+    op: SetVertexDescriptionsOp, manifest: GraphManifest
+) -> ManifestOp | None:
+    """Restore each vertex's prior description, ``None`` included."""
+    schema = manifest.graph_schema
+    if schema is None:
+        return None
+    by_name = {v.name: v for v in schema.core_schema.vertex_config.vertices}
+    prior: dict[str, str | None] = {}
+    for name in op.descriptions:
+        vertex = by_name.get(name)
+        if vertex is None:
+            return None
+        prior[name] = vertex.description
+    return SetVertexDescriptionsOp(descriptions=prior)
+
+
 def _invert_set_edge_semantics(
     op: SetEdgeSemanticsOp, manifest: GraphManifest
 ) -> ManifestOp | None:
@@ -708,9 +726,24 @@ def _invert_set_field_semantics(
     return SetFieldSemanticsOp(targets=targets)
 
 
-def _invert_add_resources(op: AddResourcesOp, _manifest: GraphManifest) -> ManifestOp:
-    # ``apply_add_resources`` rejects a name already present, so every listed
-    # resource is new.
+def _invert_add_resources(
+    op: AddResourcesOp, manifest: GraphManifest
+) -> ManifestOp | None:
+    """Remove the added resources -- unless the op also registered transforms.
+
+    ``apply_add_resources`` rejects a name already present, so every listed
+    resource is new. A transform the op registered, though, stays registered
+    after ``remove_resources``, and no op withdraws one; so an op that brought
+    a transform the pre-state did not hold has no single-op inverse.
+    """
+    if op.transforms:
+        held = (
+            {t.name for t in manifest.ingestion_model.transforms}
+            if manifest.ingestion_model is not None
+            else set()
+        )
+        if any(t.name not in held for t in op.transforms):
+            return None
     return RemoveResourcesOp(names=[resource.name for resource in op.resources])
 
 
@@ -782,6 +815,7 @@ _HANDLERS: dict[str, Any] = {
     "set_bindings": _invert_set_bindings,
     "set_db_profile": _invert_set_db_profile,
     "set_vertex_semantics": _invert_set_vertex_semantics,
+    "set_vertex_descriptions": _invert_set_vertex_descriptions,
     "set_edge_semantics": _invert_set_edge_semantics,
     "set_field_semantics": _invert_set_field_semantics,
     "add_secondary_identities": _invert_add_secondary_identities,

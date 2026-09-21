@@ -135,6 +135,16 @@ def _rewrite_entity_names_in_edge_step(
                 )
 
 
+def _is_untyped_flat_edge(step: dict[str, Any]) -> bool:
+    """An edge step written flat and without ``type``, as the normalizer reads one."""
+    return (
+        "type" not in step
+        and "vertex" not in step
+        and ("source" in step or "from" in step)
+        and ("target" in step or "to" in step)
+    )
+
+
 def rewrite_entity_names_in_pipeline(
     step: Any,
     *,
@@ -198,9 +208,12 @@ def rewrite_entity_names_in_pipeline(
             vertex_name=vertex_name,
             edge_name=edge_name,
         )
-    elif step.get("type") == "edge":
+    elif step.get("type") == "edge" or _is_untyped_flat_edge(step):
         # Flat form: the edge payload *is* the step. Only string-valued endpoint keys
         # are touched, so a vertex step's dict-valued ``from`` column map is unaffected.
+        # The untyped spelling (``{from, to, relation}``) is an edge too: it is how
+        # ``normalize_actor_step`` reads it, so a rename that skipped it would leave
+        # the ingested edge pointing at a vertex that no longer exists.
         _rewrite_entity_names_in_edge_step(
             step,
             vertex_name=vertex_name,
