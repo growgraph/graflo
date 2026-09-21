@@ -14,7 +14,7 @@ Runnable walkthroughs with sample data under `examples/` in the repository.
 | TigerGraph / S3 | [10](example-10.md) | [TigerGraph bulk load guide](../guides/tigergraph_bulk_load.md) |
 | Graph export / file backend | [13](example-13.md) | [Graph export guide](../guides/graph_export_and_replay.md) |
 | Graph DB migration (Neo4j/Arango → any target) | — | [Graph DB migration guide](../guides/graph_db_migration.md), [Quick start](../getting_started/quickstart.md#graph-export-and-migration) |
-| Evolution / versioning | [17](example-17.md), [18](example-18.md), [19](example-19.md), [20](example-20.md) | [Version control](../concepts/schema/versioning.md), [Manifest evolution](../concepts/schema/manifest_evolution.md) |
+| Evolution / versioning | [17](example-17.md), [18](example-18.md), [19](example-19.md), [20](example-20.md), [23](example-23.md) | [Version control](../concepts/schema/versioning.md), [Manifest evolution](../concepts/schema/manifest_evolution.md) |
 | Connectors / proxy wiring | [9](example-9.md) | [Runtime connector updates](../concepts/connectors/runtime_updates.md) |
 
 ## Full list
@@ -40,3 +40,4 @@ Runnable walkthroughs with sample data under `examples/` in the repository.
 19. **[Union of manifests with conditional equivalence](example-19.md)** — an n-ary equivalence cluster named by a `CanonicalMap` on the merge op, merged in one step with `identity_alignments`, and fuse entities behind a gated match key.
 20. **[Version control: fork, conflict, resolve, merge](example-20.md)** — record commits over a manifest, fork it, reconcile the conflict, and replay the recorded decision after one side moves on.
 21. **[Identity alignment on a routed source](example-21.md)** — align identity across a union whose side is one `vertex_router`, without splitting it: level-targeted derivations, one gated derivation per collapsing branch, and delivery through a restrictive router.
+23. **[Edge inverses: audit, repair, realize](example-23.md)** — a manifest assembled from two sources where only one reported both readings of a fact: see how each declared pair is realized, propagate what is merely missing as reviewable ops, and leave the inverse unstored where the backend reads backwards for free.

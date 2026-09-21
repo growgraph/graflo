@@ -21,7 +21,10 @@ from typing import TYPE_CHECKING, Any
 
 from graflo.architecture.graph_types import EdgeDirection, EdgeId, GraphContainer
 from graflo.architecture.schema import Schema
+from graflo.architecture.schema.edge_direction import reversed_direction
+from graflo.architecture.schema.inverse_realization import resolve_relation
 from graflo.db.edge_direction_support import (
+    UnsupportedEdgeDirectionError,
     assert_direction_supported,
 )
 
@@ -76,22 +79,37 @@ def _far_endpoint(edge_id: EdgeId, anchor_type: str) -> str:
     return target if source == anchor_type else source
 
 
+def select_edges(
+    schema: Schema, edge_types: Sequence[str] | None
+) -> list[tuple[Edge, str | None]]:
+    """Declared edges a walk may follow, each with the inverse name it is read through.
+
+    With no allow-list every declared edge is followed as stored. A relation
+    name is resolved through the declared inverses
+    (:func:`~graflo.architecture.schema.inverse_realization.resolve_relation`):
+    a name that labels declared edges selects them as stored, and a name that is
+    only the declared inverse of one -- nothing stored under it -- selects those
+    edges read backwards. The second element is that inverse name, or ``None``
+    for an edge read as stored.
+    """
+    if edge_types is None:
+        return [(edge, None) for edge in schema.core_schema.edge_config.edges]
+    selected: list[tuple[Edge, str | None]] = []
+    for name in dict.fromkeys(edge_types):
+        for resolved in resolve_relation(schema, name):
+            selected.append((resolved.edge, name if resolved.reversed else None))
+    return selected
+
+
 def _incident_edges(
-    schema: Schema,
-    vertex_type: str,
-    *,
-    edge_types: Sequence[str] | None,
-) -> list[Edge]:
-    """Declared edges touching *vertex_type*, honouring a relation allow-list."""
-    allowed = set(edge_types) if edge_types is not None else None
-    incident: list[Edge] = []
-    for edge in schema.core_schema.edge_config.edges:
-        if vertex_type not in (edge.source, edge.target):
-            continue
-        if allowed is not None and edge.relation not in allowed:
-            continue
-        incident.append(edge)
-    return incident
+    selected: Sequence[tuple[Edge, str | None]], vertex_type: str
+) -> list[tuple[Edge, str | None]]:
+    """The selected edges touching *vertex_type*."""
+    return [
+        (edge, read_as)
+        for edge, read_as in selected
+        if vertex_type in (edge.source, edge.target)
+    ]
 
 
 def _vertex_identity_value(
@@ -137,7 +155,10 @@ def bfs_neighbors(
         anchor_key: Anchor identity value, or a field mapping to resolve.
         hops: Maximum hop distance, at least 1.
         direction: Orientations followed from each frontier vertex.
-        edge_types: Restrict to these logical relation names.
+        edge_types: Restrict to these logical relation names. A declared
+            inverse that stores nothing is a valid name:
+            it reads the forward edge from its target, and the result reports
+            it under the name asked for, endpoints in that reading's order.
         filters: Optional edge filter, rendered per backend dialect.
         limit: Maximum accumulated edges. Defaults to ``DEFAULT_EDGE_LIMIT``.
         schema: Required — logical names must be resolved to storage names, or
@@ -167,6 +188,8 @@ def bfs_neighbors(
 
     max_edges = DEFAULT_EDGE_LIMIT if limit is None else limit
     db_aware = schema.resolve_db_aware(conn.flavor)
+    edge_config = schema.core_schema.edge_config
+    selected = select_edges(schema, edge_types)
 
     container = GraphContainer()
     anchor_id = _resolve_anchor_id(conn, schema, db_aware, anchor_type, anchor_key)
@@ -183,21 +206,32 @@ def bfs_neighbors(
             break
         next_frontier: list[tuple[str, str]] = []
         for current_type, current_id in frontier:
-            for edge in _incident_edges(schema, current_type, edge_types=edge_types):
+            for edge, read_as in _incident_edges(selected, current_type):
                 if edge_count >= max_edges:
                     break
-                effective = _edge_direction_for(edge, direction)
+                # Read through its inverse name, the stored edge is followed
+                # from the other end.
+                effective = _edge_direction_for(
+                    edge,
+                    direction if read_as is None else reversed_direction(direction),
+                )
+                anchor_side = _anchor_side(edge, current_type, effective)
+                if anchor_side is None:
+                    continue
+                # The paired type the database maintains for this relation, on a
+                # backend where reverse reachability is a schema-time decision.
+                native_inverse_type = db_aware.db_profile.native_inverse_of(
+                    edge.relation, edge_config
+                )
                 # Assert before querying: a backend that cannot follow this
                 # orientation must fail rather than silently return the half it
                 # can answer.
                 assert_direction_supported(
                     conn.flavor,
-                    effective,
+                    anchor_side,
+                    has_native_inverse=native_inverse_type is not None,
                     edge_is_undirected=not edge.directed,
                 )
-                anchor_side = _anchor_side(edge, current_type, effective)
-                if anchor_side is None:
-                    continue
                 rows = _fetch_edge_rows(
                     conn,
                     db_aware=db_aware,
@@ -207,11 +241,19 @@ def bfs_neighbors(
                     direction=anchor_side,
                     filters=filters,
                     remaining=max_edges - edge_count,
+                    native_inverse_type=native_inverse_type,
                 )
                 if not rows:
                     continue
-                edge_id = edge.edge_id
-                far_type = _far_endpoint(edge_id, current_type)
+                far_type = _far_endpoint(edge.edge_id, current_type)
+                # Reported under the name asked for: whether the inverse is
+                # stored, maintained by the database or only declared, one
+                # question gets one shape of answer.
+                edge_id = (
+                    edge.edge_id
+                    if read_as is None
+                    else (edge.target, edge.source, read_as)
+                )
                 bucket = container.edges.setdefault(edge_id, [])
                 far_ids: list[str] = []
                 for row in rows:
@@ -222,9 +264,12 @@ def bfs_neighbors(
                     seen_edges.add(marker)
                     # Normalize the endpoints into the row so a consumer reads
                     # one shape whatever backend answered.
-                    bucket.append(
-                        {**properties, "source": source_key, "target": target_key}
+                    near, far_end = (
+                        (source_key, target_key)
+                        if read_as is None
+                        else (target_key, source_key)
                     )
+                    bucket.append({**properties, "source": near, "target": far_end})
                     edge_count += 1
                     far = target_key if source_key == current_id else source_key
                     if far is not None and far != current_id or far is not None:
@@ -252,22 +297,26 @@ def bfs_neighbors(
 def _anchor_side(
     edge: Edge, anchor_type: str, direction: EdgeDirection
 ) -> EdgeDirection | None:
-    """Direction to pass to ``fetch_edges`` when anchored at *anchor_type*.
+    """Direction to pass to ``fetch_edges`` when anchored at *anchor_type*, or None.
 
-    ``fetch_edges`` orients relative to the anchor, so an edge reached from its
-    *target* has to be queried inbound even when the caller asked to go out.
-    A self-loop is reachable both ways and always uses the requested direction.
+    ``direction`` is relative to the anchor, exactly as ``fetch_edges`` reads
+    it: ``OUT`` follows edges that leave the anchor, ``IN`` edges that arrive.
+    An edge type can only leave its source type and arrive at its target type,
+    so from the other end there is nothing to follow and the edge is skipped --
+    which is also what a directed pattern ``(anchor)-[r]->(far)`` matches. A
+    self-typed edge sits at both ends and always uses the requested direction.
     """
     is_source = edge.source == anchor_type
     is_target = edge.target == anchor_type
     if is_source and is_target:
         return direction
-    if direction is EdgeDirection.ANY:
-        return EdgeDirection.ANY
-    if is_source:
-        return direction if direction is EdgeDirection.OUT else None
-    if is_target:
-        return EdgeDirection.IN if direction is EdgeDirection.OUT else None
+    # From one end of a two-type edge only one orientation can exist, so ``ANY``
+    # narrows to it: a backend that cannot read backwards is then asked only
+    # for what the walk actually needs.
+    if is_source and direction is not EdgeDirection.IN:
+        return EdgeDirection.OUT
+    if is_target and direction is not EdgeDirection.OUT:
+        return EdgeDirection.IN
     return None
 
 
@@ -329,8 +378,14 @@ def _fetch_edge_rows(
     direction: EdgeDirection,
     filters: Any | None,
     remaining: int,
+    native_inverse_type: str | None = None,
 ) -> list[dict[str, Any]]:
-    """One hop over one declared edge, in storage terms."""
+    """One hop over one declared edge, in storage terms.
+
+    ``native_inverse_type`` and the edge's undirectedness travel with the
+    request: a backend whose reverse reachability is fixed at schema time
+    answers an inbound read from them, and every other backend ignores them.
+    """
     edge_storage = edge_query_name(db_aware, edge, conn.flavor)
     anchor_storage = db_aware.vertex_config.vertex_dbname(anchor_type)
     far_type = _far_endpoint(edge.edge_id, anchor_type)
@@ -345,10 +400,15 @@ def _fetch_edge_rows(
                 filters=filters,
                 limit=remaining,
                 direction=direction,
+                native_inverse_type=native_inverse_type,
+                edge_is_undirected=not edge.directed,
             )
             or []
         )
-    except NotImplementedError:
+    except (NotImplementedError, UnsupportedEdgeDirectionError):
+        # A direction the backend cannot follow is a refusal, not a miss:
+        # swallowing it would return the half of the neighbourhood that the
+        # module exists to never silently drop.
         raise
     except Exception:
         logger.exception(

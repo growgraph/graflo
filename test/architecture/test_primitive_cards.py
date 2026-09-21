@@ -253,6 +253,41 @@ class TestVertexCard:
 # ---------------------------------------------------------------------------
 
 
+def _inverse_schema():
+    from graflo.architecture.schema import Schema
+
+    return Schema.model_validate(
+        {
+            "metadata": {"name": "cards", "version": "1.0.0"},
+            "graph": {
+                "vertex_config": {
+                    "vertices": [
+                        {"name": name, "properties": ["id"], "identity": ["id"]}
+                        for name in ("person", "company")
+                    ]
+                },
+                "edge_config": {
+                    "edges": [
+                        {
+                            "source": "person",
+                            "target": "company",
+                            "relation": "works_at",
+                        },
+                        {
+                            "source": "person",
+                            "target": "person",
+                            "relation": "knows",
+                            "directed": False,
+                        },
+                    ],
+                    "inverses": [{"relation": "works_at", "inverse": "employs"}],
+                    "symmetric": ["knows"],
+                },
+            },
+        }
+    )
+
+
 class TestEdgeCard:
     def test_build(self, edge_works_at):
         card = build_edge_card(edge_works_at)
@@ -274,6 +309,39 @@ class TestEdgeCard:
         e = Edge(source="a", target="b")
         card = build_edge_card(e)
         assert card.relation is None
+
+    def test_an_edge_alone_cannot_know_its_inverse(self, edge_works_at):
+        card = build_edge_card(edge_works_at)
+        assert (card.inverse, card.inverse_state, card.symmetric) == (
+            None,
+            None,
+            False,
+        )
+
+    def test_with_its_schema_the_card_states_the_declared_inverse(self):
+        schema = _inverse_schema()
+        (edge,) = [
+            e for e in schema.core_schema.edge_config.edges if e.relation == "works_at"
+        ]
+        card = build_edge_card(edge, schema=schema)
+        assert card.inverse == "employs"
+        assert card.inverse_state == "declared"
+        assert card.symmetric is False
+
+    def test_a_symmetric_relation_has_no_separate_inverse(self):
+        schema = _inverse_schema()
+        (edge,) = [
+            e for e in schema.core_schema.edge_config.edges if e.relation == "knows"
+        ]
+        card = build_edge_card(edge, schema=schema)
+        assert card.symmetric is True
+        assert card.inverse is None
+
+    def test_the_relation_vocabulary_lists_inverse_names_nothing_is_stored_under(self):
+        from graflo.architecture.schema.context.graph import SchemaGraph
+
+        vocabulary = SchemaGraph.from_schema(_inverse_schema()).relation_vocabulary()
+        assert vocabulary == ["employs", "knows", "works_at"]
 
 
 # ---------------------------------------------------------------------------

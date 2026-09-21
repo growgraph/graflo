@@ -176,3 +176,100 @@ def test_the_query_excludes_the_anchor() -> None:
         limit=None,
     )
     assert "WHERE far <> anchor" in query
+
+
+# An undirected edge next to a directed one: peer -knows- peer, peer -owns-> item
+_MIXED: dict[str, Any] = {
+    "metadata": {"name": "mixed", "version": "1.0.0"},
+    "graph": {
+        "vertex_config": {
+            "vertices": [
+                {
+                    "name": name,
+                    "properties": [{"name": "key", "type": "STRING"}],
+                    "identity": ["key"],
+                }
+                for name in ("peer", "item")
+            ]
+        },
+        "edge_config": {
+            "edges": [
+                {
+                    "source": "peer",
+                    "target": "peer",
+                    "relation": "knows",
+                    "directed": False,
+                },
+                {"source": "peer", "target": "item", "relation": "owns"},
+            ],
+            "symmetric": ["knows"],
+        },
+    },
+}
+
+
+@pytest.fixture
+def mixed_schema() -> Schema:
+    manifest = GraphManifest.model_validate({"schema": _MIXED})
+    manifest.finish_init()
+    return manifest.require_schema()
+
+
+def test_an_undirected_edge_is_matched_without_an_arrow(mixed_schema: Schema) -> None:
+    """The override follows the same per-edge rule as the backend-neutral default."""
+    run = _Recorder()
+    _neighbors(
+        mixed_schema,
+        run,
+        vertex_type="peer",
+        key="p1",
+        hops=1,
+        direction=EdgeDirection.OUT,
+    )
+
+    by_relation = {
+        relation: query
+        for query, _ in run.calls
+        for relation in ("knows", "owns")
+        if f":{relation}" in query
+    }
+    assert "-[r:knows*1..1]-(far" in by_relation["knows"]
+    assert "-[r:owns*1..1]->(far" in by_relation["owns"]
+
+
+def test_relations_that_disagree_on_direction_are_walked_hop_by_hop(
+    mixed_schema: Schema,
+) -> None:
+    """One variable-length pattern has one direction; mixed relations cannot share it."""
+    run = _Recorder(rows=[{"far": {"key": "p2"}, "labels": ["peer"]}])
+    container = _neighbors(
+        mixed_schema,
+        run,
+        vertex_type="peer",
+        key="p1",
+        hops=2,
+        direction=EdgeDirection.OUT,
+    )
+
+    queries = [query for query, _ in run.calls]
+    assert all("*1..1]" in query for query in queries)
+    assert any("-[r:knows*1..1]-(far" in query for query in queries)
+    assert any("-[r:owns*1..1]->(far" in query for query in queries)
+    # The second hop is anchored at the vertex the first hop reached.
+    assert {ANCHOR_PARAM: "p2"} in [params for _, params in run.calls]
+    assert container.vertices["peer"] == [{"key": "p2"}]
+
+
+def test_relations_that_agree_still_share_one_pattern(mixed_schema: Schema) -> None:
+    run = _Recorder()
+    _neighbors(
+        mixed_schema,
+        run,
+        vertex_type="peer",
+        key="p1",
+        hops=3,
+        direction=EdgeDirection.ANY,
+    )
+
+    (query,) = [query for query, _ in run.calls]
+    assert "-[r:knows|owns*1..3]-" in query

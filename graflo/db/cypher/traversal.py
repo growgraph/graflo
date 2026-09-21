@@ -32,6 +32,11 @@ logger = logging.getLogger(__name__)
 #: Name of the query parameter carrying the anchor's key value.
 ANCHOR_PARAM = "anchor_id"
 
+#: One rendered pattern: relationship type(s), far storage label, far logical
+#: type, and the direction followed. A far type of None means "read it from the
+#: reached node's labels".
+_NeighborQuery = tuple[str, str | None, str | None, EdgeDirection]
+
 
 def _quote_identifier(name: str) -> str:
     """Backtick-quote a Cypher identifier, doubling any embedded backtick."""
@@ -131,6 +136,13 @@ def cypher_graph_neighbors(
     service — which a pattern per relation never could. The reached node's type
     is then read from its labels.
 
+    Direction is decided per edge, exactly as in the backend-neutral default
+    (:func:`graflo.db.traversal.bfs_neighbors`): an edge declared
+    ``directed: false`` is followed both ways whatever *direction* says. A
+    variable-length pattern has one direction for all its relationship types, so
+    when the selected relations disagree the walk falls back to one-hop patterns
+    issued hop by hop.
+
     Args:
         conn: The live connection, for flavor-aware name resolution.
         vertex_type: Logical anchor type.
@@ -139,7 +151,8 @@ def cypher_graph_neighbors(
         hops: Maximum hop distance.
         direction: Orientation followed from the anchor.
         edge_types: Logical relation names to restrict to; None means every
-            relation.
+            relation. A declared inverse that stores nothing reads the forward
+            edge from its target.
         limit: Maximum reached nodes.
         schema: Required for logical -> storage naming.
         run: Executes a query string with its parameters and returns rows as
@@ -148,7 +161,13 @@ def cypher_graph_neighbors(
     Returns:
         GraphContainer: reached vertices, keyed by logical type.
     """
-    from graflo.db.traversal import _vertex_identity_value, edge_query_name
+    from graflo.architecture.schema.edge_direction import reversed_direction
+    from graflo.db.traversal import (
+        _edge_direction_for,
+        _vertex_identity_value,
+        edge_query_name,
+        select_edges,
+    )
 
     if hops < 1:
         raise ValueError(f"hops must be >= 1, got {hops}")
@@ -165,81 +184,146 @@ def cypher_graph_neighbors(
         )
 
     db_aware = schema.resolve_db_aware(conn.flavor)
-    anchor_label = db_aware.vertex_config.vertex_dbname(vertex_type)
     key_field, anchor_value = _anchor_key(schema, db_aware, vertex_type, key)
-    params = {ANCHOR_PARAM: anchor_value}
 
-    allowed = set(edge_types) if edge_types is not None else None
+    # Direction is decided per edge, as in the generic default: an undirected
+    # edge is followed both ways whatever the caller asked for, and a relation
+    # read through its declared inverse is followed from the other end.
     edges = [
-        edge
-        for edge in schema.core_schema.edge_config.edges
-        if allowed is None or edge.relation in allowed
-    ]
-
-    # Each entry is (relationship type(s), far label, far type). A far type of
-    # None means "read it from the reached node's labels".
-    queries: list[tuple[str, str | None, str | None]] = []
-    if hops == 1:
-        for edge in edges:
-            if vertex_type not in (edge.source, edge.target):
-                continue
-            storage = edge_query_name(db_aware, edge, conn.flavor)
-            if storage is None:
-                continue
-            far_type = edge.target if edge.source == vertex_type else edge.source
-            queries.append(
-                (storage, db_aware.vertex_config.vertex_dbname(far_type), far_type)
-            )
-    else:
-        storages = sorted(
-            {
-                storage
-                for edge in edges
-                if (storage := edge_query_name(db_aware, edge, conn.flavor)) is not None
-            }
+        (
+            edge,
+            _edge_direction_for(
+                edge,
+                direction if read_as is None else reversed_direction(direction),
+            ),
+            storage,
         )
-        if storages:
-            queries.append(("|".join(storages), None, None))
-
+        for edge, read_as in select_edges(schema, edge_types)
+        if (storage := edge_query_name(db_aware, edge, conn.flavor)) is not None
+    ]
     by_label = {
         db_aware.vertex_config.vertex_dbname(name): name
         for name in vertex_config.vertex_set
     }
+
+    def reached(
+        anchor_type: str,
+        field: str,
+        value: Any,
+        queries: list[_NeighborQuery],
+        max_hops: int,
+    ) -> list[tuple[str, dict[str, Any]]]:
+        """Run *queries* from one anchor; reached docs with their logical type."""
+        out: list[tuple[str, dict[str, Any]]] = []
+        for storage, far_label, far_type, effective in queries:
+            query = cypher_neighbors_query(
+                anchor_label=db_aware.vertex_config.vertex_dbname(anchor_type),
+                anchor_key_field=field,
+                edge_type=storage,
+                far_label=far_label,
+                direction=effective,
+                hops=max_hops,
+                limit=limit,
+            )
+            try:
+                rows = run(query, {ANCHOR_PARAM: value})
+            except Exception:
+                logger.exception(
+                    "cypher graph_neighbors failed for edge type %s", storage
+                )
+                continue
+            for row in rows:
+                doc = row.get("far")
+                if not isinstance(doc, dict):
+                    continue
+                row_type = far_type or next(
+                    (
+                        by_label[label]
+                        for label in row.get("labels") or ()
+                        if label in by_label
+                    ),
+                    None,
+                )
+                if row_type is not None:
+                    out.append((row_type, doc))
+        return out
+
+    def one_hop_queries(anchor_type: str) -> list[_NeighborQuery]:
+        """One pattern per relation touching *anchor_type*, each in its own direction."""
+        return [
+            (
+                storage,
+                db_aware.vertex_config.vertex_dbname(far_type),
+                far_type,
+                effective,
+            )
+            for edge, effective, storage in edges
+            if anchor_type in (edge.source, edge.target)
+            for far_type in [edge.target if edge.source == anchor_type else edge.source]
+        ]
+
     container = GraphContainer()
     seen: set[tuple[str, str]] = set()
-    for storage, far_label, far_type in queries:
-        query = cypher_neighbors_query(
-            anchor_label=anchor_label,
-            anchor_key_field=key_field,
-            edge_type=storage,
-            far_label=far_label,
-            direction=direction,
-            hops=hops,
-            limit=limit,
-        )
-        try:
-            rows = run(query, params)
-        except Exception:
-            logger.exception("cypher graph_neighbors failed for edge type %s", storage)
-            continue
-        for row in rows:
-            doc = row.get("far")
-            if not isinstance(doc, dict):
-                continue
-            row_type = far_type or next(
-                (
-                    by_label[label]
-                    for label in row.get("labels") or ()
-                    if label in by_label
-                ),
-                None,
-            )
-            if row_type is None:
-                continue
+
+    def admit(found: list[tuple[str, dict[str, Any]]]) -> list[tuple[str, str]]:
+        """Add unseen docs to the container; their (type, identity) for the next hop."""
+        fresh: list[tuple[str, str]] = []
+        for row_type, doc in found:
             identity = _vertex_identity_value(conn, schema, row_type, doc)
             if identity is None or (row_type, identity) in seen:
                 continue
             seen.add((row_type, identity))
             container.vertices.setdefault(row_type, []).append(doc)
+            fresh.append((row_type, identity))
+        return fresh
+
+    directions = {effective for _edge, effective, _storage in edges}
+    if hops == 1:
+        admit(
+            reached(
+                vertex_type, key_field, anchor_value, one_hop_queries(vertex_type), 1
+            )
+        )
+    elif len(directions) <= 1:
+        # One variable-length pattern over every allowed relation at once. A
+        # far type of None means "read it from the reached node's labels".
+        storages = sorted({storage for _edge, _effective, storage in edges})
+        if storages:
+            effective = next(iter(directions))
+            admit(
+                reached(
+                    vertex_type,
+                    key_field,
+                    anchor_value,
+                    [("|".join(storages), None, None, effective)],
+                    hops,
+                )
+            )
+    else:
+        # A variable-length pattern carries one direction for all its types, so
+        # relations that disagree (a directed walk crossing an undirected edge)
+        # are walked hop by hop, each relation in its own direction.
+        # Each one-hop pattern excludes only its own anchor, so a later hop
+        # could walk back to the start; the single-pattern path never returns it.
+        seen.add((vertex_type, str(anchor_value)))
+        frontier = admit(
+            reached(
+                vertex_type, key_field, anchor_value, one_hop_queries(vertex_type), 1
+            )
+        )
+        for _hop in range(hops - 1):
+            next_frontier: list[tuple[str, str]] = []
+            for far_type, identity in frontier:
+                fields = db_aware.vertex_config.identity_fields(far_type)
+                next_frontier += admit(
+                    reached(
+                        far_type,
+                        fields[0] if fields else "id",
+                        identity,
+                        one_hop_queries(far_type),
+                        1,
+                    )
+                )
+            frontier = next_frontier
     container.pick_unique()
     return container

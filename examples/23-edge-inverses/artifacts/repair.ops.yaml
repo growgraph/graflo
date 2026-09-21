@@ -1,0 +1,11 @@
+-   symmetric:
+    -   collaborates_with
+    op: declare_edge_inverses
+-   additions:
+        employed_by:
+        -   since
+    op: add_edge_properties
+-   steps:
+        registry:
+        -   step: 2
+    op: set_inverse_emission

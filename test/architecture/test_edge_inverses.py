@@ -22,6 +22,12 @@ from graflo.architecture.evolution.codec import op_from_dict
 from graflo.architecture.evolution.hashing import manifest_hash
 from graflo.architecture.evolution.merge3 import op_slots
 from graflo.architecture.schema import Schema
+from graflo.architecture.schema.inverse_realization import (
+    edge_inverse_findings,
+    native_inverse_violations,
+    pair_realizations,
+    schema_inverse_findings,
+)
 
 FORWARD = {"source": "person", "target": "institution", "relation": "employed_by"}
 INVERSE = {"source": "institution", "target": "person", "relation": "employs"}
@@ -597,3 +603,192 @@ class TestAdvisories:
                 {"op": "add_edge_properties", "additions": {"employs": ["since"]}},
             )
         assert "different properties" in caplog.text
+
+
+class TestDirectedness:
+    def test_edges_of_one_relation_must_agree_on_directed(self) -> None:
+        other = {**FORWARD, "target": "company", "directed": False}
+        with pytest.raises(ValueError, match="must agree on `directed`"):
+            _schema(edges=[FORWARD, other], inverses=[])
+
+    def test_the_refusal_names_each_edge_and_its_value(self) -> None:
+        other = {**FORWARD, "target": "company", "directed": False}
+        with pytest.raises(ValueError) as refusal:
+            _schema(edges=[FORWARD, other], inverses=[])
+        message = str(refusal.value)
+        assert "('person', 'institution', 'employed_by') is directed" in message
+        assert "('person', 'company', 'employed_by') is undirected" in message
+
+    def test_relation_less_edges_are_not_compared(self) -> None:
+        template = {"source": "person", "target": "company"}
+        loose = {"source": "person", "target": "institution", "directed": False}
+        assert _schema(edges=[template, loose], inverses=[])
+
+    def test_a_new_edge_of_a_relation_follows_the_declared_ones(self) -> None:
+        edge_config = _schema(
+            edges=[FORWARD, KNOWS], symmetric=["knows"]
+        ).core_schema.edge_config
+        assert edge_config.directed_for("knows") is False
+        assert edge_config.directed_for("employed_by") is True
+        assert edge_config.directed_for("never_seen") is True
+        assert edge_config.directed_for(None) is True
+
+
+class TestTypedFindings:
+    def test_every_advisory_is_a_rendering_of_a_typed_finding(self) -> None:
+        drifted = {**INVERSE, "properties": ["since"], "identities": [["since"]]}
+        edge_config = _schema(edges=[FORWARD, drifted]).core_schema.edge_config
+        messages = {finding.message for finding in edge_inverse_findings(edge_config)}
+        assert set(edge_config.inverse_advisories()) <= messages
+
+    def test_a_finding_names_its_relations_and_edges(self) -> None:
+        drifted = {**INVERSE, "identities": [["since"]], "properties": ["since"]}
+        edge_config = _schema(edges=[FORWARD, drifted]).core_schema.edge_config
+        (finding,) = [
+            f for f in edge_inverse_findings(edge_config) if f.kind == "identity_drift"
+        ]
+        assert finding.severity == "conflict"
+        assert finding.relations == ["employed_by", "employs"]
+        assert finding.edges == [
+            ("person", "institution", "employed_by"),
+            ("institution", "person", "employs"),
+        ]
+
+    def test_under_reported_properties_are_repairable(self) -> None:
+        """One mirror states a property the other omits: propagating it is safe."""
+        richer = {**INVERSE, "properties": ["since"]}
+        edge_config = _schema(edges=[FORWARD, richer]).core_schema.edge_config
+        (finding,) = [
+            f for f in edge_inverse_findings(edge_config) if f.kind == "property_drift"
+        ]
+        assert finding.severity == "repairable"
+        assert finding.detail["missing"] == {"employed_by": ["since"], "employs": []}
+
+    def test_a_repair_that_would_reach_an_unmirrored_edge_is_a_conflict(self) -> None:
+        """Properties are added per relation, so a bystander edge would gain one too."""
+        richer = {**INVERSE, "properties": ["since"]}
+        bystander = {**FORWARD, "target": "company"}
+        edge_config = _schema(
+            edges=[FORWARD, richer, bystander]
+        ).core_schema.edge_config
+        (finding,) = [
+            f for f in edge_inverse_findings(edge_config) if f.kind == "property_drift"
+        ]
+        assert finding.severity == "conflict"
+
+    def test_one_property_typed_two_ways_is_a_conflict(self) -> None:
+        forward = {**FORWARD, "properties": [{"name": "since", "type": "INT"}]}
+        inverse = {**INVERSE, "properties": [{"name": "since", "type": "STRING"}]}
+        edge_config = _schema(edges=[forward, inverse]).core_schema.edge_config
+        (finding,) = [
+            f
+            for f in edge_inverse_findings(edge_config)
+            if f.kind == "property_type_drift"
+        ]
+        assert finding.severity == "conflict"
+        assert finding.detail == {"properties": ["since"]}
+
+    def test_undirected_edges_without_a_symmetric_declaration_are_repairable(
+        self,
+    ) -> None:
+        edge_config = _schema(edges=[FORWARD, KNOWS]).core_schema.edge_config
+        (finding,) = [
+            f
+            for f in edge_inverse_findings(edge_config)
+            if f.kind == "undirected_not_symmetric"
+        ]
+        assert finding.severity == "repairable"
+        assert finding.relations == ["knows"]
+
+    def test_a_config_that_does_not_load_can_still_be_described(self) -> None:
+        from graflo.architecture.schema.edge import EdgeConfig
+
+        directed_knows = {**KNOWS, "directed": True}
+        edge_config = EdgeConfig.model_validate(
+            {"edges": [FORWARD, directed_knows], "symmetric": ["knows"]}
+        )
+        (finding,) = [
+            f
+            for f in edge_inverse_findings(edge_config)
+            if f.kind == "symmetric_on_directed"
+        ]
+        assert finding.severity == "repairable"
+
+
+class TestNativeEligibility:
+    def test_a_candidate_is_checked_without_changing_the_profile(self) -> None:
+        schema = _schema(db_profile=_tigergraph())
+        violations = native_inverse_violations(
+            schema.db_profile,
+            schema.core_schema.edge_config,
+            schema.core_schema.vertex_config.vertex_set,
+            candidates=["employed_by"],
+        )
+        assert violations == []
+        assert schema.db_profile.native_inverses == []
+
+    def test_the_side_with_no_edges_is_not_eligible(self) -> None:
+        """The native side is the relation that has edges; its inverse has none."""
+        schema = _schema(db_profile=_tigergraph())
+        (violation,) = native_inverse_violations(
+            schema.db_profile,
+            schema.core_schema.edge_config,
+            schema.core_schema.vertex_config.vertex_set,
+            candidates=["employs"],
+        )
+        assert violation.code == "no_edge"
+
+    def test_each_violation_carries_a_code_and_its_relation(self) -> None:
+        schema = _schema(edges=[FORWARD, INVERSE], db_profile={"db_flavor": "neo4j"})
+        violations = native_inverse_violations(
+            schema.db_profile,
+            schema.core_schema.edge_config,
+            schema.core_schema.vertex_config.vertex_set,
+            candidates=["employed_by"],
+        )
+        assert {(v.relation, v.code) for v in violations} == {
+            ("employed_by", "not_tigergraph"),
+            ("employed_by", "collides_with_edges"),
+        }
+
+
+class TestRealization:
+    def test_a_pair_with_nothing_stored_is_simply_declared(self) -> None:
+        (pair,) = pair_realizations(_schema())
+        assert pair.state == "declared"
+        assert pair.stored_sides == ["employed_by"]
+        assert (pair.mirrored, pair.total) == (0, 1)
+
+    def test_a_pair_the_database_maintains_is_native(self) -> None:
+        (pair,) = pair_realizations(_schema(db_profile=_tigergraph("employed_by")))
+        assert pair.state == "native"
+        assert pair.native_side == "employed_by"
+
+    def test_a_pair_with_every_mirror_declared_is_materialized(self) -> None:
+        (pair,) = pair_realizations(_schema(edges=[FORWARD, INVERSE]))
+        assert pair.state == "materialized"
+        assert (pair.mirrored, pair.total) == (2, 2)
+
+    def test_a_pair_mirrored_for_some_endpoint_pairs_is_partial(self) -> None:
+        other = {**FORWARD, "target": "company"}
+        (pair,) = pair_realizations(_schema(edges=[FORWARD, INVERSE, other]))
+        assert pair.state == "partial"
+
+    def test_a_pair_touched_by_a_conflict_is_conflicting(self) -> None:
+        same_side = {**FORWARD, "relation": "employs"}
+        (pair,) = pair_realizations(_schema(edges=[FORWARD, same_side]))
+        assert pair.state == "conflicting"
+
+    def test_an_unrealized_pair_is_flagged_where_the_reverse_read_is_unanswerable(
+        self,
+    ) -> None:
+        findings = schema_inverse_findings(_schema(db_profile=_tigergraph()))
+        (note,) = [f for f in findings if f.kind == "reverse_unreadable"]
+        assert note.severity == "note"
+        assert note.detail == {"reverse_traversal_cost": "schema_time_only"}
+
+    def test_an_unrealized_pair_is_fine_where_the_reverse_read_is_cheap(
+        self,
+    ) -> None:
+        findings = schema_inverse_findings(_schema(db_profile={"db_flavor": "neo4j"}))
+        assert [f for f in findings if f.kind == "reverse_unreadable"] == []

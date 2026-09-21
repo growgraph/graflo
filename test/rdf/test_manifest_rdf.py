@@ -857,3 +857,36 @@ def test_ontology_and_context_declare_inverse_terms() -> None:
         "nativeInverseRelation",
     ):
         assert key in context
+
+
+def test_round_trip_preserves_a_step_that_mirrors_its_inverse() -> None:
+    """``emit_inverse`` rides in the step payload, so it needs no term of its own."""
+    payload = _inverse_manifest(native=False).to_dict(skip_defaults=False)
+    payload["schema"]["core_schema"]["edge_config"]["edges"].append(
+        {"source": "institution", "target": "person", "relation": "employs"}
+    )
+    payload["ingestion_model"] = {
+        "resources": [
+            {
+                "name": "rows",
+                "pipeline": [
+                    {"vertex": "person"},
+                    {"vertex": "institution"},
+                    {
+                        "edge": {
+                            "from": "person",
+                            "to": "institution",
+                            "relation": "employed_by",
+                            "emit_inverse": True,
+                        }
+                    },
+                ],
+            }
+        ]
+    }
+    manifest = GraphManifest.from_dict(payload)
+
+    restored = _round_trip(manifest)
+    assert _canonical(restored) == _canonical(manifest)
+    assert restored.ingestion_model is not None
+    assert restored.ingestion_model.resources[0].pipeline[-1]["edge"]["emit_inverse"]

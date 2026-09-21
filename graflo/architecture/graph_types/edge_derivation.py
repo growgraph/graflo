@@ -80,6 +80,14 @@ class EdgeDerivation(ConfigBaseModel):
         ),
     )
 
+    emit_inverse: bool = Field(
+        default=False,
+        description=(
+            "If True, assembly also writes the declared inverse of every edge this "
+            "step writes, when that inverse edge is declared."
+        ),
+    )
+
     def uses_secondary_identity(self) -> bool:
         """True when either endpoint is matched on something other than the primary identity."""
         return any(
@@ -88,7 +96,7 @@ class EdgeDerivation(ConfigBaseModel):
         )
 
     def is_empty(self) -> bool:
-        if self.relation_from_key:
+        if self.relation_from_key or self.emit_inverse:
             return False
         return all(
             getattr(self, name) is None

@@ -62,6 +62,7 @@ from .ops import (
     SetEdgeDirectedOp,
     SetEdgeSemanticsOp,
     SetFieldSemanticsOp,
+    SetInverseEmissionOp,
     SetNativeInversesOp,
     SetVertexDescriptionsOp,
     SetVertexSemanticsOp,
@@ -110,6 +111,7 @@ RevisionOp = Annotated[
     | RetractEdgeInversesOp
     | AddInverseEdgesOp
     | SetNativeInversesOp
+    | SetInverseEmissionOp
     | ProjectManifestOp
     | ReplaceIdentityOp
     | SanitizeOp,

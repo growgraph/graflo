@@ -16,6 +16,7 @@ from graflo.architecture.schema.context.budget import estimate_tokens
 from graflo.architecture.schema.context.graph import SchemaGraph
 from graflo.architecture.schema.context.rank import VertexSignals, score_vertices
 from graflo.architecture.schema.document import Schema
+from graflo.architecture.schema.inverse_realization import pair_realizations
 
 if TYPE_CHECKING:
     from graflo.architecture.contract.bindings.core import AnyConnector
@@ -213,6 +214,26 @@ class EdgeCard(BaseCard):
     directed: bool = PydanticField(
         default=True, description="True if source->target order matters."
     )
+    symmetric: bool = PydanticField(
+        default=False,
+        description="True if the relation is declared its own inverse.",
+    )
+    inverse: str | None = PydanticField(
+        default=None,
+        description=(
+            "Declared inverse relation: the name for reading this edge from its "
+            "target. Usable in a query whether or not anything is stored under it."
+        ),
+    )
+    inverse_state: str | None = PydanticField(
+        default=None,
+        description=(
+            "State of the declared pair: declared (nothing stored; the inverse "
+            "reads this edge from its target), native (the database maintains "
+            "it), materialized (a declared edge of its own), or partial / "
+            "conflicting."
+        ),
+    )
     identity_count: int = PydanticField(
         default=0, description="Number of logical uniqueness keys."
     )
@@ -321,14 +342,44 @@ def build_vertex_card(vertex: Vertex, id: str | None = None) -> VertexCard:
     return card
 
 
-def build_edge_card(edge: Edge, id: str | None = None) -> EdgeCard:
-    """Build a summary card for a logical edge type."""
+def build_edge_card(
+    edge: Edge, id: str | None = None, *, schema: Schema | None = None
+) -> EdgeCard:
+    """Build a summary card for a logical edge type.
+
+    Args:
+        edge: The edge to summarize.
+        id: Identifier carried on the card.
+        schema: The schema the edge belongs to. With it the card also states the
+            relation's declared inverse and the state of that pair, which
+            an edge alone cannot know; without it those fields stay empty.
+    """
+    inverse: str | None = None
+    state: str | None = None
+    symmetric = False
+    if schema is not None and edge.relation is not None:
+        edge_config = schema.core_schema.edge_config
+        symmetric = edge_config.is_symmetric(edge.relation)
+        if not symmetric:
+            inverse = edge_config.inverse_of(edge.relation)
+        if inverse is not None:
+            state = next(
+                (
+                    pair.state
+                    for pair in pair_realizations(schema)
+                    if edge.relation in (pair.relation, pair.inverse)
+                ),
+                None,
+            )
     card = EdgeCard(
         id=id,
         source=edge.source,
         target=edge.target,
         relation=edge.relation,
         directed=edge.directed,
+        symmetric=symmetric,
+        inverse=inverse,
+        inverse_state=state,
         identity_count=len(edge.identities),
         property_count=len(edge.properties),
         description=edge.description,

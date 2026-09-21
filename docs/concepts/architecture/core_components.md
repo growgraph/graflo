@@ -258,7 +258,8 @@ Logical edges are **directed by default** (`directed: true`). Direction matters 
 | Modeling goal | GraFlo config | TigerGraph GSQL (when `db_flavor: tigergraph`) |
 |---------------|---------------|------------------------------------------------|
 | Single direction | `directed: true` (default), one logical edge | `ADD DIRECTED EDGE ...` |
-| Portable forward + inverse labels (**inverse edge**) | Declared inverse + two logical directed edges (hand-authored, or `AddInverseEdgesOp`) | Two `ADD DIRECTED EDGE` statements |
+| A name for the reverse reading, nothing stored (**declared inverse**) | Declared pair only; reads resolve the inverse name to the forward edge followed from its target | One `ADD DIRECTED EDGE` — and no reverse read, which is why TigerGraph wants one of the next two |
+| Portable forward + inverse labels (**materialized inverse**) | Declared pair + two logical directed edges, the inverse fed by `emit_inverse` on the forward steps (`AddInverseEdgesOp`) or by steps of its own | Two `ADD DIRECTED EDGE` statements |
 | Database-maintained pair, one load path (**native inverse**) | Declared pair + one logical relation + `native_inverses: [relation]` | `ADD DIRECTED EDGE ... WITH REVERSE_EDGE="<declared inverse>"` |
 | Symmetric / direction-agnostic | `directed: false` on one logical edge | `ADD UNDIRECTED EDGE ...` |
 
@@ -304,10 +305,10 @@ Following it either way is what `Connection.fetch_edges(..., direction=...)` doe
 | ArangoDB | no | free — the edge index covers `_from` and `_to`, so `ANY` matches either orientation |
 | Neo4j / Memgraph / FalkorDB | no | cheap — the pattern drops or flips its arrow (`-[r]-`, `<-[r]-`) |
 | Nebula | no | cheap — `GO … REVERSELY` / `BIDIRECT` |
-| PostgreSQL | no | `target_id` is indexed, but `fetch_edges` is not implemented |
-| GraFlo file backend | no | direction **is** the storage partition key; `fetch_edges` is not implemented |
+| PostgreSQL | no | free — every edge table is defined with an index on `target_id`, so `IN` filters on it and `ANY` is a `UNION` of both lookups |
+| GraFlo file backend | no | direction **is** the storage partition key, so the reverse view is never stored; `fetch_edges` answers it from an in-process index over the batches it reads |
 
-Declaring `directed: false` against a backend with no undirected type is **not an error** — the flag is already present in working manifests, and refusing it would reject valid schemas. Each backend instead reports one diagnostic per undirected edge when the schema is applied, stating what that target actually does; `Connection.edge_direction_diagnostics(schema)` returns them as data, and `report_edge_direction_support` logs them. The matrix lives in [`graflo.db.edge_direction_support`](../../reference/db/edge_direction_support.md).
+Declaring `directed: false` against a backend with no undirected type is **not an error** — the flag is already present in working manifests, and refusing it would reject valid schemas. Each backend instead reports one diagnostic per undirected edge when the schema is applied, stating what that target actually does; `Connection.edge_direction_diagnostics(schema)` returns them as data, and `report_edge_direction_support` logs them. The matrix itself is [`graflo.architecture.schema.edge_direction`](../../reference/architecture/schema/edge_direction.md) — beside the schema and below every backend, so that choosing how to realize a declared inverse can consult it without a database driver; the read-path assertion and the diagnostics built on it are in [`graflo.db.edge_direction_support`](../../reference/db/edge_direction_support.md).
 
 !!! warning "TigerGraph fails loudly rather than under-reporting"
     Reverse reachability there is fixed when the edge type is created, so an `IN` / `ANY` read of a directed type with no paired reverse type raises `UnsupportedEdgeDirectionError`. Silently returning only the outgoing half would hand back a partial neighbourhood with no signal.
@@ -315,8 +316,8 @@ Declaring `directed: false` against a backend with no undirected type is **not a
 !!! warning "`identities` stay endpoint-ordered"
     On an undirected edge the `source` and `target` tokens in an [identity key](#edge) still resolve positionally, so `(a, b)` and `(b, a)` count as two distinct keys. Declare such edges from a consistent side until canonical ordering lands.
 
-!!! note "Single-hop only"
-    `direction` applies to `fetch_edges`, which is one hop from a known vertex. Multi-hop traversal is a separate primitive and does not exist yet.
+!!! note "Direction is decided per edge, on every read path"
+    `fetch_edges` is one hop from a known vertex; `Connection.graph_neighbors` walks several. Both follow an undirected edge both ways whatever direction was requested, and the native Cypher override applies the same rule as the backend-neutral default: relations that disagree on direction cannot share one variable-length pattern, so such a walk is issued hop by hop. A schema-aware caller also tells the backend what it needs to answer a reverse read — `edge_is_undirected`, and `native_inverse_type` for a relation whose inverse the database maintains — and gets rows back in the orientation of the edge as declared, whichever type answered.
 
 #### Matching and filtering (ingestion)
 - **`match_source`** / **`match_target`** / **`match`**: edge **actor** options for branch selection when building edges from hierarchical documents

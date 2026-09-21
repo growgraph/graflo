@@ -98,6 +98,7 @@ OP_PAYLOADS: dict[str, dict] = {
     "declare_edge_inverses": {"inverses": {"purchases": "purchased_by"}},
     "retract_edge_inverses": {"relations": ["purchases"]},
     "set_native_inverses": {"relations": ["purchases"]},
+    "set_inverse_emission": {"steps": {"crm": [{"at": [0], "step": 2, "link": 1}]}},
     "add_resource_transforms": {
         "additions": {
             "crm": [
@@ -483,8 +484,8 @@ class TestUnionCoverage:
             if name.endswith("Op")
             and hasattr(getattr(ops_module, name), "model_fields")
         }
-        assert len(exported) == 44
-        assert len(_union_members()) == 43  # 44 minus the binary merge op
+        assert len(exported) == 45
+        assert len(_union_members()) == 44  # 45 minus the binary merge op
 
 
 class TestRoundTrip:

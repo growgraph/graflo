@@ -286,6 +286,10 @@ def op_slots(op: ManifestOp) -> set[Slot]:
             }
 
     # ── ingestion ───────────────────────────────────────────────────────────
+    elif isinstance(op, ops.SetInverseEmissionOp):
+        # Steps are addressed by position, and a position is only meaningful
+        # against the pipeline it was read from: one slot per resource.
+        slots |= {_resource_slot(name) for name in op.steps}
     elif isinstance(op, (ops.AddResourceTransformsOp, ops.EnsureExtractedFieldsOp)):
         # A pipeline is one slot per resource: an ordered program cannot be
         # half-merged, so it conflicts as a unit or merges as a unit.

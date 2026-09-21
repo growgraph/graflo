@@ -66,6 +66,7 @@ from .ops import (
     SetEdgeDirectedOp,
     SetEdgeSemanticsOp,
     SetFieldSemanticsOp,
+    SetInverseEmissionOp,
     SetNativeInversesOp,
     SetVertexDescriptionsOp,
     SetVertexSemanticsOp,
@@ -113,6 +114,7 @@ _INGESTION_APPLY_EXPORTS = frozenset(
         "apply_add_resources",
         "apply_ensure_extracted_fields",
         "apply_remove_resources",
+        "apply_set_inverse_emission",
     }
 )
 
@@ -248,6 +250,17 @@ _INVERSE_EXPORTS = frozenset(
     {"IRREVERSIBLE", "invert_op", "invert_ops", "irreversible_reason", "is_reversible"}
 )
 
+_INVERSE_PLAN_EXPORTS = frozenset(
+    {
+        "InversePlan",
+        "plan_declare_symmetric",
+        "plan_realize_inverses",
+        "plan_repair_inverses",
+        "plan_switch_realization",
+        "plan_withdraw_realization",
+    }
+)
+
 _COMMIT_EXPORTS = frozenset(
     {
         "COMMIT_KINDS",
@@ -344,6 +357,7 @@ __all__ = [
     "IdentityAlignment",
     "IdentityReplacement",
     "IdentityTarget",
+    "InversePlan",
     "ListOrder",
     "LocalKeySource",
     "LocalKeySpec",
@@ -388,6 +402,7 @@ __all__ = [
     "SetEdgeDirectedOp",
     "SetEdgeSemanticsOp",
     "SetFieldSemanticsOp",
+    "SetInverseEmissionOp",
     "SetNativeInversesOp",
     "SetVertexDescriptionsOp",
     "SetVertexSemanticsOp",
@@ -437,6 +452,7 @@ __all__ = [
     "apply_set_edge_directed",
     "apply_set_edge_semantics",
     "apply_set_field_semantics",
+    "apply_set_inverse_emission",
     "apply_set_native_inverses",
     "apply_set_vertex_descriptions",
     "apply_set_vertex_semantics",
@@ -482,6 +498,11 @@ __all__ = [
     "ops_reaching_ingestion",
     "ops_to_dicts",
     "ops_to_yaml_str",
+    "plan_declare_symmetric",
+    "plan_realize_inverses",
+    "plan_repair_inverses",
+    "plan_switch_realization",
+    "plan_withdraw_realization",
     "re_merge",
     "same_name_groups",
     "schema_hash",
@@ -561,6 +582,10 @@ def __getattr__(name: str) -> Any:
         from . import inverse as inverse_mod
 
         return getattr(inverse_mod, name)
+    if name in _INVERSE_PLAN_EXPORTS:
+        from . import inverse_plan as inverse_plan_mod
+
+        return getattr(inverse_plan_mod, name)
     if name in _COMMIT_EXPORTS:
         from . import commit as commit_mod
 

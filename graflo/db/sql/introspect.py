@@ -69,6 +69,43 @@ def is_edge_like_table(
     return bool(pk_set.issubset(fk_column_names) and len(fk_columns) >= 2)
 
 
+def foreign_keys_in_column_order(
+    fk_columns: list[dict[str, Any]], all_columns: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Order foreign-key rows by where their constraint sits in the table.
+
+    An edge table reads *source, then target* in the order its columns were
+    declared, and the first foreign key becomes the edge source. No catalog
+    promises that order: a query sorted by position *within* a constraint ties
+    across single-column constraints, and one sorted by constraint name puts
+    ``product_id`` before ``user_id``. The table's own column order is the one
+    thing every provider reports the same way.
+
+    A constraint is placed by its earliest column; the rows of a composite key
+    keep the order the provider gave them. Rows naming a column the table does
+    not list sort last, in their original order.
+    """
+    position = {col["name"]: index for index, col in enumerate(all_columns)}
+    last = len(position)
+
+    def constraint_of(index: int) -> object:
+        return fk_columns[index].get("constraint_name") or index
+
+    earliest: dict[object, int] = {}
+    first_row: dict[object, int] = {}
+    for index, fk in enumerate(fk_columns):
+        key = constraint_of(index)
+        at = position.get(fk["column"], last)
+        earliest[key] = min(earliest.get(key, at), at)
+        first_row.setdefault(key, index)
+
+    def rank(index: int) -> tuple[int, int, int]:
+        key = constraint_of(index)
+        return (earliest[key], first_row[key], index)
+
+    return [fk_columns[index] for index in sorted(range(len(fk_columns)), key=rank)]
+
+
 def detect_vertex_tables(
     provider: SqlMetadataProvider,
     schema_name: str | None = None,
@@ -97,8 +134,10 @@ def detect_vertex_tables(
     for table_info in tables:
         table_name = table_info["table_name"]
         pk_columns = provider.get_primary_keys(table_name, schema_name)
-        fk_columns = provider.get_foreign_keys(table_name, schema_name)
         all_columns = provider.get_table_columns(table_name, schema_name)
+        fk_columns = foreign_keys_in_column_order(
+            provider.get_foreign_keys(table_name, schema_name), all_columns
+        )
 
         # Vertex-like tables have:
         # 1. A primary key
@@ -220,6 +259,8 @@ def detect_edge_tables(
             continue
 
         all_columns = provider.get_table_columns(table_name, schema_name)
+        # The first foreign key is the edge source: read them as declared.
+        fk_columns = foreign_keys_in_column_order(fk_columns, all_columns)
 
         # Mark primary key and unique columns and convert to ColumnInfo
         pk_set = set(pk_columns)

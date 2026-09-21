@@ -18,6 +18,7 @@ from graflo.architecture.graph_types.edge_derivation import (
     EndpointMatch,
 )
 from graflo.architecture.schema.edge import Edge, EdgeConfig
+from graflo.architecture.schema.inverse_realization import inverse_emission_refusal
 from graflo.architecture.schema.vertex import VertexConfig, VertexName
 
 from .base import Actor, ActorInitContext
@@ -51,6 +52,8 @@ def _link_to_edge_actor_config(link: EdgeLinkConfig) -> EdgeActorConfig:
         data["target_match"] = link.target_match
     if link.on_ambiguous is not None:
         data["on_ambiguous"] = link.on_ambiguous
+    if link.emit_inverse:
+        data["emit_inverse"] = True
     return EdgeActorConfig.model_validate(data)
 
 
@@ -206,9 +209,67 @@ class EdgeActor(Actor):
                 )
             self._register_endpoint_match(init_ctx, edge_id)
             self.edge = init_ctx.edge_config.edge_for(edge_id)
+            self._check_inverse_emission(init_ctx, edge_id)
         else:
             # Dynamic mode: cache will be populated per-document.
             self._edge_cache.clear()
+            self._check_inverse_emission(init_ctx, None)
+
+    def _check_inverse_emission(
+        self, init_ctx: ActorInitContext, edge_id: EdgeId | None
+    ) -> None:
+        """Tie ``emit_inverse`` to the declared inverses, as far as the step is known.
+
+        A step whose endpoints and relation are all fixed names exactly one edge,
+        so everything can be checked now: the relation must have a declared pair
+        (a symmetric relation has no inverse edge -- its edges are undirected),
+        and the inverse edge must be declared, because only a *materialized*
+        inverse is written. A step whose relation or endpoints come from the data
+        is checked per document at assembly instead.
+
+        Raises:
+            ValueError: naming the step's edge and what to declare.
+        """
+        if not self.derivation.emit_inverse:
+            return
+        derivation = self.derivation
+        data_driven = (
+            edge_id is None
+            or edge_id[2] is None
+            or derivation.relation_field is not None
+            or derivation.relation_from_key
+        )
+        if data_driven:
+            if derivation.uses_secondary_identity():
+                # The writer learns which identity to match an endpoint on per
+                # edge id, at load time; an inverse known only per document has
+                # no id to register the swapped selectors under.
+                raise ValueError(
+                    "emit_inverse cannot be combined with source_match / "
+                    "target_match on an edge step whose relation or endpoints come "
+                    "from the data; write the inverse with a step of its own"
+                )
+            return
+
+        assert edge_id is not None
+        edge_config = init_ctx.edge_config
+        refusal = inverse_emission_refusal(edge_config, edge_id)
+        if refusal is not None:
+            raise ValueError(f"emit_inverse on edge step {edge_id}: {refusal}")
+        source, target, relation = edge_id
+        inverse_id = (target, source, edge_config.inverse_of(relation))
+        if inverse_id in edge_config and (
+            derivation.uses_secondary_identity() or derivation.on_ambiguous is not None
+        ):
+            # The mirror's endpoints are this step's endpoints, swapped.
+            init_ctx.edge_derivation.set_endpoint_match(
+                inverse_id,
+                EndpointMatch(
+                    source=derivation.target_match,
+                    target=derivation.source_match,
+                    on_ambiguous=derivation.on_ambiguous,
+                ),
+            )
 
     def _register_endpoint_match(
         self, init_ctx: ActorInitContext, edge_id: EdgeId
@@ -261,7 +322,18 @@ class EdgeActor(Actor):
                 relation,
             )
             return None
-        edge = Edge(source=source, target=target, relation=relation)
+        edge = Edge(
+            source=source,
+            target=target,
+            relation=relation,
+            # Edges of one relation agree on `directed`; a relation named only
+            # at ingest time follows the ones already declared.
+            directed=(
+                self.edge_config.directed_for(relation)
+                if self.edge_config is not None
+                else True
+            ),
+        )
         if self.vertex_config is not None:
             edge.finish_init(vertex_config=self.vertex_config)
         if self.edge_config is not None and self.vertex_config is not None:
@@ -423,6 +495,7 @@ class EdgeActor(Actor):
         derivation = EdgeDerivation(
             match_source=self._source_slot_key,
             match_target=self._target_slot_key,
+            emit_inverse=self.derivation.emit_inverse,
         )
         ctx.record_edge_intent(edge=edge, location=lindex, derivation=derivation)
         return ctx

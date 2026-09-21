@@ -17,14 +17,27 @@ from graflo.architecture.contract.ingestion.steps.models import TransformActorCo
 from graflo.architecture.contract.ingestion.steps.normalize import (
     normalize_actor_step,
 )
+from graflo.architecture.contract.ingestion.steps.ref import (
+    EdgeStepRef,
+    find_edge_step,
+    iter_edge_steps,
+    with_emit_inverse,
+)
 from graflo.architecture.contract.ingestion.transform import ProtoTransform
 from graflo.architecture.contract.manifest import GraphManifest
+from graflo.architecture.graph_types import EdgeId
+from graflo.architecture.schema.edge import EdgeConfig, inverse_map
+from graflo.architecture.schema.inverse_realization import (
+    inverse_emission_refusal,
+    materialized_inverse_id,
+)
 
 from .ops import (
     AddResourcesOp,
     AddResourceTransformsOp,
     EnsureExtractedFieldsOp,
     RemoveResourcesOp,
+    SetInverseEmissionOp,
 )
 
 
@@ -279,3 +292,116 @@ def apply_ensure_extracted_fields(
     manifest.ingestion_model = IngestionModel.model_validate(
         im.to_dict(skip_defaults=False)
     )
+
+
+def set_emit_inverse_flags(
+    manifest: GraphManifest, steps: dict[str, list[EdgeStepRef]], enabled: bool
+) -> None:
+    """Set or clear ``emit_inverse`` on the addressed steps, in place.
+
+    The mechanical half of :func:`apply_set_inverse_emission`, shared with the
+    ops that move flags as a consequence of a schema change.
+
+    Raises:
+        ValueError: naming an unknown resource, or a ref that is not an edge step.
+    """
+    ingestion = manifest.ingestion_model
+    if ingestion is None:
+        raise ValueError("set_inverse_emission requires ingestion_model")
+    by_name = {resource.name: resource for resource in ingestion.resources}
+    unknown = sorted(set(steps) - set(by_name))
+    if unknown:
+        raise ValueError(f"set_inverse_emission: unknown resources: {unknown}")
+    payload = ingestion.to_dict(skip_defaults=False)
+    for resource_payload in payload.get("resources", []):
+        refs = steps.get(resource_payload.get("name"))
+        if not refs:
+            continue
+        pipeline = resource_payload.get("pipeline") or []
+        for ref in refs:
+            try:
+                pipeline = with_emit_inverse(pipeline, ref, enabled)
+            except ValueError as exc:
+                raise ValueError(
+                    f"set_inverse_emission: resource {resource_payload['name']!r}: {exc}"
+                ) from exc
+        resource_payload["pipeline"] = pipeline
+    manifest.ingestion_model = IngestionModel.model_validate(payload)
+
+
+def apply_set_inverse_emission(
+    manifest: GraphManifest, op: SetInverseEmissionOp
+) -> None:
+    """Set or clear ``emit_inverse`` on edge steps addressed by position.
+
+    Enabling a step that names exactly one edge is checked against the schema
+    here, in the op's own words, rather than left to the next manifest load: the
+    relation needs a declared pair, must not be symmetric, and its inverse edge
+    must be declared.
+    """
+    ingestion = manifest.ingestion_model
+    if ingestion is None:
+        raise ValueError("set_inverse_emission requires ingestion_model")
+    schema = manifest.graph_schema
+    if op.enabled and schema is not None:
+        edge_config = schema.core_schema.edge_config
+        by_name = {resource.name: resource for resource in ingestion.resources}
+        for name, refs in op.steps.items():
+            resource = by_name.get(name)
+            if resource is None:
+                continue
+            for ref in refs:
+                view = find_edge_step(resource.pipeline, ref)
+                static = view.static_edge_id if view is not None else None
+                if static is None:
+                    continue
+                refusal = inverse_emission_refusal(edge_config, static)
+                if refusal is not None:
+                    raise ValueError(
+                        f"set_inverse_emission: resource {name!r} step {ref} "
+                        f"writes {static}: {refusal}"
+                    )
+    set_emit_inverse_flags(manifest, op.steps, op.enabled)
+
+
+def _flag_is_live(
+    view_static: EdgeId | None, written: set[str] | None, edge_config: EdgeConfig
+) -> bool:
+    """Whether a flagged step can mirror into anything under ``edge_config``."""
+    if view_static is not None:
+        return materialized_inverse_id(edge_config, view_static) is not None
+    paired = inverse_map(edge_config.inverses)
+    materialized = {
+        edge.relation
+        for edge in edge_config.edges
+        if edge.relation is not None
+        and materialized_inverse_id(edge_config, edge.edge_id) is not None
+    }
+    if written is None:
+        return bool(materialized)
+    return any(name in paired and name in materialized for name in written)
+
+
+def stranded_emission_flags(
+    manifest: GraphManifest, before: EdgeConfig, after: EdgeConfig
+) -> dict[str, list[EdgeStepRef]]:
+    """Flagged steps that mirrored into something under *before* and into nothing under *after*.
+
+    Removing an inverse edge strands the flags that fed it. A flag that was
+    already idle before the change is not the change's to clear.
+    """
+    ingestion = manifest.ingestion_model
+    if ingestion is None:
+        return {}
+    stranded: dict[str, list[EdgeStepRef]] = {}
+    for resource in ingestion.resources:
+        refs = [
+            view.ref
+            for view in iter_edge_steps(resource.pipeline)
+            if view.emit_inverse
+            and _flag_is_live(view.static_edge_id, view.relations_written(), before)
+            and not _flag_is_live(view.static_edge_id, view.relations_written(), after)
+        ]
+        if refs:
+            stranded[resource.name] = refs
+    return stranded

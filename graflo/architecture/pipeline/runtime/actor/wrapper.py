@@ -27,7 +27,7 @@ from graflo.architecture.graph_types import (
     LocationIndex,
 )
 from graflo.architecture.graph_types.merge import fuse_doc_basis
-from graflo.architecture.schema.edge import EdgeConfig
+from graflo.architecture.schema.edge import EdgeConfig, inverse_map
 from graflo.architecture.schema.identity_digest import (
     ensure_digest_identities_in_acc_vertex,
 )
@@ -80,6 +80,19 @@ class ActorWrapper:
     @property
     def target_db_flavor(self) -> DBType | None:
         return self.init_ctx.target_db_flavor
+
+    def _inverse_pairs(self) -> dict[str, str]:
+        """``{relation: declared inverse}`` of this resource's edge config, built once.
+
+        Keyed by the config object so a wrapper re-initialized against another
+        schema does not mirror through a stale table.
+        """
+        edge_config = self.init_ctx.edge_config
+        cached = self.__dict__.get("_inverse_pairs_cache")
+        if cached is None or cached[0] is not edge_config:
+            cached = (edge_config, inverse_map(edge_config.inverses))
+            self.__dict__["_inverse_pairs_cache"] = cached
+        return cached[1]
 
     def init_transforms(self, init_ctx: ActorInitContext) -> None:
         self.init_ctx = init_ctx
@@ -164,6 +177,7 @@ class ActorWrapper:
             infer_edge_except=self.infer_edge_except,
             target_db_flavor=self.target_db_flavor,
             edge_derivation=self.init_ctx.edge_derivation,
+            inverse_pairs=self._inverse_pairs(),
         )
 
         for vertex_name, dd in assembly_ctx.acc_vertex.items():

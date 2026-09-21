@@ -188,14 +188,22 @@ class ResourceRuntime:
 
     @staticmethod
     def edge_ids_from_pipeline(pipeline: list[dict[str, Any]]) -> set[EdgeId]:
-        """Collect (source, target, None) for every static EdgeActor in *pipeline*."""
+        """Collect (source, target, None) for every static EdgeActor in *pipeline*.
+
+        A step that also writes its inverse (``emit_inverse``) feeds the reversed
+        pair too, so that pair is collected with it: these ids keep inference off
+        what the pipeline already writes.
+        """
         root = ActorWrapper(*pipeline)
         edge_actors = [a for a in root.collect_actors() if isinstance(a, EdgeActor)]
-        return {
-            (ea.edge.source, ea.edge.target, None)
-            for ea in edge_actors
-            if ea.edge is not None
-        }
+        edge_ids: set[EdgeId] = set()
+        for ea in edge_actors:
+            if ea.edge is None:
+                continue
+            edge_ids.add((ea.edge.source, ea.edge.target, None))
+            if ea.derivation.emit_inverse:
+                edge_ids.add((ea.edge.target, ea.edge.source, None))
+        return edge_ids
 
     def _filter_vertex_edge_configs(
         self,

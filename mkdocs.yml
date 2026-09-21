@@ -113,6 +113,7 @@ nav:
     -   "20 - Version control: fork, conflict, resolve, merge": examples/example-20.md
     -   21 - Identity alignment on a routed source: examples/example-21.md
     -   "22 - state-core: lifting a manifest": examples/example-22.md
+    -   "23 - Edge inverses: audit, repair, realize": examples/example-23.md
 -   API Reference: reference/
 -   Contributing: contributing.md
 markdown_extensions:

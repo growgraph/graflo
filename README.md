@@ -1,9 +1,10 @@
 # GraFlo — Graph Schema & Transformation Language (GSTL) <img src="https://raw.githubusercontent.com/growgraph/graflo/main/docs/assets/favicon.ico" alt="graflo logo" style="height: 32px; width:32px;"/>
 
 
-![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg) 
+![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)
 [![PyPI version](https://badge.fury.io/py/graflo.svg)](https://badge.fury.io/py/graflo)
 [![PyPI Downloads](https://static.pepy.tech/badge/graflo)](https://pepy.tech/projects/graflo)
+[![Docs](https://img.shields.io/badge/docs-growgraph.github.io-orange.svg)](https://growgraph.github.io/graflo)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green)](https://github.com/growgraph/graflo/blob/main/LICENSE)
 [![pre-commit](https://github.com/growgraph/graflo/actions/workflows/pre-commit.yml/badge.svg)](https://github.com/growgraph/graflo/actions/workflows/pre-commit.yml)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.15446131.svg)](https://doi.org/10.5281/zenodo.15446131)
@@ -30,14 +31,14 @@ never becomes the place where the model is really defined.
   keys in priority order), a `blank` node, or an `assigned` UUID. Identity backs upserts, so reloads
   merge on keys instead of duplicating nodes, and `secondary_identities` give edge steps additional
   named lookups.
-- **Typed properties** — `INT`, `UINT`, `FLOAT`, `DOUBLE`, `BOOL`, `STRING`, `DATETIME`, `UUID`, and
-  `LIST` with a declared `item_type`. Types are optional where a backend does not need them and
+- **Typed properties** — `INT`, `UINT`, `FLOAT`, `DOUBLE`, `BOOL`, `STRING`, `DATETIME`, `UUID`,
+  and `LIST` with a declared `item_type`. Types are optional where a backend does not need them and
   enforced where it does.
 - **Semantic grounding** — vertices, edges and properties may carry an `iri`, `exact_match`,
   `synonyms`, and — on properties — a `unit`. Purely descriptive: identity, naming and ingestion
   behave identically with or without it.
-- **Reusable ingestion** — `Resource` actor pipelines (*descend*, *transform*, *vertex*,
-  *vertex_router*, *edge*) bind to files, SQL, SPARQL/RDF, REST APIs, Kafka topics or in-memory
+- **Reusable ingestion** — `Resource` actor pipelines (`descend`, `transform`, `vertex`,
+  `vertex_router`, `edge`) bind to files, SQL, SPARQL/RDF, REST APIs, Kafka topics or in-memory
   batches through `Bindings` and the `DataSourceRegistry`.
 
 **Evolve and version**
@@ -79,8 +80,8 @@ never becomes the place where the model is really defined.
   measured property carries a unit, temporal validity is declared or explicitly waived, and
   provenance is expressible and attached. Operator **waivers** are first-class — a waived assertion
   is reported as waived with its reason, never as a pass.
-- **`graflo lift`** — plans an existing manifest into a twin-ready schema against a declared
-  `LiftSpec`, emitting the planned ops as a reviewable artifact before anything is written.
+- **`graflo lift`** — plans an existing manifest into a twin-ready schema against a declared `LiftSpec`,
+  emitting the planned ops as a reviewable artifact before anything is written.
 - **Manifest as linked data** — the [GraFlo ontology](https://growgraph.github.io/graflo/concepts/schema/ontology/)
   (`gf:` at `ontology.growgraph.dev`) round-trips a manifest to RDF for tooling, provenance and
   SPARQL-facing catalogs.
@@ -88,8 +89,8 @@ never becomes the place where the model is really defined.
 ### What's in the manifest
 
 - **`schema`** — `Schema`: metadata, **`core_schema`** (vertices, edges, typed **`properties`**, identities, semantics), and **`db_profile`** (`DatabaseProfile`: target flavor, storage names, secondary indexes, `default_property_values`, …).
-- **`ingestion_model`** — `IngestionModel`: named **`resources`** (actor sequences: *descend*, *transform*, *vertex*, *vertex_router*, *edge*, …) and a registry of reusable **`transforms`**.
-- **`bindings`** — Connectors (`FileConnector`, `TableConnector`, `SparqlConnector`, `APIConnector`) plus **`resource_connector`** wiring. Optional **`connector_connection`** maps connectors to **`conn_proxy`** labels so YAML stays secret-free; a runtime **`ConnectionProvider`** supplies credentials. See [API connector and pagination](docs/concepts/connectors/api_connector.md).
+- **`ingestion_model`** — `IngestionModel`: named **`resources`** (actor sequences: `descend`, `transform`, `vertex`, `vertex_router`, `edge`, …) and a registry of reusable **`transforms`**.
+- **`bindings`** — Connectors (`FileConnector`, `TableConnector`, `SparqlConnector`, `APIConnector`) plus **`resource_connector`** wiring. Optional **`connector_connection`** maps connectors to **`conn_proxy`** labels so YAML stays secret-free; a runtime **`ConnectionProvider`** supplies credentials. See [API connector and pagination](https://growgraph.github.io/graflo/concepts/connectors/api_connector/).
 
 Each block is optional: a manifest may carry only a schema, only bindings, or all three.
 
@@ -117,8 +118,8 @@ graflo revert <commit-id> --base v1.yaml
 ```
 
 > `revert` is the least exercised of these verbs — it has no functional test in the
-> suite and may need the history checked out from its base first. Prefer `checkout`
-> when you want a known-good earlier state.
+> suite and may need the history checked out from its base first. Prefer `checkout` when
+> you want a known-good earlier state.
 
 
 Merge and conformance run on manifests directly, with no history involved:
@@ -162,7 +163,7 @@ graflo check manifest.yaml --profile world-model --json
 
 The eight backends listed under **Project and load** are the supported **output** `DBType` values in `graflo.onto`. Each uses its own `Connection` implementation under the shared `ConnectionManager` / `DBWriter` / `GraphEngine` flow.
 
-**Graph sources** (introspection and bulk export) are supported on **Neo4j**, **ArangoDB**, **PostgreSQL**, and the **GraFlo file backend**. Note that `GraphEngine.migrate_graph()` itself currently fails at the write step for every source/target pair; `export_graph()` and `infer_schema_from_graph()` are unaffected. See [Graph export and migration](docs/concepts/operations/graph_export_migration.md).
+**Graph sources** (introspection and bulk export) are supported on **Neo4j**, **ArangoDB**, **PostgreSQL**, and the **GraFlo file backend**. Note that `GraphEngine.migrate_graph()` itself currently fails at the write step for every source/target pair; `export_graph()` and `infer_schema_from_graph()` are unaffected. See [Graph export and migration](https://growgraph.github.io/graflo/concepts/operations/graph_export_migration/).
 
 ## More capabilities
 
@@ -175,6 +176,7 @@ The eight backends listed under **Project and load** are the supported **output*
 - **`GraphEngine`** — High-level orchestration for infer, define schema, and ingest (`define_and_ingest`, …); `Caster` stays available for lower-level control.
 
 ## Documentation
+
 Full documentation is available at: [growgraph.github.io/graflo](https://growgraph.github.io/graflo)
 
 ## Installation
@@ -183,7 +185,7 @@ Full documentation is available at: [growgraph.github.io/graflo](https://growgra
 pip install graflo
 ```
 
-Optional extras (see `pyproject.toml` → `[project.optional-dependencies]`):
+Optional extras (see the [Installation](https://growgraph.github.io/graflo/getting_started/installation/) guide for details):
 
 - `dev` — pytest, ty, pre-commit
 - `docs` — MkDocs stack for building the documentation site
@@ -210,18 +212,15 @@ manifest.finish_init()
 schema = manifest.require_schema()
 ingestion_model = manifest.require_ingestion_model()
 
-# Option 1: Load config from docker/arango/.env (recommended)
-conn_conf = ArangoConfig.from_docker_env()
-
-# Option 2: Load from environment variables
+# Option 1: Load from environment variables (recommended for installed packages)
 # Set: ARANGO_URI, ARANGO_USERNAME, ARANGO_PASSWORD, ARANGO_DATABASE
 conn_conf = ArangoConfig.from_env()
 
-# Option 3: Load with custom prefix (for multiple configs)
+# Option 2: Load with custom prefix (for multiple configs)
 # Set: USER_ARANGO_URI, USER_ARANGO_USERNAME, USER_ARANGO_PASSWORD, USER_ARANGO_DATABASE
 user_conn_conf = ArangoConfig.from_env(prefix="USER")
 
-# Option 4: Create config directly
+# Option 3: Create config directly
 # conn_conf = ArangoConfig(
 #     uri="http://localhost:8535",
 #     username="root",
@@ -230,6 +229,8 @@ user_conn_conf = ArangoConfig.from_env(prefix="USER")
 # )
 # Note: If 'database' (or 'schema_name' for TigerGraph) is not set,
 # Caster will automatically use Schema.metadata.name as fallback
+
+# From a clone with docker/arango/.env present, ArangoConfig.from_docker_env() also works.
 
 from graflo.architecture.contract.bindings import FileConnector
 import pathlib
@@ -301,7 +302,7 @@ from graflo import Caster
 from graflo.onto import DBType
 
 # Connect to PostgreSQL
-postgres_config = PostgresConfig.from_docker_env()  # or PostgresConfig.from_env()
+postgres_config = PostgresConfig.from_env()  # or PostgresConfig.from_docker_env() from a clone
 
 # Create GraphEngine and infer schema from PostgreSQL 3NF database
 # Connection is automatically managed inside infer_schema()
@@ -314,7 +315,7 @@ schema = manifest.require_schema()
 ingestion_model = manifest.require_ingestion_model()
 
 # Define schema in target database (optional, can also use define_and_ingest)
-target_config = ArangoConfig.from_docker_env()
+target_config = ArangoConfig.from_env()
 engine.define_schema(
     manifest=manifest,
     target_db_config=target_config,
@@ -353,19 +354,19 @@ pg_engine = GraphEngine(target_db_flavor=DBType.POSTGRES)
 pg_engine.migrate_graph(backend, postgres, recreate_schema=True)
 ```
 
-See [Graph export and migration](docs/concepts/operations/graph_export_migration.md) and [Example 13](docs/examples/example-13.md).
+See [Graph export and migration](https://growgraph.github.io/graflo/concepts/operations/graph_export_migration/) and [Example 13](https://growgraph.github.io/graflo/examples/example-13/).
 
 ### Manifest ↔ RDF (GraFlo ontology)
 
 ```bash
 # Serialize manifest YAML to Turtle (embeds gf: vocabulary when --include-ontology is default)
-uv run manifest-to-rdf manifest.yaml \
+manifest-to-rdf manifest.yaml \
   --base-uri https://growgraph.dev/manifests/mygraph/v1 \
   --format turtle \
   --output mygraph.ttl
 
 # Restore YAML from RDF
-uv run rdf-to-manifest mygraph.ttl \
+rdf-to-manifest mygraph.ttl \
   --manifest-uri https://growgraph.dev/manifests/mygraph/v1 \
   --output manifest.restored.yaml
 ```
@@ -381,7 +382,7 @@ ttl = ManifestRdfSerializer().to_turtle(manifest, base)
 restored = ManifestRdfDeserializer().from_turtle(ttl, base.rstrip("/"))
 ```
 
-Ontology source: `graflo/rdf/ontology/graflo.ttl`. See [GraFlo ontology](https://growgraph.github.io/graflo/concepts/schema/ontology/).
+Ontology source: [`graflo/rdf/ontology/graflo.ttl`](https://github.com/growgraph/graflo/blob/main/graflo/rdf/ontology/graflo.ttl). See [GraFlo ontology](https://growgraph.github.io/graflo/concepts/schema/ontology/).
 
 ### RDF / SPARQL Ingestion (domain ontology → LPG)
 
@@ -408,7 +409,7 @@ bindings = engine.create_bindings_from_rdf(source=ontology)
 #     endpoint_url=sparql_cfg.query_endpoint,
 # )
 
-target = ArangoConfig.from_docker_env()
+target = ArangoConfig.from_env()
 engine.define_and_ingest(
     manifest=GraphManifest(
         graph_schema=schema,
@@ -421,77 +422,43 @@ engine.define_and_ingest(
 
 ## Development
 
-To install requirements
+To install from a clone:
 
 ```shell
 git clone git@github.com:growgraph/graflo.git && cd graflo
 uv sync --extra dev
 ```
 
+See the [Contributing Guide](https://growgraph.github.io/graflo/contributing/) for the full workflow.
+
 ### Tests
 
 #### Test databases
 
-**Quick Start:** To start all test databases at once, use the convenience scripts from the [docker folder](./docker):
+Start the test databases from a clone using the scripts under
+[docker/](https://github.com/growgraph/graflo/tree/main/docker):
 
 ```shell
 cd docker
 ./start-all.sh    # Start all services
-./stop-all.sh      # Stop all services
-./cleanup-all.sh   # Remove containers and volumes
+./stop-all.sh     # Stop all services
+./cleanup-all.sh  # Remove containers and volumes
 ```
 
-**Individual Services:** To start individual databases, navigate to each database folder and run:
+Per-engine compose files and ports are documented in the
+[docker README](https://github.com/growgraph/graflo/blob/main/docker/README.md).
 
-Spin up Arango from [arango docker folder](./docker/arango) by
-
-```shell
-docker-compose --env-file .env up arango
-```
-
-Neo4j from [neo4j docker folder](./docker/neo4j) by
-
-```shell
-docker-compose --env-file .env up neo4j
-```
-
-TigerGraph from [tigergraph docker folder](./docker/tigergraph) by
-
-```shell
-docker-compose --env-file .env up tigergraph
-```
-
-FalkorDB from [falkordb docker folder](./docker/falkordb) by
-
-```shell
-docker-compose --env-file .env up falkordb
-```
-
-Memgraph from [memgraph docker folder](./docker/memgraph) by
-
-```shell
-docker-compose --env-file .env up memgraph
-```
-
-NebulaGraph from [nebula docker folder](./docker/nebula) by
-
-```shell
-docker-compose --env-file .env up
-```
-
-and Apache Fuseki from [fuseki docker folder](./docker/fuseki) by
-
-```shell
-docker-compose --env-file .env up fuseki
-```
-
-To run unit tests
+To run unit tests:
 
 ```shell
 uv run pytest test
 ```
 
-> **Note**: Tests require external database containers (ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph, Fuseki) to be running. CI builds intentionally skip test execution. Tests must be run locally with the required database images started (see [Test databases](#test-databases) section above). NebulaGraph tests are gated behind `pytest --run-nebula`.
+> **Note**: Tests require external database containers (ArangoDB, Neo4j, TigerGraph, FalkorDB,
+> Memgraph, NebulaGraph, Fuseki) to be running. CI builds intentionally skip test execution.
+> Tests must be run locally with the required database images started (see
+> [Test databases](#test-databases) above). NebulaGraph tests are gated behind
+> `pytest --run-nebula`.
 
 ## Requirements
 
@@ -504,11 +471,14 @@ uv run pytest test
 
 ## License
 
-Open source under the [Apache License 2.0](LICENSE). Copyright and trademark notices are in
-[NOTICE](NOTICE): the licence grants no rights in the **GraFlo** and **GrowGraph** marks.
-Releases before the relicensing shipped under the Business Source License 1.1 and keep those terms;
-see the [changelog](CHANGELOG.md).
+Open source under the [Apache License 2.0](https://github.com/growgraph/graflo/blob/main/LICENSE).
+Copyright and trademark notices are in
+[NOTICE](https://github.com/growgraph/graflo/blob/main/NOTICE): the licence grants no rights in the
+**GraFlo** and **GrowGraph** marks. Releases before the relicensing shipped under the Business
+Source License 1.1 and keep those terms; see the
+[changelog](https://github.com/growgraph/graflo/blob/main/CHANGELOG.md).
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions are welcome! Please feel free to submit a Pull Request. See the
+[Contributing Guide](https://growgraph.github.io/graflo/contributing/).

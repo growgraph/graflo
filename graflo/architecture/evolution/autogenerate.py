@@ -33,6 +33,11 @@ from pydantic import model_validator
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.contract.ingestion.resource import ResourceConfig
+from graflo.architecture.contract.ingestion.steps.ref import (
+    EdgeStepRef,
+    iter_edge_steps,
+    with_emit_inverse,
+)
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.graph_types import EdgePhysicalKey, Index
 from graflo.architecture.schema.database_features import (
@@ -80,6 +85,7 @@ from .ops import (
     SetEdgeDirectedOp,
     SetEdgeSemanticsOp,
     SetFieldSemanticsOp,
+    SetInverseEmissionOp,
     SetNativeInversesOp,
     SetVertexDescriptionsOp,
     SetVertexSemanticsOp,
@@ -356,13 +362,20 @@ def _native_inverses(
 def _inverse_withdrawal_ops(
     base: GraphManifest, target: GraphManifest, hints: RenameHints
 ) -> list[ManifestOp]:
-    """Withdraw native inverses, then retract declarations, before any edge changes.
+    """Clear mirroring flags, withdraw native inverses, then retract declarations.
 
-    A declaration constrains ``directed`` (a pair forbids undirected edges, a
-    symmetric relation requires them) and a native inverse pins its pair, so
-    both go before ``set_edge_directed`` and removals can trip over them.
+    All before any edge changes. A declaration constrains ``directed`` (a pair
+    forbids undirected edges, a symmetric relation requires them) and a native
+    inverse pins its pair, so both go before ``set_edge_directed`` and removals
+    can trip over them.
     """
     ops: list[ManifestOp] = []
+    # Flags go first of all: a step that still mirrors a pair would refuse the
+    # retraction below, and its position is read against the pipelines as they
+    # stand now, before anything else moves a step.
+    _set, cleared = _emission_flag_changes(base, target, hints)
+    if cleared:
+        ops.append(SetInverseEmissionOp(steps=cleared, enabled=False))
     withdrawn = sorted(
         _native_inverses(base, hints.relations) - _native_inverses(target)
     )
@@ -691,7 +704,12 @@ def _resource_ops(
     appended: dict[str, list[dict[str, Any]]] = {}
     for resource in target_ingestion.resources:
         old = base_resources.get(resource.name)
-        if old is None or _body(old) == _body(resource):
+        if old is None:
+            continue
+        # ``emit_inverse`` has an op of its own, so it is set aside here: a
+        # pipeline that differs only in those flags is not an inexpressible edit.
+        old, resource = _without_emission(old), _without_emission(resource)
+        if _body(old) == _body(resource):
             continue
         steps = _appended_root_transforms(old, resource)
         if steps is None:
@@ -728,7 +746,79 @@ def _resource_ops(
         ops.append(
             AddResourcesOp(resources=added, transforms=[] if appended else carried)
         )
+    # Last in this stage: the inverse edges a flag writes into were added by the
+    # edge stage, the pairs declared by the declaration stage, and appends only
+    # grow a pipeline at its tail, so the positions still hold.
+    flagged, _cleared = _emission_flag_changes(base, target, hints)
+    if flagged:
+        ops.append(SetInverseEmissionOp(steps=flagged))
     return ops
+
+
+def _without_emission(resource: ResourceConfig) -> ResourceConfig:
+    """*resource* with every ``emit_inverse`` flag cleared."""
+    pipeline = list(resource.pipeline)
+    flagged = [view.ref for view in iter_edge_steps(pipeline) if view.emit_inverse]
+    if not flagged:
+        return resource
+    for ref in flagged:
+        pipeline = with_emit_inverse(pipeline, ref, False)
+    payload = resource.to_dict(skip_defaults=False)
+    payload["pipeline"] = pipeline
+    return ResourceConfig.model_validate(payload)
+
+
+def _emission_flag_changes(
+    base: GraphManifest, target: GraphManifest, hints: RenameHints
+) -> tuple[dict[str, list[EdgeStepRef]], dict[str, list[EdgeStepRef]]]:
+    """``(flags to set, flags to clear)`` between *base* and *target*, by resource.
+
+    Steps are addressed by position, so a change is reported only where the
+    positions of the two pipelines correspond: the pipelines are the same with
+    the flags set aside, or the target only appends transform steps at the root.
+    Any other pipeline edit is already reported as inexpressible, and guessing
+    at positions across it would flag the wrong step.
+    """
+    base_ingestion, target_ingestion = base.ingestion_model, target.ingestion_model
+    if base_ingestion is None or target_ingestion is None:
+        return {}, {}
+    base_resources = {
+        hints.resources.get(r.name, r.name): r for r in base_ingestion.resources
+    }
+    to_set: dict[str, list[EdgeStepRef]] = {}
+    to_clear: dict[str, list[EdgeStepRef]] = {}
+    for resource in target_ingestion.resources:
+        old = base_resources.get(resource.name)
+        if old is None:
+            continue
+        before = {str(view.ref): view for view in iter_edge_steps(list(old.pipeline))}
+        after = {
+            str(view.ref): view for view in iter_edge_steps(list(resource.pipeline))
+        }
+        if all(
+            before[key].emit_inverse == after[key].emit_inverse
+            for key in before.keys() & after.keys()
+        ):
+            continue
+        old_plain, new_plain = _without_emission(old), _without_emission(resource)
+        comparable = (
+            _resource_body(old_plain) == _resource_body(new_plain)
+            or _appended_root_transforms(old_plain, new_plain) is not None
+        )
+        if not comparable:
+            continue
+        for key in sorted(before.keys() & after.keys()):
+            was, now = before[key].emit_inverse, after[key].emit_inverse
+            if now and not was:
+                to_set.setdefault(resource.name, []).append(after[key].ref)
+            elif was and not now:
+                to_clear.setdefault(resource.name, []).append(after[key].ref)
+    return to_set, to_clear
+
+
+def _resource_body(resource: ResourceConfig) -> dict[str, Any]:
+    """A resource as compared by the differ: canonical, without its name."""
+    return {k: v for k, v in canonical_payload(resource).items() if k != "name"}
 
 
 def _appended_root_transforms(

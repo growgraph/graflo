@@ -141,3 +141,101 @@ class TestRdfInferenceManager:
         vertex_names = {v.name for v in schema.core_schema.vertex_config.vertices}
         assert "Person" in vertex_names
         assert "Organization" in vertex_names
+
+
+_PREFIXES = """
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix ex: <http://example.org/> .
+
+ex:Person a owl:Class .
+ex:Organization a owl:Class .
+"""
+
+
+def _infer(tmp_path: Path, body: str):
+    path = tmp_path / "onto.ttl"
+    path.write_text(_PREFIXES + body, encoding="utf-8")
+    schema, _ = RdfInferenceManager().infer_schema(path, schema_name="inv")
+    return schema.core_schema.edge_config
+
+
+class TestDeclaredInverses:
+    """What the ontology states about inverses is carried over; nothing is stored for it."""
+
+    def test_inverse_of_becomes_a_declared_pair(self, tmp_path: Path):
+        edge_config = _infer(
+            tmp_path,
+            """
+ex:worksFor a owl:ObjectProperty ;
+    rdfs:domain ex:Person ; rdfs:range ex:Organization ;
+    owl:inverseOf ex:employs .
+""",
+        )
+        assert [(p.relation, p.inverse) for p in edge_config.inverses] == [
+            ("employs", "worksFor")
+        ]
+        # Declared only: the inverse labels no edge, and nothing is stored for it.
+        assert [e.relation for e in edge_config.edges] == ["worksFor"]
+
+    def test_a_pair_stated_from_both_sides_is_one_pair(self, tmp_path: Path):
+        edge_config = _infer(
+            tmp_path,
+            """
+ex:worksFor a owl:ObjectProperty ;
+    rdfs:domain ex:Person ; rdfs:range ex:Organization ;
+    owl:inverseOf ex:employs .
+ex:employs a owl:ObjectProperty ;
+    rdfs:domain ex:Organization ; rdfs:range ex:Person ;
+    owl:inverseOf ex:worksFor .
+""",
+        )
+        assert len(edge_config.inverses) == 1
+        assert {e.relation for e in edge_config.edges} == {"worksFor", "employs"}
+
+    def test_a_symmetric_property_is_declared_and_its_edges_are_undirected(
+        self, tmp_path: Path
+    ):
+        edge_config = _infer(
+            tmp_path,
+            """
+ex:knows a owl:ObjectProperty , owl:SymmetricProperty ;
+    rdfs:domain ex:Person ; rdfs:range ex:Person .
+""",
+        )
+        assert edge_config.symmetric == ["knows"]
+        assert [e.directed for e in edge_config.edges] == [False]
+
+    def test_a_property_that_is_its_own_inverse_is_symmetric(self, tmp_path: Path):
+        edge_config = _infer(
+            tmp_path,
+            """
+ex:marriedTo a owl:ObjectProperty ;
+    rdfs:domain ex:Person ; rdfs:range ex:Person ;
+    owl:inverseOf ex:marriedTo .
+""",
+        )
+        assert edge_config.symmetric == ["marriedTo"]
+        assert edge_config.inverses == []
+
+    def test_statements_the_inverse_table_cannot_hold_are_dropped_not_fatal(
+        self, tmp_path: Path, caplog
+    ):
+        with caplog.at_level("WARNING"):
+            edge_config = _infer(
+                tmp_path,
+                """
+ex:worksFor a owl:ObjectProperty ;
+    rdfs:domain ex:Person ; rdfs:range ex:Organization ;
+    owl:inverseOf ex:employs , ex:hasStaff .
+""",
+            )
+        assert edge_config.inverses == []
+        assert [e.relation for e in edge_config.edges] == ["worksFor"]
+        assert "at most one inverse" in caplog.text
+
+    def test_an_inverse_between_properties_that_label_no_edge_is_ignored(
+        self, tmp_path: Path
+    ):
+        edge_config = _infer(tmp_path, "ex:a owl:inverseOf ex:b .\n")
+        assert edge_config.inverses == []

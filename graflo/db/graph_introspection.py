@@ -10,7 +10,7 @@ from pydantic import Field as PydanticField
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.schema import CoreSchema, GraphMetadata, Schema
 from graflo.architecture.schema.database_features import DatabaseProfile
-from graflo.architecture.schema.edge import Edge, EdgeConfig
+from graflo.architecture.schema.edge import Edge, EdgeConfig, EdgeInverse
 from graflo.architecture.schema.vertex import Field, FieldType, Vertex, VertexConfig
 from graflo.onto import DBType
 
@@ -47,6 +47,11 @@ class GraphEdgeIntrospection(ConfigBaseModel):
     #: query built on the recovered schema.
     directed: bool = True
     property_types: dict[str, FieldType] = PydanticField(default_factory=dict)
+    #: Name of the reverse type the database maintains for this edge's relation,
+    #: when the backend *states* one -- today TigerGraph's ``WITH REVERSE_EDGE``.
+    #: Recovered as a declared inverse pair realized natively; never guessed from
+    #: two edge types that merely look like each other's mirror.
+    native_inverse: str | None = None
 
 
 class GraphIntrospectionResult(ConfigBaseModel):
@@ -153,7 +158,21 @@ class GraphSchemaInferencer:
                     directed=edge_info.directed,
                 )
             )
-        return EdgeConfig(edges=edges)
+        kept = {edge.edge_id for edge in edges}
+        pairs = {
+            edge_info.relation: edge_info.native_inverse
+            for edge_info in introspection.edges
+            if edge_info.relation is not None
+            and edge_info.native_inverse is not None
+            and (edge_info.source, edge_info.target, edge_info.relation) in kept
+        }
+        return EdgeConfig(
+            edges=edges,
+            inverses=[
+                EdgeInverse(relation=relation, inverse=inverse)
+                for relation, inverse in sorted(pairs.items())
+            ],
+        )
 
     def infer_schema(
         self,
@@ -174,6 +193,16 @@ class GraphSchemaInferencer:
             db_profile=DatabaseProfile(
                 db_flavor=self.db_flavor,
                 vertex_storage_names={v.name: v.name for v in vertex_config.vertices},
+                # A pair recovered from a stated reverse type is one the database
+                # maintains; the side listed is the relation that has the edges.
+                native_inverses=sorted(
+                    {
+                        pair.relation
+                        if any(e.relation == pair.relation for e in edge_config.edges)
+                        else pair.inverse
+                        for pair in edge_config.inverses
+                    }
+                ),
             ),
         )
 

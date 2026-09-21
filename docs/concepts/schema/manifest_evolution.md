@@ -24,10 +24,11 @@ GraFlo provides **contract-level** operations that transform a validated `GraphM
 | **Rename edge fields** | Per-relation edge property renames across schema edge properties/identities, `db_profile` edge indexes/defaults, and edge actor `properties` payloads. |
 | **Remove edge fields** | Removes per-relation edge properties, prunes edge index/default references, and rewrites edge actor `properties`. |
 | **Add edge fields** | Adds properties to existing relations. An entry is a bare name (untyped) or a full `Field` carrying type and grounding, as for vertices. Rejects an unknown relation. |
-| **Declare / retract edge inverses** | `declare_edge_inverses` (`inverses: {R: R_inv}`, `symmetric: [R, ...]`) records pairs in `edge_config.inverses` and self-inverse relations in `edge_config.symmetric`; `retract_edge_inverses` (`relations: [...]`, either side of a pair, or a symmetric name) withdraws them. Logical only — creates no edge. A pair is unordered: `{a: b}`, `{b: a}` and `{a: b, b: a}` declare the same thing, and restating a declaration is a no-op. A declaration giving a relation a second inverse is refused. Retracting is refused while a native inverse still realizes the pair. Inverses of each other; the differ emits both. See [Inverse and symmetric relations](#5-inverse-and-symmetric-relations). |
-| **Add inverse edges** | Realizes declared pairs as **explicit logical edges**, portable to every backend. `relations: [R, ...]` names paired relations (either side of a pair); omitted, it realizes every declared pair, both sides, skipping relations whose inverse is native. It never declares: an undeclared relation is refused, and so is a symmetric one (its edges are undirected). For each directed `(S, T, R)` adds `(T, S, R_inv)` unless it exists, with a physical spec copied minus `relation_name`, and ingestion steps that write **only** the created edges. A named relation whose inverse is already native is refused. Reversible: the inverse removes exactly the created edges. |
+| **Declare / retract edge inverses** | `declare_edge_inverses` (`inverses: {R: R_inv}`, `symmetric: [R, ...]`) records pairs in `edge_config.inverses` and self-inverse relations in `edge_config.symmetric`; `retract_edge_inverses` (`relations: [...]`, either side of a pair, or a symmetric name) withdraws them. Logical only — creates no edge. A pair is unordered: `{a: b}`, `{b: a}` and `{a: b, b: a}` declare the same thing, and restating a declaration is a no-op. A declaration giving a relation a second inverse is refused. Retracting is refused while a native inverse still realizes the pair, or while an edge step naming exactly one edge of it still sets `emit_inverse`. Inverses of each other; the differ emits both. See [Inverse and symmetric relations](#5-inverse-and-symmetric-relations). |
+| **Add inverse edges** | **Materializes** declared pairs as explicit logical edges, portable to every backend. `relations: [R, ...]` names paired relations (either side of a pair); omitted, it realizes every declared pair, both sides, skipping relations whose inverse is native. It never declares: an undeclared relation is refused, and so is a symmetric one (its edges are undirected). For each directed `(S, T, R)` adds `(T, S, R_inv)` unless it exists, with a physical spec copied minus `relation_name`, and sets `emit_inverse` on the edge steps that write `R` — no step is generated, so every way a step can name its relation is covered. A resource that already writes the inverse with a step of its own is left alone. A named relation whose inverse is already native is refused. Reversible: the inverse removes exactly the created edges, and removing an edge clears the flags that fed it. |
+| **Set inverse emission** | `steps: {resource: [{at, step, link}]}` + `enabled` set or clear `emit_inverse` on edge steps addressed by position — the ingestion half of a materialized inverse, as a primitive. Enabling is refused on a step that names exactly one edge whose relation has no declared pair, is symmetric, or has no declared inverse edge. Its own inverse, over the steps that actually change. One merge slot per resource. |
 | **Set native inverses** | Realizes declared pairs **physically**: `relations` + `enabled` add to or remove from `db_profile.native_inverses`, so TigerGraph maintains the pair (`WITH REVERSE_EDGE` on the relation's edge type, named after the declared inverse). Refused without a declared pair, for a symmetric relation, where explicit edges carry the inverse name, on both sides of one pair, when `relation_name` overrides split the relation over several edge types, and on non-TigerGraph profiles. |
-| **Project manifest** | Keeps a logical subgraph by vertex names and/or edge triples `(source, target, relation)`. Prunes isolated vertex types from `keep_vertices` when they have no surviving edges (`connectivity: induced_prune`). Cascades to schema, `db_profile`, ingestion (pipeline steps, infer selectors, `extra_weights`), and bindings through the same removal as **Remove vertices**, so a `vertex_router` keeps routing the kept types. Optional `keep_resources` filters ingestion resources. Optional `depth` expands `keep_vertices` into seeds for an n-hop neighbourhood walk (`direction` orients it), yielding the induced subgraph on the hop ball. Inverse edges are not auto-kept. Fails if ingestion would be left empty. |
+| **Project manifest** | Keeps a logical subgraph by vertex names and/or edge triples `(source, target, relation)`. Prunes isolated vertex types from `keep_vertices` when they have no surviving edges (`connectivity: induced_prune`). Cascades to schema, `db_profile`, ingestion (pipeline steps, infer selectors, `extra_weights`), and bindings through the same removal as **Remove vertices**, so a `vertex_router` keeps routing the kept types. Optional `keep_resources` filters ingestion resources. Optional `depth` expands `keep_vertices` into seeds for an n-hop neighbourhood walk (`direction` orients it), yielding the induced subgraph on the hop ball. Inverse edges are not kept by default; `keep_inverse_edges: true` keeps the declared mirror of every edge in `keep_edges`, so a materialized pair survives as a pair. Fails if ingestion would be left empty. |
 | **Replace identity** | `replacements: {vertex: {to, retire, ...}}`. Per-vertex identity policy swap covering both field-set and **mode** changes (`natural` / `hash` / `assigned` / `blank`). `retire` decides what becomes of the old field-set — `demote` (default) turns it into a secondary identity, `keep` leaves it as plain properties, `drop` removes it. `endpoints` decides whether edge steps follow the new identity (`follow_new`, default) or stay pinned to the demoted one (`pin_to_retired`). Drops `db_profile` indexes that encoded the retired identity. See [Replacing a vertex identity](#replacing-a-vertex-identity). |
 | **Add / remove secondary identities** | Declares or withdraws alternate lookup keys on existing vertices. Each field-set's non-unique index is *derived* by `Schema.finish_init`, so adding one needs no index authoring; removing one drops the derived index explicitly. Removal is rejected while an edge step still selects the field-set. |
 | **Replace edge identities** | Replaces `Edge.identities` (uniqueness keys) per `(source, target, relation)`. No retire policy — edge identities have no lookup plane. Non-endpoint tokens are merged into edge `properties` by `Edge.finish_init`. |
@@ -619,16 +620,23 @@ enriched = apply_evolution(
 
 ### 5) Inverse and symmetric relations
 
-Two relation names often read one fact from its two endpoints: `person --employed_by--> institution` and `institution --employs--> person`. Some relations read the same both ways: `person --knows--> person`. Declarations are made over **relation names**, and edges are derived from them:
+Two relation names often read one fact from its two endpoints: `person --employed_by--> institution` and `institution --employs--> person`. Some relations read the same both ways: `person --knows--> person`. Declarations are made over **relation names**:
 
 | Term | Where | What it is |
 |------|-------|------------|
 | **Inverse pair** | `schema.graph.edge_config.inverses` | The logical fact that `employs` and `employed_by` are inverses. Unordered; creates nothing. |
-| **Symmetric relation** | `schema.graph.edge_config.symmetric` | The logical fact that `knows` is its own inverse. Creates nothing; its edges must be `directed: false`. |
-| **Inverse edge** | `edge_config.edges` + ingestion | An explicit logical edge `(institution, person, employs)`, stored and loaded like any other. Portable to every backend. |
-| **Native inverse** | `db_profile.native_inverses: [employed_by]` | The database maintains the pair itself — TigerGraph only, as `WITH REVERSE_EDGE="employs"` on the `employed_by` edge type. One load path; the type name is the declared inverse, never spelled on the profile. |
+| **Symmetric relation** | `schema.graph.edge_config.symmetric` | The logical fact that `knows` is its own inverse. Creates nothing; its edges must be `directed: false`, which is its realization (`UNDIRECTED EDGE` on TigerGraph; elsewhere see [Core components — Edge](../architecture/core_components.md#directed-undirected-and-bidirectional-edges)). |
 
-A symmetric relation has one realization: its edges are undirected (`UNDIRECTED EDGE` on TigerGraph; elsewhere see [Core components — Edge](../architecture/core_components.md#directed-undirected-and-bidirectional-edges)). An inverse pair is realized **at most one way per relation** — explicit inverse edges or a native inverse. Both at once would store the same fact twice, so the schema refuses it when it loads. A native inverse is keyed by relation because TigerGraph sets the reverse type on the edge type, and one edge type spans every `(source, target)` pair of its relation.
+A declaration stores nothing, and is usually all you need. Reads honour it: the inverse name resolves to the forward edge followed from its target (`graph_neighbors(edge_types=["employs"])`), schema cards and the relation vocabulary list it, and on most backends a reverse read costs nothing — so storing the inverse would only duplicate edges.
+
+**Storing** the reverse reading is a separate, optional step — a *realization* — and a pair has at most one:
+
+| Realization | What is stored | How `employs` is read | When |
+|-------------|----------------|-----------------------|------|
+| **native** | The database maintains the reverse type: `db_profile.native_inverses: [employed_by]` → `WITH REVERSE_EDGE="employs"`. One load path. | An outgoing query on the reverse type. | TigerGraph, where reverse reachability is fixed when the edge type is created. Keyed by relation, because the reverse type belongs to the edge type, which spans every `(source, target)` pair of its relation. |
+| **materialized** | `(institution, person, employs)` is a declared edge, fed at ingestion. | An ordinary edge. | A backend that cannot read backwards and cannot maintain the pair, or a consumer that needs the inverse to physically exist. Portable to every backend. |
+
+Native **and** materialized would store the same fact twice, so the schema refuses the combination when it loads.
 
 ```yaml
 schema:
@@ -638,12 +646,33 @@ schema:
         - {source: person, target: institution, relation: employed_by}
         - {source: person, target: person, relation: knows, directed: false}
       inverses:
-        - {relation: employed_by, inverse: employs}
+        - {relation: employed_by, inverse: employs}   # declared; nothing stored
       symmetric: [knows]
   db_profile:                     # only for the native realization
     db_flavor: tigergraph
     native_inverses: [employed_by]
 ```
+
+**Feeding a materialized inverse.** An edge step — or one entry of its `links` — that sets `emit_inverse: true` also writes the declared inverse of every edge it writes, with the same properties. The mirror is taken at assembly, *after* the relation is resolved, so it does not matter how the step names its relation: fixed, `relation_field` (with fixed or routed endpoints), `relation_map`, or `relation_from_key`. Only a materialized inverse is written: a row whose resolved relation has no declared inverse edge is written once.
+
+```yaml
+edge_config:
+  edges:
+    - {source: person, target: institution, relation: employed_by}
+    - {source: institution, target: person, relation: employs}   # materialized
+  inverses:
+    - {relation: employed_by, inverse: employs}
+# ...
+pipeline:
+  - edge:
+      source_role: source
+      target_role: target
+      relation_field: relation_type
+      relation_map: {EMPLOYED_BY: employed_by, FUNDS: funds}
+      emit_inverse: true    # EMPLOYED_BY rows also write employs; FUNDS rows do not
+```
+
+A source that already reports both readings needs no flag: a step of its own that writes `employs` is a perfectly good way to feed the inverse. What matters is that **every** resource writing `employed_by` feeds `employs` somehow — otherwise the two relations disagree. That is what the audit checks.
 
 **What the schema checks when it loads**
 
@@ -652,42 +681,98 @@ schema:
 | One inverse per relation | Pairs and symmetric names give a relation two inverses — a chain `a-b`, `b-c`, or a relation both paired and symmetric. A pair restated in either order is the same statement and is kept once; pairs are stored with their names sorted, so the order they are written in does not change the content hash. |
 | No self-pair | `relation == inverse` in a pair; declare the relation in `symmetric` instead. |
 | No dangling declaration | A pair or symmetric name names no edge (allowed while a relation-less template edge admits relations named at ingest time). |
+| One direction per relation | Edges of one relation disagree on `directed`. `directed: false` and `symmetric` are one fact at two granularities, so a relation is undirected everywhere or nowhere. |
 | Pairs are directed | A paired relation is on an undirected edge. |
 | Symmetric is undirected | A symmetric relation is on a directed edge. |
 | Native needs a pair | A relation in `native_inverses` has no declared pair, or is symmetric. |
-| One realization | A relation is native and explicit edges carry its inverse name, or both sides of one pair are native. |
+| One realization | A relation is native and declared edges carry its inverse name, or both sides of one pair are native. |
 | One edge type | `relation_name` overrides store a native relation under several physical names. |
 | TigerGraph only | `native_inverses` on any other `db_flavor`. |
 | One type namespace | The inverse name equals a vertex type (TigerGraph type names are global). Physical `relation_name` overrides are checked again when the DDL is built. |
+| A flag that can write | A step naming exactly one edge sets `emit_inverse`, and its relation has no declared pair, is symmetric, or has no declared inverse edge. A step whose relation comes from the data is checked per document instead. |
 
-Every declaration and realization is authored by an op — `declare_edge_inverses` / `retract_edge_inverses`, `set_edge_directed`, `add_inverse_edges`, `set_native_inverses` — and `diff_manifests` emits them in an order whose refusals cannot fire.
+#### Seeing what you have: `audit_inverses`
 
-**Declaring**:
+```python
+from graflo.architecture.profile import audit_inverses
+
+report = audit_inverses(manifest)
+for line in report.to_lines():
+    print(line)
+```
+
+```text
+employed_by <-> employs: materialized (2/2 mirrored)
+    fed in hr: step
+    fed in registry: none
+funded_by <-> funds: declared
+
+repairable (1):
+  - [unfed_inverse] resource 'registry' writes 'employed_by' but feeds nothing into its materialized inverse 'employs'; the two relations will disagree
+      at registry:2
+```
+
+For each pair the report gives its state — `declared` when nothing realizes it, `native` or `materialized` when something does, `partial` or `conflicting` when something is wrong — how every resource that writes the forward relation feeds a materialized inverse (`emit_inverse`, a `step` of its own, edge `inference`, or `none`), and — for a pair the database does not maintain — whether it could, and if not which rule says so. Findings come in three severities, and the split is the point:
+
+| Severity | Meaning | Examples |
+|----------|---------|----------|
+| `repairable` | One place states a fact and another omits it. Propagating it cannot change meaning. | `unfed_inverse` (above — typical of a manifest assembled from several sources, where only one reported both readings), `partial_endpoint_pairs` (the inverse edge exists for some endpoint pairs only), `property_drift` (one mirror declares a property the other lacks), `undirected_not_symmetric`, `idle_emit_inverse` |
+| `conflict` | Two places disagree, and only the author knows which is right. | `same_side_pair` (`(S, T, a)` next to `(S, T, b)` — one is reversed), `identity_drift`, `property_type_drift`, `orphan_inverse_step` (a step writing an inverse that labels no edge), and one `native_*` finding per native-inverse rule broken |
+| `note` | Nothing is wrong. | `reverse_unreadable` (a pair that is only declared, on a backend that cannot read an edge from its target), `double_fed` |
+
+A schema runs its cross-block checks while it is validated, so a manifest that breaks them cannot be loaded the usual way; `manifest_for_audit(config)` builds it block by block, and the audit and the repair planner both work on the result. The same audit runs as a conformance profile — `graflo check --profile inverses` — where conflicts fail and omissions warn. `audit_inverses(after).introduced_since(audit_inverses(before))` is what a change did to the inverses, whatever made the change.
+
+#### Doing something about it: the planners
+
+Five pure planners emit primitive ops and apply nothing, in the manner of `plan_lift`. The op list is the reviewable artifact; `apply_evolution` applies it, `invert_ops` undoes it, and a stored revision records exactly those primitives, so a plan replays without the planner. Each plan is checked against a copy of the manifest before it is returned, so an op that would be refused is reported as skipped — with the reason — instead of being handed to you to trip over.
 
 ```python
 from graflo.architecture.evolution import (
-    DeclareEdgeInversesOp,
-    SetEdgeDirectedOp,
-    EdgeSelector,
     apply_evolution,
+    plan_declare_symmetric,
+    plan_realize_inverses,
+    plan_repair_inverses,
+    plan_switch_realization,
+    plan_withdraw_realization,
 )
 
-declared = apply_evolution(
-    manifest,
-    [
-        # both orders of one pair are accepted
-        DeclareEdgeInversesOp(inverses={"employed_by": "employs"}),
-        SetEdgeDirectedOp(
-            edges=[EdgeSelector(source="person", target="person", relation="knows")],
-            directed=False,
-        ),
-        DeclareEdgeInversesOp(symmetric=["knows"]),
-    ],
-    bump_version=False,
-)
+# Have the database maintain every eligible pair; get a reason for each of the rest.
+plan = plan_realize_inverses(manifest, strategy="native")
+plan.ops        # [SetNativeInversesOp(relations=["employed_by", "funds"])]
+plan.skipped    # [Skipped(relation="advises", code="collides_with_vertex", reason=...)]
+manifest = apply_evolution(manifest, plan.ops)
 ```
 
-**Realizing a declared pair explicitly** — `add_inverse_edges`:
+| Planner | Emits | Notes |
+|---------|-------|-------|
+| `plan_realize_inverses(manifest, strategy=, relations=)` | `set_native_inverses` and/or `add_inverse_edges` | `native`, `materialized`, or `auto` — which decides from what a reverse read costs on the target backend: native on TigerGraph, materialized where direction is the storage key, and otherwise *nothing*, with the pair left as declared and the reason stated. The native side is the relation that has edges while its inverse has none. A pair already realized the other way is skipped, never realized twice. |
+| `plan_repair_inverses(manifest)` | whatever propagates each `repairable` finding | A repair is kept only if, applied to a working copy, its finding is gone and no new one has appeared. Conflicts are never touched; they are in `plan.remaining`. Works on a manifest that does not load. |
+| `plan_switch_realization(manifest, relations, to=)` | withdraw, then add | The relation named is the side that stays stored. Eligibility for `native` is checked *as the schema will be after the withdrawal*, before anything is planned, so a pair is never left withdrawn and unrealized. |
+| `plan_withdraw_realization(manifest, relations)` | `set_native_inverses` (off) or `remove_edges` | Stops storing the inverse and keeps the declaration: the reverse of realizing. Removing a materialized inverse's edges also clears the `emit_inverse` flags that fed them. The relation named is the side that stays stored. |
+| `plan_declare_symmetric(manifest, relations)` | `set_edge_directed`, then `declare_edge_inverses` | The schema refuses either without the other, so they are two ops in a fixed order — and two ops rather than one so that each can be undone exactly. |
+
+From the shell, with `graflo lift`'s conventions (`-o`, `--emit-ops`, `--dry-run`):
+
+```bash
+graflo inverses audit manifest.yaml                     # exits 1 on conflicts
+graflo inverses repair merged.yaml -o fixed.yaml --emit-ops fix.ops.yaml
+graflo inverses realize manifest.yaml --strategy native --dry-run
+graflo inverses switch manifest.yaml --to native -r employed_by -o out.yaml
+graflo inverses withdraw manifest.yaml -r employed_by -o out.yaml   # keep the declaration, store nothing
+```
+
+#### The primitives
+
+Every declaration and realization is authored by an op, and `diff_manifests` emits them in an order whose refusals cannot fire.
+
+| Op | Plane | What it does |
+|----|-------|--------------|
+| `declare_edge_inverses` / `retract_edge_inverses` | logical | Record or withdraw pairs and symmetric relations. Retraction is refused while a native inverse realizes the pair, or while a step naming exactly one edge of it still sets `emit_inverse`. |
+| `set_edge_directed` | logical | The realization of a symmetric relation. |
+| `set_native_inverses` | physical | Add to or remove from `db_profile.native_inverses`. |
+| `add_inverse_edges` | logical + physical + ingestion | Materialize: for each **directed** edge of a selected relation, adds the inverse edge with swapped endpoints — copying properties and identities but not `semantics` or `description`, which describe the forward reading — copies the physical spec without `relation_name` (so the two relations never share a storage type), and sets `emit_inverse` on the edge steps that write the forward relation. A resource that already writes the inverse with a step of its own is left alone, as is an inverse edge that already exists. `infer_edge_only` / `infer_edge_except` / `extra_weights` selectors covering a forward edge gain a twin covering its mirror. |
+| `set_inverse_emission` | ingestion | Set or clear `emit_inverse` on steps addressed by position: `steps: {resource: [{at: [...], step: n, link: k}]}`, where `at` descends through nested pipelines. This is what lets the differ reproduce a materialization, and what a repair emits. |
+| `remove_edges` | cascade | Removing an inverse edge clears the flags that fed it, so withdrawing a materialization is `remove_edges` on the inverse edges and its undo is exact. |
 
 ```python
 from graflo.architecture.evolution import (
@@ -699,78 +784,32 @@ from graflo.architecture.evolution import (
 bidirectional = apply_evolution(
     manifest,
     [
-        DeclareEdgeInversesOp(inverses={"works_at": "employs"}),
+        DeclareEdgeInversesOp(inverses={"works_at": "employs"}),  # either order
         AddInverseEdgesOp(relations=["works_at"]),  # omit to realize every pair
     ],
     bump_version=False,
 )
 ```
 
-For each **directed** edge whose relation is selected, the op adds the inverse edge with swapped endpoints, copying properties and identities but not `semantics` or `description` (those describe the forward reading). The physical spec is copied without `relation_name`, so the two relations never share a storage type. An inverse edge that already exists is left alone, **including its ingestion** — the user modeled it explicitly. The pair must already be declared, a symmetric relation is refused (it has no inverse edge), and a named relation whose inverse is already native is refused.
+Materialized inverse edges are ordinary edges afterwards: later ops on the forward edge do not reach them, which is exactly the drift the audit reports.
 
-Explicit inverse edges are ordinary edges afterwards: later ops on the forward edge do not reach them. `EdgeConfig.inverse_advisories()` reports a realization that no longer matches itself — inverse edges whose properties or identity keys differ, a relation realized for some endpoint pairs but not others, a pair read from the same side — and `apply_evolution` logs the findings its ops introduce. They are advisories, not errors: realizing a pair is optional.
-
-**What gets written in ingestion** — only for edges the op created, and only in a form that cannot write anything else:
-
-| Location | Inverse behavior |
-|----------|------------------|
-| Static `pipeline` edge step (`from`/`to`/`relation`) | Step with swapped endpoints and inverse `relation`, unless the resource already writes that triple (in any spelling) |
-| Dynamic edge step (`source_role`/`target_role`, mixed static+dynamic) | Swapped roles/static sides; `match_*`, `exclude_*`, `*_match` swapped |
-| `relation_field` + `relation_map` | `relation_map` restricted to the mapped relations and redefined to their inverses, with `relation_map_only: true` so an unmapped raw value writes nothing (by default it would pass through as a forward name, reversed) |
-| `relation_field` without `relation_map` | The raw values are relation names: the map becomes `{R: R_inv}` with `relation_map_only: true` |
-| `relation_field` with static endpoints, `relation_from_key`, `links` with `relation_field` | Not inverted — no mechanism restricts them to the mapped relations. A warning names the resource; add the inverse step explicitly |
-| `links` with static `relation` | Each link inverted independently |
-| Nested `descend` pipelines | Recursively |
-| `infer_edge_only` / `infer_edge_except` / `extra_weights` | Static triple specs appended for created edges |
-
-**Dynamic EdgeActor example** (declared `employed_by ↔ employs`, then `AddInverseEdgesOp(relations=["employed_by"])`):
-
-```yaml
-# forward step
-- edge:
-    source_role: source
-    target_role: target
-    relation_field: relation_type
-    relation_map:
-      EMPLOYED_BY: employed_by
-      FUNDS: funds
-# appended inverse step
-- edge:
-    source_role: target
-    target_role: source
-    relation_field: relation_type
-    relation_map:
-      EMPLOYED_BY: employs
-    relation_map_only: true
-```
-
-**Realizing a declared pair natively** — `set_native_inverses` (TigerGraph):
-
-```python
-from graflo.architecture.evolution import (
-    DeclareEdgeInversesOp,
-    SetNativeInversesOp,
-    apply_evolution,
-)
-
-native = apply_evolution(
-    manifest,
-    [
-        DeclareEdgeInversesOp(inverses={"employed_by": "employs"}),
-        SetNativeInversesOp(relations=["employed_by"]),
-    ],
-)
-```
-
-To switch a relation from one realization to the other, withdraw the first (`set_native_inverses` with `enabled: false`, or `remove_edges` on the inverse relation) before adding the second.
-
-**Choosing a bidirectional strategy** (see also [Core components — Edge](../architecture/core_components.md#directed-undirected-and-bidirectional-edges)):
+**Choosing** (see also [Core components — Edge](../architecture/core_components.md#directed-undirected-and-bidirectional-edges)):
 
 | Goal | Approach |
 |------|----------|
-| Portable across DBs | Declared pair + `add_inverse_edges` (explicit inverse edges) |
-| TigerGraph-maintained pair, single load path | Declared pair + `set_native_inverses` |
-| Truly symmetric (friends, co-authors) | Edges with `directed: false` (+ optionally `symmetric: [R]`) → `UNDIRECTED EDGE` on TigerGraph |
+| A name for the reverse reading, nothing stored | Declare the pair. Done. (`plan_withdraw_realization` gets you back here.) |
+| TigerGraph, reverse reads needed | Declared pair + `set_native_inverses` (`plan_realize_inverses(strategy="native")`) |
+| The inverse must physically exist, on any backend | Declared pair + `add_inverse_edges` (`strategy="materialized"`) |
+| Truly symmetric (friends, co-authors) | `plan_declare_symmetric` → `directed: false` + `symmetric: [R]` → `UNDIRECTED EDGE` on TigerGraph |
+| Not sure | `plan_realize_inverses(manifest)` — `auto` decides from the target backend and says why |
+
+#### Why it is built this way
+
+- **Declaring and storing are separate.** A pair is a statement about names; whether the reverse reading is stored is a cost decision that depends on the backend. Most backends read an edge from its target for free, so by default nothing is stored and the declaration earns its place on the read side instead. A declared pair with no realization is not a third kind of realization; it is simply the declaration, working.
+- **Materialization is a flag on the step, not generated steps.** A generated reversed step has to be restricted to exactly the relations it mirrors, and for a relation read from a field with fixed endpoints, taken from a document key, or read by a link, nothing can express that restriction — so such steps used to be skipped, leaving an inverse edge nobody wrote. Mirroring after the relation is resolved has no such cases, keeps one step one step, and makes the change a flag flip that the differ can reproduce and an undo can reverse exactly.
+- **The flag is per step, so coverage can be partial — and that is detected, not prevented.** A source that reports both readings should keep its own inverse step; a source that reports one should mirror. A per-relation switch could not express that. The price is that one resource can be left out, which is precisely what `unfed_inverse` reports and `repair` propagates.
+- **Aggregation is done by planners that emit primitives, never by a macro op.** A stored revision records what was done, not what was asked for, so it replays without the planner and each step inverts on its own. It is also why making a relation symmetric is two ops: folding `set_edge_directed` into `declare_edge_inverses` would make the declaration impossible to undo exactly.
+- **Repair propagates omissions and never settles contradictions.** When one place is silent and another speaks, the manifest has one opinion and propagating it is safe. When two places disagree it has two, and only the author knows which is wrong.
 
 ### 6) Project to a subgraph slice
 

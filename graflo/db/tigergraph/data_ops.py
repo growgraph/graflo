@@ -47,6 +47,42 @@ def _wrap_tg_exception(func):
     return wrapper
 
 
+_REVERSED_ROW_KEYS: tuple[tuple[str, str], ...] = (
+    ("from_id", "to_id"),
+    ("from_type", "to_type"),
+    ("from", "to"),
+)
+
+
+def _as_forward_rows(rows: Any, forward_type: str | None) -> list[Any]:
+    """Rows read from a reverse edge type, restated in the forward orientation.
+
+    A reverse read is an *outgoing* query on the paired type, so REST++ reports
+    the anchor as ``from`` and names the reverse type. Every other backend
+    answers an inbound read with the edge as stored; restating the row here
+    keeps one orientation for callers, whichever type answered.
+    """
+    if isinstance(rows, dict):
+        rows = [rows]
+    out: list[Any] = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            out.append(row)
+            continue
+        forward = dict(row)
+        for near, far in _REVERSED_ROW_KEYS:
+            for key, other in ((near, far), (far, near)):
+                if other in row:
+                    forward[key] = row[other]
+                else:
+                    forward.pop(key, None)
+        if forward_type is not None:
+            forward.pop("edge_type", None)
+            forward["e_type"] = forward_type
+        out.append(forward)
+    return out
+
+
 class TigerGraphDataOps:
     def __init__(self, conn) -> None:
         self._conn = conn
@@ -844,13 +880,17 @@ class TigerGraphDataOps:
             if direction is EdgeDirection.OUT or edge_is_undirected:
                 edges = self._conn._get_edges(from_type, from_id, edge_type_str)
             elif direction is EdgeDirection.IN:
-                edges = self._conn._get_edges(from_type, from_id, native_inverse_type)
+                edges = _as_forward_rows(
+                    self._conn._get_edges(from_type, from_id, native_inverse_type),
+                    edge_type_str,
+                )
             else:
                 forward = self._conn._get_edges(from_type, from_id, edge_type_str)
-                backward = self._conn._get_edges(
-                    from_type, from_id, native_inverse_type
+                backward = _as_forward_rows(
+                    self._conn._get_edges(from_type, from_id, native_inverse_type),
+                    edge_type_str,
                 )
-                edges = list(forward or []) + list(backward or [])
+                edges = list(forward or []) + backward
 
             # Parse REST API response format
             # _get_edges() returns list of edge dicts from REST++ API

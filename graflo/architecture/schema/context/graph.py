@@ -141,14 +141,20 @@ class SchemaGraph:
         return sorted(name for name in self._vertex_types if self.degree(name) == 0)
 
     def relation_vocabulary(self) -> list[str]:
-        """Distinct non-null relation names across all edges."""
-        return sorted(
-            {
-                relation
-                for _source, _target, relation in self._edges
-                if relation is not None
-            }
-        )
+        """Distinct relation names a query over this schema may use.
+
+        The names that label declared edges, plus the declared inverse of each:
+        an inverse is a valid name for reading its edge from the target, whether
+        it is stored, maintained by the database, or only declared.
+        """
+        edge_config = self._schema.core_schema.edge_config
+        stored = {
+            relation
+            for _source, _target, relation in self._edges
+            if relation is not None
+        }
+        inverses = {edge_config.inverse_of(relation) for relation in stored}
+        return sorted(stored | {name for name in inverses if name is not None})
 
     def _traversable(
         self,

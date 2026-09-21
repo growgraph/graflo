@@ -1,0 +1,79 @@
+ingestion_model:
+    resources:
+    -   infer_edges: false
+        name: hr
+        pipeline:
+        -   vertex: person
+        -   vertex: institution
+        -   edge:
+                from: person
+                relation: employed_by
+                to: institution
+        -   edge:
+                from: institution
+                relation: employs
+                to: person
+    -   infer_edges: false
+        name: registry
+        pipeline:
+        -   vertex: person
+        -   vertex: institution
+        -   edge:
+                emit_inverse: true
+                from: person
+                relation: employed_by
+                to: institution
+        -   edge:
+                from: person
+                relation: alumnus_of
+                to: institution
+schema:
+    core_schema:
+        edge_config:
+            edges:
+            -   directed: true
+                properties:
+                -   name: since
+                relation: employed_by
+                source: person
+                target: institution
+            -   directed: true
+                properties:
+                -   name: since
+                relation: employs
+                source: institution
+                target: person
+            -   directed: true
+                relation: alumnus_of
+                source: person
+                target: institution
+            -   directed: false
+                relation: collaborates_with
+                source: person
+                target: person
+            inverses:
+            -   inverse: has_alumnus
+                relation: alumnus_of
+            -   inverse: employs
+                relation: employed_by
+            symmetric:
+            -   collaborates_with
+        vertex_config:
+            vertices:
+            -   identity:
+                -   person_id
+                name: person
+                properties:
+                -   name: person_id
+                -   name: name
+            -   identity:
+                -   institution_id
+                name: institution
+                properties:
+                -   name: institution_id
+                -   name: title
+    db_profile:
+        db_flavor: neo4j
+    metadata:
+        name: staffing
+        version: 1.1.0

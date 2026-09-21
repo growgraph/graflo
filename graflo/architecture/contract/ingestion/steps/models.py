@@ -483,6 +483,18 @@ class EdgeLinkConfig(EdgeEndpointMatchOptionsConfig):
         default=None,
         description="Require this path segment in target vertex locations.",
     )
+    emit_inverse: bool = PydanticField(
+        default=False,
+        description=(
+            "Also write the declared inverse of every edge this link writes: for "
+            "``(s, t, a)`` with ``a`` paired to ``b`` in ``edge_config.inverses``, "
+            "``(t, s, b)`` with the same properties. The relation is mirrored after "
+            "it is resolved, so ``relation_field``, ``relation_map`` and "
+            "``relation_from_key`` are all covered. Only a *materialized* inverse is "
+            "written -- one whose edge ``(t, s, b)`` is declared; a pair that is "
+            "only declared, or that the database maintains, stores nothing here."
+        ),
+    )
 
     @staticmethod
     def _canonicalize_slot_key(
@@ -627,6 +639,18 @@ class EdgeActorConfig(EdgeEndpointMatchOptionsConfig):
             "with swapped endpoints."
         ),
     )
+    emit_inverse: bool = PydanticField(
+        default=False,
+        description=(
+            "Also write the declared inverse of every edge this step writes: for "
+            "``(s, t, a)`` with ``a`` paired to ``b`` in ``edge_config.inverses``, "
+            "``(t, s, b)`` with the same properties. The relation is mirrored after "
+            "it is resolved, so ``relation_field``, ``relation_map`` and "
+            "``relation_from_key`` are all covered. Only a *materialized* inverse is "
+            "written -- one whose edge ``(t, s, b)`` is declared; a pair that is "
+            "only declared, or that the database maintains, stores nothing here."
+        ),
+    )
     strict_edge_types: bool = PydanticField(
         default=False,
         description=(
@@ -719,6 +743,11 @@ class EdgeActorConfig(EdgeEndpointMatchOptionsConfig):
                     "edge 'links' is mutually exclusive with top-level "
                     "from/to/source_type_field/target_type_field/source_role/target_role."
                 )
+            if self.emit_inverse:
+                raise ValueError(
+                    "emit_inverse on an edge step with 'links' is ambiguous: set it "
+                    "on each link whose inverse should be written."
+                )
             return self
 
         # Single-intent mode: canonicalize to role-first slot names.
@@ -778,6 +807,7 @@ class EdgeActorConfig(EdgeEndpointMatchOptionsConfig):
             source_match=self.source_match,
             target_match=self.target_match,
             on_ambiguous=self.on_ambiguous,
+            emit_inverse=self.emit_inverse,
         )
 
     @model_validator(mode="before")

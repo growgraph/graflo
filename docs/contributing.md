@@ -79,6 +79,25 @@ CI runs the same script and fails if `docs/assets/graflo-ontology-viz/` is out o
 - Add tests for bug fixes
 - Maintain or improve test coverage
 
+### Test databases
+
+Most of the suite needs live database containers. From a clone, start them with the scripts under `docker/`:
+
+```bash
+cd docker
+./start-all.sh    # Start all services
+./stop-all.sh     # Stop all services
+./cleanup-all.sh  # Remove containers and volumes
+```
+
+Per-engine compose files, ports, and env notes are in [`docker/README.md`](https://github.com/growgraph/graflo/blob/main/docker/README.md). Then run:
+
+```bash
+uv run pytest test
+```
+
+NebulaGraph tests are gated behind `pytest --run-nebula`. CI intentionally skips the database suite.
+
 ## Pull Request Process
 
 1. Ensure your PR description clearly describes the problem and solution

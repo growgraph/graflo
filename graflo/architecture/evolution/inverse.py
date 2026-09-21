@@ -67,6 +67,7 @@ from .ops import (
     SetEdgeDirectedOp,
     SetEdgeSemanticsOp,
     SetFieldSemanticsOp,
+    SetInverseEmissionOp,
     SetNativeInversesOp,
     SetVertexDescriptionsOp,
     SetVertexSemanticsOp,
@@ -618,6 +619,34 @@ def _invert_set_native_inverses(
     return SetNativeInversesOp(relations=changed, enabled=not op.enabled)
 
 
+def _invert_set_inverse_emission(
+    op: SetInverseEmissionOp, manifest: GraphManifest
+) -> ManifestOp | None:
+    """Restore the prior flag of the addressed steps that actually change."""
+    from graflo.architecture.contract.ingestion.steps.ref import find_edge_step
+
+    ingestion = manifest.ingestion_model
+    if ingestion is None:
+        return None
+    by_name = {resource.name: resource for resource in ingestion.resources}
+    changed: dict[str, list] = {}
+    for name, refs in op.steps.items():
+        resource = by_name.get(name)
+        if resource is None:
+            return None
+        flipped = [
+            ref
+            for ref in refs
+            if (view := find_edge_step(resource.pipeline, ref)) is not None
+            and view.emit_inverse != op.enabled
+        ]
+        if flipped:
+            changed[name] = flipped
+    if not changed:
+        return None
+    return SetInverseEmissionOp(steps=changed, enabled=not op.enabled)
+
+
 def _invert_replace_identity(
     op: ReplaceIdentityOp, manifest: GraphManifest
 ) -> ManifestOp | None:
@@ -825,6 +854,7 @@ _HANDLERS: dict[str, Any] = {
     "declare_edge_inverses": _invert_declare_edge_inverses,
     "retract_edge_inverses": _invert_retract_edge_inverses,
     "set_native_inverses": _invert_set_native_inverses,
+    "set_inverse_emission": _invert_set_inverse_emission,
     "replace_identity": _invert_replace_identity,
     "replace_edge_identities": _invert_replace_edge_identities,
     "add_resources": _invert_add_resources,

@@ -49,6 +49,16 @@ def _raise_step_validation_error(data: dict[str, Any], err: ValidationError) -> 
             "Invalid transform step. Expected exactly one of `rename` or `call`. "
             f"Step keys: [{keys}]."
         ) from err
+    if data.get("type") == "edge":
+        # An edge step is recognised; what it broke is one of the step's own
+        # rules, and the rule's wording says what to change.
+        rules = "; ".join(
+            dict.fromkeys(
+                str(error["msg"]).removeprefix("Value error, ")
+                for error in err.errors()
+            )
+        )
+        raise ValueError(f"Invalid edge step: {rules} Step keys: [{keys}].") from err
     raise ValueError(
         "Invalid actor step configuration. "
         "Supported step forms include `vertex`, `transform`, `edge`, `descend`, "

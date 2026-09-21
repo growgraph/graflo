@@ -149,7 +149,7 @@ out the parent commit is always exact and is the better tool.
 |---|---|
 | add ↔ remove: vertices, edges, vertex/edge properties, indexes | `merge_vertices`, `merge_edges` |
 | rename: vertices, relations, resources, properties; `canonicalize` that only renames | `change_field_types`, `canonicalize` that merges |
-| `set_edge_directed`, `retarget_edges`, `add_inverse_edges`, `set_native_inverses`; `declare_edge_inverses` ↔ `retract_edge_inverses` | `sanitize`, `project_manifest` |
+| `set_edge_directed`, `retarget_edges`, `add_inverse_edges`, `set_native_inverses`, `set_inverse_emission`; `declare_edge_inverses` ↔ `retract_edge_inverses` | `sanitize`, `project_manifest` |
 | `replace_identity` (with `retire: keep`), secondary identities | `merge_manifests` (binary) |
 
 ## Merging two branches

@@ -12,6 +12,9 @@ from pydantic import Field as PydanticField
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.graph_types import EdgeId, EdgePhysicalKey, Index
+from graflo.architecture.schema.inverse_realization import (
+    native_inverse_violations,
+)
 from graflo.architecture.schema.vertex import VertexName
 from graflo.onto import DBType
 
@@ -257,77 +260,21 @@ class DatabaseProfile(ConfigBaseModel):
         A native inverse is the database realizing a *declared* pair for a whole
         relation, so it needs the declaration, must not coexist with explicit
         inverse edges, and exists only where the database can maintain one: on a
-        single TigerGraph edge type whose reverse name is free.
+        single TigerGraph edge type whose reverse name is free. The rules
+        themselves are
+        :func:`graflo.architecture.schema.inverse_realization.native_inverse_violations`,
+        which also answers "would this relation be eligible?" without changing
+        the profile.
 
         Raises:
-            ValueError: naming the rule broken and the relation that breaks it.
+            ValueError: naming every rule broken and the relation that breaks it.
         """
-        if not self.native_inverses:
-            return
-        errors: list[str] = []
-        if self.db_flavor != DBType.TIGERGRAPH:
-            errors.append(
-                f"native_inverses {self.native_inverses} are TigerGraph-only "
-                f"(db_flavor is {str(self.db_flavor)!r}); use explicit inverse edges "
-                "(add_inverse_edges) for a portable inverse"
+        violations = native_inverse_violations(self, edge_config, vertex_names)
+        if violations:
+            raise ValueError(
+                "invalid native inverse: "
+                + "; ".join(violation.message for violation in violations)
             )
-        edges_by_relation: dict[str, list[EdgeId]] = {}
-        for edge in edge_config.edges:
-            if edge.relation is not None:
-                edges_by_relation.setdefault(edge.relation, []).append(edge.edge_id)
-        native = set(self.native_inverses)
-        for relation in self.native_inverses:
-            edge_ids = edges_by_relation.get(relation)
-            if not edge_ids:
-                errors.append(f"{relation!r}: names no declared edge")
-                continue
-            if edge_config.is_symmetric(relation):
-                errors.append(
-                    f"{relation!r}: a symmetric relation has no reverse type; its "
-                    "edges are undirected"
-                )
-                continue
-            inverse = edge_config.inverse_of(relation)
-            if inverse is None:
-                errors.append(
-                    f"{relation!r}: a native inverse needs a declared pair; add "
-                    f"{{relation: {relation}, inverse: <name>}} to edge_config.inverses"
-                )
-                continue
-            if inverse in native and relation < inverse:
-                errors.append(
-                    f"{relation!r} and {inverse!r}: only one side of a pair can be "
-                    "native; the other is the reverse type the database creates"
-                )
-            # TigerGraph edge type names share one namespace with each other and
-            # with vertex types, so the reverse type must not shadow either --
-            # including an explicit inverse edge, which would store the fact twice.
-            if inverse in edges_by_relation:
-                errors.append(
-                    f"{relation!r}: native inverse {inverse!r} collides with the "
-                    "declared edges of that name; keep one realization of the pair"
-                )
-            elif inverse in vertex_names:
-                errors.append(
-                    f"{relation!r}: native inverse {inverse!r} collides with a "
-                    "vertex type"
-                )
-            # WITH REVERSE_EDGE belongs to one edge type; a relation spread over
-            # several physical names would ask for one reverse name twice.
-            physical = sorted(
-                {
-                    self.edge_relation_name(edge_id, default_relation=relation)
-                    or relation
-                    for edge_id in edge_ids
-                }
-            )
-            if len(physical) > 1:
-                errors.append(
-                    f"{relation!r}: a native inverse needs the relation stored as "
-                    f"one edge type, but relation_name splits it into {physical}"
-                )
-        if errors:
-            raise ValueError("invalid native inverse: " + "; ".join(errors))
 
     def vertex_property_default(
         self, vertex_name: str, property_name: str
