@@ -432,11 +432,14 @@ class TestAnInverseIsExactOrAbsent:
             manifest=base,
         )
 
-    def test_removing_a_property_the_type_never_had_needs_no_inverse(self) -> None:
+    def test_removing_a_property_the_type_never_had_is_refused(self) -> None:
+        """It used to be skipped forward, and its "inverse" then added the field."""
         op = op_from_dict(
             {"op": "remove_vertex_properties", "removals": {"party": ["nickname"]}}
         )
-        assert invert_ops([op], manifest=_manifest()) == ([], [])
+        assert invert_op(op, manifest=_manifest()) is None
+        with pytest.raises(ValueError, match="unknown properties"):
+            apply_evolution(_manifest(), [op])
 
     def test_a_vertex_removal_that_cascaded_over_an_edge_has_no_inverse(self) -> None:
         """Re-adding the vertex does not bring the edge back, and one op cannot."""

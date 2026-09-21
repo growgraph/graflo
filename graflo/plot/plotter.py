@@ -313,7 +313,7 @@ class ManifestPlotter:
             manifest = graph_manifest
             self.config = None
         elif config_filename is not None:
-            self.config = FileHandle.load(fpath=config_filename)
+            self.config = FileHandle.load(config_filename)
             manifest = GraphManifest.from_config(self.config)
         else:
             raise ValueError(

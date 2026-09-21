@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 from datetime import UTC, datetime
 
+import suthing
 from pydantic import Field
 
 from graflo.architecture.base import ConfigBaseModel
@@ -18,8 +17,7 @@ def backend_schema_hash(schema: Schema) -> str:
         "core_schema": schema.core_schema.to_minimal_canonical_dict(),
         "db_profile": schema.db_profile.to_minimal_canonical_dict(),
     }
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+    return suthing.stable_hash(payload)
 
 
 class CollectionEntry(ConfigBaseModel):

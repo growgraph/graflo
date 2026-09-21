@@ -14,9 +14,9 @@ different hashes by construction rather than reinterpreting old ones.
 
 from __future__ import annotations
 
-import hashlib
-import json
 from typing import Any
+
+import suthing
 
 from graflo.architecture.evolution.canonicalize import CANON_VERSION, canonical_payload
 
@@ -27,12 +27,7 @@ def stable_hash(payload_obj: Any) -> str:
     The canonicalization version is part of the hashed bytes, not a wrapper
     around them, so it cannot be stripped by a caller that re-serializes.
     """
-    payload = json.dumps(
-        {"canon": CANON_VERSION, "payload": payload_obj},
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    return suthing.stable_hash({"canon": CANON_VERSION, "payload": payload_obj})
 
 
 def graph_hash(schema: Any) -> str:

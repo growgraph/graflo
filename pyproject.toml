@@ -33,7 +33,8 @@ dependencies = [
   "redis>=5.0.0",
   "requests>=2.31.0",
   "sqlalchemy>=2.0.0",
-  "suthing>=0.5.1",
+  "strenum>=0.4.15",
+  "suthing>=0.6.0,<0.7",
   "urllib3>=2.0.0",
   "xmltodict>=0.14.2,<0.15"
 ]
@@ -44,7 +45,7 @@ license-files = ["LICENSE", "NOTICE"]
 name = "graflo"
 readme = "README.md"
 requires-python = ">=3.11"
-version = "1.13.4"
+version = "1.13.5"
 
 [project.optional-dependencies]
 dev = [

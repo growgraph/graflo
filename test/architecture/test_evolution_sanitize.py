@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.evolution import (
     RenameVertexPropertiesOp,
@@ -165,8 +167,22 @@ def test_rename_vertex_fields_does_not_add_old_identity_as_type_none():
     assert by_name["user_id"].type == FieldType.STRING
 
 
+def test_rename_vertex_fields_refuses_a_fold_nobody_wrote_down():
+    """``{a: b}`` onto a declared ``b`` would turn the key ``[a, b]`` into ``[b]``."""
+    manifest = _build_manifest(
+        user_properties=[Field(name="a"), Field(name="b")],
+        user_identity=["a", "b"],
+    )
+
+    with pytest.raises(ValueError, match="fold two properties into one"):
+        apply_rename_vertex_properties(
+            manifest,
+            RenameVertexPropertiesOp(renames={"users": {"a": "b"}}),
+        )
+
+
 def test_rename_vertex_fields_dedupes_identity_when_names_collide():
-    """Identity rewrite should not keep duplicate names after a collision."""
+    """A fold the map spells out is applied, and leaves no duplicate names."""
     manifest = _build_manifest(
         user_properties=[Field(name="a"), Field(name="b")],
         user_identity=["a", "b"],
@@ -174,7 +190,7 @@ def test_rename_vertex_fields_dedupes_identity_when_names_collide():
 
     apply_rename_vertex_properties(
         manifest,
-        RenameVertexPropertiesOp(renames={"users": {"a": "b"}}),
+        RenameVertexPropertiesOp(renames={"users": {"a": "b", "b": "b"}}),
     )
 
     schema = manifest.require_schema()

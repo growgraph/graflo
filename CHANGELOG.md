@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [Unreleased]
+## [1.13.5]
 
 ### Added
 
@@ -17,8 +17,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to its target. Laws not yet satisfied are strict expected failures that name
   the mechanism. `hypothesis` joins the `dev` extra.
 
+### Changed
+
+- **Unknown names in a change set are refused.** `remove_vertex_properties`,
+  `remove_edge_properties` and `rename_edge_properties` used to skip a property
+  the type never had, and the two edge ops an unknown relation;
+  `rename_vertex_properties` skipped an unknown source. All now raise, as
+  `remove_vertices` and `remove_edges` already did for unknown names. A change
+  set relying on the skip needs the stale entry removed.
+- **A property rename onto a taken name is refused** (`rename_vertex_properties`,
+  `rename_edge_properties`). It folded two properties into one — silently
+  turning a key `[a, b]` into `[b]` — and no rename back restores them. A fold
+  the map spells out (`{a: c, b: c}`, or `{a: b, b: b}` onto an existing `b`)
+  is still applied.
+- **`merge_three_way` raises `MergeError`** when a side changed something no
+  operation expresses (one sibling edge gaining a property, an edited
+  pipeline). The merge is assembled from each side's ops, so such a change was
+  dropped from a result reported as clean, with a warning as the only trace.
+  Both diffs are now verified by replay before they are reconciled.
+- **`bump_semver_minor` no longer rewrites a non-semver string to `0.1.0`.**
+  A version that is not `MAJOR.MINOR.PATCH` is left as written, which used to
+  move it backwards; a leading `v` is accepted and kept (`v2.0.0` → `v2.1.0`).
+- **Requires `suthing>=0.6.0,<0.7`.** Canonical-JSON hashes (commit ids, root
+  ids, merge-recipe addresses, connector ids, schema hashes), filename/URI slugs
+  and resolve-lookup chunking now use `suthing.stable_hash`, `suthing.slugify`
+  and `suthing.batched`; outputs are byte-identical, so stored ids stay valid.
+
+### Removed
+
+- **`graflo.db.resolve.chunked`**, in favour of `suthing.batched`.
+
 ### Fixed
 
+- **Three-way merge did not see what an op depends on.** Slots recorded writes
+  only: `add_edges` does not write its endpoint vertices, so a `remove_vertices`
+  on the other side — which cascades over that vertex's edges — was not a
+  conflict. With the removal on the right the merge was clean and the added
+  edge was gone; with it on the left the merged ops did not apply. Ops now
+  carry a read set (`op_reads`): edge ops read their endpoints, ops addressed
+  by relation read what that relation connects in the base, identity and index
+  ops read the fields they key on. A read conflicts with a write at or above
+  it, never beneath — an edge onto `company` still merges with a new field on
+  `company` — and an op both sides made is agreement, not a dependency. The
+  dependent op is held back and reported with the conflict.
+  `ops_independent(a, b, base)` is the shared test, and the laws for
+  commutation, side symmetry and "a clean merge loses neither side" now hold.
+- **`manage_dbs` and `plot_manifest` broke with suthing 0.6.** Both loaded their
+  config with `FileHandle.load(fpath=...)`, a keyword suthing 0.6 removed; they
+  now pass the path positionally. `manage_dbs` also read `Timer.mins` /
+  `Timer.secs`, which suthing 0.6 dropped; it now logs `Timer.elapsed_str`.
+- **`import graflo` failed with suthing 0.6.** `graflo.onto` imports
+  `strenum`, which was only installed as a dependency of `suthing`; suthing 0.6
+  dropped it. `strenum` is now a declared dependency.
 - **`diff_manifests` removed a whole relation to drop one edge.** A removed
   edge was expressed as `remove_edges` by relation name, which drops every edge
   on that relation — including edges the target still declares and, because

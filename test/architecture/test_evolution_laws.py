@@ -38,9 +38,8 @@ from graflo.architecture.evolution.hashing import manifest_hash
 from graflo.architecture.evolution.inverse import invert_op, invert_ops
 from graflo.architecture.evolution.merge3 import (
     MergeError,
-    _covers,
     merge_three_way,
-    op_slots,
+    ops_independent,
 )
 from graflo.architecture.evolution.ops import ManifestOp
 
@@ -340,13 +339,6 @@ def _merge_outcome(
     return ("clean", manifest_hash(merged))
 
 
-def _independent(a: ManifestOp, b: ManifestOp) -> bool:
-    """No slot of one covers, or is covered by, a slot of the other."""
-    return not any(
-        _covers(x, y) or _covers(y, x) for x in op_slots(a) for y in op_slots(b)
-    )
-
-
 def _two_branches(
     case: tuple[GraphManifest, ManifestOp, ManifestOp],
 ) -> tuple[GraphManifest, GraphManifest, GraphManifest]:
@@ -440,25 +432,17 @@ def test_a_manifest_differs_from_itself_by_nothing(manifest) -> None:
 
 # ── commutation and merge ───────────────────────────────────────────────────
 
-_WRITE_ONLY_FOOTPRINT = (
-    "op_slots records what an op writes, not what it reads: add_edges does not "
-    "occupy its endpoint vertices, so it counts as independent of the "
-    "remove_vertices that cascades over it"
-)
 
-
-@pytest.mark.xfail(strict=True, reason=_WRITE_ONLY_FOOTPRINT)
 @LAWS
 @given(manifest_and_two_ops())
 def test_independent_ops_commute(case) -> None:
-    """Ops on slots that do not touch give one outcome in either order."""
+    """Neither writes where the other writes or reads: one outcome, either order."""
     manifest, a, b = case
-    assume(_independent(a, b))
+    assume(ops_independent(a, b, manifest))
 
     assert _outcome(manifest, [a, b]) == _outcome(manifest, [b, a])
 
 
-@pytest.mark.xfail(strict=True, reason=_WRITE_ONLY_FOOTPRINT)
 @LAWS
 @given(manifest_and_two_ops())
 def test_merge_does_not_depend_on_which_side_is_left(case) -> None:
@@ -467,7 +451,6 @@ def test_merge_does_not_depend_on_which_side_is_left(case) -> None:
     assert _merge_outcome(base, left, right) == _merge_outcome(base, right, left)
 
 
-@pytest.mark.xfail(strict=True, reason=_WRITE_ONLY_FOOTPRINT)
 @LAWS
 @given(manifest_and_two_ops())
 def test_a_clean_merge_loses_neither_side(case) -> None:
@@ -480,12 +463,14 @@ def test_a_clean_merge_loses_neither_side(case) -> None:
     dropped something.
     """
     base, left, right = _two_branches(case)
+    left_ops, left_residue = diff_manifests_verified(base, left)
+    right_ops, right_residue = diff_manifests_verified(base, right)
+    # A change no op expresses cannot be merged, and the merge says so.
+    assume(not left_residue and not right_residue)
     kind, merged_hash = _merge_outcome(base, left, right)
-    assert kind != "error", "two valid descendants must merge or conflict"
+    assert kind != "error", "two expressible descendants must merge or conflict"
     assume(kind == "clean")
 
-    left_ops, _ = diff_manifests(base, left)
-    right_ops, _ = diff_manifests(base, right)
     left_dicts, right_dicts = ops_to_dicts(left_ops), ops_to_dicts(right_ops)
     left_only = [op for op, d in zip(left_ops, left_dicts) if d not in right_dicts]
     right_only = [op for op, d in zip(right_ops, right_dicts) if d not in left_dicts]

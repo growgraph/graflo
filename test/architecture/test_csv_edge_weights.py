@@ -24,7 +24,7 @@ def _load_csv_as_dicts(csv_path: Path) -> list[dict]:
 @pytest.fixture
 def schema_csv_edge_weights():
     manifest = GraphManifest.from_config(
-        FileHandle.load("test.config.schema", "csv-edge-weights.yaml")
+        FileHandle.load_resource("test.config.schema", "csv-edge-weights.yaml")
     )
     manifest.finish_init()
     return manifest

@@ -69,7 +69,7 @@ def cast(modes, current_path, level, reset, n_cores=1):
                 )
             )
         else:
-            data_obj = FileHandle.load(
+            data_obj = FileHandle.load_resource(
                 f"test.data.{mode}",
                 f"{mode}.{ext}.gz",
             )

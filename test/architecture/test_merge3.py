@@ -20,12 +20,15 @@ from graflo.architecture.evolution.commit import build_commit
 from graflo.architecture.evolution.history import History
 from graflo.architecture.evolution.merge3 import (
     ConflictResolution,
+    MergeError,
     MergeRecipe,
     build_recipe,
     describe_slot,
     find_merge_base,
     merge_three_way,
+    op_reads,
     op_slots,
+    ops_independent,
     re_merge,
     take_left,
     take_right,
@@ -217,13 +220,6 @@ def test_a_relation_wide_property_add_merges_with_an_edge_flip() -> None:
     assert edge.directed is False
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "op_slots records what an op writes, not what it reads: add_edges does not "
-        "occupy its endpoint vertices, so removing one of them is not a conflict"
-    ),
-)
 @pytest.mark.parametrize("remover", ["left", "right"])
 def test_removing_a_vertex_conflicts_with_adding_an_edge_onto_it(remover: str) -> None:
     """The same blind spot one level up: a vertex removal cascades over its edges.
@@ -241,6 +237,145 @@ def test_removing_a_vertex_conflicts_with_adding_an_edge_onto_it(remover: str) -
 
     assert merged is None
     assert [tuple(c.slot) for c in result.conflicts] == [merge3._vertex_slot("company")]
+
+
+def test_the_dependent_op_is_reported_with_the_conflict() -> None:
+    """Both halves of the disagreement are shown, not only the op that wrote."""
+    base = _people_and_companies([])
+    removed = _manifest([_vertex("person", ["id"], ["id"])])
+    linked = _people_and_companies([KNOWS])
+
+    _, result = merge_three_way(base, linked, removed)
+
+    (conflict,) = result.conflicts
+    assert [op.op for op in conflict.left_ops] == ["add_edges"]
+    assert [op.op for op in conflict.right_ops] == ["remove_vertices"]
+    assert "depends on it" in conflict.reason
+
+
+def test_a_dependency_conflict_resolves_like_any_other() -> None:
+    base = _people_and_companies([])
+    removed = _manifest([_vertex("person", ["id"], ["id"])])
+    linked = _people_and_companies([KNOWS])
+    _, result = merge_three_way(base, linked, removed)
+
+    kept, _ = merge_three_way(
+        base, linked, removed, resolutions=[take_left(result.conflicts[0])]
+    )
+    dropped, _ = merge_three_way(
+        base, linked, removed, resolutions=[take_right(result.conflicts[0])]
+    )
+
+    assert kept is not None and dropped is not None
+    assert [e.edge_id for e in _core(kept).edge_config.edges] == [
+        ("person", "company", "knows")
+    ]
+    assert _core(dropped).vertex_config.vertex_set == {"person"}
+
+
+def test_flipping_an_edge_conflicts_with_removing_its_endpoint() -> None:
+    base = _people_and_companies([KNOWS])
+    flipped = _people_and_companies([{**KNOWS, "directed": False}])
+    removed = _manifest([_vertex("person", ["id"], ["id"])])
+
+    merged, result = merge_three_way(base, flipped, removed)
+
+    assert merged is None
+    assert merge3._vertex_slot("company") in {tuple(c.slot) for c in result.conflicts}
+
+
+def test_a_relation_wide_edit_conflicts_with_removing_a_vertex_it_connects() -> None:
+    """The op names the relation only; what it connects is read from the base."""
+    base = _people_and_companies([KNOWS])
+    widened = _people_and_companies([{**KNOWS, "properties": ["since"]}])
+    removed = _manifest([_vertex("person", ["id"], ["id"])])
+
+    merged, result = merge_three_way(base, widened, removed)
+
+    assert merged is None
+    assert merge3._vertex_slot("company") in {tuple(c.slot) for c in result.conflicts}
+
+
+def test_re_keying_onto_a_field_conflicts_with_removing_it() -> None:
+    base = _person(["id", "email"])
+    rekeyed = _person(["id", "email"], ["email"])
+    trimmed = _person(["id"])
+
+    merged, result = merge_three_way(base, rekeyed, trimmed)
+
+    assert merged is None
+    assert merge3._field_slot("person", "email") in {
+        tuple(c.slot) for c in result.conflicts
+    }
+
+
+def test_an_edge_onto_a_vertex_merges_with_a_new_field_on_it() -> None:
+    """A read is disturbed at or above it, not beneath: fields are beneath."""
+    base = _people_and_companies([])
+    linked = _people_and_companies([KNOWS])
+    widened = _manifest(
+        [_vertex("person", ["id"], ["id"]), _vertex("company", ["id", "name"], ["id"])]
+    )
+
+    merged, result = merge_three_way(base, linked, widened)
+
+    assert merged is not None and not result.conflicts
+    assert [e.edge_id for e in _core(merged).edge_config.edges] == [
+        ("person", "company", "knows")
+    ]
+
+
+def test_two_edges_onto_one_vertex_merge() -> None:
+    """Both read ``company``; neither writes it. Reads do not collide."""
+    base = _people_and_companies([])
+    owns = {"source": "person", "target": "company", "relation": "owns"}
+
+    merged, result = merge_three_way(
+        base, _people_and_companies([KNOWS]), _people_and_companies([owns])
+    )
+
+    assert merged is not None and not result.conflicts
+    assert len(_core(merged).edge_config.edges) == 2
+
+
+def test_both_sides_removing_a_vertex_and_its_edge_is_agreement() -> None:
+    """An op both sides made is on the reader's own side too: not a dependency."""
+    base = _people_and_companies([KNOWS])
+    removed = _manifest([_vertex("person", ["id"], ["id"])])
+
+    merged, result = merge_three_way(base, removed, removed)
+
+    assert merged is not None and not result.conflicts
+    assert _core(merged).vertex_config.vertex_set == {"person"}
+
+
+def test_independence_is_about_writes_and_reads() -> None:
+    add_edge = ops_module.AddEdgesOp(edges=[KNOWS])
+    remove_vertex = ops_module.RemoveVerticesOp(names=["company"])
+    add_field = AddVertexPropertiesOp(additions={"company": ["name"]})
+
+    assert op_reads(add_edge) == {("vertex", "person"), ("vertex", "company")}
+    assert not ops_independent(add_edge, remove_vertex)
+    assert ops_independent(add_edge, add_field)
+
+
+def test_a_change_no_op_expresses_refuses_the_merge() -> None:
+    """One sibling edge gains a field: no op says that, so merging would drop it."""
+    to_city = {"source": "person", "target": "city", "relation": "knows"}
+    vertices = [_vertex("person", ["id"], ["id"]), _vertex("city", ["id"], ["id"])]
+    loop = {"source": "person", "target": "person", "relation": "knows"}
+    base = _manifest(vertices, [loop, to_city])
+    gained = _manifest(vertices, [{**loop, "properties": ["since"]}, to_city])
+    unrelated = _manifest(
+        [*vertices, _vertex("order", ["id"], ["id"])], [loop, to_city]
+    )
+
+    try:
+        merge_three_way(base, gained, unrelated)
+    except MergeError as refusal:
+        assert "no operation expresses" in str(refusal)
+    else:
+        raise AssertionError("a merge that drops a side's change must not be clean")
 
 
 def test_a_grounding_only_change_survives_a_merge() -> None:

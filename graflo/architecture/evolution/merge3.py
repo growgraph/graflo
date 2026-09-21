@@ -10,7 +10,7 @@ Slots
 
 Reconciliation happens per **slot** -- the addressable location an op touches,
 such as ``("vertex", "person", "field", "age")``. Two sides that touch disjoint
-slots merge automatically. Two sides that make the *same* change to one slot
+slots, and do not change what the other depends on, merge automatically. Two sides that make the *same* change to one slot
 merge to that change, once. Two sides that make different changes to one slot
 are a :class:`MergeConflict`, reported rather than guessed at.
 
@@ -24,15 +24,25 @@ Three things make the slot the right unit:
   and it is invisible unless the rename is understood to touch the old slot too.
 * An op touching several slots is **atomic**: if any one of its slots is
   contested, the whole op is held back. Applying half an op is not a merge.
+* An op **reads** as well as writes. An edge added onto ``company`` writes the
+  edge and depends on ``company``; the other side removing ``company`` writes a
+  different slot and still cannot be merged with it (:func:`op_reads`). A read
+  is disturbed by a write at or above it, never by one beneath: the edge does
+  not care which fields ``company`` carries.
 
-Merge is not merge
---------------------
+A side whose change no operation expresses cannot be merged at all, because the
+merge is assembled from each side's ops: :func:`merge_three_way` raises rather
+than return a clean result that silently lacks it.
 
-Merge reconciles two descendants of a **common ancestor**: names are expected to
-agree because both sides inherited them, so disagreement is a conflict. Merge
-joins **unrelated lineages** by declared equivalence: names are expected to
-disagree, and the declaration is what reconciles them. Both produce multi-parent
-commits; they are not the same operation and must not be conflated.
+Three-way merge is not merge
+----------------------------
+
+Three-way merge (this module, commit kind ``merge3``) reconciles two descendants
+of a **common ancestor**: names are expected to agree because both sides
+inherited them, so disagreement is a conflict. Merge (``merge_manifests``, commit
+kind ``merge``) joins **unrelated lineages** by declared equivalence: names are
+expected to disagree, and the declaration is what reconciles them. Both produce
+multi-parent commits; they are not the same operation and must not be conflated.
 
 Determinism is a contract
 -------------------------
@@ -45,11 +55,11 @@ here consults a set iteration order or a dict insertion order.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 from typing import Any
 
+import suthing
 from pydantic import Field as PydanticField
 
 from graflo.architecture.base import ConfigBaseModel
@@ -57,7 +67,7 @@ from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.schema.naming import canonical_key
 
 from . import ops
-from .autogenerate import RenameHints, diff_manifests
+from .autogenerate import RenameHints, diff_manifests_verified
 from .codec import RevisionOp, op_to_dict, ops_from_dicts, ops_to_dicts
 from .hashing import manifest_hash
 from .ops import ManifestOp
@@ -319,6 +329,177 @@ def op_slots(op: ManifestOp) -> set[Slot]:
     return slots
 
 
+# ── what an op depends on ───────────────────────────────────────────────────
+
+_ENDPOINT_TOKENS = frozenset({"source", "target", "relation"})
+
+
+def _relation_endpoints(base: GraphManifest | None, relation: str) -> set[Slot]:
+    """The vertices the edges of *relation* connect in *base*."""
+    if base is None or base.graph_schema is None:
+        return set()
+    wanted = _relation_slot(relation)
+    return {
+        _vertex_slot(name)
+        for edge in base.graph_schema.core_schema.edge_config.edges
+        if edge.relation is not None and _relation_slot(edge.relation) == wanted
+        for name in (edge.source, edge.target)
+    }
+
+
+def _key_field_reads(vertex: str, fields: list[str]) -> set[Slot]:
+    """A keying field, and its type: an identity field may not become a list."""
+    reads: set[Slot] = set()
+    for field in fields:
+        reads |= {_field_slot(vertex, field), (*_field_slot(vertex, field), "type")}
+    return reads
+
+
+def _identity_target_fields(target: Any) -> list[str]:
+    if isinstance(target, ops.NaturalIdentityTarget):
+        return list(target.identity)
+    if isinstance(target, ops.HashIdentityTarget):
+        return list(target.hash_from)
+    if isinstance(target, ops.FunnelIdentityTarget):
+        return [
+            field
+            for branch in target.funnel.branches
+            for field in [*branch.fields, *(branch.when_all_present or [])]
+        ]
+    return []
+
+
+def op_reads(op: ManifestOp, base: GraphManifest | None = None) -> set[Slot]:
+    """What *op* needs to be there and does not itself change.
+
+    :func:`op_slots` is what an op writes. That is not enough to tell whether
+    two ops are independent: ``add_edges`` writes an edge and *reads* its
+    endpoint vertices, so a ``remove_vertices`` on the other side -- which
+    cascades over that vertex's edges -- shares no written slot with it and
+    still cannot be merged with it. One order drops the new edge without a
+    word; the other does not apply.
+
+    A read conflicts with a write **at or above** it, never below: an edge onto
+    ``company`` depends on ``company`` existing under that name, not on which
+    fields it carries.
+
+    Ops addressed by relation depend on whatever that relation connects, which
+    the op does not say; that is read from *base*. A relation one side renamed
+    is looked up under the name *base* knows, so its endpoints are not seen --
+    the rename itself occupies both names and conflicts with the other side's
+    edits to the relation, which covers the common case.
+
+    An op not listed reads nothing beyond what it writes: a property op lives
+    under its vertex's slot, so the containment of written slots already ties
+    it to that vertex.
+    """
+    reads: set[Slot] = set()
+
+    # ── edges, addressed by endpoints ───────────────────────────────────────
+    if isinstance(op, ops.AddEdgesOp):
+        for edge in op.edges:
+            reads |= {_vertex_slot(edge.source), _vertex_slot(edge.target)}
+            if edge.by is not None:
+                reads.add(_vertex_slot(edge.by))
+    elif isinstance(op, ops.RetargetEdgesOp):
+        for entry in op.edges:
+            reads |= {_vertex_slot(entry.source), _vertex_slot(entry.target)}
+            reads |= {
+                _vertex_slot(name)
+                for name in (entry.new_source, entry.new_target)
+                if name is not None
+            }
+    elif isinstance(op, (ops.SetEdgeDirectedOp, ops.SetEdgeSemanticsOp)):
+        for selector in op.edges:
+            reads |= {_vertex_slot(selector.source), _vertex_slot(selector.target)}
+    elif isinstance(op, ops.ReplaceEdgeIdentitiesOp):
+        for entry in op.edges:
+            reads |= {_vertex_slot(entry.source), _vertex_slot(entry.target)}
+            tokens = {token for key in entry.identities for token in key}
+            if entry.relation is not None and tokens - _ENDPOINT_TOKENS:
+                reads.add((*_relation_slot(entry.relation), "field"))
+    elif isinstance(op, (ops.AddEdgeIndexesOp, ops.RemoveEdgeIndexesOp)):
+        for entry in op.edges:
+            reads |= {_vertex_slot(entry.source), _vertex_slot(entry.target)}
+            if entry.relation is not None:
+                reads.add((*_relation_slot(entry.relation), "field"))
+    elif isinstance(op, ops.SetFieldSemanticsOp):
+        for target in op.targets:
+            if isinstance(target, ops.EdgeFieldSemanticsTarget):
+                reads |= {_vertex_slot(target.source), _vertex_slot(target.target)}
+
+    # ── edges, addressed by relation name ───────────────────────────────────
+    elif isinstance(op, ops.RemoveEdgesOp):
+        for selector in op.edges:
+            reads |= {_vertex_slot(selector.source), _vertex_slot(selector.target)}
+        for relation in op.relations:
+            reads |= _relation_endpoints(base, relation)
+    elif isinstance(op, ops.AddEdgePropertiesOp):
+        for relation in op.additions:
+            reads |= _relation_endpoints(base, relation)
+    elif isinstance(op, ops.RemoveEdgePropertiesOp):
+        for relation in op.removals:
+            reads |= _relation_endpoints(base, relation)
+    elif isinstance(op, (ops.RenameEdgePropertiesOp, ops.RenameRelationsOp)):
+        for relation in op.renames:
+            reads |= _relation_endpoints(base, relation)
+    elif isinstance(op, ops.MergeEdgesOp):
+        for relation in [*op.sources, op.into]:
+            reads |= _relation_endpoints(base, relation)
+    elif isinstance(op, (ops.AddInverseEdgesOp, ops.SetNativeInversesOp)):
+        for relation in op.relations or []:
+            reads |= _relation_endpoints(base, relation)
+    elif isinstance(op, ops.RetractEdgeInversesOp):
+        for relation in op.relations:
+            reads |= _relation_endpoints(base, relation)
+    elif isinstance(op, ops.DeclareEdgeInversesOp):
+        for relation in [*op.inverses, *op.inverses.values(), *op.symmetric]:
+            reads |= _relation_endpoints(base, relation)
+    elif isinstance(op, ops.ChangeFieldTypesOp):
+        for relation in op.edges:
+            reads |= _relation_endpoints(base, relation)
+
+    # ── keys ────────────────────────────────────────────────────────────────
+    elif isinstance(op, ops.ReplaceIdentityOp):
+        for vertex, replacement in op.replacements.items():
+            reads |= _key_field_reads(vertex, _identity_target_fields(replacement.to))
+    elif isinstance(op, ops.AddSecondaryIdentitiesOp):
+        for vertex, entries in op.additions.items():
+            for entry in entries:
+                reads |= _key_field_reads(vertex, list(entry.fields))
+    elif isinstance(op, ops.AddVertexIndexesOp):
+        for vertex, indexes in op.indexes.items():
+            for index in indexes:
+                reads |= {_field_slot(vertex, field) for field in index.fields}
+
+    return reads
+
+
+def _depends_on(read: Slot, written: Slot) -> bool:
+    """A read is disturbed by a write at or above it, not by one beneath it."""
+    return _covers(written, read)
+
+
+def ops_independent(
+    one: ManifestOp, other: ManifestOp, base: GraphManifest | None = None
+) -> bool:
+    """Whether *one* and *other* can be applied in either order to one effect.
+
+    Neither writes where the other writes, and neither writes what the other
+    reads. Two ops reading the same thing are independent: two edges onto one
+    vertex do not get in each other's way.
+    """
+    one_writes, other_writes = op_slots(one), op_slots(other)
+    if any(_covers(a, b) or _covers(b, a) for a in one_writes for b in other_writes):
+        return False
+    return not any(
+        _depends_on(read, written)
+        for reader, writes in ((one, other_writes), (other, one_writes))
+        for read in op_reads(reader, base)
+        for written in writes
+    )
+
+
 # ── merge base ──────────────────────────────────────────────────────────────
 
 
@@ -505,6 +686,33 @@ def _ops_touching(ops: list[ManifestOp], slot: Slot) -> list[ManifestOp]:
     return [op for op in ops if _touches(op_slots(op), slot)]
 
 
+def _dependencies(
+    readers: list[ManifestOp], writers: list[ManifestOp], base: GraphManifest
+) -> dict[str, set[Slot]]:
+    """For each of *readers*, the slots *writers* change out from under it.
+
+    Keyed by the reader's canonical form. An op both sides made is agreement:
+    it is on the reader's own side too, where the differ already ordered it, so
+    it is neither a reader nor a writer here.
+    """
+    shared = {_canonical_ops([op]) for op in readers} & {
+        _canonical_ops([op]) for op in writers
+    }
+    found: dict[str, set[Slot]] = {}
+    for reader in readers:
+        key = _canonical_ops([reader])
+        reads = op_reads(reader, base)
+        if key in shared or not reads:
+            continue
+        for writer in writers:
+            if _canonical_ops([writer]) in shared:
+                continue
+            for written in op_slots(writer):
+                if any(_depends_on(read, written) for read in reads):
+                    found.setdefault(key, set()).add(written)
+    return found
+
+
 def _base_excerpt(base: GraphManifest, slot: Slot) -> dict[str, Any]:
     """The ancestor's state at *slot*, best effort, for a human deciding."""
     if not slot or base.graph_schema is None:
@@ -558,6 +766,12 @@ def merge_three_way(
     Returns:
         ``(merged_manifest_or_None, result)``. The manifest is ``None`` exactly
         when unresolved conflicts remain.
+
+    Raises:
+        MergeError: A side changed something no operation expresses -- a
+            property gained by one of a relation's edges and not its siblings,
+            an edited pipeline -- so the merged manifest would silently lack
+            it. Also when the merged change set does not apply to *base*.
     """
     from .apply import apply_evolution
 
@@ -565,10 +779,18 @@ def merge_three_way(
         resolution.slot_key: resolution for resolution in (resolutions or [])
     }
 
-    left_ops, left_warnings = diff_manifests(base, left, hints=hints)
-    right_ops, right_warnings = diff_manifests(base, right, hints=hints)
+    left_ops, left_warnings = diff_manifests_verified(base, left, hints=hints)
+    right_ops, right_warnings = diff_manifests_verified(base, right, hints=hints)
     warnings = [f"left: {w}" for w in left_warnings]
     warnings += [f"right: {w}" for w in right_warnings]
+    if warnings:
+        # The merge is assembled from each side's ops. A change the ops do not
+        # carry is a change the merged manifest will not have, and a result
+        # that is clean and incomplete is the one outcome a merge may not have.
+        raise MergeError(
+            "a side changed something no operation expresses, so merging would "
+            "drop it: " + "; ".join(warnings)
+        )
 
     left_slots = {slot for op in left_ops for slot in op_slots(op)}
     right_slots = {slot for op in right_ops for slot in op_slots(op)}
@@ -581,27 +803,49 @@ def merge_three_way(
         ):
             contested.add(slot)
 
+    # A slot is contested, too, when one side changes what the other side's
+    # change depends on: an edge added onto a vertex the other side removed.
+    # The two ops write different slots, so nothing above sees them meet.
+    depends: dict[str, set[Slot]] = _dependencies(left_ops, right_ops, base)
+    for key, slots in _dependencies(right_ops, left_ops, base).items():
+        depends.setdefault(key, set()).update(slots)
+    depended_on = {slot for slots in depends.values() for slot in slots}
+    written_by_both = set(contested)
+    contested |= depended_on
+
+    def reaches(op: ManifestOp, slot: Slot) -> bool:
+        """Whether *op* writes at *slot* or depends on what is written there."""
+        return _touches(op_slots(op), slot) or slot in depends.get(
+            _canonical_ops([op]), ()
+        )
+
+    def reason_for(slot: Slot) -> str:
+        if slot == ("manifest",):
+            return "a whole-manifest op cannot be merged with another change"
+        if slot in written_by_both:
+            return "both sides changed this slot differently"
+        return "one side changed this slot and the other side's change depends on it"
+
     unresolved = sorted(contested - set(resolved))
     conflicts = [
         MergeConflict(
             slot=list(slot),
-            left_ops=ops_from_dicts(ops_to_dicts(_ops_touching(left_ops, slot))),
-            right_ops=ops_from_dicts(ops_to_dicts(_ops_touching(right_ops, slot))),
-            base_excerpt=_base_excerpt(base, slot),
-            reason=(
-                "both sides changed this slot differently"
-                if slot != ("manifest",)
-                else "a whole-manifest op cannot be merged with another change"
+            left_ops=ops_from_dicts(
+                ops_to_dicts([op for op in left_ops if reaches(op, slot)])
             ),
+            right_ops=ops_from_dicts(
+                ops_to_dicts([op for op in right_ops if reaches(op, slot)])
+            ),
+            base_excerpt=_base_excerpt(base, slot),
+            reason=reason_for(slot),
         )
         for slot in unresolved
     ]
 
-    # An op is held back if *any* slot it touches is contested: applying half an
-    # op is not a merge.
+    # An op is held back if *any* slot it reaches is contested: applying half an
+    # op is not a merge, and neither is applying an op whose ground moved.
     def blocked(op: ManifestOp) -> bool:
-        slots = op_slots(op)
-        return any(_touches(slots, slot) for slot in contested)
+        return any(reaches(op, slot) for slot in contested)
 
     # Assemble in diff order, with each resolution taking the *place* of the
     # ops it replaces rather than being appended at the end.
@@ -626,11 +870,10 @@ def merge_three_way(
 
     def place_resolutions_for(op: ManifestOp) -> None:
         """Emit the decisions for whichever contested slots *op* reaches."""
-        slots = op_slots(op)
         for contested_slot in sorted(contested):
             if contested_slot in placed_slots:
                 continue
-            if not _touches(slots, contested_slot):
+            if not reaches(op, contested_slot):
                 continue
             placed_slots.add(contested_slot)
             resolution = resolved.get(contested_slot)
@@ -734,8 +977,7 @@ class MergeRecipe(ConfigBaseModel):
                 key=lambda entry: json.dumps(entry["slot"]),
             ),
         }
-        canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        return suthing.stable_hash(payload)
 
 
 def build_merge_recipe(

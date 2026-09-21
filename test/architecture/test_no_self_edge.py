@@ -88,7 +88,7 @@ BUGS_0AD = [
 @pytest.fixture
 def schema_debian_eco():
     manifest = GraphManifest.from_config(
-        FileHandle.load("test.config.schema", "debian-eco.yaml")
+        FileHandle.load_resource("test.config.schema", "debian-eco.yaml")
     )
     manifest.finish_init()
     return manifest

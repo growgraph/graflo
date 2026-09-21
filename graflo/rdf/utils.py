@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
 from rdflib import RDF, BNode, Graph, Literal, URIRef
 from rdflib.namespace import XSD
+from suthing import slugify
 
 from graflo.architecture.contract.ingestion.steps.normalize import (
     normalize_actor_step,
@@ -31,8 +31,7 @@ def load_ontology_graph() -> Graph:
 
 def slug_token(value: str) -> str:
     """Normalize arbitrary text into a URI path segment."""
-    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", value.strip())
-    return quote(cleaned.strip("-") or "item", safe="-._~")
+    return quote(slugify(value, fallback="item"), safe="-._~")
 
 
 def join_uri(base_uri: str, *parts: str) -> str:
