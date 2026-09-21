@@ -1007,11 +1007,27 @@ def _removal_ops(
 
     base_edges = _edges_after_renames(base, hints)
     target_edges = _edges(target)
+    gone = [key for key in base_edges if key not in target_edges]
+    # A relation is removed by name only when the target keeps no edge on it:
+    # removal by name takes every edge of the relation, so it would also take
+    # the ones the target still declares -- or the one an earlier op just added.
+    surviving = {key[2] for key in target_edges}
     gone_relations = sorted(
-        {key[2] for key in base_edges if key not in target_edges and key[2] is not None}
+        {key[2] for key in gone if key[2] is not None and key[2] not in surviving}
     )
-    if gone_relations:
-        ops.append(RemoveEdgesOp(relations=gone_relations))
+    gone_edges = sorted(
+        (key for key in gone if key[2] is None or key[2] in surviving), key=str
+    )
+    if gone_relations or gone_edges:
+        ops.append(
+            RemoveEdgesOp(
+                relations=gone_relations,
+                edges=[
+                    EdgeSelector(source=source, target=target_name, relation=relation)
+                    for source, target_name, relation in gone_edges
+                ],
+            )
+        )
 
     base_vertices = _vertices_after_renames(base, hints)
     gone_vertices = sorted(set(base_vertices) - set(_vertices(target)))

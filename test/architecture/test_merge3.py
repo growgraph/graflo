@@ -11,6 +11,8 @@ from __future__ import annotations
 import inspect
 import typing
 
+import pytest
+
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.evolution import merge3
 from graflo.architecture.evolution import ops as ops_module
@@ -213,6 +215,32 @@ def test_a_relation_wide_property_add_merges_with_an_edge_flip() -> None:
     edge = _core(merged).edge_config.edges[0]
     assert [f.name for f in edge.properties] == ["since"]
     assert edge.directed is False
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "op_slots records what an op writes, not what it reads: add_edges does not "
+        "occupy its endpoint vertices, so removing one of them is not a conflict"
+    ),
+)
+@pytest.mark.parametrize("remover", ["left", "right"])
+def test_removing_a_vertex_conflicts_with_adding_an_edge_onto_it(remover: str) -> None:
+    """The same blind spot one level up: a vertex removal cascades over its edges.
+
+    With the removal on the right the merge is clean and the edge the left added
+    is gone; with it on the left the merged ops do not apply at all. Either way
+    the two sides disagree about whether ``company`` exists, which is a conflict.
+    """
+    base = _people_and_companies([])
+    removed = _manifest([_vertex("person", ["id"], ["id"])])
+    linked = _people_and_companies([KNOWS])
+    left, right = (removed, linked) if remover == "left" else (linked, removed)
+
+    merged, result = merge_three_way(base, left, right)
+
+    assert merged is None
+    assert [tuple(c.slot) for c in result.conflicts] == [merge3._vertex_slot("company")]
 
 
 def test_a_grounding_only_change_survives_a_merge() -> None:

@@ -6,6 +6,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [Unreleased]
+
+### Added
+
+- **Evolution law tests** (`test/test_evolution_laws.py`). Manifests and ops
+  are generated from a closed vocabulary; per op kind the suite checks that an
+  applied op leaves a loadable manifest, an offered inverse restores the
+  pre-state by content hash, a sequence inverts in reverse, and a diff replays
+  to its target. Laws not yet satisfied are strict expected failures that name
+  the mechanism. `hypothesis` joins the `dev` extra.
+
+### Fixed
+
+- **`diff_manifests` removed a whole relation to drop one edge.** A removed
+  edge was expressed as `remove_edges` by relation name, which drops every edge
+  on that relation — including edges the target still declares and, because
+  removals run last, an edge the same diff had just added. Three-way merge
+  inherited the loss. Edges are now removed by triple, and by name only when
+  the target keeps no edge on the relation. Relation-less edges that
+  disappeared were never removed; they are now.
+- **`invert_op` offered inverses that did not restore the manifest.** The
+  candidate is now replayed and withheld unless it lands back on the pre-state
+  by content hash — closing: `remove_vertices` whose cascade dropped incident
+  edges (the inverse only re-added the vertex); `remove_vertex_properties` /
+  `remove_edge_properties` on a missing field (the inverse added it);
+  `remove_edge_properties` when sibling edges disagreed; and a property rename
+  onto a name already taken.
+- **Removed properties came back untyped.** Inverses of
+  `remove_vertex_properties` and `remove_edge_properties` re-added bare names;
+  they now restore declared fields with type, description, and grounding.
+
 ## [1.13.4]
 
 ### Added

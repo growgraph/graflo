@@ -411,6 +411,64 @@ class TestAdditiveInversesUndoOnlyWhatWasAdded:
         assert invert_ops([op], manifest=_manifest()) == ([], [])
 
 
+class TestAnInverseIsExactOrAbsent:
+    """A candidate that does not land back on the pre-state is never offered."""
+
+    def test_a_removed_property_comes_back_with_its_type(self) -> None:
+        typed = {**ORDER, "properties": ["oid", {"name": "total", "type": "FLOAT"}]}
+        base = GraphManifest.model_validate(
+            {
+                "schema": {
+                    "metadata": {"name": "inverse-demo"},
+                    "graph": {
+                        "vertex_config": {"vertices": [typed]},
+                        "edge_config": {"edges": []},
+                    },
+                }
+            }
+        )
+        _assert_round_trips(
+            {"op": "remove_vertex_properties", "removals": {"order": ["total"]}},
+            manifest=base,
+        )
+
+    def test_removing_a_property_the_type_never_had_needs_no_inverse(self) -> None:
+        op = op_from_dict(
+            {"op": "remove_vertex_properties", "removals": {"party": ["nickname"]}}
+        )
+        assert invert_ops([op], manifest=_manifest()) == ([], [])
+
+    def test_a_vertex_removal_that_cascaded_over_an_edge_has_no_inverse(self) -> None:
+        """Re-adding the vertex does not bring the edge back, and one op cannot."""
+        op = op_from_dict({"op": "remove_vertices", "names": ["order"]})
+
+        assert invert_op(op, manifest=_manifest()) is None
+        assert invert_ops([op], manifest=_manifest()) == (
+            [],
+            ["remove_vertices: no inverse could be derived"],
+        )
+
+    def test_a_vertex_removal_that_cascaded_nothing_round_trips(self) -> None:
+        _assert_round_trips({"op": "remove_vertices", "names": ["invoice"]})
+
+    def test_remove_edge_properties_refuses_when_sibling_edges_disagree(self) -> None:
+        """Adding the field back by relation would put it on the edge without it."""
+        bare = {"source": "party", "target": "invoice", "relation": "places"}
+        op = op_from_dict(
+            {"op": "remove_edge_properties", "removals": {"places": ["when"]}}
+        )
+
+        assert invert_op(op, manifest=_manifest(extra_edges=[bare])) is None
+
+    def test_a_rename_onto_a_name_already_taken_has_no_inverse(self) -> None:
+        """Two fields became one; renaming back cannot make them two again."""
+        op = op_from_dict(
+            {"op": "rename_vertex_properties", "renames": {"party": {"email": "name"}}}
+        )
+
+        assert invert_op(op, manifest=_manifest()) is None
+
+
 class TestReplaceEdgeIdentities:
     def test_round_trips_when_the_new_key_uses_existing_properties(self) -> None:
         _assert_round_trips(
@@ -481,7 +539,7 @@ class TestIrreversible:
                 "op": "canonicalize",
                 "vertices": {"order": "purchase"},
                 "properties": {"order": {"oid": "purchase_id"}},
-                "relations": {"buys": "purchases"},
+                "relations": {"places": "purchases"},
             }
         )
 
@@ -493,7 +551,13 @@ class TestIrreversible:
         # Attribute maps re-key onto the renamed class, which is what the
         # inverse sees when it runs.
         assert inverse.properties == {"purchase": {"purchase_id": "oid"}}
-        assert inverse.relations == {"purchases": "buys"}
+        assert inverse.relations == {"purchases": "places"}
+
+    def test_an_op_the_manifest_refuses_has_no_inverse(self) -> None:
+        """Nothing was done, so there is nothing to undo -- and nothing to replay."""
+        op = op_from_dict({"op": "rename_relations", "renames": {"buys": "purchases"}})
+
+        assert invert_op(op, manifest=_manifest()) is None
 
     def test_canonicalize_has_no_inverse_when_it_merges(self) -> None:
         op = op_from_dict(

@@ -48,6 +48,7 @@ version = "1.13.4"
 
 [project.optional-dependencies]
 dev = [
+  "hypothesis>=6.140.0",
   "pre-commit>=4.2.0",
   "pytest-timeout>=2.4.0",
   "pytest-xdist>=3.8.0",

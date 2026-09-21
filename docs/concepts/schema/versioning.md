@@ -152,6 +152,22 @@ out the parent commit is always exact and is the better tool.
 | `set_edge_directed`, `retarget_edges`, `add_inverse_edges`, `set_native_inverses`, `set_inverse_emission`; `declare_edge_inverses` ↔ `retract_edge_inverses` | `sanitize`, `project_manifest` |
 | `replace_identity` (with `retire: keep`), secondary identities | `merge_manifests` (binary) |
 
+Reversible is a property of the op *and* the manifest it met. `invert_op` replays
+its candidate inverse and offers it only when the round trip lands back on the
+pre-state by content hash, so an inverse is exact or absent:
+
+- a `remove_vertices` that cascaded — over incident edges, profile entries,
+  pipeline steps — has no inverse, because re-adding the vertex restores none of
+  that. Remove the edges first, as `diff_manifests` does, and each step inverts;
+- a relation-addressed property op has no inverse when the relation's edges
+  disagreed about the field beforehand;
+- a property rename onto a name already taken folds two fields into one, and
+  renaming back cannot make them two again;
+- an op the manifest refuses has no inverse: nothing was done.
+
+A removed property is restored as the field it was — type, description and
+grounding — not as a bare name.
+
 ## Merging two branches
 
 ```python
