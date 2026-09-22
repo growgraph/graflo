@@ -12,7 +12,7 @@ of keys, and bucketing returned documents back by key.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Sequence
 from typing import Any
 
 #: Distinct key tuples per lookup query. Keeps generated predicates well below
@@ -51,14 +51,6 @@ def distinct_keys(
         seen.add(key)
         out.append(key)
     return out
-
-
-def chunked(items: Sequence[Any], size: int) -> Iterator[list[Any]]:
-    """Yield *items* in lists of at most *size*."""
-    if size < 1:
-        raise ValueError(f"chunk size must be positive, got {size}")
-    for start in range(0, len(items), size):
-        yield list(items[start : start + size])
 
 
 def build_match_filter(

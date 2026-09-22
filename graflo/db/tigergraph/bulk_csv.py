@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import csv
 import logging
-import re
 import threading
 from pathlib import Path
 from typing import Any, TextIO
+
+from suthing import slugify
 
 from graflo.architecture.graph_types import GraphContainer
 from graflo.architecture.schema import Schema
@@ -25,8 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 def _slug_filename_token(token: str) -> str:
-    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", token.strip())
-    return cleaned.strip("-") or "type"
+    return slugify(token, fallback="type")
 
 
 def vertex_column_order(logical_name: str, schema_db: SchemaDBAware) -> list[str]:

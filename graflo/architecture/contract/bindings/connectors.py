@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import abc
-import hashlib
-import json
 import pathlib
 import re
 from typing import TYPE_CHECKING, Any, Literal, Self
 
+import suthing
 from pydantic import (
     AliasChoices,
     ConfigDict,
@@ -125,14 +124,7 @@ class ResourceConnector(ConfigBaseModel, abc.ABC):
 
     @model_validator(mode="after")
     def _compute_hash(self) -> Self:
-        canonical = json.dumps(
-            self._hash_payload(), sort_keys=True, separators=(",", ":")
-        )
-        object.__setattr__(
-            self,
-            "hash",
-            hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
-        )
+        object.__setattr__(self, "hash", suthing.stable_hash(self._hash_payload()))
         return self
 
     @abc.abstractmethod

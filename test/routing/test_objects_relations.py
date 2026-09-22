@@ -25,7 +25,7 @@ def _load_csv_as_dicts(csv_path: Path) -> list[dict]:
 def schema_objects_relations():
     """Schema with vertex_router (objects) and vertex_router+edge (relations) resources."""
     manifest = GraphManifest.from_config(
-        FileHandle.load("test.config.schema", "objects-relations.yaml")
+        FileHandle.load_resource("test.config.schema", "objects-relations.yaml")
     )
     manifest.finish_init()
     return manifest

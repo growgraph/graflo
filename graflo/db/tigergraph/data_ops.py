@@ -9,6 +9,7 @@ from urllib.parse import quote
 
 import requests
 from requests import exceptions as requests_exceptions
+from suthing import batched
 
 from graflo.architecture.graph_types import EdgeDirection
 from graflo.architecture.schema.vertex import FieldType
@@ -17,7 +18,6 @@ from graflo.db.edge_direction_support import assert_direction_supported
 from graflo.db.resolve import (
     DEFAULT_RESOLVE_CHUNK_SIZE,
     build_match_filter,
-    chunked,
     distinct_keys,
     index_matches_by_doc,
     key_tuple,
@@ -1047,7 +1047,7 @@ class TigerGraphDataOps:
         graph_name = self._conn._require_configured_graph_name()
         buckets: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
 
-        for chunk in chunked(keys, chunk_size):
+        for chunk in batched(keys, chunk_size):
             match_filter = build_match_filter(match_keys, chunk)
             if match_filter is None:
                 continue

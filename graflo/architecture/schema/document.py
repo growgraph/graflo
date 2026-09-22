@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import pathlib
-import re
 from typing import TYPE_CHECKING
 
 import yaml
 from pydantic import AliasChoices, model_validator
 from pydantic import Field as PydanticField
+from suthing import slugify
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.schema.core import CoreSchema
@@ -110,8 +110,7 @@ class Schema(ConfigBaseModel):
     @staticmethod
     def _slug_filename_token(token: str) -> str:
         """Normalize arbitrary token into filename-safe slug."""
-        cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", token.strip())
-        return cleaned.strip("-") or "schema"
+        return slugify(token, fallback="schema")
 
     def default_dump_filename(self) -> str:
         """Return default schema dump filename: <name>-<version>.yaml."""

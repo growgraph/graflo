@@ -152,6 +152,22 @@ out the parent commit is always exact and is the better tool.
 | `set_edge_directed`, `retarget_edges`, `add_inverse_edges`, `set_native_inverses`, `set_inverse_emission`; `declare_edge_inverses` ↔ `retract_edge_inverses` | `sanitize`, `project_manifest` |
 | `replace_identity` (with `retire: keep`), secondary identities | `merge_manifests` (binary) |
 
+Reversible is a property of the op *and* the manifest it met. `invert_op` replays
+its candidate inverse and offers it only when the round trip lands back on the
+pre-state by content hash, so an inverse is exact or absent:
+
+- a `remove_vertices` that cascaded — over incident edges, profile entries,
+  pipeline steps — has no inverse, because re-adding the vertex restores none of
+  that. Remove the edges first, as `diff_manifests` does, and each step inverts;
+- a relation-addressed property op has no inverse when the relation's edges
+  disagreed about the field beforehand;
+- a property rename onto a name already taken folds two fields into one, and
+  renaming back cannot make them two again;
+- an op the manifest refuses has no inverse: nothing was done.
+
+A removed property is restored as the field it was — type, description and
+grounding — not as a bare name.
+
 ## Merging two branches
 
 ```python
@@ -210,6 +226,36 @@ declaring or retracting its inverse on the other side; a symmetric declaration
 sits under its one relation. A native inverse is a relation slot
 (`relation/knows/native_inverse`), matching TigerGraph, where the reverse type
 belongs to the relation's edge type.
+
+#### What an op reads
+
+A slot is what an op **writes**. That alone does not tell whether two ops are
+independent: `add_edges` writes an edge and *depends on* its endpoint vertices,
+and a `remove_vertices` on the other side — which cascades over that vertex's
+edges — writes a different slot altogether. Merged on written slots only, one
+side order drops the new edge without a word and the other does not apply. So an
+op also carries a read set (`op_reads`):
+
+| Op | Reads |
+|---|---|
+| `add_edges`, `retarget_edges`, and every op addressed by edge triple | the endpoint vertices (old and new, for a retarget) |
+| ops addressed by relation — edge properties, `remove_edges`, `rename_relations`, `merge_edges`, the inverse ops | the vertices that relation connects **in the base**; the op names only the relation |
+| `replace_identity`, `add_secondary_identities` | the fields they key on, and those fields' types |
+| `add_vertex_indexes`; edge index and identity ops | the fields they index or key on |
+
+A read is disturbed by a write **at or above** it, never beneath: an edge onto
+`company` conflicts with removing or renaming `company`, and merges with a new
+field on it. Two ops reading the same thing are independent — two edges onto
+one vertex. An op both sides made is agreement, not a dependency. The conflict
+is reported at the written slot with both ops attached, and resolves like any
+other. `ops_independent(a, b, base)` is the test the merge and the law suite
+share.
+
+A change **no operation expresses** — one of a relation's edges gaining a
+property its siblings lack, an edited pipeline — cannot be merged at all: the
+merge is assembled from each side's ops, so the result would silently lack it.
+`merge_three_way` raises `MergeError` naming the residue rather than return a
+clean result that is incomplete.
 
 ### Determinism
 
@@ -333,7 +379,10 @@ what to compare against.
   *Associativity and Commutativity in Generic Merge*, LNCS 5600, 2009. Their **Merge** — two
   models plus correspondences — is the operator this page calls **merge**, and those papers
   are where its commutativity is studied. GraFlo's merge is commutative in the union and not
-  in six preserved slots (above); three-way merge claims neither property, only determinism.
+  in six preserved slots (above). Three-way merge is symmetric in its two sides — the same
+  conflicts, or the same content hash — and a clean result is each side's change applied on
+  top of the other; both are checked over generated inputs on the structural ops.
+  Associativity across three branches is not claimed.
 - Edwards, Petricek — *Baseline: Operation-Based Evolution and Versioning of Data*, 2025;
   Deshpande — *Living Databases*, 2026. Contemporary operation-based versioning of data, where the
   operations are the diff — the same design position, applied to instances rather than contracts.

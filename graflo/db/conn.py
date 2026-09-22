@@ -57,6 +57,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeVar
 
+from suthing import batched
+
 from graflo.architecture.graph_types import EdgeDirection, GraphContainer
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.edge import Edge
@@ -67,7 +69,6 @@ from graflo.db.resolve import (
     DEFAULT_RESOLVE_CHUNK_SIZE,
     bucket_by_key,
     build_match_filter,
-    chunked,
     distinct_keys,
     index_matches_by_doc,
 )
@@ -615,7 +616,7 @@ class Connection(abc.ABC):
 
         fetch_keys = list(dict.fromkeys([*match_keys, *return_keys]))
         buckets: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
-        for chunk in chunked(keys, chunk_size):
+        for chunk in batched(keys, chunk_size):
             filters = build_match_filter(match_keys, chunk)
             docs = self.fetch_docs(
                 class_name,

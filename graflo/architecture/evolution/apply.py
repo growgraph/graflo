@@ -946,6 +946,28 @@ def relabel_vertex_fields(vertex: Vertex, renames: Mapping[str, str]) -> Vertex:
     return Vertex.model_validate(payload)
 
 
+def _refuse_folding_renames(
+    op_name: str, owner: str, declared: list[str], renames: dict[str, str]
+) -> None:
+    """Refuse a property rename onto a name the owner already declares.
+
+    That folds two properties into one -- their types and groundings with them
+    -- and no rename back makes them two again, so it would be recorded as a
+    reversible rename that was not one. A map that names both properties
+    (``{first: full_name, last: full_name}``) says the fold outright and is
+    applied; so is a swap. What is refused is the fold nobody wrote down: a
+    target that happens to be taken by a property the map leaves alone.
+    """
+    untouched = {name for name in declared if name not in renames}
+    taken = sorted({renames[name] for name in declared if name in renames} & untouched)
+    if taken:
+        raise ValueError(
+            f"{op_name}: {owner} already declares {taken}; renaming onto it would "
+            "fold two properties into one. Remove one first, or name both in the "
+            "rename if the fold is intended"
+        )
+
+
 def _rename_fields_in_schema(
     schema: Schema, renames: dict[str, dict[str, str]]
 ) -> None:
@@ -1025,6 +1047,18 @@ def apply_rename_vertex_properties(
         raise ValueError(
             f"rename_vertex_properties: unknown vertices in renames: {unknown}"
         )
+    for vertex in schema.core_schema.vertex_config.vertices:
+        per_vertex = op.renames.get(vertex.name) or {}
+        declared = [field.name for field in vertex.properties]
+        missing = sorted(set(per_vertex) - set(declared))
+        if missing:
+            raise ValueError(
+                "rename_vertex_properties: unknown properties in renames for "
+                f"{vertex.name}: {missing}"
+            )
+        _refuse_folding_renames(
+            "rename_vertex_properties", f"vertex {vertex.name}", declared, per_vertex
+        )
 
     _rename_fields_in_schema(schema, op.renames)
     apply_field_rename_to_db_profile(schema.db_profile, op.renames)
@@ -1079,6 +1113,22 @@ def apply_remove_vertex_properties(
         )
 
     removals = {vertex_name: set(fields) for vertex_name, fields in op.removals.items()}
+
+    # A name the vertex never declared is a mistake in the change set, as an
+    # unknown vertex is: skipping it would record a removal that removed nothing.
+    unknown_fields = {
+        vertex.name: missing
+        for vertex in schema.core_schema.vertex_config.vertices
+        if (
+            missing := sorted(
+                removals.get(vertex.name, set()) - {f.name for f in vertex.properties}
+            )
+        )
+    }
+    if unknown_fields:
+        raise ValueError(
+            f"remove_vertex_properties: unknown properties in removals: {unknown_fields}"
+        )
 
     for vertex in schema.core_schema.vertex_config.vertices:
         remove_fields = removals.get(vertex.name, set())
@@ -1661,6 +1711,33 @@ def apply_merge_edges(manifest: GraphManifest, op: MergeEdgesOp) -> None:
     _rename_relations_inplace(manifest, relation_map)
 
 
+def _refuse_unknown_edge_properties(
+    op_name: str, schema: Schema, named: dict[str, set[str]]
+) -> None:
+    """Refuse a relation no edge carries, and a property none of its edges has.
+
+    Both ops are addressed by relation and applied per edge, so a property on
+    only some sibling edges is ordinary. One on *none* of them is a mistake in
+    the change set, and skipping it would record a change that changed nothing.
+    """
+    declared: dict[str, set[str]] = {}
+    for edge in schema.core_schema.edge_config.edges:
+        if edge.relation is not None:
+            declared.setdefault(edge.relation, set()).update(
+                field.name for field in edge.properties
+            )
+    unknown_relations = sorted(set(named) - set(declared))
+    if unknown_relations:
+        raise ValueError(f"{op_name}: unknown relations: {unknown_relations}")
+    unknown = {
+        relation: missing
+        for relation, fields in sorted(named.items())
+        if (missing := sorted(fields - declared[relation]))
+    }
+    if unknown:
+        raise ValueError(f"{op_name}: unknown properties: {unknown}")
+
+
 def apply_rename_edge_properties(
     manifest: GraphManifest, op: RenameEdgePropertiesOp
 ) -> None:
@@ -1668,6 +1745,19 @@ def apply_rename_edge_properties(
     schema = manifest.graph_schema
     if schema is None:
         raise ValueError("rename_edge_properties requires graph_schema")
+    _refuse_unknown_edge_properties(
+        "rename_edge_properties",
+        schema,
+        {relation: set(renames) for relation, renames in op.renames.items()},
+    )
+    for edge in schema.core_schema.edge_config.edges:
+        if edge.relation is not None and edge.relation in op.renames:
+            _refuse_folding_renames(
+                "rename_edge_properties",
+                f"edge {edge.edge_id}",
+                [field.name for field in edge.properties],
+                op.renames[edge.relation],
+            )
     for edge in schema.core_schema.edge_config.edges:
         per_relation = (
             op.renames.get(edge.relation, {}) if edge.relation is not None else {}
@@ -1712,6 +1802,7 @@ def apply_remove_edge_properties(
     if schema is None:
         raise ValueError("remove_edge_properties requires graph_schema")
     removals = {relation: set(fields) for relation, fields in op.removals.items()}
+    _refuse_unknown_edge_properties("remove_edge_properties", schema, removals)
     for edge in schema.core_schema.edge_config.edges:
         remove_fields = (
             removals.get(edge.relation, set()) if edge.relation is not None else set()

@@ -6,7 +6,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 import yaml
-from suthing import FileHandle, equals
+from suthing import FileHandle, diff
 
 from graflo.architecture.contract.bindings import Bindings, FileConnector
 from graflo.architecture.contract.manifest import GraphManifest
@@ -104,7 +104,7 @@ def current_path():
 
 
 def fetch_schema_dict(mode):
-    schema_dict = FileHandle.load("test.config.schema", f"{mode}.yaml")
+    schema_dict = FileHandle.load_resource("test.config.schema", f"{mode}.yaml")
     return schema_dict
 
 
@@ -217,23 +217,15 @@ def verify(sample, current_path, mode, test_type, kind="sizes", reset=False):
         )
 
     else:
-        sample_ref = FileHandle.load(f"test.ref.{test_type}", f"{mode}_{kind}.{ext}")
-        flag = equals(sample_transformed, sample_ref)
-        if not flag:
-            logger.error(f" mode: {mode}")
-            if isinstance(sample_ref, dict):
-                for k, v in sample_ref.items():
-                    if k not in sample_transformed or v != sample_transformed[k]:
-                        logger.error(
-                            f"for {k} expected: {v} received: {sample_transformed.get(k, None)}"
-                        )
-
-            elif isinstance(sample_ref, list):
-                for j, (x, y) in enumerate(zip(sample_ref, sample_transformed)):
-                    if x != y:
-                        logger.error(f"for item {j}\nexpected: {x}\nreceived: {y}")
-
-        assert flag
+        sample_ref = FileHandle.load_resource(
+            f"test.ref.{test_type}", f"{mode}_{kind}.{ext}"
+        )
+        differences = diff(sample_ref, sample_transformed)
+        assert not differences, (
+            f"mode {mode}: {len(differences)} difference(s) from"
+            f" ref/{test_type}/{mode}_{kind}.{ext}:\n"
+            + "\n".join(str(d) for d in differences)
+        )
 
 
 @pytest.fixture()
@@ -503,10 +495,10 @@ def resource_ticker():
 
 @pytest.fixture()
 def data_deb():
-    return FileHandle.load("test.data.deb", "package.json")
+    return FileHandle.load_resource("test.data.deb", "package.json")
 
 
 @pytest.fixture()
 def data_deb_relation_from_key():
     """Package data for relation_from_key edge test (example 4 style)."""
-    return FileHandle.load("test.data.deb", "package_relation_from_key.json")
+    return FileHandle.load_resource("test.data.deb", "package_relation_from_key.json")

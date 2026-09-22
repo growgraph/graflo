@@ -89,6 +89,33 @@ class TestReplayInvariant:
         ops = _assert_replays(_manifest([PARTY, ORDER]), _manifest([PARTY]))
         assert [op.op for op in ops] == ["remove_vertices"]
 
+    def test_removing_one_of_two_edges_on_a_relation_keeps_the_other(self) -> None:
+        """Removal by relation name takes every edge of the relation."""
+        returns = {"source": "order", "target": "party", "relation": "places"}
+        ops = _assert_replays(
+            _manifest([PARTY, ORDER], edges=[PLACES, returns]),
+            _manifest([PARTY, ORDER], edges=[PLACES]),
+        )
+        (removal,) = ops
+        assert removal.relations == []
+        assert [e.edge_id() for e in removal.edges] == [("order", "party", "places")]
+
+    def test_moving_an_edge_within_its_relation_replays(self) -> None:
+        """The removal runs last, so by name it would take the edge just added."""
+        moved = {"source": "order", "target": "party", "relation": "places"}
+        ops = _assert_replays(
+            _manifest([PARTY, ORDER], edges=[PLACES]),
+            _manifest([PARTY, ORDER], edges=[moved]),
+        )
+        assert [op.op for op in ops] == ["add_edges", "remove_edges"]
+
+    def test_a_relation_that_disappears_is_removed_by_name(self) -> None:
+        ops = _assert_replays(
+            _manifest([PARTY, ORDER], edges=[PLACES]), _manifest([PARTY, ORDER])
+        )
+        (removal,) = ops
+        assert (removal.relations, removal.edges) == (["places"], [])
+
     def test_changing_identity_replays(self) -> None:
         rekeyed = {
             "name": "party",

@@ -120,9 +120,17 @@ def irreversible_reason(op: ManifestOp) -> str | None:
 def invert_op(op: ManifestOp, *, manifest: GraphManifest) -> ManifestOp | None:
     """The op undoing *op*, computed against the **pre-state** *manifest*.
 
-    Returns ``None`` when *op* is irreversible. *manifest* must be the manifest
-    as it was *before* *op* was applied — that is where the information an
-    inverse needs still exists.
+    Returns ``None`` when *op* is irreversible, and when it is reversible in
+    general but not from this *manifest*. *manifest* must be the manifest as it
+    was *before* *op* was applied — that is where the information an inverse
+    needs still exists.
+
+    An inverse is exact or absent. The handlers derive a candidate from the op's
+    payload, and the payload says what the op *named*, not what it *did*: a
+    removal names a property the type never had and is skipped forward, a
+    relation-addressed op meets edges that disagree, a removal cascades over
+    elements no single op restores. So the candidate is replayed, and one that
+    does not land back on *manifest* is not offered.
     """
     if not is_reversible(op):
         return None
@@ -131,7 +139,24 @@ def invert_op(op: ManifestOp, *, manifest: GraphManifest) -> ManifestOp | None:
     if handler is None:
         logger.debug("no inverse handler for op %r", op.op)
         return None
-    return handler(op, manifest)
+    inverse = handler(op, manifest)
+    if inverse is None or not _restores(manifest, op, inverse):
+        return None
+    return inverse
+
+
+def _restores(manifest: GraphManifest, op: ManifestOp, inverse: ManifestOp) -> bool:
+    """Whether *inverse* after *op* lands back on *manifest*, by content hash."""
+    from .apply import apply_evolution
+    from .hashing import manifest_hash
+
+    try:
+        round_trip = apply_evolution(
+            manifest, [op, inverse], bump_version=False, finish_init=False
+        )
+    except ValueError:
+        return False
+    return manifest_hash(round_trip) == manifest_hash(manifest)
 
 
 def invert_ops(
@@ -185,6 +210,9 @@ def _invert_remove_vertices(
     restored = [vertices[name] for name in op.names if name in vertices]
     if len(restored) != len(op.names):
         return None
+    # Exact only when nothing cascaded: incident edges, profile entries and
+    # pipeline steps go with the vertices, and re-adding the vertices brings none
+    # of that back. ``invert_op`` replays the candidate and withholds it then.
     return AddVerticesOp(vertices=restored)
 
 
@@ -235,11 +263,25 @@ def _invert_add_vertex_properties(
 
 
 def _invert_remove_vertex_properties(
-    op: RemoveVertexPropertiesOp, _manifest: GraphManifest
-) -> ManifestOp:
-    return AddVertexPropertiesOp(
-        additions={name: list(fields) for name, fields in op.removals.items()}
-    )
+    op: RemoveVertexPropertiesOp, manifest: GraphManifest
+) -> ManifestOp | None:
+    """Re-declare what was removed: the fields themselves, not just their names.
+
+    A field carries a type, a description and a grounding, and a name alone
+    brings back none of them. A name the type never had was skipped forward and
+    is skipped here too.
+    """
+    vertices = _vertices(manifest)
+    additions: dict[str, list[Any]] = {}
+    for name, fields in op.removals.items():
+        vertex = vertices.get(name)
+        if vertex is None:
+            return None
+        declared = {field.name: field for field in vertex.properties}
+        restored = [declared[field] for field in fields if field in declared]
+        if restored:
+            additions[name] = restored
+    return AddVertexPropertiesOp(additions=additions) if additions else None
 
 
 def _invert_add_edge_properties(
@@ -274,11 +316,27 @@ def _invert_add_edge_properties(
 
 
 def _invert_remove_edge_properties(
-    op: RemoveEdgePropertiesOp, _manifest: GraphManifest
-) -> ManifestOp:
-    return AddEdgePropertiesOp(
-        additions={name: list(fields) for name, fields in op.removals.items()}
-    )
+    op: RemoveEdgePropertiesOp, manifest: GraphManifest
+) -> ManifestOp | None:
+    """Re-declare what was removed, as the fields the relation's edges carried.
+
+    Both ops are addressed by relation and applied per edge, so sibling edges
+    that disagreed -- one carried the field, another did not, or they declared
+    it differently -- have no relation-wide inverse: adding it back would put it
+    on every edge of the relation. The first declaration is restored and
+    ``invert_op`` withholds the result when that does not reproduce them all.
+    """
+    additions: dict[str, list[Any]] = {}
+    for relation, fields in op.removals.items():
+        declared: dict[str, Any] = {}
+        for edge in _edges(manifest):
+            if edge.relation == relation:
+                for field in edge.properties:
+                    declared.setdefault(field.name, field)
+        restored = [declared[field] for field in fields if field in declared]
+        if restored:
+            additions[relation] = restored
+    return AddEdgePropertiesOp(additions=additions) if additions else None
 
 
 def _invert_rename_vertices(

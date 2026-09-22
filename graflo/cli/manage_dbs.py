@@ -154,7 +154,7 @@ def manage_dbs(
         uri = db_host if db_host and "://" in db_host else f"http://{db_host}"
         db_conf = ArangoConfig(uri=uri, username=db_user, password=db_password)
     else:
-        conn_conf = FileHandle.load(fpath=db_config_path)
+        conn_conf = FileHandle.load(db_config_path)
         db_conf_raw = DBConfig.from_dict(conn_conf)
         # Type checker can't infer the specific type, but we know it's ArangoConfig from the config
         if not isinstance(db_conf_raw, ArangoConfig):
@@ -186,10 +186,8 @@ def manage_dbs(
                     )
                 except Exception as e:
                     logging.error(e)
-            logging.info(
-                f"{action} {dbname} took  {t_dump.mins} mins {t_dump.secs:.2f} sec"
-            )
-    logging.info(f"all {action} took  {t_all.mins} mins {t_all.secs:.2f} sec")
+            logging.info(f"{action} {dbname} took {t_dump.elapsed_str}")
+    logging.info(f"all {action} took {t_all.elapsed_str}")
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@ This replaces the linear ``Revision`` chain. The old model was already "a git
 log, not an Alembic script" -- but it still spoke Alembic (``down_revision``,
 ``upgrade``/``downgrade``) and it could only be a *line*. A world model that can
 be merged needs a **DAG**: a commit has a list of parents, empty for a root, one
-for an ordinary edit, two or more for a merge or a merge.
+for an ordinary edit, two or more for a three-way merge or a merge.
 
 What carries over unchanged is the property that made the chain worth having:
 each commit records the content hash before and after it, so replay is
@@ -27,12 +27,11 @@ expressible, and is not needed.
 
 from __future__ import annotations
 
-import hashlib
-import json
 import logging
 import re
 from typing import Any
 
+import suthing
 from pydantic import Field as PydanticField
 from pydantic import model_validator
 
@@ -49,8 +48,8 @@ logger = logging.getLogger(__name__)
 COMMIT_ID_LENGTH = 12
 
 #: What produced a commit. ``root`` names a tree that nothing derived it from;
-#: ``edit`` is an ordinary change set; ``merge`` reconciles two descendants of a
-#: common ancestor; ``merge`` joins unrelated lineages by declared
+#: ``edit`` is an ordinary change set; ``merge3`` reconciles two descendants of
+#: a common ancestor; ``merge`` joins unrelated lineages by declared
 #: equivalence; ``revert`` undoes an earlier commit.
 CommitKind = str
 
@@ -74,12 +73,10 @@ def compute_commit_id(ops: list[ManifestOp], parents: list[str]) -> str:
     materialized against A-then-B is not the commit materialized against
     B-then-A.
     """
-    payload = json.dumps(
+    return suthing.stable_hash(
         {"ops": ops_to_dicts(list(ops)), "parents": list(parents)},
-        sort_keys=True,
-        separators=(",", ":"),
+        length=COMMIT_ID_LENGTH,
     )
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:COMMIT_ID_LENGTH]
 
 
 class Commit(ConfigBaseModel):
@@ -113,7 +110,7 @@ class Commit(ConfigBaseModel):
         ..., description="Content hash of the manifest this commit produces."
     )
     kind: str = PydanticField(
-        default="edit", description="One of edit / merge / merge / revert."
+        default="edit", description="One of root / edit / merge / merge3 / revert."
     )
     label: str | None = PydanticField(
         default=None, description="Short human-readable name."
@@ -126,7 +123,7 @@ class Commit(ConfigBaseModel):
     )
     merge_recipe: MergeRecipeRef | None = PydanticField(
         default=None,
-        description="How a merge was resolved; present on merge/merge commits.",
+        description="How a merge was resolved; present on merge/merge3 commits.",
     )
     notes: str | None = None
 
@@ -165,7 +162,7 @@ class Commit(ConfigBaseModel):
     def is_multi_parent(self) -> bool:
         """Whether this commit joins two or more lineages.
 
-        True for both `merge` and `merge` kinds: joining unrelated lineages
+        True for both `merge` and `merge3` kinds: joining unrelated lineages
         is as multi-parent as reconciling related ones. Not a test for
         `kind == "merge"` -- read `kind` for that.
         """
@@ -222,10 +219,7 @@ def compute_root_commit_id(tree: str, scope: str | None = None) -> str:
     dedupes the second against the first, and one of them silently ends up with
     no root at all.
     """
-    payload = json.dumps(
-        {"root": tree, "scope": scope}, sort_keys=True, separators=(",", ":")
-    )
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:COMMIT_ID_LENGTH]
+    return suthing.stable_hash({"root": tree, "scope": scope}, length=COMMIT_ID_LENGTH)
 
 
 def build_root_commit(
@@ -294,7 +288,7 @@ def build_commit(
         base: The first parent's manifest state.
         ops: The change set to apply.
         parents: Parent commit ids, first parent first.
-        kind: One of ``edit``, ``merge``, ``merge``, ``revert``.
+        kind: One of ``edit``, ``merge``, ``merge3``, ``revert``.
         label: Short human-readable name.
         created_at: ISO-8601 timestamp.
         notes: Free-form annotation.
@@ -367,7 +361,7 @@ def build_multi_parent_commit(
         first_parent: Manifest state of the parent the ops are diffed from.
         merged: The merge result.
         parents: All parent commit ids, first parent first (at least two).
-        kind: ``merge`` or ``merge``.
+        kind: ``merge`` or ``merge3``.
         label: Short human-readable name.
         created_at: ISO-8601 timestamp.
         notes: Free-form annotation.

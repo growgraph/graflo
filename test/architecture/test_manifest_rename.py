@@ -537,3 +537,41 @@ def test_add_inverse_edges_updates_schema_and_ingestion_with_dedup() -> None:
     assert ("person", "company", "works_at") in extra_keys
     assert ("company", "person", "employs") in extra_keys
     assert extra_keys.count(("company", "person", "employs")) == 1
+
+
+# ── a change set that names what is not there is refused ────────────────────
+
+
+def _sample() -> GraphManifest:
+    return GraphManifest.from_dict(_sample_manifest_payload())
+
+
+def test_remove_vertex_properties_refuses_a_property_the_vertex_never_had() -> None:
+    op = RemoveVertexPropertiesOp(removals={"person": ["nickname"]})
+    with pytest.raises(ValueError, match=r"unknown properties.*nickname"):
+        apply_evolution(_sample(), [op])
+
+
+def test_remove_edge_properties_refuses_an_unknown_relation() -> None:
+    op = RemoveEdgePropertiesOp(removals={"owns": ["since"]})
+    with pytest.raises(ValueError, match=r"unknown relations: \['owns'\]"):
+        apply_evolution(_sample(), [op])
+
+
+def test_remove_edge_properties_refuses_a_property_no_edge_carries() -> None:
+    op = RemoveEdgePropertiesOp(removals={"employee_of": ["weight"]})
+    with pytest.raises(ValueError, match=r"unknown properties.*weight"):
+        apply_evolution(_sample(), [op])
+
+
+def test_rename_edge_properties_refuses_a_source_no_edge_carries() -> None:
+    op = RenameEdgePropertiesOp(renames={"employee_of": {"weight": "load"}})
+    with pytest.raises(ValueError, match=r"unknown properties.*weight"):
+        apply_evolution(_sample(), [op])
+
+
+def test_rename_edge_properties_refuses_a_fold_nobody_wrote_down() -> None:
+    """``weight`` onto a declared ``since`` would drop one of the two fields."""
+    op = RenameEdgePropertiesOp(renames={"works_at": {"weight": "since"}})
+    with pytest.raises(ValueError, match="fold two properties into one"):
+        apply_evolution(_sample(), [op])
