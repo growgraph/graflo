@@ -38,7 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`bump_semver_minor` no longer rewrites a non-semver string to `0.1.0`.**
   A version that is not `MAJOR.MINOR.PATCH` is left as written, which used to
   move it backwards; a leading `v` is accepted and kept (`v2.0.0` → `v2.1.0`).
-- **Requires `suthing>=0.6.0,<0.7`.** Canonical-JSON hashes (commit ids, root
+- **Requires `suthing>=0.6.1,<0.7`.** Canonical-JSON hashes (commit ids, root
   ids, merge-recipe addresses, connector ids, schema hashes), filename/URI slugs
   and resolve-lookup chunking now use `suthing.stable_hash`, `suthing.slugify`
   and `suthing.batched`; outputs are byte-identical, so stored ids stay valid.

@@ -590,7 +590,7 @@ requires-dist = [
   {name = "sparqlwrapper", specifier = ">=2.0.0"},
   {name = "sqlalchemy", specifier = ">=2.0.0"},
   {name = "strenum", specifier = ">=0.4.15"},
-  {name = "suthing", specifier = ">=0.6.0,<0.7"},
+  {name = "suthing", specifier = ">=0.6.1,<0.7"},
   {name = "ty", marker = "extra == 'dev'", specifier = ">=0.0.1a24"},
   {name = "urllib3", specifier = ">=2.0.0"},
   {name = "xmltodict", specifier = ">=0.14.2,<0.15"}
@@ -2426,14 +2426,15 @@ wheels = [
 dependencies = [
   {name = "pandas"},
   {name = "python-dotenv"},
-  {name = "pyyaml"}
+  {name = "pyyaml"},
+  {name = "strenum"}
 ]
 name = "suthing"
-sdist = {url = "https://files.pythonhosted.org/packages/fb/a8/42e2046e8dc7003f733441037fa93d98372b04f3c32ff7ce9efc34649bc9/suthing-0.6.0.tar.gz", hash = "sha256:440c2a9414e2c15220bac2c6abfefba2a1e111606997f9de908020e0273a43f4", size = 20845, upload-time = "2026-09-21T23:24:45.01Z"}
+sdist = {url = "https://files.pythonhosted.org/packages/34/f6/9adffe12d876cb37211d1d05d4484516ab21d85ef937e3220fc9c8f8db50/suthing-0.6.1.tar.gz", hash = "sha256:b20f15bf922a60583905525a84c73888d3ad8686b6a0d629600a3132fe1a4563", size = 21231, upload-time = "2026-09-21T23:58:18.242Z"}
 source = {registry = "https://pypi.org/simple"}
-version = "0.6.0"
+version = "0.6.1"
 wheels = [
-  {url = "https://files.pythonhosted.org/packages/9b/dd/56ebdbc2c42467ba8ce295615c568818af642859e7825f62d609f2e1e054/suthing-0.6.0-py3-none-any.whl", hash = "sha256:cb655beda259a5ae1c8aed5451c6256044615e4c478a90bd05720429edaffa3d", size = 26336, upload-time = "2026-09-21T23:24:43.087Z"}
+  {url = "https://files.pythonhosted.org/packages/96/88/0df5a43ba110a4f68af512cdcdfe8ee621aa051fdb46ad2dba4f48de2244/suthing-0.6.1-py3-none-any.whl", hash = "sha256:7013e33bb96f14ceafe7444eb4e069079a8c185036c5f4e15d146774a3b90923", size = 26708, upload-time = "2026-09-21T23:58:19.104Z"}
 ]
 
 [[package]]
