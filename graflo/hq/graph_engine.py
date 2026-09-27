@@ -148,6 +148,7 @@ class GraphEngine:
         resources: list[str] | None = None,
         max_docs: int = DEFAULT_MAX_DOCS,
         source_name: str | None = None,
+        connection_provider: ConnectionProvider | None = None,
     ) -> "SourceSample":
         """Sample documents from a source, keeping connector provenance.
 
@@ -163,6 +164,9 @@ class GraphEngine:
             resources: Restrict sampling to these resource names.
             max_docs: Cap on documents fetched per resource.
             source_name: Override the logical source name.
+            connection_provider: For a ``Bindings`` source, resolves each
+                connector's connection (and credentials) the way ingestion
+                does. Without it, table connectors cannot be sampled.
 
         Returns:
             SourceSample: Per-resource samples with connector provenance.
@@ -181,6 +185,7 @@ class GraphEngine:
             return sampler.sample_bindings(
                 source,
                 resources=resources,
+                connection_provider=connection_provider,
                 source_name=source_name or "bindings",
             )
         return sampler.sample_files(source, source_name=source_name)

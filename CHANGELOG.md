@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [Unreleased]
+
+### Fixed
+
+- **A bindings source can be sampled through its connections.** `GraphEngine.sample_resources`
+  passed no connection when sampling a `Bindings` block, so every `TableConnector` was skipped
+  with a log line and only file connectors were sampled — a bindings source made of tables
+  failed with "No resources could be sampled". `sample_resources` and
+  `ResourceSampler.sample_bindings` now take a `connection_provider`, and each table connector
+  samples through the connection that provider resolves for it, the way ingestion does. When
+  nothing can be sampled, the error names each skipped resource and why.
+
 ## [1.13.5]
 
 ### Added

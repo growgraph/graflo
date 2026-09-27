@@ -36,10 +36,25 @@ from graflo.architecture.onto_sample import (
     SourceSample,
 )
 from graflo.connections.onto import PostgresConfig
+from graflo.connections.provider import (
+    ConnectionProvider,
+    PostgresGeneralizedConnConfig,
+)
 from graflo.data_source.factory import DataSourceFactory
 from graflo.hq.registry_builder import RegistryBuilder
 
 logger = logging.getLogger(__name__)
+
+
+def _provider_postgres_config(
+    provider: ConnectionProvider, resource_name: str, connector: TableConnector
+) -> PostgresConfig | None:
+    """The PostgreSQL config *provider* holds for *connector*, as ingestion resolves it."""
+    generalized = provider.get_generalized_conn_config(connector)
+    if isinstance(generalized, PostgresGeneralizedConnConfig):
+        return generalized.config
+    return provider.get_postgres_config(resource_name, connector)
+
 
 #: Values longer than this are clipped and the sample marked ``truncated``.
 DEFAULT_MAX_CELL_CHARS = 512
@@ -359,6 +374,7 @@ class ResourceSampler:
         *,
         resources: list[str] | None = None,
         config: PostgresConfig | None = None,
+        connection_provider: ConnectionProvider | None = None,
         source_name: str = "bindings",
     ) -> SourceSample:
         """Sample every resource wired up in *bindings*.
@@ -366,6 +382,19 @@ class ResourceSampler:
         The ``resource_connector`` mapping is the authority on which connector
         feeds which resource, so the provenance recorded on each sample is the
         same relation ingestion will later use.
+
+        Args:
+            bindings: The connectors and their resource mapping.
+            resources: Restrict sampling to these resource names.
+            config: One PostgreSQL config for every table connector (legacy).
+            connection_provider: Resolves each connector's own connection, the
+                way ingestion does. Takes precedence over *config*; without
+                either, a table connector cannot be sampled.
+            source_name: Logical name recorded on the sample.
+
+        Raises:
+            ValueError: When no resource could be sampled; the message names
+                each skipped resource and why.
         """
         connectors_by_ref: dict[str, ResourceConnector] = {}
         for connector in bindings.connectors:
@@ -374,6 +403,7 @@ class ResourceSampler:
             connectors_by_ref[connector.hash] = connector
 
         samples: list[ResourceSample] = []
+        skipped: list[str] = []
         for mapping in bindings.resource_connector:
             resource = (
                 mapping.get("resource")
@@ -389,23 +419,35 @@ class ResourceSampler:
                 continue
             connector = connectors_by_ref.get(str(connector_ref))
             if connector is None:
-                logger.warning(
-                    "Skipping resource '%s': connector '%s' not found in bindings",
-                    resource,
-                    connector_ref,
-                )
+                reason = f"connector '{connector_ref}' not found in bindings"
+                logger.warning("Skipping resource '%s': %s", resource, reason)
+                skipped.append(f"{resource}: {reason}")
                 continue
+            resource_config = config
+            if connection_provider is not None and isinstance(
+                connector, TableConnector
+            ):
+                resource_config = (
+                    _provider_postgres_config(
+                        connection_provider, str(resource), connector
+                    )
+                    or config
+                )
             try:
                 samples.append(
                     self.sample_connector(
-                        connector, resource_name=str(resource), config=config
+                        connector, resource_name=str(resource), config=resource_config
                     )
                 )
             except ValueError as exc:
                 logger.warning("Skipping resource '%s': %s", resource, exc)
+                skipped.append(f"{resource}: {exc}")
 
         if not samples:
-            raise ValueError("No resources could be sampled from the given bindings")
+            detail = "; ".join(skipped) or "the bindings map no resources"
+            raise ValueError(
+                f"No resources could be sampled from the given bindings ({detail})"
+            )
 
         return SourceSample(source_name=source_name, samples=samples)
 
