@@ -3,7 +3,7 @@ build-backend = "hatchling.build"
 requires = ["hatchling"]
 
 [project]
-authors = [{email = "alexander@growgraph.dev", name = "Alexander Belikov"}]
+authors = [{ email = "alexander@growgraph.dev", name = "Alexander Belikov" }]
 classifiers = [
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.11",
@@ -45,7 +45,7 @@ license-files = ["LICENSE", "NOTICE"]
 name = "graflo"
 readme = "README.md"
 requires-python = ">=3.11"
-version = "1.13.5"
+version = "1.14.0"
 
 [project.optional-dependencies]
 dev = [

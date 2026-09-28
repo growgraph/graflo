@@ -20,6 +20,20 @@ from graflo.onto import DBType
 
 if TYPE_CHECKING:
     from graflo.architecture.schema.edge import EdgeConfig
+    from graflo.architecture.schema.vertex import VertexConfig
+
+
+def _refuse_physical_collisions(
+    owner: str, declared: list[str], renames: dict[str, str]
+) -> None:
+    """Refuse a property map that stores two properties under one physical name."""
+    physical = [renames.get(name, name) for name in declared]
+    duplicated = sorted({name for name in physical if physical.count(name) > 1})
+    if duplicated:
+        raise ValueError(
+            f"Physical property names on {owner} collide: {duplicated}. Two logical "
+            "properties cannot share one stored attribute."
+        )
 
 
 class EdgeRef(ConfigBaseModel):
@@ -57,6 +71,15 @@ class EdgePhysicalSpec(EdgeRef):
         description=(
             "How variant indexes relate to base (purpose=None): "
             "inherit=base only, append=base+variant, replace=variant only."
+        ),
+    )
+    property_names: dict[str, str] = PydanticField(
+        default_factory=dict,
+        description=(
+            "Physical attribute name per logical edge property, for properties whose "
+            "logical name the database cannot store (reserved word, invalid "
+            "character). Base variant (purpose=None) only; absent means the logical "
+            "name is the physical one."
         ),
     )
 
@@ -151,6 +174,17 @@ class DatabaseProfile(ConfigBaseModel):
         default_factory=dict,
         description="Physical vertex collection/label names keyed by logical vertex name.",
     )
+    vertex_property_names: dict[VertexName, dict[str, str]] = PydanticField(
+        default_factory=dict,
+        description=(
+            "Physical attribute name per logical vertex property, keyed by logical "
+            "vertex name, for properties whose logical name the database cannot "
+            "store (reserved word, invalid character). Absent means the logical name "
+            "is the physical one. The logical schema and ingestion model never see "
+            "these names; they are applied when writing to and reading from the "
+            "database."
+        ),
+    )
     vertex_indexes: dict[VertexName, list[Index]] = PydanticField(
         default_factory=dict,
         description="Secondary indexes per vertex name (identity excluded).",
@@ -233,6 +267,15 @@ class DatabaseProfile(ConfigBaseModel):
                         f"{variant.relation_name!r} vs {item.relation_name!r}"
                     )
                 variant.relation_name = item.relation_name
+            for logical, physical in item.property_names.items():
+                # Same reasoning as relation_name: one attribute, one name.
+                current = variant.property_names.get(logical)
+                if current is not None and current != physical:
+                    raise ValueError(
+                        f"Conflicting property_names[{logical!r}] for edge spec "
+                        f"{variant.physical_key!r}: {current!r} vs {physical!r}"
+                    )
+                variant.property_names[logical] = physical
             for idx in item.indexes:
                 append_index(
                     variant.indexes, idx, owner=f"edge spec {variant.physical_key!r}"
@@ -251,6 +294,95 @@ class DatabaseProfile(ConfigBaseModel):
                     f"EdgePhysicalSpec {spec.physical_key!r} references undeclared "
                     f"edge {spec.edge_id!r}"
                 )
+            if spec.purpose is not None and spec.property_names:
+                raise ValueError(
+                    f"EdgePhysicalSpec {spec.physical_key!r}: property_names belong "
+                    "on the base variant (purpose=None); every variant of an edge "
+                    "stores the same attributes"
+                )
+
+    def reconcile_property_names(
+        self, vertex_config: VertexConfig, edge_config: EdgeConfig
+    ) -> None:
+        """Normalize the physical property maps against the logical schema.
+
+        Entries for vertices, edges or properties the schema no longer declares
+        are dropped, and so are entries mapping a name to itself: both describe
+        the same physical layout as no entry, but serialize (and hash)
+        differently. That also keeps the maps correct after an evolution op
+        removes or renames an element without knowing about them.
+
+        Raises:
+            ValueError: when two properties of one vertex or edge map to the
+                same physical name, or a physical name lands on another
+                property's unmapped logical name. Either would store two
+                properties in one attribute.
+        """
+        declared_vertices = {v.name: v.property_names for v in vertex_config.vertices}
+        kept_vertices: dict[str, dict[str, str]] = {}
+        for vertex_name, names in self.vertex_property_names.items():
+            declared = declared_vertices.get(vertex_name)
+            if declared is None:
+                continue
+            kept = {
+                logical: physical
+                for logical, physical in names.items()
+                if logical in declared and logical != physical
+            }
+            _refuse_physical_collisions(f"vertex {vertex_name!r}", declared, kept)
+            if kept:
+                kept_vertices[vertex_name] = kept
+        if kept_vertices != self.vertex_property_names:
+            self.vertex_property_names = kept_vertices
+
+        for spec in self.edge_specs:
+            if not spec.property_names or spec.edge_id not in edge_config:
+                continue
+            declared = edge_config.edge_for(spec.edge_id).property_names
+            kept = {
+                logical: physical
+                for logical, physical in spec.property_names.items()
+                if logical in declared and logical != physical
+            }
+            _refuse_physical_collisions(f"edge {spec.edge_id!r}", declared, kept)
+            if kept != spec.property_names:
+                spec.property_names = kept
+
+    def has_property_names(self) -> bool:
+        """Whether any logical property is stored under a different physical name."""
+        return bool(self.vertex_property_names) or any(
+            spec.property_names for spec in self.edge_specs
+        )
+
+    def vertex_property_map(self, vertex_name: str) -> dict[str, str]:
+        """Logical -> physical names of *vertex_name*'s renamed properties only."""
+        return dict(self.vertex_property_names.get(vertex_name, {}))
+
+    def vertex_property_name(self, vertex_name: str, property_name: str) -> str:
+        """Physical attribute name of one vertex property."""
+        return self.vertex_property_names.get(vertex_name, {}).get(
+            property_name, property_name
+        )
+
+    def edge_property_map(self, edge_id: EdgeId) -> dict[str, str]:
+        """Logical -> physical names of one edge's renamed properties only."""
+        spec = self._edge_variant_spec(edge_id, purpose=None)
+        return dict(spec.property_names) if spec is not None else {}
+
+    def edge_property_name(self, edge_id: EdgeId, property_name: str) -> str:
+        """Physical attribute name of one edge property."""
+        return self.edge_property_map(edge_id).get(property_name, property_name)
+
+    def set_edge_property_names(self, edge_id: EdgeId, names: dict[str, str]) -> None:
+        """Record physical names for an edge's properties on its base variant."""
+        if not names:
+            return
+        spec = self._edge_variant_spec(edge_id, purpose=None)
+        if spec is None:
+            source, target, relation = edge_id
+            spec = EdgePhysicalSpec(source=source, target=target, relation=relation)
+            self.edge_specs.append(spec)
+        spec.property_names = {**spec.property_names, **names}
 
     def validate_native_inverses(
         self, edge_config: EdgeConfig, vertex_names: set[str]

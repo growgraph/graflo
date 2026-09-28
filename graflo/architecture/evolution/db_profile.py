@@ -6,19 +6,14 @@ import logging
 from typing import Any
 
 from graflo.architecture.graph_types import EdgeId, EdgePhysicalKey, Index
-from graflo.architecture.schema import Schema
 from graflo.architecture.schema.database_features import (
     DatabaseProfile,
     DefaultPropertyValues,
     EdgePhysicalSpec,
     EdgePropertyDefaults,
 )
-from graflo.onto import DBType
 
 logger = logging.getLogger(__name__)
-
-VERTEX_SUFFIX = "vertex"
-RELATION_SUFFIX = "relation"
 
 
 def _merge_vertex_default_maps(
@@ -42,6 +37,7 @@ def apply_vertex_removal_to_db_profile(
         return
     for name in removed:
         profile.vertex_storage_names.pop(name, None)
+        profile.vertex_property_names.pop(name, None)
         profile.vertex_indexes.pop(name, None)
 
     dpv = profile.default_property_values
@@ -83,20 +79,27 @@ def apply_vertex_rename_to_db_profile(
         new_vi.setdefault(nk, []).extend(list(vlist))
     profile.vertex_indexes = new_vi
 
-    new_specs: list[EdgePhysicalSpec] = []
-    for s in profile.edge_specs:
-        new_specs.append(
-            EdgePhysicalSpec(
-                source=vertex_renames.get(s.source, s.source),
-                target=vertex_renames.get(s.target, s.target),
-                relation=s.relation,
-                purpose=s.purpose,
-                relation_name=s.relation_name,
-                indexes=list(s.indexes),
-                indexes_mode=s.indexes_mode,
-            )
+    profile.edge_specs = [
+        s.model_copy(
+            update={
+                "source": vertex_renames.get(s.source, s.source),
+                "target": vertex_renames.get(s.target, s.target),
+            },
+            deep=True,
         )
-    profile.edge_specs = new_specs
+        for s in profile.edge_specs
+    ]
+
+    new_vpn: dict[str, dict[str, str]] = {}
+    for k, names in profile.vertex_property_names.items():
+        nk = vertex_renames.get(k, k)
+        if nk in new_vpn and new_vpn[nk] != names:
+            raise ValueError(
+                f"Conflicting vertex_property_names for logical {nk!r}: "
+                f"{new_vpn[nk]!r} vs {names!r}"
+            )
+        new_vpn[nk] = dict(names)
+    profile.vertex_property_names = new_vpn
 
     dpv = profile.default_property_values
     if dpv is None:
@@ -165,22 +168,28 @@ def remap_vertices_in_db_profile(
         new_vi.setdefault(nk, []).extend(list(vlist))
     profile.vertex_indexes = new_vi
 
-    new_specs: list[EdgePhysicalSpec] = []
-    for s in profile.edge_specs:
-        src = m.get(s.source, s.source)
-        tgt = m.get(s.target, s.target)
-        new_specs.append(
-            EdgePhysicalSpec(
-                source=src,
-                target=tgt,
-                relation=s.relation,
-                purpose=s.purpose,
-                relation_name=s.relation_name,
-                indexes=list(s.indexes),
-                indexes_mode=s.indexes_mode,
-            )
+    profile.edge_specs = [
+        s.model_copy(
+            update={
+                "source": m.get(s.source, s.source),
+                "target": m.get(s.target, s.target),
+            },
+            deep=True,
         )
-    profile.edge_specs = new_specs
+        for s in profile.edge_specs
+    ]
+
+    # Merged vertices pool their properties, so their physical names union;
+    # two different physical names for one logical property cannot both hold.
+    merged_vpn: dict[str, dict[str, str]] = {}
+    for k, names in profile.vertex_property_names.items():
+        nk = m.get(k, k)
+        merged_vpn[nk] = _merge_vertex_default_maps(
+            merged_vpn.get(nk, {}),
+            dict(names),
+            label="vertex_property_names",
+        )
+    profile.vertex_property_names = merged_vpn
 
     dpv = profile.default_property_values
     if dpv is None:
@@ -214,122 +223,6 @@ def remap_vertices_in_db_profile(
     object.__setattr__(dpv, "edges", new_edges)
 
 
-def _storage_name_sanitizer(
-    profile: DatabaseProfile,
-    reserved_words: set[str],
-    *,
-    db_flavor: DBType | None = None,
-):
-    """Return ``(sanitize, should_run)`` for storage/relation name sanitization."""
-    from graflo.db.util import (
-        load_tigergraph_identifier_rules,
-        sanitize_attribute_name,
-        sanitize_tigergraph_identifier,
-    )
-
-    flavor = db_flavor if db_flavor is not None else profile.db_flavor
-    if flavor == DBType.TIGERGRAPH:
-        rules = load_tigergraph_identifier_rules()
-        if rules is None:
-            if not reserved_words:
-                return None, False
-            return (
-                lambda name, suffix: sanitize_attribute_name(
-                    name, reserved_words, suffix=suffix
-                ),
-                True,
-            )
-        effective_reserved = reserved_words or set(rules.reserved_words_upper)
-
-        def sanitize(name: str, suffix: str) -> str:
-            return sanitize_tigergraph_identifier(
-                name,
-                effective_reserved,
-                rules.forbidden_prefixes,
-                rules.invalid_characters,
-                suffix=suffix,
-            )
-
-        return sanitize, True
-
-    if not reserved_words:
-        return None, False
-
-    return (
-        lambda name, suffix: sanitize_attribute_name(
-            name, reserved_words, suffix=suffix
-        ),
-        True,
-    )
-
-
-def apply_storage_name_sanitization_to_db_profile(
-    profile: DatabaseProfile,
-    schema: Schema,
-    reserved_words: set[str],
-    *,
-    db_flavor: DBType | None = None,
-) -> None:
-    """Sanitize physical storage/relation names against a flavor's reserved words.
-
-    Walks ``schema.core_schema.vertex_config.vertices`` and rewrites
-    ``profile.vertex_storage_names[vertex.name]`` when the current effective
-    storage name collides with a reserved word.
-
-    Walks ``schema.core_schema.edge_config.edges`` and rewrites the variant
-    spec's ``relation_name`` (via :meth:`DatabaseProfile.set_edge_name_spec`)
-    when the current effective relation name collides with a reserved word or
-    an existing vertex storage name.
-
-    For TigerGraph, also replaces invalid identifier characters and forbidden
-    prefixes using the same rules as DDL validation.
-
-    Mutates ``profile`` in place.
-    """
-    sanitize, should_run = _storage_name_sanitizer(
-        profile, reserved_words, db_flavor=db_flavor
-    )
-    if not should_run or sanitize is None:
-        return
-
-    for vertex in schema.core_schema.vertex_config.vertices:
-        dbname = profile.vertex_storage_name(vertex.name)
-        sanitized = sanitize(dbname, suffix=f"_{VERTEX_SUFFIX}")
-        if sanitized != dbname:
-            logger.debug("Sanitizing vertex name '%s' -> '%s'", dbname, sanitized)
-            profile.vertex_storage_names[vertex.name] = sanitized
-
-    vertex_storage_names = {
-        profile.vertex_storage_name(vertex.name)
-        for vertex in schema.core_schema.vertex_config.vertices
-    }
-
-    for edge in schema.core_schema.edge_config.edges:
-        if not edge.relation:
-            continue
-        original = profile.edge_relation_name(
-            edge.edge_id,
-            default_relation=edge.relation,
-        )
-        if original is None:
-            continue
-        sanitized = sanitize(original, suffix=f"_{RELATION_SUFFIX}")
-        if sanitized in vertex_storage_names:
-            base = f"{sanitized}_{RELATION_SUFFIX}"
-            candidate = base
-            counter = 1
-            while candidate in vertex_storage_names:
-                candidate = f"{base}_{counter}"
-                counter += 1
-            sanitized = candidate
-
-        if sanitized != original:
-            profile.set_edge_name_spec(
-                edge.edge_id,
-                relation_name=sanitized,
-            )
-
-
 def _rewrite_index_fields(indexes: list[Index], renames: dict[str, str]) -> list[Index]:
     if not renames:
         return indexes
@@ -346,19 +239,19 @@ def _rewrite_index_fields(indexes: list[Index], renames: dict[str, str]) -> list
 def apply_field_rename_to_db_profile(
     profile: DatabaseProfile,
     renames: dict[str, dict[str, str]],
-    *,
-    edge_vertex_lookup: dict[EdgeId, tuple[str, str]] | None = None,
 ) -> None:
-    """Rewrite field names referenced by a :class:`DatabaseProfile`.
+    """Rewrite vertex field names referenced by a :class:`DatabaseProfile`.
 
     ``renames`` maps each vertex name to a per-vertex ``{old_field: new_field}``
     map. Updates:
 
     - ``profile.vertex_indexes[vertex_name]`` field tuples.
-    - ``profile.edge_specs[*].indexes`` field tuples (using both source and
-      target vertex renames; an explicit ``edge_vertex_lookup`` may be passed
-      to map ``EdgeId -> (source, target)`` when source/target names changed).
+    - ``profile.vertex_property_names[vertex_name]`` keys.
     - ``profile.default_property_values.vertices[vertex_name]`` keys.
+
+    Edge specs are left alone: their index fields name *edge* attributes, and
+    renaming a vertex property does not rename an edge attribute -- not even
+    one copied from that property by ``vertex_weights``, which keeps its name.
     """
     if not renames:
         return
@@ -371,29 +264,15 @@ def apply_field_rename_to_db_profile(
         )
     profile.vertex_indexes = new_vertex_indexes
 
-    new_specs: list[EdgePhysicalSpec] = []
-    for spec in profile.edge_specs:
-        if edge_vertex_lookup is not None:
-            source_name, target_name = edge_vertex_lookup.get(
-                spec.edge_id, (spec.source, spec.target)
-            )
-        else:
-            source_name, target_name = spec.source, spec.target
-        merged: dict[str, str] = {}
-        merged.update(renames.get(source_name) or {})
-        merged.update(renames.get(target_name) or {})
-        new_specs.append(
-            EdgePhysicalSpec(
-                source=spec.source,
-                target=spec.target,
-                relation=spec.relation,
-                purpose=spec.purpose,
-                relation_name=spec.relation_name,
-                indexes=_rewrite_index_fields(list(spec.indexes), merged),
-                indexes_mode=spec.indexes_mode,
-            )
-        )
-    profile.edge_specs = new_specs
+    # A physical name belongs to the property, not to its logical name.
+    new_vpn: dict[str, dict[str, str]] = {}
+    for vertex_name, names in profile.vertex_property_names.items():
+        per_vertex = renames.get(vertex_name) or {}
+        new_vpn[vertex_name] = {
+            per_vertex.get(logical, logical): physical
+            for logical, physical in names.items()
+        }
+    profile.vertex_property_names = new_vpn
 
     dpv = profile.default_property_values
     if dpv is None:
@@ -525,7 +404,14 @@ def merge_relation_entries_in_db_profile(profile: DatabaseProfile) -> None:
                 f"{key}: {current.indexes_mode!r} vs {spec.indexes_mode!r}"
             )
         merged_specs[key] = current.model_copy(
-            update={"indexes": list(current.indexes) + list(spec.indexes)},
+            update={
+                "indexes": list(current.indexes) + list(spec.indexes),
+                "property_names": _merge_vertex_default_maps(
+                    dict(current.property_names),
+                    dict(spec.property_names),
+                    label=f"property_names while merging relation entries for {key}",
+                ),
+            },
             deep=True,
         )
     profile.edge_specs = list(merged_specs.values())
@@ -556,20 +442,26 @@ def apply_edge_property_rename_to_db_profile(
     """Rename edge property references in edge indexes/default values."""
     if not renames_by_relation:
         return
-    profile.edge_specs = [
-        spec.model_copy(
-            update={
-                "indexes": _rewrite_index_fields(
-                    list(spec.indexes),
-                    renames_by_relation.get(spec.relation, {})
-                    if spec.relation is not None
-                    else {},
-                )
-            },
-            deep=True,
+    new_specs: list[EdgePhysicalSpec] = []
+    for spec in profile.edge_specs:
+        renames = (
+            renames_by_relation.get(spec.relation, {})
+            if spec.relation is not None
+            else {}
         )
-        for spec in profile.edge_specs
-    ]
+        new_specs.append(
+            spec.model_copy(
+                update={
+                    "indexes": _rewrite_index_fields(list(spec.indexes), renames),
+                    "property_names": {
+                        renames.get(logical, logical): physical
+                        for logical, physical in spec.property_names.items()
+                    },
+                },
+                deep=True,
+            )
+        )
+    profile.edge_specs = new_specs
     dpv = profile.default_property_values
     if dpv is None:
         return

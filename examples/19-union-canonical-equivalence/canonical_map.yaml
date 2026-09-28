@@ -1,5 +1,6 @@
 vertices:
     Firm: Company
+    Agreement: Contract
 properties:
     Firm:
         firm_id: company_id

@@ -6,6 +6,111 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.14.0]
+
+### Added
+
+- **Contributor License Agreement.** Outside contributors accept `CLA.md` once, by commenting on a
+  pull request. A `cla` status check (`.github/workflows/cla.yml`) tracks acceptances; people with
+  write access and bots are exempt. The contributing guide and a pull request template explain it.
+- `graflo.util.transform.normalized_key`: ungated counterpart of `gated_normalized_key`, whose
+  `prefix` now defaults to `""`.
+- Example 19: a class renamed by the canonical map alone, a `lookup_only` reference resource,
+  and `--flag-identity-demo` / `--uncovered-producer-demo`.
+
+### Changed
+
+- Re-keying a merged class (declared `identity`, identity flags, or an identity alignment)
+  demotes each member's own key to a secondary identity, against the final identity;
+  `retire: keep` opts out. Alignments previously demoted nothing.
+- Edge steps of `lookup_only` resources referencing a re-keyed member now match on its demoted
+  key.
+- **Sanitizing records physical names; it no longer renames the logical model.** A name a
+  database cannot store (reserved word, invalid character, forbidden prefix) is a physical fact,
+  so `SanitizeOp` / `Sanitizer` now write it to `DatabaseProfile` only: vertex storage names and
+  relation names as before, plus the new `vertex_property_names` and
+  `edge_specs[].property_names`. The core schema and the ingestion model are left untouched —
+  no more `_attr` property renames, injected `from:` maps or rewritten `transform.rename`s.
+  Documents stay keyed by logical names; `DBWriter` translates them to stored names at every
+  backend call and translates back what it reads, and DDL is generated from the schema with the
+  stored names folded in (`graflo.architecture.evolution.sanitize.physical_schema`). Manifests
+  sanitized by earlier versions keep working: their logical names are already storable.
+- **TigerGraph identity normalization is gone.** Sanitizing no longer renames vertex identity
+  fields so that every vertex on a relation shares one identity tuple. Edge DDL names no
+  identity field and the writer passes each edge's own endpoint keys, so nothing depended on
+  it; and for identities of different lengths it added untyped fields no document fills.
+- **Stored names are filled in at write time.** `define_schema`, ingestion, migration and live
+  drift checks complete the profile with any stored name it lacks
+  (`with_physical_names`), so a manifest with a reserved property name deploys to TigerGraph
+  without being sanitized first. Names already in the profile win; sanitize to record them.
+- **Sanitized names never collide.** A sanitized name that lands on a declared one gets a `_N`
+  suffix (`user-id` next to a declared `user__id` is stored as `user__id_1`), two vertex types
+  or two relations can no longer be stored under one name, and edge properties are sanitized
+  too. Edges sharing a stored relation share stored attribute names.
+- **`SanitizeOp` touches only the profile slot in three-way merges**, instead of conflicting
+  with every other change.
+- **TigerGraph edge types declare the union of their edges' attributes.** Edges stored as one
+  type used to be declared with the first edge's attributes only. Edges that would give one type
+  two discriminators (different edge identities) are now refused at define time.
+- `Sanitizer` takes an optional `reserved_words` override and sets `db_profile.db_flavor` to its
+  target; `Sanitizer.build_ops` no longer takes `reserved_words`.
+- **Schema-aware reads speak logical names.** `Connection.graph_neighbors` and
+  `Connection.traverse` translate the anchor key and edge filters to stored names and translate
+  the vertex documents and edge rows they return back to logical ones — also for an edge read
+  through its declared inverse — and use the storage names the target was deployed with.
+  **Backends now override `_graph_neighbors`**, not `graph_neighbors`: the public method is the
+  translating wrapper, and the hook sees stored names only. `traverse` resolves the stored view
+  once for all seeds. `fetch_docs`, `fetch_edges` and `fetch_all_*` stay storage-addressed.
+- **Renaming a vertex property keeps the edge attributes copied from it.** A `vertex_weights`
+  entry of `fields` writes an edge attribute named after the vertex field; renaming the field used
+  to rename that attribute too, while the edge's declared properties kept the old name. The entry
+  now moves to `map` as `{new_field: old_attribute}`. For the same reason
+  `apply_field_rename_to_db_profile` no longer applies vertex renames to edge-spec indexes (and
+  drops its `edge_vertex_lookup` parameter); edge attributes are renamed by
+  `rename_edge_properties`.
+- **Physical naming is cheap on the hot paths.** `with_physical_names` copies the profile only
+  and shares the core schema, returns the schema itself for a flavor with no naming rules,
+  indexes edge specs once instead of scanning them per edge, and sanitizes each distinct name
+  once. Reserved words are read from disk once per flavor. Documents are re-keyed by moving only
+  the renamed keys.
+
+### Fixed
+
+- PostgreSQL engines work under SQLAlchemy 2.1, which maps a bare `postgresql://` to `psycopg`
+  (v3) rather than the `psycopg2` graflo ships. `PostgresConfig.to_sqlalchemy_connection_string()`
+  now returns `postgresql+psycopg2://…`, and `SQLDataSource` pins that driver for a bare
+  `postgresql://` connection string; an explicitly named driver is left alone.
+- Merge refuses a merged key some member cannot complete (`MergeIdentityError`, check
+  `identity coverage`) instead of dropping that member's records. Example 19's
+  `boundary_op.yaml` had this defect.
+- `PropertyEquivalence(identity=True)` over members with different keys re-keys on the flagged
+  fields instead of appending them to the union of the keys.
+- Identity alignment: a resource reading its own column is no longer refused when the other side
+  renames a field to the same name; a resource that upserts the class without deriving its key,
+  a derivation whose function cannot take its inputs, and two alignments for one class are
+  refused.
+- Edge-step rewrites (`pin_to_retired`, retargeting, selector collection, edge properties) now
+  handle flat `{source, target}` steps.
+- **`migrate_graph` writes its data.** `DBWriter.write` looked up a resource even when the
+  container came from no resource, and the migration path writes through an empty ingestion
+  model, so every migration failed with "Empty resource container" after defining the target.
+- **Migrated data lands on the target's stored attributes.** The target schema was sanitized
+  while the exported documents kept the source's keys, so a renamed property was never written
+  and a renamed identity could not be read off the documents.
+- **Extra-weight enrichment reads `Weight.fields` and `Weight.map`.** It asked for a
+  `properties` attribute `Weight` does not have, and raised whenever it fetched; it now projects
+  a weight exactly as the pipeline's edge render does.
+- `rename_vertex_properties` now rewrites the fields a vertex's `filters` compare on.
+- TigerGraph edge DDL no longer appends discriminator attributes to the caller's `Edge`.
+
+- **A bindings source can be sampled through its connections.** `GraphEngine.sample_resources`
+  passed no connection when sampling a `Bindings` block, so every `TableConnector` was skipped
+  with a log line and only file connectors were sampled — a bindings source made of tables
+  failed with "No resources could be sampled". `sample_resources` and
+  `ResourceSampler.sample_bindings` now take a `connection_provider`, and each table connector
+  samples through the connection that provider resolves for it, the way ingestion does. When
+  nothing can be sampled, the error names each skipped resource and why.
+
 ## [1.13.5]
 
 ### Added

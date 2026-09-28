@@ -16,6 +16,7 @@ from graflo.architecture.evolution import (
     MergeManifestsOp,
     PropertyEquivalence,
     RelationEquivalence,
+    SideIdentity,
     VertexEquivalence,
     apply_evolution,
     canonical_map_to_ops,
@@ -93,6 +94,10 @@ def _right_b_manifest() -> GraphManifest:
         ],
     )
 
+
+#: Settles the merged identity without keying either side on a field only the
+#: other carries: each member keys on its own key, one funnel branch apiece.
+_EACH_OWN_KEY = SideIdentity(left=["company_id"], right=["org_id"])
 
 _CANONICAL = CanonicalMap(
     vertices={"Firm": "Company"},
@@ -365,14 +370,14 @@ class TestValidateAndCompleteCanonicalMap:
         """Canonicalize-then-declare and declare-then-canonicalize are one function."""
         raw_op = MergeManifestsOp(
             vertex_equivalences=[
-                VertexEquivalence(left="Firm", right="Org", identity=["company_id"])
+                VertexEquivalence(left="Firm", right="Org", identity=_EACH_OWN_KEY)
             ],
             canonical_maps={"left": _CANONICAL},
         )
         canonical_op = MergeManifestsOp(
             vertex_equivalences=[
                 VertexEquivalence(
-                    left="Company", right="Org", into="Company", identity=["company_id"]
+                    left="Company", right="Org", into="Company", identity=_EACH_OWN_KEY
                 )
             ],
             canonical_maps={"left": _CANONICAL},
@@ -807,8 +812,14 @@ class TestValidateAndCompleteCanonicalMap:
         return _manifest(
             name="b2",
             vertices=[
-                Vertex(name="Org", properties=[Field(name="id")], identity=["id"]),
-                Vertex(name="Branch", properties=[Field(name="id")], identity=["id"]),
+                Vertex(
+                    name="Org", properties=[Field(name="org_id")], identity=["org_id"]
+                ),
+                Vertex(
+                    name="Branch",
+                    properties=[Field(name="branch_id")],
+                    identity=["branch_id"],
+                ),
             ],
             edges=[Edge(source="Org", target="Branch", relation="owns")],
         )
@@ -818,14 +829,18 @@ class TestValidateAndCompleteCanonicalMap:
     ) -> MergeManifestsOp:
         # One right-side n-ary cluster: {Org, Branch} ~ {Company} -> Company.
         # Declares the merged identity explicitly so this fixture isn't
-        # also exercising the (separately tested) identity-disagreement check.
+        # also exercising the (separately tested) identity-disagreement check;
+        # each member keys on what it carries, which a declared key must allow.
         return MergeManifestsOp(
             vertex_equivalences=[
                 VertexEquivalence(
                     left="Company",
                     right=["Org", "Branch"],
                     into="Company",
-                    identity=["company_id"],
+                    identity=SideIdentity(
+                        left=["company_id"],
+                        members={"Org": ["org_id"], "Branch": ["branch_id"]},
+                    ),
                 )
             ],
             allow_merges=allow_merges,
@@ -951,7 +966,7 @@ class TestValidateAndCompleteCanonicalMap:
                     left="Company",
                     right="Company",
                     into="Company",
-                    identity=["company_id"],
+                    identity=_EACH_OWN_KEY,
                 )
             ]
         )

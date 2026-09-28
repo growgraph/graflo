@@ -302,7 +302,9 @@ from graflo import Caster
 from graflo.onto import DBType
 
 # Connect to PostgreSQL
-postgres_config = PostgresConfig.from_env()  # or PostgresConfig.from_docker_env() from a clone
+postgres_config = (
+    PostgresConfig.from_env()
+)  # or PostgresConfig.from_docker_env() from a clone
 
 # Create GraphEngine and infer schema from PostgreSQL 3NF database
 # Connection is automatically managed inside infer_schema()
@@ -481,4 +483,6 @@ Source License 1.1 and keep those terms; see the
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request. See the
-[Contributing Guide](https://growgraph.github.io/graflo/contributing/).
+[Contributing Guide](https://growgraph.github.io/graflo/contributing/). Contributors accept the
+[Contributor License Agreement](https://github.com/growgraph/graflo/blob/main/CLA.md) once, by
+commenting on their first pull request.

@@ -11,7 +11,7 @@ from graflo.hq.graph_engine import GraphEngine
 
 drift = GraphEngine().diff_live_schema(neo4j_config, schema)
 if drift.has_drift:
-    print(drift.undeclared_properties)   # {"server": ["os_family"]}
+    print(drift.undeclared_properties)  # {"server": ["os_family"]}
 ```
 
 It works on every backend that can describe its own structure

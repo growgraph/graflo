@@ -26,7 +26,7 @@ Move an existing labeled property graph from one database to another — no mani
 
 - **Neo4j → ArangoDB** (or any other LPG) — vendor migration without rewriting ETL
 - **Production graph → PostgreSQL** — relational vertex + junction edge tables
-- **Any graph source → TigerGraph** — target sanitization handles naming and DDL differences
+- **Any graph source → TigerGraph** — target sanitization records TigerGraph-safe stored names in the profile; exported data keeps its source keys and is mapped onto them at write time
 
 For large graphs or repeated replays, export to a [GraFlo file backend](graph_export_and_replay.md) first, then load from disk.
 

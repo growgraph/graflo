@@ -3,7 +3,7 @@ fail_fast: false
 repos:
   # Python linting and formatting
 -   repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.16.0
+    rev: v0.16.9
     hooks:
     -   id: ruff-check
         args: [--fix]
@@ -34,14 +34,12 @@ repos:
     -   id: pretty-format-json
         args: [--autofix, --indent, '4', --no-sort-keys]
 
-  # TOML formatting and sorting
--   repo: https://github.com/macisamuele/language-formatters-pre-commit-hooks
-    rev: v2.16.0
-    hooks:
-    -   id: pretty-format-toml
-        args: [--autofix]
+  # TOML formatting and sorting. One tool only: pretty-format-toml is built on the
+  # toml-sort library, and its hook environment pins whatever toml-sort was current
+  # when it was installed. Once that differs from the rev below, the two rewrite
+  # inline tables back and forth ({a = 1} vs { a = 1 }) on every run.
 -   repo: https://github.com/pappasam/toml-sort
-    rev: v0.24.4
+    rev: v0.25.0
     hooks:
     -   id: toml-sort
         args: [-ia]

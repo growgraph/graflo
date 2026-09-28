@@ -8,8 +8,8 @@ reconciled.
 The model is a **git log, not an Alembic script**. Alembic's core abstraction is
 a reversible `upgrade()` / `downgrade()` pair, and GraFlo cannot honour that:
 `merge_vertices` discards which source each property came from,
-`change_field_types` discards the previous type, `sanitize` and
-`project_manifest` drop material outright. A `downgrade` that quietly produces a
+`change_field_types` discards the previous type, `sanitize` overwrites the
+profile names it replaces, and `project_manifest` drops material outright. A `downgrade` that quietly produces a
 *different* manifest is worse than none. So history moves forward, and going
 back means replaying from the base.
 

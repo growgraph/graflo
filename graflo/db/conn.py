@@ -52,7 +52,7 @@ Example:
 
 import abc
 import logging
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeVar
@@ -62,6 +62,7 @@ from suthing import batched
 from graflo.architecture.graph_types import EdgeDirection, GraphContainer
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.edge import Edge
+from graflo.architecture.schema.physical_keys import PhysicalKeys
 from graflo.architecture.schema.vertex import VertexConfig
 from graflo.connections.onto import TigergraphBulkLoadConfig
 from graflo.db.bulk_exc import UnsupportedBulkLoad
@@ -174,6 +175,19 @@ class ConnectionCapability(Enum):
             ConnectionCapability.SCHEMA_INTROSPECTION: "schema introspection",
             ConnectionCapability.SCHEMA_DDL: "schema migration DDL",
         }[self]
+
+
+def _walked_edge_ids(
+    schema: Schema, edge_types: Sequence[str] | None
+) -> Iterator["EdgeId"]:
+    """Declared edges a walk over *edge_types* may follow, as stored.
+
+    A generator, so a read with no edge filter never resolves them.
+    """
+    from graflo.db.traversal import select_edges
+
+    for edge, _read_as in select_edges(schema, edge_types):
+        yield edge.edge_id
 
 
 class Connection(abc.ABC):
@@ -785,12 +799,18 @@ class Connection(abc.ABC):
         so every backend answers in the same shape — the point of the whole read
         path being DB-agnostic.
 
-        The default is a breadth-first composition of :meth:`fetch_edges` and
-        :meth:`fetch_docs`, which gives correct multi-hop semantics on any
-        backend that can answer a single hop. Backends with a native multi-hop
-        form (AQL ``1..k``, Cypher variable-length, nGQL ``GO … STEPS``) override
-        this for a single round trip; the conformance suite asserts the override
-        returns exactly what the default would.
+        Names are logical on both sides: the anchor key and edge filters name
+        logical properties, and returned vertex documents and edge rows are keyed
+        by them, whatever names the database stores (``db_profile``'s property
+        maps, plus any the target flavor needs filled in). Backends implement
+        :meth:`_graph_neighbors`, which sees stored names only.
+
+        The default :meth:`_graph_neighbors` is a breadth-first composition of
+        :meth:`fetch_edges` and :meth:`fetch_docs`, which gives correct multi-hop
+        semantics on any backend that can answer a single hop. Backends with a
+        native multi-hop form (AQL ``1..k``, Cypher variable-length, nGQL
+        ``GO … STEPS``) override it for a single round trip; the conformance
+        suite asserts the override returns exactly what the default would.
 
         Args:
             vertex_type: Logical type of the anchor vertex.
@@ -811,6 +831,49 @@ class Connection(abc.ABC):
             UnsupportedEdgeDirectionError: if the backend cannot follow an edge
                 in the requested direction (TigerGraph without a reverse type).
         """
+        if schema is None:
+            return self._graph_neighbors(
+                vertex_type,
+                key,
+                hops=hops,
+                direction=direction,
+                edge_types=edge_types,
+                filters=filters,
+                limit=limit,
+                schema=None,
+            )
+        stored, keys = self._stored_view(schema)
+        reached = self._graph_neighbors(
+            vertex_type,
+            keys.anchor_key(vertex_type, key),
+            hops=hops,
+            direction=direction,
+            edge_types=edge_types,
+            filters=keys.edge_filter(filters, _walked_edge_ids(schema, edge_types)),
+            limit=limit,
+            schema=stored,
+        )
+        return keys.logical_container(reached, schema.core_schema.edge_config)
+
+    def _graph_neighbors(
+        self,
+        vertex_type: str,
+        key: str | dict[str, Any],
+        *,
+        hops: int = 1,
+        direction: EdgeDirection = EdgeDirection.OUT,
+        edge_types: Sequence[str] | None = None,
+        filters: Any | None = None,
+        limit: int | None = None,
+        schema: Schema | None = None,
+    ) -> GraphContainer:
+        """Backend hook for :meth:`graph_neighbors`, in stored names.
+
+        *schema* is the schema as the database stores it
+        (:func:`~graflo.architecture.evolution.sanitize.physical_schema`), and
+        *key* and *filters* are already translated to it. The default walks
+        breadth-first over :meth:`fetch_edges` and :meth:`fetch_docs`.
+        """
         from graflo.db.traversal import bfs_neighbors
 
         return bfs_neighbors(
@@ -825,12 +888,29 @@ class Connection(abc.ABC):
             schema=schema,
         )
 
+    def _stored_view(self, schema: Schema) -> tuple[Schema, PhysicalKeys]:
+        """*schema* as this database stores it, and the key translation to it.
+
+        With nothing stored under another name this is the schema itself (or a
+        copy carrying filled-in storage names) and a no-op translation, so the
+        common read pays for neither a deep copy nor a document rebuild.
+        """
+        from graflo.architecture.evolution.sanitize import (
+            materialize_physical_schema,
+            with_physical_names,
+        )
+
+        named = with_physical_names(schema, self.flavor)
+        keys = PhysicalKeys(named.db_profile)
+        return (materialize_physical_schema(named) if keys.active else named), keys
+
     def traverse(self, query: Any, *, schema: Schema) -> GraphContainer:
         """Answer a :class:`~graflo.architecture.query.TraverseQuery`.
 
         The multi-seed form of :meth:`graph_neighbors`. Seeds are walked in
         order and merged into one container, so a vertex reachable from several
-        seeds appears once.
+        seeds appears once. Names are logical in and out, as for
+        :meth:`graph_neighbors`; the stored view is resolved once for all seeds.
 
         The query is **not** validated here. Cap enforcement belongs to the
         surface that accepted the request, before any connection is opened —
@@ -846,24 +926,28 @@ class Connection(abc.ABC):
         Returns:
             GraphContainer: everything reached from any seed, deduplicated.
         """
+        stored, keys = self._stored_view(schema)
+        filters = keys.edge_filter(
+            query.filters, _walked_edge_ids(schema, query.edge_relations)
+        )
         container = GraphContainer()
         for seed in query.seeds:
-            reached = self.graph_neighbors(
+            reached = self._graph_neighbors(
                 seed["vertex_type"],
-                seed["key"],
+                keys.anchor_key(seed["vertex_type"], seed["key"]),
                 hops=query.max_hops,
                 direction=query.edge_direction,
                 edge_types=query.edge_relations,
-                filters=query.filters,
+                filters=filters,
                 limit=query.limit,
-                schema=schema,
+                schema=stored,
             )
             for vertex_type, docs in reached.vertices.items():
                 container.vertices.setdefault(vertex_type, []).extend(docs)
             for edge_id, rows in reached.edges.items():
                 container.edges.setdefault(edge_id, []).extend(rows)
         container.pick_unique()
-        return container
+        return keys.logical_container(container, schema.core_schema.edge_config)
 
     def introspect_graph_schema(
         self,

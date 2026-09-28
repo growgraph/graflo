@@ -10,8 +10,10 @@ fundamental ops —
    normalization, local-key namespacing) appended to the pipelines;
 3. ``ReplaceIdentityOp`` — a priority funnel over the canonical attributes,
    in declared order, with the namespaced ``local_key`` as the last branch;
-4. ``AddSecondaryIdentitiesOp`` — the retired side keys as lookup-only
-   secondary identities.
+4. ``AddSecondaryIdentitiesOp`` — the ``secondary_identities`` the alignment
+   lists. Inside ``merge_manifests`` the members' own pre-merge keys are
+   demoted as well, without being listed: merge knows each member's key and
+   demotes it against the class's final identity.
 
 The division of labor is deliberate: **a primary identity is a property of the
 class**, so the funnel references only canonical attributes; *how* a given
@@ -716,7 +718,10 @@ def validate_alignment(
     rename_targets = _canonical_rename_targets(tuple(canonical_maps))
     if rename_targets:
         for resource, fields in raw_inputs.items():
-            canonical_used = sorted(set(fields) & rename_targets)
+            canonical_used = sorted(
+                set(fields)
+                & rename_targets - _raw_properties(resource, sides, cluster_members)
+            )
             if canonical_used:
                 raise _conflict(
                     "canonical name as derivation input",
@@ -729,6 +734,8 @@ def validate_alignment(
                 )
 
     levels = resolve_derivation_levels(alignment, manifest, productions=productions)
+    _check_uncovered_producers(alignment, manifest)
+    _check_derivation_signatures(alignment)
 
     # Scratch fields exist only for the column-presence (list) form; a
     # member-keyed derivation is the single writer of its attribute.
@@ -781,6 +788,140 @@ def validate_alignment(
             "aligned attribute complete no funnel branch and are dropped",
             alignment.vertex,
         )
+
+
+def _raw_properties(
+    resource: str,
+    sides: SideManifests | None,
+    cluster_members: ClusterMembers | None,
+) -> set[str]:
+    """Property names the members *resource* produces declare on its own side.
+
+    Those are columns its documents carry, whatever the other side renames
+    onto the same spelling: aligning B's ``cname`` onto A's ``name`` makes
+    ``name`` a rename target, and A's resource reading its own ``name`` is
+    exactly right. Empty without the sides, which leaves the check global.
+    """
+    if sides is None:
+        return set()
+    hits = [
+        manifest
+        for manifest in sides.values()
+        if resource in _resource_pipelines(manifest)
+    ]
+    if len(hits) != 1 or hits[0].graph_schema is None:
+        return set()
+    manifest = hits[0]
+    schema = manifest.graph_schema
+    assert schema is not None
+    vertex_config = schema.core_schema.vertex_config
+    produced = _produced_vertices(
+        _resource_pipelines(manifest)[resource], known_vertices=_vertex_set(manifest)
+    )
+    if cluster_members is not None:
+        members = {m for side in cluster_members.values() for m in side}
+        produced &= members
+    return {
+        name
+        for vertex in produced
+        if vertex in vertex_config.vertex_set
+        for name in vertex_config.property_names(vertex)
+    }
+
+
+def _check_uncovered_producers(
+    alignment: IdentityAlignment, manifest: GraphManifest
+) -> None:
+    """Refuse a resource that upserts the class but derives none of its key.
+
+    Every record of the class keys on the funnel over the alignment's
+    attributes. A resource the alignment never names derives none of them, so
+    each record it upserts completes no branch and is dropped -- the whole
+    resource, and every edge it emits to the class, silently. A resource
+    whose steps producing the class are all ``lookup_only`` upserts nothing;
+    merge points its edges at the member key it carries instead.
+    """
+    covered = _referenced_resources(alignment)
+    known = _vertex_set(manifest)
+    for resource, pipeline in sorted(_resource_pipelines(manifest).items()):
+        if resource in covered:
+            continue
+        upserting = [
+            step
+            for step in _steps_producing_anywhere(pipeline, alignment.vertex, known)
+            if not (step.get("type") == "vertex" and step.get("lookup_only"))
+        ]
+        if upserting:
+            raise _conflict(
+                "uncovered producer",
+                f"resource {resource!r} produces {alignment.vertex!r} but the "
+                "alignment derives none of its funnel attributes there, so "
+                "every record it upserts would complete no branch and be dropped",
+                "Add the resource to an attribute's sources or to local_key, "
+                "or, if it only references the class, mark its vertex step "
+                "`lookup_only: true` — merge then points its edges at the "
+                "demoted member key.",
+            )
+
+
+def _steps_producing_anywhere(
+    pipeline: list[Any], vertex: str, known: Collection[str]
+) -> list[dict[str, Any]]:
+    """Normalized steps producing *vertex* at any level of *pipeline*."""
+    out: list[dict[str, Any]] = []
+    for step in pipeline:
+        if not isinstance(step, dict):
+            continue
+        normalized = normalize_actor_step(dict(step))
+        if vertex in step_produces_vertices(normalized, known_vertices=known):
+            out.append(normalized)
+        if normalized.get("type") == "descend":
+            nested = normalized.get("pipeline")
+            if isinstance(nested, list):
+                out.extend(_steps_producing_anywhere(nested, vertex, known))
+    return out
+
+
+def _check_derivation_signatures(alignment: IdentityAlignment) -> None:
+    """Refuse a derivation whose function cannot take its inputs and parameters.
+
+    The call is ``foo(*input, **params)``. One that cannot bind fails for
+    every document at ingestion, the attribute is never derived, and every
+    record falls through to a lower funnel branch or is dropped — with nothing
+    at merge time to say so. Binding against the signature here turns that
+    into a refusal naming the call.
+    """
+    import importlib
+    import inspect
+
+    for attribute in alignment.attributes:
+        for resource in attribute.sources:
+            for spec in attribute.specs_for(resource):
+                try:
+                    function = getattr(importlib.import_module(spec.module), spec.foo)
+                except (ImportError, AttributeError) as exc:
+                    raise _conflict(
+                        "derivation signature",
+                        f"resource {resource!r} derives {attribute.name!r} with "
+                        f"{spec.module}.{spec.foo}, which cannot be imported ({exc})",
+                        "Name a function the module defines.",
+                    ) from exc
+                try:
+                    signature = inspect.signature(function)
+                except (TypeError, ValueError):
+                    continue  # a builtin without introspectable signature
+                try:
+                    signature.bind(*spec.input, **spec.params)
+                except TypeError as exc:
+                    raise _conflict(
+                        "derivation signature",
+                        f"resource {resource!r} derives {attribute.name!r} as "
+                        f"{spec.foo}(*{spec.input}, **{spec.params}), which "
+                        f"{spec.foo}{signature} cannot take ({exc})",
+                        "Give `input` one field per positional parameter — "
+                        "`normalized_key` takes one, `gated_normalized_key` a "
+                        "gate and a value.",
+                    ) from exc
 
 
 def _check_sibling_classes(
@@ -1011,8 +1152,8 @@ def alignment_to_ops(
                     to=FunnelIdentityTarget(funnel=IdentityFunnel(branches=branches)),
                     # The pre-alignment identity on a merged class is the
                     # merged union of the side keys — a field-set no record
-                    # carries. Demoting it would index nothing; the per-side
-                    # keys are demoted explicitly below instead.
+                    # carries. Demoting it would index nothing; merge demotes
+                    # the per-member keys once this funnel is in place.
                     retire="keep",
                 )
             }

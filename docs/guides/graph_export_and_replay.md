@@ -59,7 +59,7 @@ engine.define_and_ingest(
 
 ## Pre-sanitize for a future target
 
-Set `target_flavor_hint` so `schema.yaml` is sanitized for the intended backend before it is written:
+Set `target_flavor_hint` so `schema.yaml` is sanitized for the intended backend before it is written. Names the intended backend cannot store are replaced by stored names in `schema.yaml`, and the data files are keyed by the same names, so the export replays as-is:
 
 ```python
 backend = GraFloBackendConfig(

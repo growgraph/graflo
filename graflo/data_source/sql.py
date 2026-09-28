@@ -12,7 +12,7 @@ from typing import Any
 
 from pydantic import Field, PrivateAttr
 from sqlalchemy import create_engine, text
-from sqlalchemy.engine import Engine
+from sqlalchemy.engine import Engine, make_url
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.data_source.base import AbstractDataSource, DataSourceType
@@ -65,7 +65,12 @@ class SQLDataSource(AbstractDataSource):
             SQLAlchemy engine instance
         """
         if self._engine is None:
-            self._engine = create_engine(self.config.connection_string)
+            url = make_url(self.config.connection_string)
+            # SQLAlchemy 2.1 maps a bare ``postgresql://`` to psycopg (v3);
+            # graflo ships psycopg2, so pin it unless a driver is named.
+            if url.drivername == "postgresql":
+                url = url.set(drivername="postgresql+psycopg2")
+            self._engine = create_engine(url)
         return self._engine
 
     @staticmethod

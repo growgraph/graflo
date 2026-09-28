@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 from graflo.architecture.contract.bindings import Bindings
 from graflo.architecture.contract.ingestion import IngestionModel
 from graflo.architecture.contract.manifest import GraphManifest
+from graflo.architecture.evolution.sanitize import physical_schema
 from graflo.architecture.graph_types import GraphContainer
 from graflo.architecture.onto_sample import DEFAULT_MAX_DOCS, SourceSample
 from graflo.architecture.onto_sql import SchemaIntrospectionResult
@@ -148,6 +149,7 @@ class GraphEngine:
         resources: list[str] | None = None,
         max_docs: int = DEFAULT_MAX_DOCS,
         source_name: str | None = None,
+        connection_provider: ConnectionProvider | None = None,
     ) -> "SourceSample":
         """Sample documents from a source, keeping connector provenance.
 
@@ -163,6 +165,9 @@ class GraphEngine:
             resources: Restrict sampling to these resource names.
             max_docs: Cap on documents fetched per resource.
             source_name: Override the logical source name.
+            connection_provider: For a ``Bindings`` source, resolves each
+                connector's connection (and credentials) the way ingestion
+                does. Without it, table connectors cannot be sampled.
 
         Returns:
             SourceSample: Per-resource samples with connector provenance.
@@ -181,6 +186,7 @@ class GraphEngine:
             return sampler.sample_bindings(
                 source,
                 resources=resources,
+                connection_provider=connection_provider,
                 source_name=source_name or "bindings",
             )
         return sampler.sample_files(source, source_name=source_name)
@@ -335,11 +341,16 @@ class GraphEngine:
         target_db_config: DBConfig,
         graph_target_namespace: str | None,
     ) -> Schema:
+        """Point *manifest*'s schema at the target and return it as the target stores it.
+
+        The manifest's own schema keeps its logical names; the returned copy has
+        the target's physical names folded in, which is what DDL declares.
+        """
         schema = manifest.require_schema()
         _ensure_graph_target_namespace(schema, target_db_config, graph_target_namespace)
         schema.db_profile.db_flavor = target_db_config.connection_type
         schema.finish_init()
-        return schema
+        return physical_schema(schema, target_db_config.connection_type)
 
     def create_target_namespace(
         self,
@@ -483,7 +494,9 @@ class GraphEngine:
         ingestion_params = ingestion_params or IngestionParams()
         if ingestion_params.clear_data:
             with ConnectionManager(connection_config=target_db_config) as db_client:
-                clear_result = db_client.clear_data(schema)
+                clear_result = db_client.clear_data(
+                    physical_schema(schema, target_db_config.connection_type)
+                )
                 if inspect.isawaitable(clear_result):
                     raise TypeError(
                         "clear_data must be synchronous so ingestion only starts "
@@ -762,7 +775,9 @@ class GraphEngine:
 
         if clear_data:
             with ConnectionManager(connection_config=target_config) as db_client:
-                db_client.clear_data(schema)
+                db_client.clear_data(
+                    physical_schema(schema, target_config.connection_type)
+                )
 
         ingestion_model = IngestionModel(resources=[])
         ingestion_model.finish_init(schema.core_schema)

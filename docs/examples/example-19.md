@@ -80,7 +80,13 @@ union = merge_manifests(canonical_a, B, op)  # identical result
    pipelines;
 3. `ReplaceIdentityOp` — a priority funnel over the canonical attributes only:
    `[match_key, local_key]`, no side-specific branches;
-4. `AddSecondaryIdentitiesOp` — retired side keys stay addressable for lookups.
+4. `AddSecondaryIdentitiesOp` — the keys the alignment's `secondary_identities`
+   lists.
+
+Merge also demotes every member's own key (`company_id`, `shop_id`, `org_id`,
+`branch_id`) to a lookup-only secondary identity, without being told, once
+`Company` has its final identity. Listing one in `secondary_identities` only
+names it; `retire: keep` on the equivalence opts out.
 
 ## How the merged name is found
 
@@ -169,6 +175,53 @@ their original keys, and transform inputs are never rewritten.
 `merge_vertex_models` unions fields by spelling — list a `PropertyEquivalence`
 only to rename or to flag identity.
 
+## A class only the map knows
+
+`canonical_map.yaml` also renames `Agreement` to `Contract`. `Agreement` is
+in no cluster, so the entry is applied as written: a vocabulary change, not a
+merge, and nothing conflicts. Mapping it onto a *merged* name is different —
+`Agreement: Company` would make it join `Company` without the cluster's
+identity and property maps governing it, and merge refuses that as
+incomplete, with the extended cluster as the completion (the same shape as
+`--forgotten-member-demo`).
+
+## References across the merge
+
+`r_agreements` relates each agreement to the `Firm` it names by `firm_id`, and
+never upserts that firm: its `Firm` step is `lookup_only`. After the merge,
+`Company` no longer keys on `company_id` — it keys on the funnel — and those
+rows carry nothing the funnel can digest. So merge points the resource's
+`signedBy` edge at the key its rows do carry, the demoted secondary:
+
+```yaml
+- source: Contract
+  target: Company
+  relation: signedBy
+  target_match: by_company_id
+```
+
+A resource that *upserts* the merged class must derive its identity instead.
+`--uncovered-producer-demo` drops the `lookup_only` and the alignment refuses:
+the resource derives none of the funnel attributes, so every `Firm` record it
+upserts would complete no branch and be dropped. Add it to the alignment's
+sources or `local_key`, or keep it a reference.
+
+## Re-keying without an alignment
+
+The alignment is one of four ways to give a merged class a new key. The
+others are declared on the equivalence: an explicit `identity` (a natural key,
+a funnel, or a `SideIdentity`, as in `boundary_op.yaml`), or a flagged
+`PropertyEquivalence(identity=True)`. `--flag-identity-demo` flags
+`shared_raw`, the one property all four members carry: the members disagree
+on their own keys, so the flag replaces them rather than joining them, and
+their keys are demoted. It keys on the raw value, though — `ABC-Alpha` and
+`ABC-ALPHA` stay two companies, which is what the alignment's normalized
+`match_key` is for.
+
+Whichever way, the key must be one every member can complete: `identity:
+[company_id]` alone would leave `Shop`, `Org` and `Branch` with no key, and
+merge refuses it rather than dropping their records.
+
 ## Priority semantics
 
 With several alignment attributes, their order is funnel priority: a record keys by
@@ -188,6 +241,8 @@ uv run python build_union.py --conflicting-cluster-demo  # overlapping declarati
 uv run python build_union.py --forgotten-member-demo  # incomplete → completion: add the member
 uv run python build_union.py --shared-name-demo       # incomplete → completion: declare the pair
 uv run python build_union.py --shared-name-demo --union-right   # …or union it by name
+uv run python build_union.py --flag-identity-demo     # re-key on a flagged shared property
+uv run python build_union.py --uncovered-producer-demo  # a resource the alignment misses → conflict
 ```
 
 The two incompleteness demos print their completion as YAML, ready to paste
@@ -195,7 +250,9 @@ into the op — the same thing `graflo merge` prints when it refuses.
 
 `inspect_fusion.py` prints one row per emitted vertex doc across the four
 resources feeding `Company`: five records collapse to three vertices, one
-fused pair per aligned key.
+fused pair per aligned key. It then casts `r_agreements` and resolves each
+`signedBy` edge through `by_company_id`: agreement `g1` lands on the company
+`f1` fused with B's `o1`.
 
 `build_union.py` stays because it shows the recipe as Python. The same
 recipe is a verb — `graflo merge` applies the op and its canonical maps
@@ -207,8 +264,9 @@ graflo merge manifest_a.yaml manifest_b.yaml \
   -o artifacts/manifest_union.yaml
 ```
 
-`boundary_op.yaml` is the cluster written as YAML, with a declared natural
-key in place of the alignment. `--canonical-map` is folded into the op
+`boundary_op.yaml` is the cluster written as YAML, with a declared identity
+in place of the alignment: a `SideIdentity` keying each member on the key it
+carries, one funnel branch apiece. `--canonical-map` is folded into the op
 (`canonical_maps`), so the same document could carry the map itself. Drop it
 and the same op is refused: the cluster has no name and nothing establishes
 one.

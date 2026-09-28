@@ -37,12 +37,24 @@ BOUNDARY_OP: dict = {
 }
 
 
+#: Each member keyed on the key it carries (a ``SideIdentity``, one funnel
+#: branch per member). No field is common to all four members, so a single
+#: natural key would leave three of them completing no key -- merge refuses it.
+EACH_OWN_KEY: dict = {
+    "members": {
+        "Company": ["company_id"],
+        "Shop": ["shop_id"],
+        "Org": ["org_id"],
+        "Branch": ["branch_id"],
+    }
+}
+
 #: The same cluster with its identity settled, so it merges. Without it the
 #: four members disagree on their natural key -- which the preview reports and
 #: merge refuses.
 KEYED_OP: dict = {
     **BOUNDARY_OP,
-    "vertices": [{**BOUNDARY_OP["vertices"][0], "identity": ["company_id"]}],
+    "vertices": [{**BOUNDARY_OP["vertices"][0], "identity": EACH_OWN_KEY}],
 }
 
 
@@ -61,7 +73,13 @@ def test_no_op_composes_a_disjoint_union(tmp_path: pathlib.Path) -> None:
     assert result.exit_code == 0, result.output
     merged = yaml.safe_load(out.read_text(encoding="utf-8"))
     vertices = merged["schema"]["core_schema"]["vertex_config"]["vertices"]
-    assert {v["name"] for v in vertices} == {"Firm", "Shop", "Org", "Branch"}
+    assert {v["name"] for v in vertices} == {
+        "Firm",
+        "Shop",
+        "Agreement",
+        "Org",
+        "Branch",
+    }
 
 
 def test_a_canonical_map_lets_the_op_name_canonical_classes(
@@ -74,9 +92,9 @@ def test_a_canonical_map_lets_the_op_name_canonical_classes(
     Without the map the same op has no left member to bind to.
     """
     op = dict(BOUNDARY_OP)
-    # The four members disagree on their natural key; naming one resolves it,
-    # which keeps this test about the rename rather than about identity.
-    op["vertices"] = [{**BOUNDARY_OP["vertices"][0], "identity": ["company_id"]}]
+    # The four members disagree on their natural key; settling it keeps this
+    # test about the rename rather than about identity.
+    op["vertices"] = [{**BOUNDARY_OP["vertices"][0], "identity": EACH_OWN_KEY}]
     op_path = _write(tmp_path, "op.yaml", op)
     out = tmp_path / "union.yaml"
     result = CliRunner().invoke(
@@ -98,7 +116,8 @@ def test_a_canonical_map_lets_the_op_name_canonical_classes(
     names = {
         v["name"] for v in merged["schema"]["core_schema"]["vertex_config"]["vertices"]
     }
-    assert names == {"Company"}
+    # `Agreement` is no member; the map renames it on its own.
+    assert names == {"Company", "Contract"}
 
 
 def test_the_example_op_document_composes_from_the_shell(
@@ -126,7 +145,8 @@ def test_the_example_op_document_composes_from_the_shell(
     names = {
         v["name"] for v in merged["schema"]["core_schema"]["vertex_config"]["vertices"]
     }
-    assert names == {"Company"}
+    # `Agreement` is no member; the map renames it on its own.
+    assert names == {"Company", "Contract"}
 
 
 def test_without_a_map_an_unnamed_cluster_is_refused(tmp_path: pathlib.Path) -> None:
@@ -235,7 +255,7 @@ def test_prefix_right_resolves_that_collision(tmp_path: pathlib.Path) -> None:
     names = {
         v["name"] for v in merged["schema"]["core_schema"]["vertex_config"]["vertices"]
     }
-    assert names == {"Firm", "Shop", "r_Firm", "r_Shop"}
+    assert names == {"Firm", "Shop", "Agreement", "r_Firm", "r_Shop", "r_Agreement"}
 
 
 def test_a_malformed_canonical_map_option_is_a_usage_error(

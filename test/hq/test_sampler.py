@@ -310,3 +310,77 @@ def test_source_sample_round_trips_through_json(file_sample):
     api = restored.get("api_orders")
     assert api is not None
     assert api.docs[0]["items"][0]["sku"] == "A-1"
+
+
+# ----------------------------------------------------------------------
+# Bindings: each connector samples through its own connection
+# ----------------------------------------------------------------------
+
+
+def _table_bindings():
+    from graflo.architecture.contract.bindings import Bindings, TableConnector
+
+    users = TableConnector(table_name="users", schema_name="public", name="users_c")
+    orders = TableConnector(table_name="orders", schema_name="public", name="orders_c")
+    return Bindings(
+        connectors=[users, orders],
+        resource_connector=[
+            {"resource": "users", "connector": "users_c"},
+            {"resource": "orders", "connector": "orders_c"},
+        ],
+        connector_connection=[
+            {"connector": "users_c", "conn_proxy": "crm"},
+            {"connector": "orders_c", "conn_proxy": "shop"},
+        ],
+    )
+
+
+def _pg(database: str):
+    from graflo.connections.onto import PostgresConfig
+
+    return PostgresConfig(
+        uri="postgresql://localhost:5432/" + database,
+        username="u",
+        password="p",
+        database=database,
+        schema_name="public",
+    )
+
+
+def test_bindings_sample_each_table_through_its_own_connection(
+    sampler: ResourceSampler, monkeypatch
+) -> None:
+    """Sampling a bindings source used to resolve no connection at all, so every
+    table connector was skipped with a log line and only files survived."""
+    from graflo.connections.provider import (
+        InMemoryConnectionProvider,
+        PostgresGeneralizedConnConfig,
+    )
+
+    bindings = _table_bindings()
+    provider = InMemoryConnectionProvider()
+    for proxy in ("crm", "shop"):
+        provider.register_generalized_config(
+            conn_proxy=proxy, config=PostgresGeneralizedConnConfig(config=_pg(proxy))
+        )
+    provider.bind_from_bindings(bindings=bindings)
+
+    seen: dict[str, str | None] = {}
+
+    def _fake(connector, *, resource_name, config=None):
+        seen[resource_name] = config.database if config else None
+        return ResourceSample(
+            resource_name=resource_name, connector=connector.name, docs=[{"id": 1}]
+        )
+
+    monkeypatch.setattr(sampler, "sample_connector", _fake)
+    sample = sampler.sample_bindings(bindings, connection_provider=provider)
+    assert seen == {"users": "crm", "orders": "shop"}
+    assert {s.resource_name for s in sample.samples} == {"users", "orders"}
+
+
+def test_bindings_with_no_connection_say_why_nothing_was_sampled(
+    sampler: ResourceSampler,
+) -> None:
+    with pytest.raises(ValueError, match=r"users: .*requires a PostgresConfig"):
+        sampler.sample_bindings(_table_bindings())

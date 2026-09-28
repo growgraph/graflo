@@ -1251,7 +1251,10 @@ class PostgresConfig(DBConfig):
         """Convert PostgresConfig to SQLAlchemy connection string.
 
         Returns:
-            SQLAlchemy connection string (e.g., 'postgresql://user:pass@host:port/dbname')
+            SQLAlchemy connection string
+            (e.g., 'postgresql+psycopg2://user:pass@host:port/dbname'). The
+            driver is explicit because SQLAlchemy 2.1 maps a bare
+            ``postgresql://`` to ``psycopg`` (v3), which graflo does not ship.
         """
         from urllib.parse import quote_plus
 
@@ -1272,9 +1275,11 @@ class PostgresConfig(DBConfig):
 
         # Build connection string
         if password_encoded:
-            return f"postgresql://{user_encoded}:{password_encoded}@{host}:{port}/{database_encoded}"
+            return f"postgresql+psycopg2://{user_encoded}:{password_encoded}@{host}:{port}/{database_encoded}"
         else:
-            return f"postgresql://{user_encoded}@{host}:{port}/{database_encoded}"
+            return (
+                f"postgresql+psycopg2://{user_encoded}@{host}:{port}/{database_encoded}"
+            )
 
     @classmethod
     def from_dsn(cls, dsn: str, **overrides: Any) -> "PostgresConfig":

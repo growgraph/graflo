@@ -14,7 +14,11 @@ from typing import Any
 from uuid import uuid4
 
 from graflo.architecture.contract.ingestion import IngestionModel
-from graflo.architecture.graph_types import GraphContainer
+from graflo.architecture.evolution.sanitize import (
+    materialize_physical_schema,
+    with_physical_names,
+)
+from graflo.architecture.graph_types import GraphContainer, Weight
 from graflo.architecture.schema import EdgeRuntime, Schema, SchemaDBAware
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.identity_digest import (
@@ -24,6 +28,7 @@ from graflo.architecture.schema.identity_uuid import (
     ensure_assigned_uuids_on_docs,
     validate_uuid_typed_identity_fields,
 )
+from graflo.architecture.schema.physical_keys import PhysicalKeys
 from graflo.connections.onto import DBConfig
 from graflo.db.manager import ConnectionManager
 from graflo.hq.endpoint_resolve import resolve_edge_endpoints
@@ -44,6 +49,22 @@ _CONCURRENT_UPSERT_SAFE_FLAVORS = frozenset(
 )
 
 
+def _weight_source_fields(weight: Weight) -> list[str]:
+    """Vertex fields a weight reads: ``fields`` then ``map`` keys, deduplicated."""
+    return list(dict.fromkeys([*weight.fields, *weight.map]))
+
+
+def _weight_attributes(weight: Weight, doc: dict[str, Any]) -> dict[str, Any]:
+    """The edge attributes *weight* derives from one vertex document.
+
+    Same projection as the pipeline's edge render: ``fields`` are written under
+    :meth:`Weight.cfield`, ``map`` entries under the attribute they name.
+    """
+    attributes = {weight.cfield(k): doc[k] for k in weight.fields if k in doc}
+    attributes.update({q: doc[k] for k, q in weight.map.items() if k in doc})
+    return attributes
+
+
 class DBWriter:
     """Push :class:`GraphContainer` data to the target graph database.
 
@@ -58,6 +79,13 @@ class DBWriter:
     cached db-aware schema (pre-warm it via :meth:`_db_aware_for` before
     fanning out) and one shared semaphore, so ``max_concurrent`` bounds DB
     operations across every in-flight batch, not per call.
+
+    Naming contract: documents in ``gc`` carry logical property names, and
+    stay that way. Storage, relation and property names the target stores
+    differently come from the profile (completed by
+    :func:`~graflo.architecture.evolution.sanitize.with_physical_names`), and
+    every document and field list is translated to them at the backend call,
+    then translated back for anything the backend returns.
 
     Attributes:
         schema: Schema configuration providing vertex/edge metadata.
@@ -79,6 +107,8 @@ class DBWriter:
         self.max_concurrent = max_concurrent
         self._schema_db_aware: SchemaDBAware | None = None
         self._schema_db_aware_flavor: DBType | None = None
+        self._named_schema: Schema | None = None
+        self._keys: PhysicalKeys | None = None
         self._semaphore: asyncio.Semaphore | None = None
         self._semaphore_loop: asyncio.AbstractEventLoop | None = None
         self._collection_locks: dict[str, asyncio.Lock] = {}
@@ -115,21 +145,34 @@ class DBWriter:
                 )
                 return
 
+            keys = self._keys_for(conn_conf)
+            stored_gc = keys.container(gc, self.schema.core_schema.edge_config)
+            stored_schema = materialize_physical_schema(self._named_for(conn_conf))
+
             def _append() -> None:
                 with ConnectionManager(connection_config=conn_conf) as db:
-                    db.bulk_load_append(bulk_session_id, gc, self.schema)
+                    db.bulk_load_append(bulk_session_id, stored_gc, stored_schema)
 
             await asyncio.to_thread(_append)
             return
 
-        resource = self.ingestion_model.fetch_resource(resource_name)
+        # A container that no resource produced (``migrate_graph`` writes an
+        # exported graph through an empty ingestion model) has no resource to
+        # consult, and needs none: extra weights and endpoint selections are
+        # resource-level ingestion features.
+        resource = (
+            self.ingestion_model.fetch_resource(resource_name)
+            if resource_name is not None or self.ingestion_model.resources
+            else None
+        )
 
         await self._push_vertices(gc, conn_conf)
         # O(blank vertices x edges x documents) of pure Python. Called straight from
         # the event loop it stalled every other coroutine — including the prefetch
         # that is supposed to overlap with the write.
         await asyncio.to_thread(self._resolve_blank_edges, gc, conn_conf)
-        await self._enrich_extra_weights(gc, conn_conf, resource)
+        if resource is not None:
+            await self._enrich_extra_weights(gc, conn_conf, resource)
         await self._push_edges(gc, conn_conf, resource)
 
     def _validate_bulk_resource(self, resource_name: str | None) -> None:
@@ -157,6 +200,7 @@ class DBWriter:
         UUID-typed natural identity fields are validated when present.
         """
         vc = self._db_aware_for(conn_conf).vertex_config
+        keys = self._keys_for(conn_conf)
 
         async def _push_one(vcol: str, data: list[dict]):
             async with AsyncExitStack() as stack:
@@ -184,9 +228,9 @@ class DBWriter:
                             vcol=vcol, data=data, conn_conf=conn_conf
                         )
                         db.upsert_docs_batch(
-                            writable,
+                            keys.vertex_docs(vcol, writable),
                             vc.vertex_dbname(vcol),
-                            vc.identity_fields(vcol),
+                            keys.vertex_fields(vcol, vc.identity_fields(vcol)),
                             update_keys="doc",
                             filter_uniques=True,
                             dry=self.dry,
@@ -357,6 +401,7 @@ class DBWriter:
     ) -> None:
         """Fetch extra-weight vertex data from the DB and attach to edges."""
         vc = self._db_aware_for(conn_conf).vertex_config
+        keys = self._keys_for(conn_conf)
 
         def _sync():
             with ConnectionManager(connection_config=conn_conf) as db:
@@ -373,16 +418,23 @@ class DBWriter:
                             continue
                         weights_per_item = db.fetch_present_documents(
                             class_name=vc.vertex_dbname(weight.name),
-                            batch=gc.vertices[weight.name],
-                            match_keys=index_fields,
-                            keep_keys=weight.properties,
+                            batch=keys.vertex_docs(
+                                weight.name, gc.vertices[weight.name]
+                            ),
+                            match_keys=keys.vertex_fields(weight.name, index_fields),
+                            keep_keys=keys.vertex_fields(
+                                weight.name, _weight_source_fields(weight)
+                            ),
                         )
                         for j, item in enumerate(gc.linear):
-                            weights = weights_per_item[j]
+                            attributes = _weight_attributes(
+                                weight,
+                                keys.logical_vertex_doc(
+                                    weight.name, weights_per_item[j][0]
+                                ),
+                            )
                             for ee in item[edge.edge_id]:
-                                ee.update(
-                                    {weight.cfield(k): v for k, v in weights[0].items()}
-                                )
+                                ee.update(attributes)
 
         await asyncio.to_thread(_sync)
 
@@ -412,6 +464,7 @@ class DBWriter:
         vc = schema_db.vertex_config
         ec = schema_db.edge_config
         core_ec = self.schema.core_schema.edge_config
+        keys = self._keys_for(conn_conf)
 
         def _schema_edge_for(edge_id: tuple) -> Edge | None:
             """Return the schema Edge for a gc edge key, or None if not declared."""
@@ -458,13 +511,16 @@ class DBWriter:
                         merge_props: tuple[str, ...] | None = None
                         mp = ec.relationship_merge_property_names(edge)
                         if mp:
-                            merge_props = tuple(mp)
+                            merge_props = tuple(keys.edge_fields(edge.edge_id, mp))
                         if not self.dry:
                             data, relation_name = self._project_edge_docs_for_db(
                                 docs=edge_docs,
                                 relation=relation,
                                 runtime=runtime,
                                 conn_type=conn_conf.connection_type,
+                            )
+                            data = keys.edge_triples(
+                                edge.edge_id, edge.source, edge.target, data
                             )
                             edge_kw: dict = {
                                 "filter_uniques": False,
@@ -492,8 +548,12 @@ class DBWriter:
                                 source_class=vc.vertex_dbname(edge.source),
                                 target_class=vc.vertex_dbname(edge.target),
                                 relation_name=relation_name,
-                                match_keys_source=source_keys,
-                                match_keys_target=target_keys,
+                                match_keys_source=tuple(
+                                    keys.vertex_fields(edge.source, source_keys)
+                                ),
+                                match_keys_target=tuple(
+                                    keys.vertex_fields(edge.target, target_keys)
+                                ),
                                 **edge_kw,
                             )
 
@@ -530,20 +590,46 @@ class DBWriter:
         source_identity = vertex_config.identity_fields(edge.source)
         target_identity = vertex_config.identity_fields(edge.target)
         policy = match.on_ambiguous or self.ingestion_model.endpoints_on_ambiguous
+        keys = self._keys
+
+        # Resolution reads the database, so it runs on stored names; the
+        # resolved endpoints come back to logical names for the rest of the write.
+        stored_docs = docs
+        if keys is not None and keys.active:
+            stored_docs = [
+                (
+                    keys.vertex_doc(edge.source, doc[0]),
+                    keys.vertex_doc(edge.target, doc[1]),
+                    *doc[2:],
+                )
+                for doc in docs
+            ]
+
+        def _stored(vertex: str, fields: list[str]) -> list[str]:
+            return keys.vertex_fields(vertex, fields) if keys is not None else fields
 
         resolved, stats = resolve_edge_endpoints(
             db,
-            docs,
+            stored_docs,
             source_class=vertex_config.vertex_dbname(edge.source),
             target_class=vertex_config.vertex_dbname(edge.target),
-            source_match_fields=source_fields,
-            target_match_fields=target_fields,
-            source_identity_fields=source_identity,
-            target_identity_fields=target_identity,
+            source_match_fields=_stored(edge.source, source_fields),
+            target_match_fields=_stored(edge.target, target_fields),
+            source_identity_fields=_stored(edge.source, source_identity),
+            target_identity_fields=_stored(edge.target, target_identity),
             resolve_source=list(source_fields) != list(source_identity),
             resolve_target=list(target_fields) != list(target_identity),
             policy=policy,
         )
+        if keys is not None and keys.active:
+            resolved = [
+                (
+                    keys.logical_vertex_doc(edge.source, doc[0]),
+                    keys.logical_vertex_doc(edge.target, doc[1]),
+                    *doc[2:],
+                )
+                for doc in resolved
+            ]
         if stats.has_findings():
             logger.warning(
                 "Edge %s endpoint resolution (policy=%s): %s",
@@ -585,12 +671,32 @@ class DBWriter:
         await stack.enter_async_context(lock)
 
     def _db_aware_for(self, conn_conf: DBConfig) -> SchemaDBAware:
-        """Return a cached :class:`SchemaDBAware` for *conn_conf*'s DB flavor."""
+        """Return a cached :class:`SchemaDBAware` for *conn_conf*'s DB flavor.
+
+        Resolved over the schema with its physical names filled in, so the
+        storage and relation names written to are the ones DDL declared, and
+        the stored property names are known for :meth:`_keys_for`.
+        """
         flavor = conn_conf.connection_type
         if self._schema_db_aware is None or self._schema_db_aware_flavor != flavor:
-            self._schema_db_aware = self.schema.resolve_db_aware(flavor)
+            named = with_physical_names(self.schema, flavor)
+            self._named_schema = named
+            self._keys = PhysicalKeys(named.db_profile)
+            self._schema_db_aware = named.resolve_db_aware(flavor)
             self._schema_db_aware_flavor = flavor
         return self._schema_db_aware
+
+    def _named_for(self, conn_conf: DBConfig) -> Schema:
+        """The schema with physical names filled in for *conn_conf*'s flavor."""
+        self._db_aware_for(conn_conf)
+        assert self._named_schema is not None
+        return self._named_schema
+
+    def _keys_for(self, conn_conf: DBConfig) -> PhysicalKeys:
+        """Logical <-> stored key translation for *conn_conf*'s flavor."""
+        self._db_aware_for(conn_conf)
+        assert self._keys is not None
+        return self._keys
 
     def _project_edge_docs_for_db(
         self,

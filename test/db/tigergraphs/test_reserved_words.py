@@ -58,31 +58,27 @@ def test_vertex_name_sanitization_for_tigergraph(schema_with_reserved_words):
 
 
 def test_edges_sanitization_for_tigergraph(schema_with_incompatible_edges):
-    """Test that vertex names with reserved words are sanitized for TigerGraph."""
+    """Relation names get stored names; endpoint identities are left alone.
+
+    ``package`` is reserved and ``box`` collides with a vertex type name, so
+    both relations are stored under suffixed names. ``contains`` spans vertices
+    with different identities (``id`` and ``name``); that needs no renaming.
+    """
     manifest: GraphManifest = schema_with_incompatible_edges
     sanitizer = Sanitizer(DBType.TIGERGRAPH)
     sanitizer.sanitize_manifest(manifest)
     sanitized_schema = manifest.require_schema()
     ingestion_model = manifest.require_ingestion_model()
 
-    # sanitized_schema.to_yaml_file(
-    #     os.path.join(
-    #         os.path.dirname(__file__),
-    #         "../../config/schema/tigergraph-sanitize-edges.corrected.yaml",
-    #     )
-    # )
-
     ingestion_model.finish_init(sanitized_schema.core_schema)
     last_resource = ingestion_model.fetch_resource(ingestion_model.resources[-1].name)
     assert last_resource.root.actor.descendants[0].actor.t.rename == {
-        "container_name": "id"
+        "container_name": "name"
     }
 
-    assert (
-        sanitized_schema.core_schema.vertex_config.vertices[-1].properties[0].name
-        == "id"
-    )
-    assert sanitized_schema.core_schema.vertex_config.vertices[-1].identity[0] == "id"
+    container = sanitized_schema.core_schema.vertex_config["container"]
+    assert container.identity == ["name"]
+    assert [f.name for f in container.properties] == ["name"]
     edge_a = sanitized_schema.core_schema.edge_config.edges[-2]
     edge_b = sanitized_schema.core_schema.edge_config.edges[-1]
     assert (
@@ -102,7 +98,7 @@ def test_edges_sanitization_for_tigergraph(schema_with_incompatible_edges):
 
 
 def test_manifest_sanitization_for_tigergraph(schema_with_reserved_words):
-    """Test manifest-first sanitization updates schema and ingestion in place."""
+    """Manifest-first sanitization records names in the profile, in place."""
     manifest: GraphManifest = schema_with_reserved_words
 
     sanitizer = Sanitizer(DBType.TIGERGRAPH)

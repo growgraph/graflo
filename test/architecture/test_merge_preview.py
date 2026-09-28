@@ -20,6 +20,7 @@ from graflo.architecture.evolution.ops import (
     CanonicalMap,
     MergeManifestsOp,
     PropertyEquivalence,
+    SideIdentity,
     VertexEquivalence,
 )
 from graflo.architecture.evolution.preview import (
@@ -74,6 +75,18 @@ def _boundary(canonical_map: CanonicalMap, **updates) -> MergeManifestsOp:
     return MergeManifestsOp(**payload)
 
 
+#: Each member keyed on the key it carries. No field is common to all four, so
+#: a single natural key would leave three members completing no key.
+_EACH_OWN_KEY = SideIdentity(
+    members={
+        "Firm": ["company_id"],
+        "Shop": ["shop_id"],
+        "Org": ["org_id"],
+        "Branch": ["branch_id"],
+    }
+)
+
+
 def _keyed(canonical_map: CanonicalMap, **updates) -> MergeManifestsOp:
     """The boundary cluster with its identity settled, so it merges."""
     return MergeManifestsOp(
@@ -81,7 +94,7 @@ def _keyed(canonical_map: CanonicalMap, **updates) -> MergeManifestsOp:
             VertexEquivalence(
                 left=["Firm", "Shop"],
                 right=["Org", "Branch"],
-                identity=["company_id"],
+                identity=_EACH_OWN_KEY,
             )
         ],
         allow_merges=True,
@@ -99,7 +112,13 @@ def test_the_declaration_graph_carries_both_sides_and_their_attributes(
     preview = preview_merge(left, right, _keyed(canonical_map), attempt=False)
 
     classes = {n.id for n in preview.nodes if n.kind == "class"}
-    assert classes == {"left:Firm", "left:Shop", "right:Org", "right:Branch"}
+    assert classes == {
+        "left:Firm",
+        "left:Shop",
+        "left:Agreement",
+        "right:Org",
+        "right:Branch",
+    }
     assert {n.name for n in preview.attributes_of("left:Firm")} == {
         "firm_id",
         "secondary_key",
@@ -183,7 +202,8 @@ def test_a_clean_compose_reports_nothing(left, right, canonical_map):
     preview = preview_merge(left, right, _keyed(canonical_map))
 
     assert preview.outcome.status == "merged"
-    assert preview.outcome.vertices == 1
+    # The cluster, plus the class only the canonical map knows (Contract).
+    assert preview.outcome.vertices == 2
     assert not preview.findings
     assert not preview.blocking
     assert not preview.refused
@@ -479,6 +499,17 @@ def _cases(canonical_map: CanonicalMap) -> dict[str, MergeManifestsOp]:
     )
     return {
         "clean": _keyed(canonical_map),
+        "uncovered-key": MergeManifestsOp(
+            vertex_equivalences=[
+                VertexEquivalence(
+                    left=["Firm", "Shop"],
+                    right=["Org", "Branch"],
+                    identity=["company_id"],
+                )
+            ],
+            allow_merges=True,
+            canonical_maps={"left": canonical_map},
+        ),
         "unnamed": MergeManifestsOp(
             vertex_equivalences=[
                 VertexEquivalence(left=["Firm", "Shop"], right=["Org", "Branch"])

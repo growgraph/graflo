@@ -33,8 +33,10 @@ four groups:
 | Read | `fetch_docs`, `fetch_edges`, `fetch_present_documents`, `aggregate`, `keep_absent_documents` |
 
 Several more have working defaults you only override for capability or speed:
-`resolve_vertices` (generic, built on `fetch_docs`), `graph_neighbors` (generic
-BFS via `db/traversal.py`), `bulk_load_begin` / `_append` / `_finalize` (raise
+`resolve_vertices` (generic, built on `fetch_docs`), `_graph_neighbors` (generic
+BFS via `db/traversal.py`; override it, not the public `graph_neighbors`, which
+translates logical property names to the stored ones and back around it),
+`bulk_load_begin` / `_append` / `_finalize` (raise
 `UnsupportedBulkLoad`), `introspect_graph_schema`, and `fetch_all_docs` /
 `fetch_all_edges`.
 

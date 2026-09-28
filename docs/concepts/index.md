@@ -218,7 +218,7 @@ GraFlo targets the LPG model:
 
 ### Schema and ingestion
 
-The `Schema` is the single source of truth for **graph structure** (not for ingestion transforms). **Secondary indexes** and physical naming live under **`schema.db_profile`** — see [Backend indexes](schema/backend_indexes.md). Resources and transforms are part of `IngestionModel`, not `Schema`.
+The `Schema` is the single source of truth for **graph structure** (not for ingestion transforms). **Secondary indexes** and physical naming — storage, relation and property names a backend stores differently — live under **`schema.db_profile`** — see [Backend indexes](schema/backend_indexes.md) and [Manifest-level sanitization](architecture/core_components.md#manifest-level-sanitization). Resources and transforms are part of `IngestionModel`, not `Schema`.
 
 `GraphEngine` orchestrates schema/manifest inference, schema definition, connector creation, and data ingestion. For PostgreSQL workflows, `infer_manifest(...)` returns a full manifest contract and runs target-`DBType` **`Sanitizer`** before returning.
 

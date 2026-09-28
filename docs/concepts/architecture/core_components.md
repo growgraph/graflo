@@ -29,14 +29,47 @@ The `IngestionModel` is the source of truth for ingestion runtime behavior. It e
 
 ### Manifest-level sanitization
 
-When targeting stricter engines (notably TigerGraph), identifier normalization is handled at the
-manifest boundary:
+Stricter engines (notably TigerGraph) reject some identifiers: reserved words, characters such as
+`-` or `.`, a `gsql_sys_` prefix. A name the database cannot store is a **physical** fact, so it is
+resolved in **`schema.db_profile`** and never by renaming the logical model. The profile holds
+four kinds of stored name, each keyed by the logical one:
 
-- Implementation lives in **`graflo.architecture.evolution`** as **`SanitizeOp`** /
-  **`apply_sanitize`** (reserved words, `DatabaseProfile` storage names, TigerGraph per-relation
-  identity alignment, and coordinated ingestion rewrites).
-- **`Sanitizer.sanitize_manifest(manifest)`** is the ergonomic wrapper: it builds the evolution op
-  list for the configured **`DBType`** and applies it in place (same public API as before).
+| Profile field | Stores |
+|---------------|--------|
+| `vertex_storage_names` | vertex collection / label / tag names |
+| `edge_specs[].relation_name` | relation (edge type) names |
+| `vertex_property_names` | vertex attribute names, per vertex |
+| `edge_specs[].property_names` | edge attribute names, per edge (base variant) |
+
+The logical schema and the ingestion model keep their names, so documents stay keyed by logical
+property names end to end. **`DBWriter`** translates every document and field list to stored names
+at the backend call and translates back what it reads; DDL is generated from the schema with the
+stored names folded in. With nothing renamed, both are no-ops.
+
+Reads follow the same split. The schema-aware reads, **`Connection.graph_neighbors`** and
+**`Connection.traverse`**, take and return logical names: anchor keys and edge filters are
+translated in, and vertex documents and edge rows are translated back out, including an edge read
+through its declared inverse name. Backends implement **`_graph_neighbors`**, which sees stored
+names only. The storage-addressed methods (`fetch_docs`, `fetch_edges`, `fetch_all_*`, …) take a
+storage name and return the stored names as they are: they are the database's view, not the
+schema's.
+
+- Implementation lives in **`graflo.architecture.evolution.sanitize`**: `assign_physical_names`
+  computes stored names, deduplicated within each database namespace (a sanitized name never lands
+  on a declared one; vertex and relation names never collide). `with_physical_names` returns the
+  schema with a complete profile, and `physical_schema` the schema as the database stores it.
+- **`SanitizeOp`** / **`apply_sanitize`** record the stored names in the profile, in place and
+  idempotently. **`Sanitizer.sanitize_manifest(manifest)`** is the ergonomic wrapper: it builds the
+  evolution op list for the configured **`DBType`** and applies it.
+- Sanitizing is optional for correctness: **`GraphEngine.define_schema`**, ingestion, migration
+  and the schema-aware reads fill in any stored name the profile lacks, and names already in the
+  profile win. Filling in copies the profile only, and is skipped outright for a flavor with no
+  naming rules.
+  Sanitize to **record** the names in the manifest, so they stay stable as the schema evolves and
+  are visible to anyone reading the database directly.
+- Edges stored as one TigerGraph type declare one attribute list: the union of their properties.
+  Edges that would give one type two discriminators (different edge identities) are refused at
+  define time; give them distinct relations or `relation_name` overrides.
 - **`GraphEngine.infer_manifest(...)`** runs **`Sanitizer`** on the assembled **`GraphManifest`**
   before returning, so PostgreSQL inference through the engine stays target-flavor-safe.
 - **`SQLInferenceManager`** (`infer_artifacts`, **`infer_complete_schema`**, …) does **not**

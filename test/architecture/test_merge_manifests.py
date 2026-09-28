@@ -746,8 +746,8 @@ def test_identity_alignments_apply_inside_compose() -> None:
             AlignmentAttribute(
                 name="match_key",
                 sources={
-                    "r_a": DerivationSpec(input=["shared_raw"]),
-                    "r_b": DerivationSpec(input=["shared_raw"]),
+                    "r_a": DerivationSpec(input=["shared_raw"], foo="normalized_key"),
+                    "r_b": DerivationSpec(input=["shared_raw"], foo="normalized_key"),
                 },
             )
         ],
@@ -847,7 +847,16 @@ def test_nary_cluster_composes_schema_and_ingestion() -> None:
                 left=["Company", "Shop"],
                 right=["Org", "Branch"],
                 into="Company",
-                identity=["company_id"],
+                # Each member keys on the key it carries: no field is common to
+                # all four, so a single natural key would drop three of them.
+                identity=SideIdentity(
+                    members={
+                        "Company": ["company_id"],
+                        "Shop": ["shop_id"],
+                        "Org": ["org_id"],
+                        "Branch": ["branch_id"],
+                    }
+                ),
             )
         ],
         allow_merges=True,
@@ -859,16 +868,25 @@ def test_nary_cluster_composes_schema_and_ingestion() -> None:
     company = next(
         v for v in schema.core_schema.vertex_config.vertices if v.name == "Company"
     )
-    assert company.identity == ["company_id"]
+    assert company.identity == ["id"]
+    assert company.identity_funnel is not None
+    assert [b.fields for b in company.identity_funnel.branches] == [
+        ["company_id"],
+        ["shop_id"],
+        ["org_id"],
+        ["branch_id"],
+    ]
     assert {f.name for f in company.properties} == {
         "company_id",
         "shop_id",
         "org_id",
         "branch_id",
         "shared",
+        "id",
     }
-    # `by_company_id` is skipped: it would restate the new primary as a secondary.
+    # Every member's own key stays addressable beside the synthetic primary.
     assert {s.name for s in company.secondary_identities} == {
+        "by_company_id",
         "by_shop_id",
         "by_org_id",
         "by_branch_id",
@@ -1288,8 +1306,20 @@ def test_a_merge_chain_through_an_occupied_into_composes() -> None:
     )
     op = MergeManifestsOp(
         vertex_equivalences=[
-            VertexEquivalence(left=["X", "X2"], right="Y", into="Z", identity=["x_id"]),
-            VertexEquivalence(left="Z", right="W", into="Q", identity=["z_id"]),
+            VertexEquivalence(
+                left=["X", "X2"],
+                right="Y",
+                into="Z",
+                identity=SideIdentity(
+                    members={"X": ["x_id"], "X2": ["x2_id"]}, right=["y_id"]
+                ),
+            ),
+            VertexEquivalence(
+                left="Z",
+                right="W",
+                into="Q",
+                identity=SideIdentity(left=["z_id"], right=["w_id"]),
+            ),
         ],
         allow_merges=True,
         allow_observation_fusion=True,
@@ -1298,8 +1328,9 @@ def test_a_merge_chain_through_an_occupied_into_composes() -> None:
     assert out.graph_schema is not None
     vc = out.graph_schema.core_schema.vertex_config
     assert vc.vertex_set == {"Z", "Q"}
-    assert set(vc.property_names("Q")) == {"z_id", "w_id"}
-    assert set(vc.property_names("Z")) == {"x_id", "x2_id", "y_id"}
+    # `id` is the funnel's synthetic key.
+    assert set(vc.property_names("Q")) == {"z_id", "w_id", "id"}
+    assert set(vc.property_names("Z")) == {"x_id", "x2_id", "y_id", "id"}
 
 
 def test_role_separated_members_compose_without_the_fusion_flag() -> None:
@@ -1338,7 +1369,14 @@ def test_role_separated_members_compose_without_the_fusion_flag() -> None:
     )
     op = MergeManifestsOp(
         vertex_equivalences=[
-            VertexEquivalence(left=["X", "X2"], right="Y", into="Z", identity=["x_id"])
+            VertexEquivalence(
+                left=["X", "X2"],
+                right="Y",
+                into="Z",
+                identity=SideIdentity(
+                    members={"X": ["x_id"], "X2": ["x2_id"]}, right=["y_id"]
+                ),
+            )
         ],
         allow_merges=True,
     )

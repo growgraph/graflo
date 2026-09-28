@@ -215,3 +215,50 @@ def test_two_relations_stored_as_one_type_must_agree_on_directed(
     )
     with pytest.raises(ValueError, match="both directed and undirected"):
         captured_gsql(schema)
+
+
+def test_an_edge_type_declares_every_attribute_its_edges_have(captured_gsql):
+    """GSQL declares attributes once per type; pairs lacking one store its default."""
+    schema = _schema(
+        extra_edges=[
+            {
+                "source": "user",
+                "target": "comment",
+                "relation": "wrote",
+                "properties": ["at"],
+            }
+        ]
+    )
+
+    gsql = captured_gsql(schema)
+
+    assert "FROM user, TO post" in gsql
+    assert "FROM user, TO comment" in gsql
+    assert "at STRING" in gsql
+
+
+def test_edges_stored_as_one_type_must_agree_on_the_discriminator(captured_gsql):
+    schema = _schema(
+        extra_edges=[
+            {
+                "source": "user",
+                "target": "comment",
+                "relation": "wrote",
+                "properties": ["at"],
+                "identities": [["source", "target", "at"]],
+            }
+        ]
+    )
+
+    with pytest.raises(ValueError, match="different discriminators"):
+        captured_gsql(schema)
+
+
+def test_defining_an_edge_leaves_the_callers_edge_alone():
+    edge = Edge(source="user", target="post", relation="wrote", identities=[["kind"]])
+
+    SchemaDdlBuilder(_bare_tg_conn())._get_edge_add_statement(
+        edge, relation_name="wrote", source_vertex="user", target_vertex="post"
+    )
+
+    assert edge.property_names == []

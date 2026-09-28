@@ -12,6 +12,7 @@ from graflo.architecture.evolution import (
     apply_rename_vertex_properties,
     apply_sanitize,
 )
+from graflo.architecture.graph_types import Index
 from graflo.architecture.schema.core import CoreSchema
 from graflo.architecture.schema.document import Schema
 from graflo.architecture.schema.edge import Edge, EdgeConfig
@@ -330,7 +331,35 @@ def test_rename_vertex_fields_updates_edge_actor_vertex_weights_in_pipeline():
     pipeline = manifest.require_ingestion_model().resources[0].pipeline
     edge_step = pipeline[1]
     vw = edge_step["vertex_weights"][0]
-    assert vw["fields"] == ["user_name"]
+    # The edge attribute belongs to the edge: it keeps its name, read from the
+    # renamed vertex field.
+    assert vw["fields"] == []
+    assert vw["map"] == {"user_name": "users@user-name"}
+
+
+def test_rename_vertex_fields_leaves_edge_indexes_alone():
+    """An edge index names edge attributes, which a vertex rename does not rename."""
+    from graflo.architecture.schema.database_features import EdgePhysicalSpec
+
+    manifest = _build_manifest(
+        user_properties=[Field(name="id"), Field(name="since")],
+    )
+    schema = manifest.require_schema()
+    schema.core_schema.edge_config.edges[0].properties = [Field(name="since")]
+    schema.db_profile.edge_specs = [
+        EdgePhysicalSpec(
+            source="users", target="orders", indexes=[Index(fields=["since"])]
+        )
+    ]
+    schema.finish_init()
+
+    apply_rename_vertex_properties(
+        manifest,
+        RenameVertexPropertiesOp(renames={"users": {"since": "joined"}}),
+    )
+
+    spec = manifest.require_schema().db_profile.edge_specs[0]
+    assert spec.indexes[0].fields == ["since"]
 
 
 # -- SanitizeOp end-to-end ---------------------------------------------------
@@ -347,11 +376,12 @@ def test_apply_sanitize_no_reserved_words_is_noop():
     assert pipeline_before == pipeline_after
 
 
-def test_apply_sanitize_with_explicit_reserved_words_renames_field():
-    """Explicit reserved word triggers vertex field rename + `from:` injection."""
+def test_apply_sanitize_with_explicit_reserved_words_records_physical_name():
+    """A reserved property gets a stored name in the profile, and only there."""
     manifest = _build_manifest(
         user_properties=[Field(name="id"), Field(name="package")],
     )
+    pipeline_before = manifest.require_ingestion_model().resources[0].pipeline
 
     apply_sanitize(
         manifest,
@@ -359,13 +389,13 @@ def test_apply_sanitize_with_explicit_reserved_words_renames_field():
     )
 
     schema = manifest.require_schema()
+    assert schema.db_profile.vertex_property_names == {
+        "users": {"package": "package_attr"}
+    }
     user_props = [f.name for f in schema.core_schema.vertex_config["users"].properties]
-    assert "package" not in user_props
-    assert "package_attr" in user_props
-
-    pipeline = manifest.require_ingestion_model().resources[0].pipeline
-    step = _vertex_actor_step(pipeline)
-    assert step["from"] == {"package_attr": "package"}
+    assert user_props == ["id", "package"]
+    pipeline_after = manifest.require_ingestion_model().resources[0].pipeline
+    assert pipeline_after == pipeline_before
 
 
 def test_apply_sanitize_preserves_call_transform_without_rename():
@@ -409,47 +439,45 @@ def test_apply_evolution_dispatches_sanitize_op():
     )
 
     schema = out.require_schema()
+    assert schema.db_profile.vertex_property_name("users", "user-name") == (
+        "user-name_attr"
+    )
     user_props = [f.name for f in schema.core_schema.vertex_config["users"].properties]
-    assert "user-name_attr" in user_props
+    assert "user-name" in user_props
 
 
 # -- regression: postgres-style flow with hyphenated columns -----------------
 
 
-def test_sanitizer_propagates_hyphenated_field_rename_to_actors_for_tigergraph():
-    """Regression for the bug fix: hyphenated columns must reach actors as `from:`.
+def test_sanitizer_leaves_logical_names_and_pipeline_alone_for_tigergraph():
+    """A name TigerGraph cannot store is a physical fact: the logical model keeps it.
 
-    A vertex property whose name is *not* TigerGraph-reserved but whose name is
-    illegal as an attribute identifier (hyphen) gets sanitized to an underscore
-    form. The `VertexActor.from` must then reflect the rename so the doc, which
-    still uses the hyphenated column, lands on the renamed property.
+    Documents still arrive keyed ``package``; the writer maps them onto the
+    stored attribute, so no ``from:`` has to be injected into the pipeline.
     """
     manifest = _build_manifest(
         user_properties=[
             Field(name="id"),
-            # 'package' is a TigerGraph reserved word -> will be sanitized
+            # 'package' is a TigerGraph reserved word
             Field(name="package"),
         ],
     )
+    pipeline_before = manifest.require_ingestion_model().resources[0].pipeline
 
     Sanitizer(DBType.TIGERGRAPH).sanitize_manifest(manifest)
 
     schema = manifest.require_schema()
-    user_props = [f.name for f in schema.core_schema.vertex_config["users"].properties]
-    assert "package" not in user_props
-    assert any(name.lower().startswith("package_attr") for name in user_props)
-
-    pipeline = manifest.require_ingestion_model().resources[0].pipeline
-    step = _vertex_actor_step(pipeline)
-    assert step.get("from"), (
-        "Sanitizer must inject `from:` covering the renamed field. "
-        f"got pipeline={pipeline}"
+    assert schema.db_profile.db_flavor == DBType.TIGERGRAPH
+    assert schema.db_profile.vertex_property_name("users", "package") == (
+        "package_attr"
     )
-    assert "package" in step["from"].values()
+    user_props = [f.name for f in schema.core_schema.vertex_config["users"].properties]
+    assert "package" in user_props
+    assert manifest.require_ingestion_model().resources[0].pipeline == pipeline_before
 
 
 def test_sanitize_preserves_merged_duplicate_vertex_fields():
-    """Duplicate logical fields are merged before sanitize rewrite."""
+    """Duplicate logical fields are merged, then given one stored name."""
     manifest = _build_manifest(
         user_properties=[
             Field(name="id"),
@@ -465,10 +493,11 @@ def test_sanitize_preserves_merged_duplicate_vertex_fields():
 
     schema = manifest.require_schema()
     user_props = [f.name for f in schema.core_schema.vertex_config["users"].properties]
-    assert user_props.count("package_attr") == 1
+    assert user_props.count("package") == 1
+    assert schema.db_profile.vertex_property_map("users") == {"package": "package_attr"}
 
 
-# -- normalize_relation_identity (TigerGraph identity normalization) ----------
+# -- relations whose endpoints have different identities ---------------------
 
 
 def _build_multi_relation_manifest(
@@ -479,8 +508,7 @@ def _build_multi_relation_manifest(
 ) -> GraphManifest:
     """Manifest with three source vertices sharing the same relation 'owns'.
 
-    UserA has a diverging identity that will be normalized to match the
-    majority identity used by UserB and UserC (["id"]).
+    UserA's identity (``source_id``) differs from UserB's and UserC's (``id``).
 
     Vertex layout:
         UserA --(owns)--> Target
@@ -547,111 +575,26 @@ def _build_multi_relation_manifest(
     return manifest
 
 
-def test_identity_normalization_preserves_field_type():
-    """Renamed identity field keeps its original type after normalization.
+def test_sanitize_leaves_identities_alone_across_a_shared_relation():
+    """Vertices on one relation keep their own identities.
 
-    UserA.source_id (INT) is renamed to 'id' to match the majority identity.
-    The resulting field must still carry type=INT, not the default None.
-    """
-    manifest = _build_multi_relation_manifest()
-
-    apply_sanitize(manifest, SanitizeOp(db_flavor=DBType.TIGERGRAPH))
-
-    schema = manifest.require_schema()
-    user_a = schema.core_schema.vertex_config["UserA"]
-    props_by_name = {f.name: f for f in user_a.properties}
-
-    assert "source_id" not in props_by_name, "old field name must be removed"
-    assert "id" in props_by_name, "new field name must be present"
-    assert props_by_name["id"].type == FieldType.INT, (
-        "type must be carried over from source_id (INT), not silently set to None"
-    )
-    assert user_a.identity == ["id"]
-
-
-def test_identity_normalization_no_stale_field_on_overlap():
-    """When old and new identity sets overlap, no stale field is left behind.
-
-    UserA identity ("a", "b") is normalized to ("b", "c").
-    per_vertex = {"a": "b", "b": "c"}.  The old set-membership removal logic
-    kept "b" because it appears in new_fields; the rename-walk approach must
-    remove it by renaming it to "c".
+    TigerGraph edge DDL (``FROM A, TO B``) names no identity field, and the writer
+    passes each edge's own source and target keys, so nothing needs a relation's
+    endpoints to share identity names. Renaming them was also lossy: identities of
+    different lengths gained untyped fields no document fills.
     """
     manifest = _build_multi_relation_manifest(
-        vertex_a_properties=[
-            Field(name="a", type=FieldType.INT),
-            Field(name="b", type=FieldType.STRING),
-            Field(name="extra"),
-        ],
-        vertex_a_identity=["a", "b"],
-    )
-    # Override UserB/UserC to use identity ("b", "c") so most_popular = ("b","c")
-    schema = manifest.require_schema()
-    vc = schema.core_schema.vertex_config
-    for vname in ("UserB", "UserC"):
-        v = vc[vname]
-        if "c" not in v.property_names:
-            v.properties.append(Field(name="c", type=FieldType.INT))
-        v.identity = ["b", "c"]
-
-    apply_sanitize(manifest, SanitizeOp(db_flavor=DBType.TIGERGRAPH))
-
-    schema = manifest.require_schema()
-    user_a = schema.core_schema.vertex_config["UserA"]
-    prop_names = user_a.property_names
-
-    # "a" renamed to "b", "b" renamed to "c" — only the post-rename names remain
-    assert "a" not in prop_names, "'a' must be gone after rename to 'b'"
-    assert prop_names.count("b") == 1, "'b' must appear exactly once"
-    assert "c" in prop_names, "'c' must be present after rename from 'b'"
-    assert user_a.identity == ["b", "c"]
-
-    # Types must be preserved: original "a"(INT)→"b", original "b"(STRING)→"c"
-    props_by_name = {f.name: f for f in user_a.properties}
-    assert props_by_name["b"].type == FieldType.INT
-    assert props_by_name["c"].type == FieldType.STRING
-
-
-def test_identity_normalization_updates_db_profile_vertex_indexes():
-    """vertex_indexes referencing the renamed field are rewritten in DatabaseProfile."""
-    from graflo.architecture.graph_types import Index
-
-    manifest = _build_multi_relation_manifest(
-        vertex_indexes={
-            "UserA": [Index(fields=["source_id", "extra_field"])],
-        },
-    )
-
-    apply_sanitize(manifest, SanitizeOp(db_flavor=DBType.TIGERGRAPH))
-
-    schema = manifest.require_schema()
-    indexes = schema.db_profile.vertex_indexes.get("UserA", [])
-    assert indexes, "UserA vertex_indexes must still exist"
-    assert indexes[0].fields == ["id", "extra_field"], (
-        "index field 'source_id' must be rewritten to 'id'; 'extra_field' unchanged"
-    )
-
-
-def test_identity_normalization_leaves_non_identity_properties_untouched():
-    """Properties not involved in identity normalization keep name and type."""
-    manifest = _build_multi_relation_manifest(
-        vertex_a_properties=[
-            Field(name="source_id", type=FieldType.INT),
-            Field(name="email", type=FieldType.STRING),
-            Field(name="score", type=FieldType.FLOAT),
-        ],
+        vertex_indexes={"UserA": [Index(fields=["source_id"])]},
     )
 
     apply_sanitize(manifest, SanitizeOp(db_flavor=DBType.TIGERGRAPH))
 
     schema = manifest.require_schema()
     user_a = schema.core_schema.vertex_config["UserA"]
-    props_by_name = {f.name: f for f in user_a.properties}
-
-    assert "email" in props_by_name
-    assert props_by_name["email"].type == FieldType.STRING
-    assert "score" in props_by_name
-    assert props_by_name["score"].type == FieldType.FLOAT
+    assert user_a.identity == ["source_id"]
+    assert {f.name: f.type for f in user_a.properties} == {"source_id": FieldType.INT}
+    assert schema.db_profile.vertex_indexes["UserA"][0].fields == ["source_id"]
+    assert schema.db_profile.vertex_property_names == {}
 
 
 # -- TigerGraph identifier sanitization (invalid chars, prefixes, reserved) --
@@ -786,7 +729,7 @@ def test_apply_sanitize_tigergraph_edge_relation_name_invalid_chars():
     )
 
 
-def test_apply_sanitize_tigergraph_field_invalid_chars_propagates_to_ingestion():
+def test_apply_sanitize_tigergraph_field_invalid_chars_records_stored_name():
     manifest = _build_tigergraph_manifest(
         vertices=[
             Vertex(
@@ -802,14 +745,13 @@ def test_apply_sanitize_tigergraph_field_invalid_chars_propagates_to_ingestion()
     apply_sanitize(manifest, SanitizeOp(db_flavor=DBType.TIGERGRAPH))
 
     schema = manifest.require_schema()
+    assert schema.db_profile.vertex_property_map("users") == {"user-name": "user__name"}
     user_props = [f.name for f in schema.core_schema.vertex_config["users"].properties]
-    assert "user__name" in user_props
-    assert "user-name" not in user_props
-    assert "user_name" not in user_props
+    assert user_props == ["id", "user-name"]
 
     pipeline = manifest.require_ingestion_model().resources[0].pipeline
     step = _vertex_actor_step(pipeline)
-    assert step["from"] == {"user__name": "user-name"}
+    assert "from" not in step
 
 
 def test_apply_sanitize_tigergraph_forbidden_prefix():
