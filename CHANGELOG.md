@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [Unreleased]
+## [1.14.0]
 
 ### Added
 
@@ -76,6 +76,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- PostgreSQL engines work under SQLAlchemy 2.1, which maps a bare `postgresql://` to `psycopg`
+  (v3) rather than the `psycopg2` graflo ships. `PostgresConfig.to_sqlalchemy_connection_string()`
+  now returns `postgresql+psycopg2://…`, and `SQLDataSource` pins that driver for a bare
+  `postgresql://` connection string; an explicitly named driver is left alone.
 - Merge refuses a merged key some member cannot complete (`MergeIdentityError`, check
   `identity coverage`) instead of dropping that member's records. Example 19's
   `boundary_op.yaml` had this defect.

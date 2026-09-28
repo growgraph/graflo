@@ -24,7 +24,7 @@ def test_from_dsn_yields_usable_sqlalchemy_connection_string():
     config = PostgresConfig.from_dsn("postgresql://alice:secret@db.example:5433/shop")
     assert (
         config.to_sqlalchemy_connection_string()
-        == "postgresql://alice:secret@db.example:5433/shop"
+        == "postgresql+psycopg2://alice:secret@db.example:5433/shop"
     )
 
 
