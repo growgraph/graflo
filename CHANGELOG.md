@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Contributor License Agreement.** Outside contributors accept `CLA.md` once, by commenting on a
+  pull request. A `cla` status check (`.github/workflows/cla.yml`) tracks acceptances; people with
+  write access and bots are exempt. The contributing guide and a pull request template explain it.
 - `graflo.util.transform.normalized_key`: ungated counterpart of `gated_normalized_key`, whose
   `prefix` now defaults to `""`.
 - Example 19: a class renamed by the canonical map alone, a `lookup_only` reference resource,
