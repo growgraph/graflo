@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from itertools import pairwise
 from typing import Any, Literal
 
 from graflo.architecture.contract.bindings import Bindings
 from graflo.architecture.contract.ingestion import IngestionModel
+from graflo.architecture.contract.ingestion.resource import step_produces_vertices
+from graflo.architecture.contract.ingestion.steps.normalize import (
+    normalize_actor_step,
+)
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.contract.provenance import ManifestMetadata
 from graflo.architecture.graph_types import EdgeId
@@ -564,16 +568,24 @@ def _composed_identity(
     *,
     has_alignment: bool,
 ) -> tuple[list[str] | IdentityFunnel, bool]:
-    """The merged vertex's identity, and whether it was explicitly declared.
+    """The merged vertex's identity, and whether the cluster is re-keyed.
 
-    Undeclared and every plain-natural-key member agrees (or fewer than two
-    are plain): carries the merged composite through, same as an ordinary
+    *Re-keyed* means the merged class no longer upserts on its members' own
+    keys: an ``identity`` declared on the equivalence, or
+    ``PropertyEquivalence(identity=True)`` flags over members that disagree.
+    A re-keyed identity must be one every member can complete
+    (:func:`_check_identity_coverage`), and the members' pre-merge keys are
+    demoted afterwards.
+
+    Otherwise: when every plain-natural-key member agrees (or fewer than two
+    are plain), the merged composite is carried through, same as an ordinary
     :func:`~graflo.architecture.evolution.merge_core.merge_vertex_models`
-    merge. Undeclared, members disagree, and nothing resolves it (no
-    ``identity``, no ``PropertyEquivalence.identity`` flag, no
-    ``identity_alignments`` entry for this class): raises
-    :class:`MergeIdentityError` rather than silently keying on the union of
-    both field-sets.
+    merge, with any flagged field added. Flags over members that disagree name
+    the only field-set they share, so those fields alone become the key --
+    appending them to the union of the disagreeing keys would build one no
+    record carries. Disagreement with no flag, no declaration and no
+    ``identity_alignments`` entry raises :class:`MergeIdentityError`. An
+    aligned class is returned as-is: the alignment replaces its identity.
     """
     declared = cluster.declaration.identity
     if declared is not None:
@@ -583,16 +595,14 @@ def _composed_identity(
             return side_identity_to_funnel(cluster, member_property_names), True
         return list(declared), True
 
-    identity_out = list(merged.identity)
-    seen = set(identity_out)
-    flagged = False
+    flagged: list[str] = []
     for pe in cluster.declaration.properties:
-        if pe.identity and pe.into not in seen:
-            identity_out.append(pe.into)
-            seen.add(pe.into)
-            flagged = True
+        if pe.identity and pe.into not in flagged:
+            flagged.append(pe.into)
 
-    if flagged or has_alignment:
+    identity_out = list(merged.identity)
+    identity_out.extend(name for name in flagged if name not in identity_out)
+    if has_alignment:
         return identity_out, False
 
     plain_members: list[tuple[Side, str, tuple[str, ...]]] = [
@@ -602,22 +612,72 @@ def _composed_identity(
         if (fields := member_keys.get((side, member))) is not None
     ]
     plain_keys = {frozenset(fields) for _side, _member, fields in plain_members}
-    if len(plain_keys) > 1:
-        detail = "; ".join(
-            f"{side}:{member}={list(fields)}" for side, member, fields in plain_members
-        )
-        raise MergeIdentityError(
-            f"merge_manifests: merged vertex {cluster.into!r} has members "
-            f"that disagree on identity ({detail}) and nothing resolves it. "
-            "Declare `identity` on the VertexEquivalence, flag a "
-            "PropertyEquivalence(identity=True), or add an "
-            "identity_alignments entry for this class.",
-            subjects=(
-                subject("merged", cluster.into),
-                *(subject(side, member) for side, member, _f in plain_members),
-            ),
-        )
-    return identity_out, False
+    if len(plain_keys) <= 1:
+        return identity_out, False
+    if flagged:
+        return flagged, True
+    detail = "; ".join(
+        f"{side}:{member}={list(fields)}" for side, member, fields in plain_members
+    )
+    raise MergeIdentityError(
+        f"merge_manifests: merged vertex {cluster.into!r} has members "
+        f"that disagree on identity ({detail}) and nothing resolves it. "
+        "Declare `identity` on the VertexEquivalence, flag the "
+        "PropertyEquivalence every member carries with identity=True, or add "
+        "an identity_alignments entry for this class.",
+        subjects=(
+            subject("merged", cluster.into),
+            *(subject(side, member) for side, member, _f in plain_members),
+        ),
+    )
+
+
+def _check_identity_coverage(
+    cluster: Cluster,
+    identity: list[str] | IdentityFunnel,
+    member_property_names: dict[tuple[Side, str], set[str]],
+) -> None:
+    """Refuse a re-keyed identity some member cannot complete.
+
+    A record keys on the merged identity only if it carries every field of it
+    (a natural key) or of one branch (a funnel). A member that declares none
+    of them contributes records that complete no key and are dropped at
+    ingestion -- the whole member, silently. Checked in canonical names, after
+    the cluster's and the canonical maps' property renames.
+    """
+    branches = (
+        [set(branch.required_fields) for branch in identity.branches]
+        if isinstance(identity, IdentityFunnel)
+        else [set(identity)]
+    )
+    for side in ("left", "right"):
+        for member in cluster.members(side):
+            declared = member_property_names.get((side, member))
+            if declared is None or any(branch <= declared for branch in branches):
+                continue
+            if isinstance(identity, IdentityFunnel):
+                detail = (
+                    "completes none of the funnel branches "
+                    f"{[sorted(branch) for branch in branches]}"
+                )
+            else:
+                detail = f"does not carry {sorted(branches[0] - declared)}"
+            raise MergeIdentityError(
+                f"merge_manifests: merged vertex {cluster.into!r} is keyed on "
+                f"{_describe_identity(identity)}, but {side}:{member} {detail}, "
+                "so every one of its records would complete no key and be "
+                "dropped. Map the field onto the member with a "
+                "PropertyEquivalence, or key each member on what it carries "
+                "(a SideIdentity, or a funnel with a branch per member).",
+                check="identity coverage",
+                subjects=(subject("merged", cluster.into), subject(side, member)),
+            )
+
+
+def _describe_identity(identity: list[str] | IdentityFunnel) -> str:
+    if isinstance(identity, IdentityFunnel):
+        return f"a funnel over {[b.required_fields for b in identity.branches]}"
+    return repr(list(identity))
 
 
 def _apply_composed_identity(
@@ -648,37 +708,203 @@ def _apply_composed_identity(
     )
 
 
-def _cluster_retire_ops(
-    cluster: Cluster,
+def _retire_member_keys(
+    manifest: GraphManifest,
+    index: ClusterIndex,
     member_keys: dict[tuple[Side, str], tuple[str, ...] | None],
-    primary_fields: frozenset[str],
-) -> list[ManifestOp]:
-    """Demote each member's pre-merge plain identity key to a lookup-only secondary.
+    rekeyed: Collection[str],
+) -> dict[tuple[Side, str], str]:
+    """Demote each re-keyed member's pre-merge key to a lookup-only secondary.
 
-    Only meaningful when the cluster declared an ``identity`` (nothing to
-    retire otherwise) and ``retire == "demote"`` (the default). A member key
-    that happens to equal the new merged identity's field-set is skipped --
-    demoting it would restate the primary as a secondary, which
-    ``Vertex.set_identity`` rejects outright.
+    Runs once the merged class has its **final** identity -- after any
+    identity alignment -- because that is the primary a demoted key must not
+    restate. Deciding against an intermediate one loses a key: a declared
+    ``[x_id]`` skips ``x_id`` as equal to the primary, then an alignment
+    replaces the primary and nothing keeps ``x_id`` addressable.
+
+    Only for clusters in *rekeyed* whose ``retire`` is ``demote`` (the
+    default). A field-set already declared as a secondary -- by a member, or by
+    the alignment's ``secondary_identities`` -- keeps that declaration and its
+    name. The first member to declare a field-set fixes its column order.
+
+    Returns the secondary name each demoted member's key now answers to, keyed
+    by ``(side, member)``.
     """
-    if cluster.declaration.identity is None or cluster.declaration.retire != "demote":
-        return []
-    secondary: dict[frozenset[str], SecondaryIdentity] = {}
+    schema = manifest.graph_schema
+    if schema is None:
+        return {}
+    vertex_config = schema.core_schema.vertex_config
+    ops: list[ManifestOp] = []
+    demoted: dict[tuple[Side, str], str] = {}
+    for cluster in index.vertices:
+        if cluster.into not in rekeyed or cluster.declaration.retire != "demote":
+            continue
+        vertex = vertex_config[cluster.into]
+        primary = frozenset(
+            vertex.identity_funnel.field_names
+            if vertex.identity_funnel is not None
+            else vertex.identity
+        )
+        # A funnel keys on a synthetic `id`; a member key spelled `id` cannot be
+        # demoted beside it without restating the primary.
+        restated = {primary, frozenset(vertex.identity)}
+        by_fields = {
+            frozenset(entry.fields): entry.name for entry in vertex.secondary_identities
+        }
+        additions: list[SecondaryIdentity] = []
+        for side in ("left", "right"):
+            for member in cluster.members(side):
+                fields = member_keys.get((side, member))
+                if not fields or frozenset(fields) in restated:
+                    continue
+                if frozenset(fields) not in by_fields:
+                    entry = SecondaryIdentity(
+                        name=f"by_{'_'.join(fields)}", fields=list(fields)
+                    )
+                    by_fields[frozenset(fields)] = entry.name
+                    additions.append(entry)
+                demoted[(side, member)] = by_fields[frozenset(fields)]
+        if additions:
+            ops.append(AddSecondaryIdentitiesOp(additions={cluster.into: additions}))
+    if ops:
+        apply_manifest_ops_inplace(manifest, ops)
+    return demoted
+
+
+def _steps_producing(
+    steps: Sequence[Any], vertex: str, *, known_vertices: Collection[str]
+) -> list[dict[str, Any]]:
+    """Every step at any level of *steps* that produces *vertex*, normalized."""
+    out: list[dict[str, Any]] = []
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        normalized = normalize_actor_step(dict(step))
+        if vertex in step_produces_vertices(normalized, known_vertices=known_vertices):
+            out.append(normalized)
+        if normalized.get("type") == "descend":
+            nested = normalized.get("pipeline")
+            if isinstance(nested, list):
+                out.extend(
+                    _steps_producing(nested, vertex, known_vertices=known_vertices)
+                )
+    return out
+
+
+def _pin_member_references(
+    manifest: GraphManifest,
+    index: ClusterIndex,
+    sides: Mapping[str, GraphManifest],
+    demoted: Mapping[tuple[Side, str], str],
+    rekeyed: Collection[str],
+) -> None:
+    """Point each reference to a re-keyed member at that member's demoted key.
+
+    A resource that only *references* a member -- every step producing the
+    merged class is ``lookup_only``, the edge-only source shape -- carries the
+    member's own key and nothing of the merged identity. Left on the primary,
+    its edges would look the endpoint up by a key its rows cannot compute and
+    resolve nothing. Its edge steps are rewritten to select the secondary the
+    member's key was demoted to, which is what the key it carries still finds.
+
+    A resource that upserts the class is not touched here: it has to produce
+    the merged identity, and an identity alignment refuses one that derives
+    nothing for it. Nor is a reference to a member that kept its key as the
+    primary, or whose key was not demoted (``retire: keep``) -- the latter is
+    logged, since its edges will not resolve.
+    """
+    ingestion = manifest.ingestion_model
+    schema = manifest.graph_schema
+    if ingestion is None or schema is None or not rekeyed:
+        return
+    union_vertices = schema.core_schema.vertex_config.vertex_set
+    side_of: dict[str, Side] = {}
     for side in ("left", "right"):
-        for member in cluster.members(side):
-            fields = member_keys.get((side, member))
-            if not fields or frozenset(fields) == primary_fields:
+        side_ingestion = sides[side].ingestion_model
+        if side_ingestion is not None:
+            for resource in side_ingestion.resources:
+                side_of.setdefault(resource.name, side)
+
+    selectors_by_resource: dict[str, dict[str, str]] = {}
+    for resource in ingestion.resources:
+        side = side_of.get(resource.name)
+        if side is None:
+            continue
+        side_schema = sides[side].graph_schema
+        side_ingestion = sides[side].ingestion_model
+        if side_schema is None or side_ingestion is None:
+            continue
+        side_pipeline = next(
+            r.pipeline for r in side_ingestion.resources if r.name == resource.name
+        )
+        side_vertices = side_schema.core_schema.vertex_config.vertex_set
+        for cluster in index.vertices:
+            if cluster.into not in rekeyed:
                 continue
-            # First member to declare a field-set fixes its column order and name.
-            secondary.setdefault(
-                frozenset(fields),
-                SecondaryIdentity(name=f"by_{'_'.join(fields)}", fields=list(fields)),
+            steps = _steps_producing(
+                resource.pipeline, cluster.into, known_vertices=union_vertices
             )
-    if not secondary:
-        return []
-    return [
-        AddSecondaryIdentitiesOp(additions={cluster.into: list(secondary.values())})
-    ]
+            if not steps or not all(
+                step.get("type") == "vertex" and step.get("lookup_only")
+                for step in steps
+            ):
+                continue
+            members = sorted(
+                member
+                for member in cluster.members(side)
+                if _steps_producing(side_pipeline, member, known_vertices=side_vertices)
+            )
+            if len(members) > 1:
+                raise MergeIdentityError(
+                    f"merge_manifests: resource {resource.name!r} references "
+                    f"{side} members {members} of {cluster.into!r}, which were "
+                    "keyed differently before the merge; its edges cannot be "
+                    "pointed at one demoted key. Reference each member from "
+                    "its own resource.",
+                    check="ambiguous reference",
+                    subjects=(
+                        subject("merged", cluster.into),
+                        *(subject(side, member) for member in members),
+                    ),
+                )
+            if not members:
+                continue
+            selector = demoted.get((side, members[0]))
+            if selector is None:
+                if cluster.declaration.retire == "keep":
+                    logger.warning(
+                        "merge_manifests: resource %r references %s:%s by its "
+                        "pre-merge key, which `retire: keep` did not demote; its "
+                        "edges to %r will not resolve",
+                        resource.name,
+                        side,
+                        members[0],
+                        cluster.into,
+                    )
+                continue
+            selectors_by_resource.setdefault(resource.name, {})[cluster.into] = selector
+
+    if not selectors_by_resource:
+        return
+    from graflo.architecture.contract.ingestion.resource import Resource
+
+    from .rewrite import rewrite_endpoint_selectors_in_pipeline
+
+    resources: list[Resource] = []
+    for resource in ingestion.resources:
+        selectors = selectors_by_resource.get(resource.name)
+        if selectors is None:
+            resources.append(resource)
+            continue
+        payload = resource.to_dict(skip_defaults=False)
+        payload["pipeline"] = rewrite_endpoint_selectors_in_pipeline(
+            resource.pipeline, selectors
+        )
+        resources.append(Resource.model_validate(payload))
+    ingestion.resources = resources
+    manifest.ingestion_model = IngestionModel.model_validate(
+        ingestion.to_dict(skip_defaults=False)
+    )
 
 
 #: Separator :func:`_fold_name` joins two differing labels with.
@@ -880,7 +1106,7 @@ def _union_schema(
     member_keys: dict[tuple[Side, str], tuple[str, ...] | None],
     member_property_names: dict[tuple[Side, str], set[str]],
     alignment_labels: set[str],
-) -> tuple[Schema, list[ManifestOp]]:
+) -> tuple[Schema, set[str]]:
     """Assemble both schemas by name, merging at every name they share.
 
     Both levels of the operation in one pass: the walk over names is the
@@ -888,8 +1114,10 @@ def _union_schema(
     is the *merge*. Cluster members have already arrived at their merged name
     by the time this runs, so a cluster reads here as an ordinary shared name.
 
-    Returns the merged schema and the ``AddSecondaryIdentitiesOp``s that
-    retire each merged member's pre-merge key.
+    Returns the merged schema and the merged names whose identity was
+    re-keyed here -- declared, or chosen by identity flags -- whose members'
+    pre-merge keys :func:`_retire_member_keys` demotes once the manifest is
+    complete.
     """
     left_vc = left.core_schema.vertex_config
     right_vc = right.core_schema.vertex_config
@@ -898,7 +1126,7 @@ def _union_schema(
 
     out_vertices: list[Vertex] = []
     seen: set[str] = set()
-    retire_ops: list[ManifestOp] = []
+    rekeyed: set[str] = set()
 
     for cluster in index.vertices:
         name = cluster.into
@@ -917,14 +1145,10 @@ def _union_schema(
             member_property_names,
             has_alignment=name in alignment_labels,
         )
-        merged = _apply_composed_identity(merged, identity, declared=declared)
         if declared:
-            primary_fields = (
-                frozenset(identity.field_names)
-                if isinstance(identity, IdentityFunnel)
-                else frozenset(identity)
-            )
-            retire_ops.extend(_cluster_retire_ops(cluster, member_keys, primary_fields))
+            _check_identity_coverage(cluster, identity, member_property_names)
+            rekeyed.add(name)
+        merged = _apply_composed_identity(merged, identity, declared=declared)
         out_vertices.append(merged)
         seen.add(name)
 
@@ -985,7 +1209,7 @@ def _union_schema(
         ),
         db_profile=db_profile,
     )
-    return schema, retire_ops
+    return schema, rekeyed
 
 
 def _union_transforms(
@@ -1258,10 +1482,10 @@ def merge_manifests(
     # default flavor could not be told from one that never spoke.
     post_left = _schema_of(out_left)
     post_right = _schema_of(out_right)
-    retire_ops: list[ManifestOp] = []
+    rekeyed: set[str] = set()
     composed_schema: Schema | None
     if post_left is not None and post_right is not None:
-        composed_schema, retire_ops = _union_schema(
+        composed_schema, rekeyed = _union_schema(
             post_left,
             post_right,
             index,
@@ -1292,9 +1516,6 @@ def merge_manifests(
     )
     _bump_schema_version(result, bump_version)
 
-    if retire_ops:
-        apply_manifest_ops_inplace(result, retire_ops)
-
     if op.identity_alignments:
         result = _apply_identity_alignments(
             result,
@@ -1310,6 +1531,13 @@ def merge_manifests(
             strict_references=strict_references,
             dynamic_edge_feedback=dynamic_edge_feedback,
         )
+
+    # Every re-keyed class now has its final identity: demote the members'
+    # pre-merge keys against it, then point the resources that only reference
+    # a member at the key they still carry.
+    rekeyed |= alignment_labels & index.labels
+    demoted = _retire_member_keys(result, index, member_keys, rekeyed)
+    _pin_member_references(result, index, sides, demoted, rekeyed)
 
     _apply_merge_naming(result, op)
 

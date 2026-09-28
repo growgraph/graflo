@@ -14,6 +14,7 @@ from graflo.util.transform import (
     camel_to_snake,
     gated_normalized_key,
     gated_tagged_key,
+    normalized_key,
     parse_multi_item,
     remove_prefix,
     remove_suffix,
@@ -458,6 +459,21 @@ def test_gated_normalized_key_none_inputs_return_none():
 
 def test_gated_normalized_key_empty_prefix_always_passes():
     assert gated_normalized_key("anything", "Alpha", prefix="") == "alpha"
+
+
+def test_gated_normalized_key_prefix_defaults_to_always_passing():
+    assert gated_normalized_key("anything", "Alpha") == "alpha"
+
+
+def test_normalized_key_is_the_ungated_normal_form():
+    assert normalized_key(" ABC-Alpha ", strip_prefix="ABC-") == "alpha"
+    assert normalized_key(" ACME ") == gated_normalized_key("any", "Acme")
+    assert normalized_key("Alpha", casefold=False) == "Alpha"
+
+
+def test_normalized_key_declines_on_missing_or_blank_value():
+    assert normalized_key(None) is None
+    assert normalized_key("   ") is None
 
 
 def test_gated_normalized_key_idempotent():

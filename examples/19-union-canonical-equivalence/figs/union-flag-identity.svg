@@ -51,7 +51,7 @@
 <polygon fill="none" stroke="#2c3e50" points="236,-269.62 236,-294.88 350.5,-294.88 350.5,-269.62 236,-269.62"/>
 <text xml:space="preserve" text-anchor="start" x="240" y="-277.38" font-family="Helvetica,sans-Serif" font-size="14.00">secondary_key</text>
 <polygon fill="none" stroke="#2c3e50" points="236,-244.38 236,-269.62 350.5,-269.62 350.5,-244.38 236,-244.38"/>
-<text xml:space="preserve" text-anchor="start" x="240" y="-252.12" font-family="Helvetica,sans-Serif" font-size="14.00">shared_raw</text>
+<text xml:space="preserve" text-anchor="start" x="240" y="-253.32" font-family="Helvetica,sans-Serif" font-weight="bold" text-decoration="underline" font-size="14.00">shared_raw</text>
 <polygon fill="none" stroke="#2c3e50" points="236,-219.12 236,-244.38 350.5,-244.38 350.5,-219.12 236,-219.12"/>
 <text xml:space="preserve" text-anchor="start" x="240" y="-228.07" font-family="Helvetica,sans-Serif" font-weight="bold" text-decoration="underline" font-size="14.00">shop_id</text>
 <polygon fill="none" stroke="#2c3e50" points="236,-193.88 236,-219.12 350.5,-219.12 350.5,-193.88 236,-193.88"/>

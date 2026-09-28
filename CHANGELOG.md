@@ -8,8 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `graflo.util.transform.normalized_key`: ungated counterpart of `gated_normalized_key`, whose
+  `prefix` now defaults to `""`.
+- Example 19: a class renamed by the canonical map alone, a `lookup_only` reference resource,
+  and `--flag-identity-demo` / `--uncovered-producer-demo`.
+
 ### Changed
 
+- Re-keying a merged class (declared `identity`, identity flags, or an identity alignment)
+  demotes each member's own key to a secondary identity, against the final identity;
+  `retire: keep` opts out. Alignments previously demoted nothing.
+- Edge steps of `lookup_only` resources referencing a re-keyed member now match on its demoted
+  key.
 - **Sanitizing records physical names; it no longer renames the logical model.** A name a
   database cannot store (reserved word, invalid character, forbidden prefix) is a physical fact,
   so `SanitizeOp` / `Sanitizer` now write it to `DatabaseProfile` only: vertex storage names and
@@ -61,6 +73,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Merge refuses a merged key some member cannot complete (`MergeIdentityError`, check
+  `identity coverage`) instead of dropping that member's records. Example 19's
+  `boundary_op.yaml` had this defect.
+- `PropertyEquivalence(identity=True)` over members with different keys re-keys on the flagged
+  fields instead of appending them to the union of the keys.
+- Identity alignment: a resource reading its own column is no longer refused when the other side
+  renames a field to the same name; a resource that upserts the class without deriving its key,
+  a derivation whose function cannot take its inputs, and two alignments for one class are
+  refused.
+- Edge-step rewrites (`pin_to_retired`, retargeting, selector collection, edge properties) now
+  handle flat `{source, target}` steps.
 - **`migrate_graph` writes its data.** `DBWriter.write` looked up a resource even when the
   container came from no resource, and the migration path writes through an empty ingestion
   model, so every migration failed with "Empty resource container" after defining the target.

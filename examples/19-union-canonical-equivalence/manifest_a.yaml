@@ -19,8 +19,16 @@ schema:
                 -   shared_raw
                 identity:
                 -   shop_id
+            -   name: Agreement
+                properties:
+                -   agreement_id
+                identity:
+                -   agreement_id
         edge_config:
-            edges: []
+            edges:
+            -   source: Agreement
+                target: Firm
+                relation: signedBy
 ingestion_model:
     resources:
     -   name: r_a
@@ -29,4 +37,13 @@ ingestion_model:
     -   name: r_shop
         pipeline:
         -   vertex: Shop
+    # References Firm by firm_id and never upserts it: an edge-only source.
+    -   name: r_agreements
+        pipeline:
+        -   vertex: Agreement
+        -   vertex: Firm
+            lookup_only: true
+        -   source: Agreement
+            target: Firm
+            relation: signedBy
     transforms: []

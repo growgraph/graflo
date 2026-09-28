@@ -520,7 +520,7 @@ def gated_normalized_key(
     gate: str | None,
     value: str | None,
     *,
-    prefix: str,
+    prefix: str = "",
     strip_prefix: str | None = None,
     casefold: bool = True,
     strip_chars: str | None = None,
@@ -539,7 +539,7 @@ def gated_normalized_key(
     Args:
         gate: Field deciding participation (e.g. ``u_number``).
         value: Raw key material to normalize.
-        prefix: Required prefix of *gate*; ``""`` always passes.
+        prefix: Required prefix of *gate*; ``""`` (the default) always passes.
         strip_prefix: Prefix removed from *value* when present.
         casefold: Casefold the normalized value.
         strip_chars: Characters stripped from both ends of *value*
@@ -552,6 +552,39 @@ def gated_normalized_key(
     if value is None or gate is None:
         return None
     if not str(gate).startswith(prefix):
+        return None
+    return normalized_key(
+        value, strip_prefix=strip_prefix, casefold=casefold, strip_chars=strip_chars
+    )
+
+
+def normalized_key(
+    value: str | None,
+    *,
+    strip_prefix: str | None = None,
+    casefold: bool = True,
+    strip_chars: str | None = None,
+) -> str | None:
+    """Return *value* in the normal form :func:`gated_normalized_key` emits, ungated.
+
+    The single-input derivation for an identity alignment every record of a
+    source takes part in: aligning ``Acme`` from one side with `` ACME `` from
+    the other needs a shared normal form, not a gate. Sharing the normal form
+    with :func:`gated_normalized_key` means a gated source and an ungated one
+    derive the same key from the same raw value.
+
+    Args:
+        value: Raw key material to normalize.
+        strip_prefix: Prefix removed from *value* when present.
+        casefold: Casefold the normalized value.
+        strip_chars: Characters stripped from both ends of *value*
+            (``None`` strips whitespace).
+
+    Returns:
+        The normalized key, or ``None`` when *value* is missing or empty once
+        normalized.
+    """
+    if value is None:
         return None
     key = str(value).strip(strip_chars)
     if strip_prefix:

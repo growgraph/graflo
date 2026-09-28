@@ -35,7 +35,9 @@ DOC = {"a_id": "a1", "b_id": "b1", "c_id": "c1"}
 _MAPPED = {"extraction_scope": "mapped_only"}
 
 
-def _manifest(*, edges: list[Edge], pipeline: list[dict]) -> GraphManifest:
+def _manifest(
+    *, edges: list[Edge], pipeline: list[dict], b_declares_a_id: bool = False
+) -> GraphManifest:
     schema = Schema(
         metadata=GraphMetadata(name="g", version="1.0.0"),
         core_schema=CoreSchema(
@@ -45,7 +47,10 @@ def _manifest(*, edges: list[Edge], pipeline: list[dict]) -> GraphManifest:
                         name="A", properties=[Field(name="a_id")], identity=["a_id"]
                     ),
                     Vertex(
-                        name="B", properties=[Field(name="b_id")], identity=["b_id"]
+                        name="B",
+                        properties=[Field(name="b_id")]
+                        + ([Field(name="a_id")] if b_declares_a_id else []),
+                        identity=["b_id"],
                     ),
                     Vertex(
                         name="C", properties=[Field(name="c_id")], identity=["c_id"]
@@ -247,8 +252,16 @@ class TestFusionIsJudgedPerSlot:
         Under that identity the observation the former B step emits carries no
         key, which is the shape that fuses: ``fuse_doc_basis`` folds a keyless
         observation into the keyed one before it *in the same bucket*.
+
+        B and D declare ``a_id`` -- their documents may carry it -- which is
+        what lets merge key the class on ``a_id`` at all; its step maps only ``b_id``, so
+        the observation it emits here is still keyless.
         """
-        left = _manifest(edges=TestFusionIsJudgedPerSlot._edges(), pipeline=pipeline)
+        left = _manifest(
+            edges=TestFusionIsJudgedPerSlot._edges(),
+            pipeline=pipeline,
+            b_declares_a_id=True,
+        )
         right = GraphManifest.from_config(
             {
                 "schema": Schema(
@@ -258,7 +271,7 @@ class TestFusionIsJudgedPerSlot:
                             vertices=[
                                 Vertex(
                                     name="D",
-                                    properties=[Field(name="d_id")],
+                                    properties=[Field(name="d_id"), Field(name="a_id")],
                                     identity=["d_id"],
                                 )
                             ],

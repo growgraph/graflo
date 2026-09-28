@@ -24,7 +24,13 @@ undeclared. Both print their completion.
 A primary identity is a property of the class: the funnel references only
 canonical attributes (``match_key``, ``local_key``). How each source populates
 them — gating, normalization, namespacing — is resource knowledge, appended to
-the resource pipelines as ops. The source manifests stay pure.
+the resource pipelines as ops. The source manifests stay pure. Each member's
+own key is demoted to a lookup-only secondary identity, and ``r_agreements`` —
+which only *references* a ``Firm`` by ``firm_id`` — has its edge pointed at
+that demoted key. ``--uncovered-producer-demo`` makes that resource upsert
+``Firm`` instead, and merge refuses: its records would derive no funnel
+attribute. ``--flag-identity-demo`` re-keys the class without an alignment,
+by flagging the one property every member carries.
 
 Each refusal is one problem: merge stops at the first. ``--plot-dir`` draws
 every mode instead — the declaration graph, with *all* the conflicts in it —
@@ -38,6 +44,8 @@ the picture also shows the two identity disagreements behind it.
     uv run python build_union.py --conflicting-cluster-demo
     uv run python build_union.py --forgotten-member-demo
     uv run python build_union.py --shared-name-demo [--union-right]
+    uv run python build_union.py --flag-identity-demo
+    uv run python build_union.py --uncovered-producer-demo
     uv run python build_union.py --plot-dir figs      # → figs/union-<mode>.svg
 """
 
@@ -52,6 +60,7 @@ from suthing import FileHandle
 from graflo import GraphManifest
 from graflo.architecture.evolution import (
     AlignmentAttribute,
+    AlignmentConflictError,
     CanonicalMap,
     DerivationSpec,
     IdentityAlignment,
@@ -59,6 +68,7 @@ from graflo.architecture.evolution import (
     LocalKeySpec,
     MergeIncompleteError,
     MergeManifestsOp,
+    PropertyEquivalence,
     VertexEquivalence,
     merge_manifests,
 )
@@ -105,6 +115,9 @@ ALIGNMENT = IdentityAlignment(
             "r_branch": LocalKeySource(field="branch_id", tag="br"),
         }
     ),
+    # Merge demotes every member's own key to a lookup-only secondary identity
+    # without being told; listing one here names it (or indexes a field that
+    # was never a key).
     secondary_identities={
         "by_company_id": ["company_id"],
         "by_shop_id": ["shop_id"],
@@ -118,6 +131,48 @@ def load_manifest(path: Path) -> GraphManifest:
     manifest = GraphManifest.from_config(FileHandle.load(path))
     manifest.finish_init()
     return manifest
+
+
+def _flag_identity_op(canonical_map: CanonicalMap) -> MergeManifestsOp:
+    """Re-key the cluster on the one property every member carries, no alignment.
+
+    The members disagree on their natural key (``company_id`` / ``shop_id`` /
+    ``org_id`` / ``branch_id``), so a flagged ``PropertyEquivalence`` does not
+    join them: it *replaces* them. ``shared_raw`` becomes the key and each
+    member's own key is demoted. It keys on the raw value, though:
+    ``ABC-Alpha`` and ``ABC-ALPHA`` stay two companies, which is what the
+    alignment's normalized ``match_key`` is for.
+    """
+    return MergeManifestsOp(
+        vertex_equivalences=[
+            VertexEquivalence(
+                left=["Firm", "Shop"],
+                right=["Org", "Branch"],
+                properties=[
+                    PropertyEquivalence(
+                        left="shared_raw",
+                        right="shared_raw",
+                        into="shared_raw",
+                        identity=True,
+                    )
+                ],
+            )
+        ],
+        allow_merges=True,
+        canonical_maps={"left": canonical_map},
+    )
+
+
+def _upserting_agreements(manifest: GraphManifest) -> GraphManifest:
+    """``manifest_a`` with ``r_agreements`` upserting ``Firm`` instead of referencing it."""
+    data = manifest.to_dict(skip_defaults=True)
+    for resource in data["ingestion_model"]["resources"]:
+        if resource["name"] == "r_agreements":
+            for step in resource["pipeline"]:
+                step.pop("lookup_only", None)
+    upserting = GraphManifest.from_config(data)
+    upserting.finish_init()
+    return upserting
 
 
 def _forgotten_member_op(canonical_map: CanonicalMap) -> MergeManifestsOp:
@@ -227,6 +282,8 @@ def build_union(
     forgotten_member: bool = False,
     shared_name: bool = False,
     union_right: bool = False,
+    flag_identity: bool = False,
+    uncovered_producer: bool = False,
 ) -> GraphManifest:
     canonical_map = CanonicalMap.model_validate(
         FileHandle.load(EXAMPLE_DIR / "canonical_map.yaml")
@@ -246,6 +303,12 @@ def build_union(
             manifest_b,
             _shared_name_op(canonical_map, union_right=union_right),
         )
+    if flag_identity:
+        return merge_manifests(manifest_a, manifest_b, _flag_identity_op(canonical_map))
+    if uncovered_producer:
+        # r_agreements now upserts Firm, and the alignment derives nothing
+        # there: every agreement's Firm record would complete no funnel branch.
+        manifest_a = _upserting_agreements(manifest_a)
 
     # The op carries the cluster, the canonical map and the identity
     # alignment: one recipe. Merge resolves the cluster's merged name
@@ -278,6 +341,7 @@ def ops_by_mode(canonical_map: CanonicalMap) -> dict[str, MergeManifestsOp]:
         "forgotten-member": _forgotten_member_op(canonical_map),
         "shared-name": _shared_name_op(canonical_map, union_right=False),
         "shared-name-union-right": _shared_name_op(canonical_map, union_right=True),
+        "flag-identity": _flag_identity_op(canonical_map),
     }
 
 
@@ -344,6 +408,18 @@ def plot_modes(plot_dir: Path) -> list[Path]:
     "merging it; add --union-right to union it by name instead of refusing.",
 )
 @click.option(
+    "--flag-identity-demo",
+    is_flag=True,
+    help="Re-key the cluster by flagging the property every member carries, "
+    "instead of aligning identity.",
+)
+@click.option(
+    "--uncovered-producer-demo",
+    is_flag=True,
+    help="Make `r_agreements` upsert `Firm` rather than reference it, to see "
+    "the alignment refuse a resource it derives nothing for.",
+)
+@click.option(
     "--union-right",
     is_flag=True,
     help="With --shared-name-demo: union the shared name through a "
@@ -356,6 +432,8 @@ def main(
     conflicting_cluster_demo: bool,
     forgotten_member_demo: bool,
     shared_name_demo: bool,
+    flag_identity_demo: bool,
+    uncovered_producer_demo: bool,
     union_right: bool,
 ) -> None:
     if plot_dir is not None:
@@ -367,6 +445,8 @@ def main(
         "--conflicting-cluster-demo": conflicting_cluster_demo,
         "--forgotten-member-demo": forgotten_member_demo,
         "--shared-name-demo": shared_name_demo,
+        "--flag-identity-demo": flag_identity_demo,
+        "--uncovered-producer-demo": uncovered_producer_demo,
     }
     chosen = [name for name, on in demos.items() if on]
     if len(chosen) > 1:
@@ -381,7 +461,12 @@ def main(
             forgotten_member=forgotten_member_demo,
             shared_name=shared_name_demo,
             union_right=union_right,
+            flag_identity=flag_identity_demo,
+            uncovered_producer=uncovered_producer_demo,
         )
+    except AlignmentConflictError as exc:
+        click.echo(f"merge refused: {exc}", err=True)
+        raise SystemExit(1)
     except MergeIncompleteError as exc:
         # The declarations are consistent, just not covering. The completion is
         # the declaration to paste into the op -- `graflo merge` prints it
@@ -396,7 +481,13 @@ def main(
     if chosen:
         # A demo that merged rather than refusing: report it, write nothing,
         # so the committed artifact stays the one the default path produces.
+        company = union.require_schema().core_schema.vertex_config["Company"]
         click.echo(f"merged with {chosen[0]}; no artifact written")
+        click.echo(f"  Company identity: {company.identity}")
+        click.echo(
+            "  secondary identities: "
+            f"{[(s.name, s.fields) for s in company.secondary_identities]}"
+        )
         return
     output.parent.mkdir(parents=True, exist_ok=True)
     FileHandle.dump(union.to_dict(), output)

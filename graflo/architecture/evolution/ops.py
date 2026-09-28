@@ -2203,8 +2203,11 @@ class IdentityAlignment(ConfigBaseModel):
     secondary_identities: dict[str, list[str]] = PydanticField(
         default_factory=dict,
         description=(
-            "Retired side keys kept as lookup-only secondary identities: "
-            "``{name: [field, ...]}``."
+            "Extra lookup-only secondary identities: ``{name: [field, ...]}``. "
+            "Inside ``merge_manifests`` every member's pre-merge key is demoted "
+            "without being listed (unless the equivalence says "
+            "``retire: keep``); list one here to name it, or to index a field "
+            "that was never a key."
         ),
     )
     at: dict[str, list[int]] = PydanticField(
@@ -2274,8 +2277,10 @@ class PropertyEquivalence(ConfigBaseModel):
     identity: bool = PydanticField(
         default=False,
         description=(
-            "When True and ``VertexEquivalence.identity`` is unset, include ``into`` "
-            "in the derived identity list after merge."
+            "When True and ``VertexEquivalence.identity`` is unset, ``into`` is "
+            "part of the merged key. Members that agree on a key keep it, with "
+            "``into`` added; members that disagree are re-keyed on the flagged "
+            "fields alone, which every member must carry."
         ),
     )
 
@@ -2377,10 +2382,13 @@ class VertexEquivalence(ConfigBaseModel):
     retire: Literal["demote", "keep"] = PydanticField(
         default="demote",
         description=(
-            "What becomes of each member's pre-merge identity fields when "
-            "`identity` is declared. `demote` keeps them as lookup-only "
-            "secondary identities on `into`; `keep` drops them. Unused when "
-            "`identity` is unset."
+            "What becomes of each member's pre-merge key once the merged class "
+            "is re-keyed -- by `identity`, by a `PropertyEquivalence.identity` "
+            "flag over members that disagree, or by an `identity_alignments` "
+            "entry. `demote` keeps each as a lookup-only secondary identity on "
+            "`into`, and points edge steps of resources that only reference a "
+            "member at it; `keep` leaves the fields as plain properties. Unused "
+            "while the merged class keeps its members' shared key."
         ),
     )
 
@@ -2525,7 +2533,8 @@ class MergeManifestsOp(ConfigBaseModel):
 
     ``identity_alignments`` are applied to the merged union before return
     (canonical attributes → resource derivations → priority funnel → secondaries).
-    Each entry's ``vertex`` must be a declared cluster's merged name.
+    Each entry's ``vertex`` must be a declared cluster's merged name, and no two
+    entries may name the same class.
 
     Equivalences name members in the manifests' own vocabulary (a member may
     also be spelled by its canonical name when ``canonical_maps`` establishes
@@ -2647,7 +2656,7 @@ class MergeManifestsOp(ConfigBaseModel):
         default_factory=list,
         description=(
             "Optional identity alignments applied after the schema/resource "
-            "union, one per merged class."
+            "union, at most one per merged class."
         ),
     )
     canonical_maps: dict[Literal["left", "right", "both"], CanonicalMap] = (
@@ -2662,6 +2671,28 @@ class MergeManifestsOp(ConfigBaseModel):
             ),
         )
     )
+
+    @model_validator(mode="after")
+    def _one_alignment_per_class(self) -> MergeManifestsOp:
+        """Refuse two alignments for one class rather than letting the later win.
+
+        Each alignment replaces the class's identity wholesale, so a second one
+        would silently discard the first's funnel and leave its attributes and
+        derivation steps behind, derived and never keyed on. Two alignments for
+        one class are one alignment with more attributes.
+        """
+        counts: dict[str, int] = {}
+        for alignment in self.identity_alignments:
+            counts[alignment.vertex] = counts.get(alignment.vertex, 0) + 1
+        repeated = sorted(vertex for vertex, n in counts.items() if n > 1)
+        if repeated:
+            raise ValueError(
+                f"merge_manifests: more than one identity alignment for {repeated}; "
+                "each replaces the class's identity, so the later would discard "
+                "the earlier -- list every attribute in one alignment, in "
+                "priority order"
+            )
+        return self
 
     @model_validator(mode="after")
     def _require_allow_merges_for_nary(self) -> MergeManifestsOp:

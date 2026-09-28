@@ -52,6 +52,7 @@ from pydantic import Field as PydanticField
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.schema.edge import Edge
+from graflo.architecture.schema.identity_funnel import IdentityFunnel
 from graflo.architecture.schema.vertex import FieldMergeError, Vertex
 
 from .apply import relabel_vertex_fields
@@ -105,6 +106,7 @@ from .ops import (
     CanonicalMap,
     MergeManifestsOp,
     RelationEquivalence,
+    SideIdentity,
     VertexEquivalence,
 )
 
@@ -144,6 +146,7 @@ FindingKind = Literal[
     "property_retarget",
     "unknown_property",
     "identity_disagreement",
+    "identity_coverage",
     "type_conflict",
     "unit_conflict",
     "identity_mode_conflict",
@@ -178,6 +181,7 @@ _KIND_BY_CHECK: dict[str, FindingKind] = {
     "re-target": "disagreement",
     "clash": "disagreement",
     "identity disagreement": "identity_disagreement",
+    "identity coverage": "identity_coverage",
     "cluster conflict": "cluster_overlap",
     # What the schema union refuses. ``edge type disagreement`` has to outrank
     # the bare ``disagreement`` above, which longest-match already guarantees;
@@ -198,7 +202,7 @@ _KINDS_BY_TYPE: dict[type[BaseException], frozenset[FindingKind]] = {
     ),
     UnknownMemberError: frozenset({"unknown_member"}),
     MergeIncompleteError: frozenset({"incomplete", "name_collision"}),
-    MergeIdentityError: frozenset({"identity_disagreement"}),
+    MergeIdentityError: frozenset({"identity_disagreement", "identity_coverage"}),
     MergeNameConflictError: frozenset({"near_collision", "name_collision"}),
     # Inert while the union's refusals set ``check`` -- which they all do. Kept
     # so a raise site added later without one still classifies rather than
@@ -1250,57 +1254,110 @@ class _Builder:
                         )
 
     def identity_checks(self) -> None:
-        """Members of one cluster whose natural keys disagree, unresolved.
+        """Members of one cluster no single key serves, unresolved or uncovered.
 
-        The rule of
-        :func:`~graflo.architecture.evolution.merge._composed_identity`: only
-        plain natural keys take part -- blank, assigned, hash and funnel
-        identities are reconciled (or refused) by the vertex merge itself.
+        The rules of
+        :func:`~graflo.architecture.evolution.merge._composed_identity` and
+        :func:`~graflo.architecture.evolution.merge._check_identity_coverage`:
+        only plain natural keys take part in disagreement -- blank, assigned,
+        hash and funnel identities are reconciled (or refused) by the vertex
+        merge itself. A declared key, or flags over disagreeing members, must
+        be one every member can complete. A ``SideIdentity`` is checked by its
+        own lowering, and an aligned class is re-keyed by its alignment.
         """
         aligned = {a.vertex for a in self.op.identity_alignments}
         for cluster in self.index.vertices:
             declaration = cluster.declaration
             if not isinstance(declaration, VertexEquivalence):
                 continue
-            if declaration.identity is not None or cluster.into in aligned:
+            if cluster.into in aligned or isinstance(
+                declaration.identity, SideIdentity
+            ):
                 continue
-            if any(pe.identity for pe in declaration.properties):
+            keys, properties = self._member_identity_state(cluster)
+            if declaration.identity is not None:
+                self._identity_coverage(cluster, declaration.identity, properties)
                 continue
-            keys: list[tuple[Side, str, tuple[str, ...]]] = []
-            for side in _SIDES:
-                schema = self.manifests[side].graph_schema
-                if schema is None:
+            if len({frozenset(k) for _s, _m, k in keys}) <= 1:
+                continue
+            flagged = list(
+                dict.fromkeys(pe.into for pe in declaration.properties if pe.identity)
+            )
+            if flagged:
+                self._identity_coverage(cluster, flagged, properties)
+                continue
+            detail = "; ".join(f"{s}:{m}={list(k)}" for s, m, k in keys)
+            self.finding(
+                "identity_disagreement",
+                f"merged vertex {cluster.into!r} has members that disagree on "
+                f"identity ({detail}) and nothing resolves it",
+                nodes=[
+                    subject("merged", cluster.into),
+                    *(subject(s, m) for s, m, _k in keys),
+                ],
+            )
+
+    def _member_identity_state(
+        self, cluster: Cluster
+    ) -> tuple[
+        list[tuple[Side, str, tuple[str, ...]]], dict[tuple[Side, str], set[str]]
+    ]:
+        """Each member's plain natural key and property names, in canonical names."""
+        keys: list[tuple[Side, str, tuple[str, ...]]] = []
+        properties: dict[tuple[Side, str], set[str]] = {}
+        for side in _SIDES:
+            schema = self.manifests[side].graph_schema
+            if schema is None:
+                continue
+            vertex_config = schema.core_schema.vertex_config
+            renames = self.composite[side].properties if side in self.composite else {}
+            for member in cluster.members(side):
+                if member not in vertex_config.vertex_set:
                     continue
-                vertex_config = schema.core_schema.vertex_config
-                renames = (
-                    self.composite[side].properties if side in self.composite else {}
+                vertex = vertex_config[member]
+                rename = renames.get(member, {})
+                properties[(side, member)] = {
+                    rename.get(f, f) for f in vertex.property_names
+                }
+                if (
+                    vertex.blank
+                    or vertex.assigned
+                    or vertex.hash_identity_properties
+                    or vertex.identity_funnel is not None
+                ):
+                    continue
+                keys.append(
+                    (side, member, tuple(rename.get(f, f) for f in vertex.identity))
                 )
-                for member in cluster.members(side):
-                    if member not in vertex_config.vertex_set:
-                        continue
-                    vertex = vertex_config[member]
-                    if (
-                        vertex.blank
-                        or vertex.assigned
-                        or vertex.hash_identity_properties
-                        or vertex.identity_funnel is not None
-                    ):
-                        continue
-                    rename = renames.get(member, {})
-                    keys.append(
-                        (side, member, tuple(rename.get(f, f) for f in vertex.identity))
-                    )
-            if len({frozenset(k) for _s, _m, k in keys}) > 1:
-                detail = "; ".join(f"{s}:{m}={list(k)}" for s, m, k in keys)
-                self.finding(
-                    "identity_disagreement",
-                    f"merged vertex {cluster.into!r} has members that disagree on "
-                    f"identity ({detail}) and nothing resolves it",
-                    nodes=[
-                        subject("merged", cluster.into),
-                        *(subject(s, m) for s, m, _k in keys),
-                    ],
-                )
+        return keys, properties
+
+    def _identity_coverage(
+        self,
+        cluster: Cluster,
+        identity: list[str] | IdentityFunnel,
+        properties: Mapping[tuple[Side, str], set[str]],
+    ) -> None:
+        branches = (
+            [set(branch.required_fields) for branch in identity.branches]
+            if isinstance(identity, IdentityFunnel)
+            else [set(identity)]
+        )
+        uncovered = [
+            (side, member)
+            for (side, member), declared in properties.items()
+            if not any(branch <= declared for branch in branches)
+        ]
+        if uncovered:
+            self.finding(
+                "identity_coverage",
+                f"merged vertex {cluster.into!r} is keyed on a field-set "
+                f"{', '.join(f'{s}:{m}' for s, m in uncovered)} cannot complete, "
+                "so their records would be dropped",
+                nodes=[
+                    subject("merged", cluster.into),
+                    *(subject(s, m) for s, m in uncovered),
+                ],
+            )
 
     def merge_checks(self) -> None:
         """What the schema union itself refuses, one cluster at a time.

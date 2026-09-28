@@ -25,6 +25,7 @@ from graflo.architecture.evolution import (
     LocalKeySource,
     LocalKeySpec,
     MergeManifestsOp,
+    SideIdentity,
     VertexEquivalence,
     alignment_to_ops,
     apply_evolution,
@@ -135,19 +136,23 @@ _ALIGNMENT = IdentityAlignment(
 def _compose_union() -> GraphManifest:
     """A merged union *without* the identity alignment applied yet.
 
-    Declares a throwaway ``identity=["company_id"]`` on the cluster: `Company`
-    and `Org` disagree on their raw identity field, and nothing here promises
-    to resolve it (callers that want the resolved identity use
-    :func:`_build_union` instead, which folds the alignment into the same
-    merge op), so an explicit placeholder is what this unaligned union
-    needs in order to merge at all.
+    Declares a throwaway identity on the cluster -- each member keyed on its
+    own key: `Company` and `Org` disagree on their raw identity field, and
+    nothing here promises to resolve it (callers that want the resolved
+    identity use :func:`_build_union` instead, which folds the alignment into
+    the same merge op), so an explicit placeholder is what this unaligned
+    union needs in order to merge at all. It must be one every member carries,
+    or merge refuses it.
     """
     canonical_a = apply_evolution(_manifest_a(), canonical_map_to_ops(_CANONICAL))
     right = _manifest_b()
     op = MergeManifestsOp(
         vertex_equivalences=[
             VertexEquivalence(
-                left="Company", right="Org", into="Company", identity=["company_id"]
+                left="Company",
+                right="Org",
+                into="Company",
+                identity=SideIdentity(left=["company_id"], right=["org_id"]),
             )
         ]
     )

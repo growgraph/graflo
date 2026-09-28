@@ -286,6 +286,29 @@ def rewrite_entity_names_in_pipeline(
 _PRIMARY_SELECTORS = (None, "identity")
 
 
+def edge_payloads(step: dict[str, Any]) -> list[dict[str, Any]]:
+    """The edge payloads *step* carries, as mutable references into it.
+
+    An edge step is spelled three ways: nested under ``edge`` or
+    ``create_edge``, or flat, with the endpoints on the step itself
+    (``{source, target}`` / ``{from, to}``, or ``type: edge``). A walker that
+    only looks under the two keys silently skips every flat step -- the form
+    most hand-written pipelines use.
+    """
+    payloads = [
+        payload
+        for key in ("edge", "create_edge")
+        if isinstance(payload := step.get(key), dict)
+    ]
+    if payloads or "vertex" in step:
+        return payloads
+    if step.get("type") == "edge" or (
+        ("source" in step or "from" in step) and ("target" in step or "to" in step)
+    ):
+        return [step]
+    return []
+
+
 def _endpoint_vertex(payload: dict[str, Any], *keys: str) -> str | None:
     """First string endpoint name among *keys* (``source``/``from``, ``target``/``to``)."""
     for key in keys:
@@ -332,10 +355,8 @@ def _pin_endpoint_selectors_in_step(step: Any, selectors: dict[str, str]) -> Non
     if not isinstance(step, dict):
         return
 
-    for key in ("edge", "create_edge"):
-        payload = step.get(key)
-        if isinstance(payload, dict):
-            _pin_endpoint_selectors_in_edge_payload(payload, selectors)
+    for payload in edge_payloads(step):
+        _pin_endpoint_selectors_in_edge_payload(payload, selectors)
 
     descend_payload = step.get("descend")
     if isinstance(descend_payload, dict):
@@ -399,10 +420,8 @@ def _collect_endpoint_selectors_in_step(
     if not isinstance(step, dict):
         return
 
-    for key in ("edge", "create_edge"):
-        payload = step.get(key)
-        if isinstance(payload, dict):
-            _collect_endpoint_selectors_in_edge_payload(payload, out)
+    for payload in edge_payloads(step):
+        _collect_endpoint_selectors_in_edge_payload(payload, out)
 
     descend_payload = step.get("descend")
     if isinstance(descend_payload, dict):
@@ -464,10 +483,8 @@ def _retarget_edges_in_step(
     if not isinstance(step, dict):
         return
 
-    for key in ("edge", "create_edge"):
-        payload = step.get(key)
-        if isinstance(payload, dict):
-            _retarget_edge_payload(payload, mapping)
+    for payload in edge_payloads(step):
+        _retarget_edge_payload(payload, mapping)
 
     descend_payload = step.get("descend")
     if isinstance(descend_payload, dict):
@@ -1188,10 +1205,8 @@ def rewrite_edge_properties_in_pipeline(
 
     def _rewrite_step(step: dict[str, Any]) -> dict[str, Any]:
         out = deepcopy(step)
-        for key in ("edge", "create_edge"):
-            payload = out.get(key)
-            if isinstance(payload, dict):
-                _rewrite_edge_payload(payload)
+        for payload in edge_payloads(out):
+            _rewrite_edge_payload(payload)
         descend_payload = out.get("descend")
         if isinstance(descend_payload, dict):
             nested_pipeline = descend_payload.get("pipeline")
