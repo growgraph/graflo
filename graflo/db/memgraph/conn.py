@@ -1128,7 +1128,7 @@ class MemgraphConnection(Connection):
         cursor.close()
         return results
 
-    def graph_neighbors(
+    def _graph_neighbors(
         self,
         vertex_type: str,
         key: str | dict[str, Any],

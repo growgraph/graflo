@@ -38,7 +38,6 @@ from .db_profile import (
     apply_inverse_edges_to_db_profile,
     apply_relation_removal_to_db_profile,
     apply_relation_rename_to_db_profile,
-    apply_storage_name_sanitization_to_db_profile,
     apply_vertex_merge_to_db_profile,
     apply_vertex_removal_to_db_profile,
     apply_vertex_rename_to_db_profile,
@@ -119,10 +118,7 @@ from .rewrite import (
     rewrite_vertex_names_in_value,
     rewrite_vertex_weight_names,
 )
-from .sanitize import (
-    compute_vertex_field_renames,
-    normalize_relation_identity,
-)
+from .sanitize import assign_physical_names
 from .version import bump_semver_minor
 
 logger = logging.getLogger(__name__)
@@ -882,7 +878,8 @@ def relabel_vertex_fields(vertex: Vertex, renames: Mapping[str, str]) -> Vertex:
 
     Every field-set that names a property follows the rename: ``properties``,
     ``identity``, ``hash_identity_properties``, each funnel branch's ``fields``
-    and ``when_all_present``, and each secondary identity's ``fields``.
+    and ``when_all_present``, each secondary identity's ``fields``, and the
+    leaf fields of ``filters``.
 
     **A property whose new name is already taken is dropped, not appended.**
     That is not a shortcut -- ``_check_property_renames`` has already refused a
@@ -928,6 +925,10 @@ def relabel_vertex_fields(vertex: Vertex, renames: Mapping[str, str]) -> Vertex:
                 update={"fields": _rename_field_list(entry.fields, renames)}
             ).to_dict(skip_defaults=False)
             for entry in vertex.secondary_identities
+        ]
+    if vertex.filters:
+        payload["filters"] = [
+            expression.rename_fields(renames) for expression in vertex.filters
         ]
 
     new_properties: list[Field] = []
@@ -2068,17 +2069,15 @@ def apply_add_inverse_edges(manifest: GraphManifest, op: AddInverseEdgesOp) -> N
 
 
 def apply_sanitize(manifest: GraphManifest, op: SanitizeOp) -> None:
-    """Apply DB-flavor-specific sanitization to *manifest* in place.
+    """Record the target flavor's physical names in the profile, in place.
 
-    Merges:
-
-    1. Storage-name sanitization on :class:`DatabaseProfile`.
-    2. Reserved-word vertex field renames (via ``apply_rename_vertex_properties``).
-    3. TigerGraph identity normalization (cross-relation), propagated to
-       ingestion via the same field-rename code path.
+    Only ``schema.db_profile`` changes: vertex storage names, relation names
+    and vertex/edge property names the flavor cannot store get a stored name
+    there (see :func:`~graflo.architecture.evolution.sanitize.assign_physical_names`).
+    The logical schema and the ingestion model are untouched, so documents keep
+    their logical keys and the writer translates them at the database call.
     """
     from graflo.db.util import load_reserved_words
-    from graflo.onto import DBType
 
     if manifest.graph_schema is None:
         return
@@ -2089,37 +2088,9 @@ def apply_sanitize(manifest: GraphManifest, op: SanitizeOp) -> None:
     else:
         reserved_words = load_reserved_words(op.db_flavor)
 
-    run_name_sanitization = bool(reserved_words) or op.db_flavor == DBType.TIGERGRAPH
-    if run_name_sanitization:
-        apply_storage_name_sanitization_to_db_profile(
-            schema.db_profile,
-            schema,
-            reserved_words,
-            db_flavor=op.db_flavor,
-        )
-        schema.db_profile = _revalidate_db_profile(schema.db_profile)
-
-        field_renames = compute_vertex_field_renames(
-            schema, reserved_words, db_flavor=op.db_flavor
-        )
-        if field_renames:
-            apply_rename_vertex_properties(
-                manifest,
-                RenameVertexPropertiesOp(renames=field_renames),
-            )
-
-    identity_renames = normalize_relation_identity(schema, op.db_flavor)
-    if identity_renames:
-        apply_field_rename_to_db_profile(schema.db_profile, identity_renames)
-        schema.db_profile = _revalidate_db_profile(schema.db_profile)
-        schema.finish_init()
-        _rebuild_ingestion_with_pipeline_rewrite(
-            manifest,
-            lambda pipeline: rewrite_vertex_field_names_in_pipeline(
-                pipeline, identity_renames
-            ),
-            vertex_field_renames=identity_renames,
-        )
+    assign_physical_names(schema, reserved_words, db_flavor=op.db_flavor)
+    schema.db_profile = _revalidate_db_profile(schema.db_profile)
+    schema.finish_init()
 
 
 def _dispatch_op(manifest: GraphManifest, op: Any) -> None:

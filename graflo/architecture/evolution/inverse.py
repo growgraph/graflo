@@ -84,7 +84,7 @@ IRREVERSIBLE: dict[str, str] = {
     "change_field_types": (
         "the previous field type is not recoverable once overwritten"
     ),
-    "sanitize": "renames are flavor-driven and not recorded per element",
+    "sanitize": "the profile names it replaces are not recorded",
     "project_manifest": "projection drops elements outright",
     "merge_manifests": "merge is binary; there is no single prior manifest",
     "add_resource_transforms": (

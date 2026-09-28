@@ -1870,15 +1870,14 @@ class ProjectManifestOp(ConfigBaseModel):
 
 
 class SanitizeOp(ConfigBaseModel):
-    """Apply DB-flavor-specific name/field sanitization to a manifest.
+    """Record the physical names a target flavor needs in ``DatabaseProfile``.
 
-    Merges (in order):
-
-    1. Storage-name sanitization on ``DatabaseProfile`` (vertex storage names + edge
-       relation names) against the flavor's reserved-words set.
-    2. Vertex field rename for fields whose names are reserved words.
-    3. For TigerGraph, normalize identity fields across edges that share a relation
-       (TigerGraph requires consistent source/target indexes per relation).
+    Vertex storage names, relation names and vertex/edge property names that the
+    flavor cannot store (reserved word, invalid character, forbidden prefix) get
+    a stored name in the profile, deduplicated within each database namespace.
+    The logical schema and the ingestion model are left untouched: a backend
+    naming constraint is a physical fact, so it never renames a logical property.
+    Idempotent.
     """
 
     op: Literal["sanitize"] = "sanitize"

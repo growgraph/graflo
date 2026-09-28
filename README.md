@@ -302,7 +302,9 @@ from graflo import Caster
 from graflo.onto import DBType
 
 # Connect to PostgreSQL
-postgres_config = PostgresConfig.from_env()  # or PostgresConfig.from_docker_env() from a clone
+postgres_config = (
+    PostgresConfig.from_env()
+)  # or PostgresConfig.from_docker_env() from a clone
 
 # Create GraphEngine and infer schema from PostgreSQL 3NF database
 # Connection is automatically managed inside infer_schema()

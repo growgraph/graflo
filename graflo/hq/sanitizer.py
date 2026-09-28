@@ -3,6 +3,11 @@
 :class:`Sanitizer` is the public, stand-alone, DB-flavor-aware orchestrator
 that encodes the policy "sanitize this manifest for a given target DB flavor".
 
+Sanitizing records physical names in ``schema.db_profile`` -- storage and
+relation names, and vertex/edge property names the flavor cannot store. The
+logical schema and the ingestion model are never rewritten, so documents keep
+their logical keys and the writer translates them at the database call.
+
 It owns no mutation logic of its own. Instead, it builds a list of
 :mod:`graflo.architecture.evolution` ops and applies them to the manifest in
 place, preserving the long-standing
@@ -51,29 +56,37 @@ class Sanitizer:
     :mod:`graflo.architecture.evolution`.
     """
 
-    def __init__(self, db_flavor: DBType):
-        """Initialize the sanitizer for a given target DB flavor."""
-        self.db_flavor = db_flavor
+    def __init__(
+        self, db_flavor: DBType, *, reserved_words: Iterable[str] | None = None
+    ):
+        """Initialize the sanitizer for a given target DB flavor.
 
-    def build_ops(
-        self,
-        manifest: GraphManifest,
-        *,
-        reserved_words: Iterable[str] | None = None,
-    ) -> list[ManifestOp]:
+        Args:
+            db_flavor: Target database flavor.
+            reserved_words: Override for the flavor's reserved words; by default
+                they are loaded for *db_flavor*.
+        """
+        self.db_flavor = db_flavor
+        self.reserved_words = (
+            list(reserved_words) if reserved_words is not None else None
+        )
+
+    def build_ops(self, manifest: GraphManifest) -> list[ManifestOp]:
         """Return the ordered list of evolution ops that sanitize *manifest*.
 
         Today the list collapses to ``[SanitizeOp(db_flavor=...)]``; exposing
-        it as a list keeps the door open for future per-flavor composition
-        (e.g. flavor-specific identity-normalization variants, future
-        rename-relation ops).
+        it as a list keeps the door open for per-flavor composition.
         """
         del manifest  # currently policy is purely a function of db_flavor
-        rw = list(reserved_words) if reserved_words is not None else None
-        return [SanitizeOp(db_flavor=self.db_flavor, reserved_words=rw)]
+        return [
+            SanitizeOp(db_flavor=self.db_flavor, reserved_words=self.reserved_words)
+        ]
 
     def sanitize_manifest(self, manifest: GraphManifest) -> GraphManifest:
         """Mutate *manifest* in place per :meth:`build_ops` and return it.
+
+        Also sets ``db_profile.db_flavor`` to the target flavor, since the
+        names recorded are that flavor's.
 
         Returns the same manifest object so callers can chain or simply assert
         that the in-place result is the original input.
@@ -81,6 +94,7 @@ class Sanitizer:
         if manifest.graph_schema is None:
             return manifest
 
+        manifest.graph_schema.db_profile.db_flavor = self.db_flavor
         apply_manifest_ops_inplace(manifest, self.build_ops(manifest))
 
         manifest.finish_init()

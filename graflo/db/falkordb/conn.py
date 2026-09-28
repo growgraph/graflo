@@ -894,7 +894,7 @@ class FalkordbConnection(Connection):
         else:
             return [self._edge_to_dict(row[0]) for row in result.result_set]
 
-    def graph_neighbors(
+    def _graph_neighbors(
         self,
         vertex_type: str,
         key: str | dict[str, Any],

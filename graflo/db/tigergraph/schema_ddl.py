@@ -12,7 +12,7 @@ from graflo.architecture.schema import Schema
 from graflo.architecture.schema.database_features import DatabaseProfile
 from graflo.architecture.schema.db_aware import EdgeConfigDBAware
 from graflo.architecture.schema.edge import Edge
-from graflo.architecture.schema.vertex import FieldType, Vertex
+from graflo.architecture.schema.vertex import Field, FieldType, Vertex
 from graflo.db.field_type_support import tigergraph_type_for_field
 from graflo.db.tigergraph.ddl_utils import (
     edge_identity_discriminator_fields,
@@ -245,6 +245,49 @@ class SchemaDdlBuilder:
         return ",\n".join(attr_parts)
 
     @staticmethod
+    def _edge_type_attributes(edges: list[Edge], relation_name: str) -> list[Field]:
+        """The attribute list of one TigerGraph edge type: the union over its edges.
+
+        GSQL declares attributes and the discriminator once per edge type, for
+        all of its FROM/TO pairs. An attribute some pairs lack is fine -- those
+        edges store its default -- so the type declares every attribute any of
+        its edges has. What a union cannot express is refused: one attribute
+        name with two types, or pairs that disagree on the discriminator, which
+        is what makes their edges unique.
+        """
+        attributes: dict[str, Field] = {}
+        for edge in edges:
+            for field in edge.properties:
+                seen = attributes.get(field.name)
+                if seen is None:
+                    attributes[field.name] = field
+                elif tigergraph_type_for_field(seen) != tigergraph_type_for_field(
+                    field
+                ):
+                    raise ValueError(
+                        f"TigerGraph edge type {relation_name!r} declares attribute "
+                        f"{field.name!r} as {tigergraph_type_for_field(seen)} and as "
+                        f"{tigergraph_type_for_field(field)}; edges stored as one "
+                        "type must agree on its type."
+                    )
+        discriminators = {
+            tuple(sorted(edge_identity_discriminator_fields(edge))): edge
+            for edge in edges
+        }
+        if len(discriminators) > 1:
+            described = "; ".join(
+                f"{edge.source}->{edge.target}: {list(fields)}"
+                for fields, edge in discriminators.items()
+            )
+            raise ValueError(
+                f"TigerGraph edge type {relation_name!r} gets different "
+                f"discriminators from its edges ({described}). Edges stored as one "
+                "type must declare the same identities; give them distinct "
+                "relations or relation_name overrides."
+            )
+        return list(attributes.values())
+
+    @staticmethod
     def _tigergraph_edge_ddl_kind(edge: Edge) -> Literal["directed", "undirected"]:
         return "undirected" if not edge.directed else "directed"
 
@@ -289,6 +332,9 @@ class SchemaDdlBuilder:
         Returns:
             str: GSQL ADD edge statement (optionally with WITH REVERSE_EDGE)
         """
+        # Discriminators are appended to the attributes below; do that on a copy
+        # so defining a schema never rewrites the caller's edge.
+        edge = edge.model_copy(deep=True)
         # TigerGraph discriminators are derived from logical edge identity.
         indexed_field_names = edge_identity_discriminator_fields(edge)
 
@@ -401,9 +447,12 @@ class SchemaDdlBuilder:
         if not edges:
             raise ValueError("Cannot create edge statement from empty edge list")
 
-        # Use the first edge to determine attributes and discriminator
-        # (all edges of the same relation should have the same schema)
-        first_edge = edges[0]
+        # One edge type has one attribute list and one discriminator for all of
+        # its FROM/TO pairs: the first edge speaks for the type, carrying the
+        # union of every pair's attributes.
+        attributes = self._edge_type_attributes(edges, relation_name)
+        first_edge = edges[0].model_copy(deep=True)
+        first_edge.properties = [field.model_copy(deep=True) for field in attributes]
         relation = relation_name
 
         # Collect identity discriminator fields (same logic as _get_edge_add_statement)

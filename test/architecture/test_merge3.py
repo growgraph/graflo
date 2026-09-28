@@ -100,11 +100,15 @@ def test_every_op_in_the_vocabulary_has_an_explicit_slot_mapping() -> None:
 def test_the_whole_manifest_ops_are_the_only_ones_that_conflict_with_everything() -> (
     None
 ):
-    """`("manifest",)` is a deliberate answer for three ops, not a default."""
-    assert op_slots(ops_module.SanitizeOp(db_flavor="arango")) == {("manifest",)}
+    """`("manifest",)` is a deliberate answer for two ops, not a default."""
     assert op_slots(ops_module.ProjectManifestOp(keep_vertices=["person"])) == {
         ("manifest",)
     }
+
+
+def test_sanitize_touches_only_the_profile() -> None:
+    """Sanitizing records physical names; it no longer rewrites the logical model."""
+    assert op_slots(ops_module.SanitizeOp(db_flavor="arango")) == {("db_profile",)}
 
 
 def test_a_vertex_slot_is_convention_independent() -> None:

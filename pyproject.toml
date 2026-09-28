@@ -3,7 +3,7 @@ build-backend = "hatchling.build"
 requires = ["hatchling"]
 
 [project]
-authors = [{email = "alexander@growgraph.dev", name = "Alexander Belikov"}]
+authors = [{ email = "alexander@growgraph.dev", name = "Alexander Belikov" }]
 classifiers = [
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.11",

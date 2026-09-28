@@ -4,8 +4,18 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from graflo.hq.graph_engine import GraphEngine
 from graflo.onto import DBType
+
+
+@pytest.fixture(autouse=True)
+def _schema_passes_through(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These schemas are mocks; the stored-name view is exercised elsewhere."""
+    monkeypatch.setattr(
+        "graflo.hq.graph_engine.physical_schema", lambda schema, _flavor: schema
+    )
 
 
 @patch("graflo.hq.graph_engine.ConnectionManager")

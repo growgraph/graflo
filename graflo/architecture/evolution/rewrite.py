@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from copy import deepcopy
 from typing import Any
@@ -10,15 +11,25 @@ from graflo.architecture.contract.ingestion.steps.normalize import (
     normalize_actor_step,
 )
 
+logger = logging.getLogger(__name__)
+
 
 def rewrite_vertex_weights_vertex_field_names(
     weights: list[Any],
     renames_by_vertex: dict[str, dict[str, str]],
 ) -> list[dict[str, Any]]:
-    """Rewrite :class:`~graflo.architecture.graph_types.Weight` field/map/filter keys.
+    """Rewrite :class:`~graflo.architecture.graph_types.Weight` references to vertex fields.
 
     Each weight's ``name`` selects the logical vertex whose ``renames_by_vertex[name]``
-    map applies (old field name -> new field name).
+    map applies (old field name -> new field name). ``filter`` and ``map`` keys
+    name vertex fields and follow the rename.
+
+    The edge attribute a weight writes does **not** follow it: that name belongs
+    to the edge, and renaming it is ``rename_edge_properties``' job. A renamed
+    entry of ``fields`` -- whose attribute name *is* the vertex field's name -- is
+    therefore moved to ``map`` as ``{new_field: old_attribute}`` -- unless ``map``
+    already uses that key, in which case it cannot name a second attribute and the
+    ``fields`` entry is renamed instead (with a warning).
     """
     from graflo.architecture.graph_types import Weight
 
@@ -32,10 +43,6 @@ def rewrite_vertex_weights_vertex_field_names(
         if isinstance(vn, str) and vn in renames_by_vertex:
             per = renames_by_vertex[vn]
         if per:
-            new_fields = [
-                per.get(fname, fname) if isinstance(fname, str) else fname
-                for fname in w.fields
-            ]
 
             def _remap_obs_key(obs_key: Any, _per: dict = per) -> Any:
                 if isinstance(obs_key, str):
@@ -43,6 +50,23 @@ def rewrite_vertex_weights_vertex_field_names(
                 return obs_key
 
             new_map = {_remap_obs_key(k): v for k, v in dict(w.map).items()}
+            new_fields: list[Any] = []
+            for fname in w.fields:
+                if not isinstance(fname, str) or fname not in per:
+                    new_fields.append(fname)
+                elif per[fname] not in new_map:
+                    new_map[per[fname]] = w.cfield(fname)
+                else:
+                    # The field also feeds a `map` entry, and one map key cannot
+                    # name two attributes: the fields-derived one follows the rename.
+                    logger.warning(
+                        "vertex_weights on %r: %r is both in `fields` and a `map` "
+                        "key, so its `fields` attribute is renamed to %r",
+                        vn,
+                        fname,
+                        w.cfield(per[fname]),
+                    )
+                    new_fields.append(per[fname])
             new_filter = {_remap_obs_key(k): v for k, v in dict(w.filter).items()}
             w = w.model_copy(
                 update={"fields": new_fields, "map": new_map, "filter": new_filter}

@@ -9,6 +9,7 @@ Key Functions:
     - serialize_document: Serialize all values in a document dictionary
     - load_reserved_words: Load reserved words for a database flavor
     - sanitize_attribute_name: Sanitize attribute names to avoid reserved words
+    - unique_name: Deduplicate a sanitized name within a scope
 
 Example:
     >>> from graflo.onto import DBType    >>> # ArangoDB-specific AQL query (collection is ArangoDB terminology)
@@ -26,7 +27,7 @@ from __future__ import annotations
 
 import json
 import logging
-from functools import lru_cache
+from functools import cache, lru_cache
 from pathlib import Path
 from typing import NamedTuple
 
@@ -204,20 +205,20 @@ _RESERVED_WORD_SOURCES: dict[DBType, tuple[str, tuple[str, ...]]] = {
 }
 
 
-def load_reserved_words(db_flavor: DBType) -> set[str]:
+@cache
+def _reserved_words(db_flavor: DBType) -> frozenset[str]:
     """Load reserved words for a given database flavor.
 
     Args:
         db_flavor: The database flavor to load reserved words for
 
     Returns:
-        Set of reserved words (uppercase) for the database flavor.
-        Empty set when the flavor declares no source, or its file is missing
-        or unparseable.
+        Reserved words (uppercase) for the database flavor. Empty when the
+        flavor declares no source, or its file is missing or unparseable.
     """
     source = _RESERVED_WORD_SOURCES.get(db_flavor)
     if source is None:
-        return set()
+        return frozenset()
     package, keys = source
 
     json_path = Path(__file__).parent / package / "reserved_words.json"
@@ -231,7 +232,7 @@ def load_reserved_words(db_flavor: DBType) -> set[str]:
             json_path,
             db_flavor,
         )
-        return set()
+        return frozenset()
     except json.JSONDecodeError as e:
         logger.warning(
             "Could not parse reserved_words.json: %s, "
@@ -239,7 +240,7 @@ def load_reserved_words(db_flavor: DBType) -> set[str]:
             e,
             db_flavor,
         )
-        return set()
+        return frozenset()
 
     declared = reserved_data.get("reserved_words", {})
     reserved_words: set[str] = set()
@@ -247,7 +248,24 @@ def load_reserved_words(db_flavor: DBType) -> set[str]:
         reserved_words.update(declared.get(key, []))
 
     # Return uppercase set for case-insensitive comparison
-    return {word.upper() for word in reserved_words}
+    return frozenset(word.upper() for word in reserved_words)
+
+
+def load_reserved_words(db_flavor: DBType) -> set[str]:
+    """Load reserved words for a given database flavor.
+
+    The file is read once per flavor; every call returns a fresh set, since
+    naming runs on each write and read.
+
+    Args:
+        db_flavor: The database flavor to load reserved words for
+
+    Returns:
+        Set of reserved words (uppercase) for the database flavor.
+        Empty set when the flavor declares no source, or its file is missing
+        or unparseable.
+    """
+    return set(_reserved_words(db_flavor))
 
 
 @lru_cache(maxsize=1)
@@ -348,7 +366,7 @@ def sanitize_attribute_name(
         'name'
         >>> sanitize_attribute_name("SELECT", reserved)
         'SELECT_attr'
-        >>> sanitize_attribute_name("SELECT_attr", reserved)
+        >>> sanitize_attribute_name("SELECT", reserved | {"SELECT_ATTR"})
         'SELECT_attr_1'
     """
     if not name:
@@ -386,3 +404,27 @@ def sanitize_attribute_name(
                 f"returning '{candidate}'"
             )
             return candidate
+
+
+def unique_name(candidate: str, taken: set[str]) -> str:
+    """Return *candidate*, or ``candidate_N`` with the smallest free ``N``.
+
+    Sanitizing two different names can land them on one identifier (``a-b``
+    and ``a__b`` both become ``a__b`` on TigerGraph), and a reserved-word
+    suffix can land on a name that is already declared (``x`` -> ``x_attr``
+    next to a real ``x_attr``). Callers pass every name already claimed in
+    the scope that must stay unique and add the result to it themselves.
+
+    Args:
+        candidate: The sanitized name wanted.
+        taken: Names already claimed in the same scope.
+
+    Returns:
+        A name not in *taken*.
+    """
+    if candidate not in taken:
+        return candidate
+    counter = 1
+    while f"{candidate}_{counter}" in taken:
+        counter += 1
+    return f"{candidate}_{counter}"

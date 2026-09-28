@@ -220,6 +220,11 @@ def op_slots(op: ManifestOp) -> set[Slot]:
         slots |= {("bindings",)}
     elif isinstance(op, ops.SetDbProfileOp):
         slots |= {("db_profile",)}
+    elif isinstance(op, ops.SanitizeOp):
+        # Writes physical names into the profile and nothing else. It needs no
+        # read footprint: a concurrent rename carries the recorded name along,
+        # and a name the merge leaves unrecorded is filled in at write time.
+        slots |= {("db_profile",)}
     elif isinstance(op, ops.SetEdgeSemanticsOp):
         slots |= {(*_edge_slot(*entry.edge_id()), "semantics") for entry in op.edges}
 
@@ -313,7 +318,7 @@ def op_slots(op: ManifestOp) -> set[Slot]:
         slots |= {_resource_slot(name) for name in op.names}
 
     # ── whole-manifest ops ──────────────────────────────────────────────────
-    elif isinstance(op, (ops.ProjectManifestOp, ops.SanitizeOp, ops.MergeManifestsOp)):
+    elif isinstance(op, (ops.ProjectManifestOp, ops.MergeManifestsOp)):
         # These rewrite everything, so they conflict with any other change.
         # That is the honest answer: there is no way to merge "keep only these
         # vertices" with an unrelated edit and be sure of the result.

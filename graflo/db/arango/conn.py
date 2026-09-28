@@ -1405,7 +1405,7 @@ class ArangoConnection(Connection):
             introspection, schema_name=resolved_name
         )
 
-    def graph_neighbors(
+    def _graph_neighbors(
         self,
         vertex_type: str,
         key: str | dict[str, Any],

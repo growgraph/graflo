@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
+from graflo.architecture.evolution.sanitize import physical_schema
 from graflo.architecture.schema import Schema
 from graflo.db.bulk_exc import UnsupportedBulkLoad
 
@@ -19,12 +20,25 @@ if TYPE_CHECKING:
 
 
 class BulkSessionCoordinator:
-    """Coordinate a single optional native bulk session for an ingest run."""
+    """Coordinate a single optional native bulk session for an ingest run.
+
+    Backends receive the schema as the target stores it
+    (:func:`~graflo.architecture.evolution.sanitize.physical_schema`), the same
+    one DDL declared and the writer's appended batches are keyed by.
+    """
 
     def __init__(self, schema: Schema):
         self._schema = schema
+        self._stored_schema: Schema | None = None
         self._session_id: str | None = None
         self._begin_lock = asyncio.Lock()
+
+    def _stored_for(self, conn_conf: DBConfig) -> Schema:
+        if self._stored_schema is None:
+            self._stored_schema = physical_schema(
+                self._schema, conn_conf.connection_type
+            )
+        return self._stored_schema
 
     async def ensure_session(self, conn_conf: DBConfig) -> str | None:
         """Return an active bulk session id, or ``None`` when unsupported/disabled."""
@@ -40,7 +54,7 @@ class BulkSessionCoordinator:
                     if bulk_cfg is None or not getattr(bulk_cfg, "enabled", False):
                         return None
                     try:
-                        return db.bulk_load_begin(self._schema, bulk_cfg)
+                        return db.bulk_load_begin(self._stored_for(conn_conf), bulk_cfg)
                     except UnsupportedBulkLoad:
                         return None
 
@@ -66,7 +80,7 @@ class BulkSessionCoordinator:
             with ConnectionManager(connection_config=conn_conf) as db:
                 db.bulk_load_finalize(
                     session_id,
-                    self._schema,
+                    self._stored_for(conn_conf),
                     bindings=bindings,
                     connection_provider=connection_provider,
                 )

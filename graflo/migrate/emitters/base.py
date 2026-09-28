@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
+from graflo.architecture.evolution.sanitize import physical_schema
 from graflo.architecture.schema import Schema
 from graflo.db.conn import Connection
 from graflo.migrate.models import MigrationOperation
@@ -38,8 +39,11 @@ class BaseEmitter(ABC):
         """Describe what would happen for the operation."""
 
     def _ensure_schema(self, conn: Connection, schema: Schema) -> None:
-        """Ensure target schema artifacts exist (idempotent where supported)."""
-        conn.apply_target_schema(schema, recreate=False)
+        """Ensure target schema artifacts exist (idempotent where supported).
+
+        Declared under the names the target stores, as ``define_schema`` does.
+        """
+        conn.apply_target_schema(physical_schema(schema, conn.flavor), recreate=False)
 
     @staticmethod
     def _is_additive_operation(operation: MigrationOperation) -> bool:

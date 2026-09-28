@@ -24,6 +24,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, computed_field
 
+from graflo.architecture.evolution.sanitize import with_physical_names
 from graflo.architecture.schema import Schema
 from graflo.onto import DBType
 
@@ -112,8 +113,12 @@ def compare_live_schema(
     Returns:
         LiveSchemaDrift: every difference, with lists sorted for stable output.
     """
+    # The names the database was deployed with: those the profile records,
+    # plus the ones the write path fills in for names the flavor cannot store.
+    declared = with_physical_names(declared, db_flavor)
     db_aware = declared.resolve_db_aware(db_flavor)
     declared_vertices = declared.core_schema.vertex_config
+    profile = declared.db_profile
     logical_of = {
         db_aware.vertex_config.vertex_dbname(name): name
         for name in declared_vertices.vertex_set
@@ -122,8 +127,15 @@ def compare_live_schema(
     def logical(storage_name: str) -> str:
         return logical_of.get(storage_name, storage_name)
 
+    def logical_properties(vertex: str, stored: list[str]) -> set[str]:
+        back = {
+            physical: name
+            for name, physical in profile.vertex_property_map(vertex).items()
+        }
+        return {back.get(prop, prop) for prop in stored}
+
     observed_props: dict[str, set[str]] = {
-        logical(v.name): set(v.property_names)
+        logical(v.name): logical_properties(logical(v.name), v.property_names)
         for v in observed.core_schema.vertex_config.vertices
     }
 

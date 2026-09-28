@@ -22,6 +22,7 @@ Example:
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Any, Literal, Self, cast
 
@@ -267,6 +268,22 @@ class FilterExpression(ConfigBaseModel):
                     unary_op=unary_op,
                 )
         raise ValueError(f"expected dict or list, got {type(data)}")
+
+    def rename_fields(self, renames: Mapping[str, str]) -> FilterExpression:
+        """This expression with every leaf ``field`` rewritten by *renames*.
+
+        Pure: returns a new expression and leaves this one untouched. Fields
+        absent from *renames* keep their name.
+        """
+        if not renames:
+            return self
+        if self.kind == "leaf":
+            if self.field is None or self.field not in renames:
+                return self
+            return self.model_copy(update={"field": renames[self.field]})
+        return self.model_copy(
+            update={"deps": [dep.rename_fields(renames) for dep in self.deps]}
+        )
 
     def __call__(
         self,

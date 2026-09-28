@@ -109,7 +109,7 @@ pg_engine.migrate_graph(backend, postgres, recreate_schema=True)
 
 **Config loading.** All `*Config` classes support `from_env()`, `from_docker_env()` (reads `docker/<backend>/.env`), or direct constructor arguments.
 
-**Pre-sanitize for a future target.** Set `target_flavor_hint` on the file-backend config so `schema.yaml` is sanitized before it is written:
+**Pre-sanitize for a future target.** Set `target_flavor_hint` on the file-backend config so `schema.yaml` is sanitized before it is written; the data files are keyed by the same stored names:
 
 ```python
 backend = GraFloBackendConfig(
