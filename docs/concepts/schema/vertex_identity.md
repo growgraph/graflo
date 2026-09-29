@@ -166,11 +166,30 @@ resources:
 
 `source_match` / `target_match` accept a declared name, an explicit field list equal to a declared set, or `secondary` when exactly one is declared. Omitted (or `identity`) means the primary identity, so existing edge steps are unaffected. An unknown selector fails at manifest load, listing what *is* declared.
 
+An endpoint a `vertex_router` role fills holds rows of several classes, which need not declare the same secondary identity. The **per-class** form names one for each class that needs it; a class it does not name is matched on its primary identity:
+
+```yaml
+      - type_field: ci_type                    # routes each row to its class
+        vertex_from_map:
+          server: { hostname: host }
+          database: { db_id: host }
+        lookup_only: [server]                  # servers are referenced, databases written
+      - vertex: change
+      - from: change
+        target_role: ci_type
+        relation: impacts
+        target_match: { server: by_hostname } # databases match on their primary key
+```
+
+Each entry is checked at manifest load against its class. On an endpoint fixed to one class the mapping may name only that class. A selector also holds for an edge whose relation comes from the data (`relation_field`, `relation_from_key`), whichever relation a row resolves to.
+
 ### `lookup_only`
 
 A resource that references a vertex without owning it marks its vertex steps `lookup_only: true`. Those observations take part in edge rendering but are never upserted. Without it, rows carrying only a secondary key would be written as vertices with no primary key.
 
-As a safety net the writer refuses to upsert any document carrying no identity value at all, since no backend can store one meaningfully.
+A `vertex_router` takes `lookup_only: true` for every class it routes to, or a list of the classes it only looks up; the rest are written as usual.
+
+As a safety net the cast drops, and the writer refuses to upsert, any document carrying no identity value at all, since no backend can store one meaningfully. Either logs what it dropped.
 
 ### Soft uniqueness and ambiguity
 

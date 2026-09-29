@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
+from dataclasses import dataclass
 from itertools import pairwise
 from typing import Any, Literal
 
 from graflo.architecture.contract.bindings import Bindings
 from graflo.architecture.contract.ingestion import IngestionModel
-from graflo.architecture.contract.ingestion.resource import step_produces_vertices
+from graflo.architecture.contract.ingestion.resource import (
+    pipeline_has_open_router,
+    step_looks_up,
+    step_produces_vertices,
+)
 from graflo.architecture.contract.ingestion.steps.normalize import (
     normalize_actor_step,
 )
@@ -55,6 +60,7 @@ from .merge_core import (
 from .ops import (
     AddSecondaryIdentitiesOp,
     CanonicalizeOp,
+    IdentityAlignment,
     IdentityBranchSpec,
     ManifestOp,
     MergeManifestsOp,
@@ -441,6 +447,32 @@ def _member_state(
     return keys, names
 
 
+def _member_identity_fields(
+    index: ClusterIndex,
+    left_schema: Schema | None,
+    right_schema: Schema | None,
+    side_maps: SideMaps,
+) -> dict[str, set[str]]:
+    """Per merged name, the identity fields its members' records carry.
+
+    Canonical names, captured before the sides are rewritten, for every
+    identity mode (a funnel member contributes its synthetic key field). An
+    identity alignment checks its targets against these rather than the
+    merged class's intermediate identity, which the alignment replaces.
+    """
+    fields: dict[str, set[str]] = {}
+    for cluster in index.vertices:
+        carried = fields.setdefault(cluster.into, set())
+        for side, schema in (("left", left_schema), ("right", right_schema)):
+            if schema is None:
+                continue
+            vertex_config = schema.core_schema.vertex_config
+            for member in cluster.members(side):
+                rename = side_maps[side].properties.get(member, {})
+                carried.update(rename.get(f, f) for f in vertex_config[member].identity)
+    return fields
+
+
 def _capture_all_member_state(
     index: ClusterIndex,
     left_schema: Schema | None,
@@ -791,6 +823,217 @@ def _steps_producing(
     return out
 
 
+def _members_produced(
+    resource: str, cluster: Cluster, sides: Mapping[str, GraphManifest]
+) -> tuple[Side, list[str]] | None:
+    """The side *resource* comes from, and the members of *cluster* it produced there.
+
+    Judged on the side manifest, before the relabel: a router produces every
+    class of its side by pass-through, so it produces every member there.
+    """
+    for side in ("left", "right"):
+        side_manifest = sides[side]
+        side_ingestion = side_manifest.ingestion_model
+        side_schema = side_manifest.graph_schema
+        if side_ingestion is None or side_schema is None:
+            continue
+        pipeline = next(
+            (r.pipeline for r in side_ingestion.resources if r.name == resource), None
+        )
+        if pipeline is None:
+            continue
+        side_vertices = side_schema.core_schema.vertex_config.vertex_set
+        return side, sorted(
+            member
+            for member in cluster.members(side)
+            if _steps_producing(pipeline, member, known_vertices=side_vertices)
+        )
+    return None
+
+
+def _rebuild_pipelines(
+    manifest: GraphManifest,
+    rewrites: Mapping[str, Callable[[list[Any]], list[Any]]],
+) -> None:
+    """Apply each resource's pipeline rewrite in *rewrites*, revalidating the model."""
+    ingestion = manifest.ingestion_model
+    if ingestion is None or not rewrites:
+        return
+    from graflo.architecture.contract.ingestion.resource import Resource
+
+    resources: list[Resource] = []
+    for resource in ingestion.resources:
+        rewrite = rewrites.get(resource.name)
+        if rewrite is None:
+            resources.append(resource)
+            continue
+        payload = resource.to_dict(skip_defaults=False)
+        payload["pipeline"] = rewrite(resource.pipeline)
+        resources.append(Resource.model_validate(payload))
+    ingestion.resources = resources
+    manifest.ingestion_model = IngestionModel.model_validate(
+        ingestion.to_dict(skip_defaults=False)
+    )
+
+
+@dataclass(frozen=True)
+class ConvertedReference:
+    """A resource merge turned from upserting a merged class into referencing it."""
+
+    resource: str
+    vertex: str
+    side: Side
+    members: tuple[str, ...]
+    key: str
+    """The secondary identity its observations now look the class up by."""
+
+
+def _convert_uncovered_producers(
+    manifest: GraphManifest,
+    alignments: Sequence[IdentityAlignment],
+    index: ClusterIndex,
+    sides: Mapping[str, GraphManifest],
+    demoted: Mapping[tuple[Side, str], str],
+) -> list[ConvertedReference]:
+    """Turn each resource an alignment leaves unable to key its class into a reference.
+
+    A resource that upserts an aligned class without deriving any of its key
+    (:func:`~graflo.architecture.evolution.alignment.uncovered_producers`)
+    carries the member's own key and nothing of the new one: every record it
+    upserts would complete no funnel branch and be dropped, with its edges.
+    The one reading of its rows that survives the re-key is a lookup by the
+    key they carry, which :func:`_retire_member_keys` has just demoted to a
+    secondary identity. So its steps producing the class become lookups --
+    ``lookup_only`` on a vertex step, the class added to a router's
+    ``lookup_only`` list, the router's other classes still written -- and
+    :func:`_pin_member_references` points its edges at that key.
+
+    What changes is logged: those records are no longer written, which
+    matters for a resource that was meant to *own* the class and was left out
+    of the alignment by mistake. Refused, with
+    :class:`~graflo.architecture.evolution.alignment.AlignmentConflictError`,
+    when no member key was demoted for the resource to look the class up by.
+    """
+    from .alignment import AlignmentConflictError, uncovered_producers
+    from .rewrite import mark_lookup_only_in_pipeline
+
+    marks: dict[str, list[str]] = {}
+    converted: list[ConvertedReference] = []
+    for alignment in alignments:
+        cluster = index.cluster_for_label(alignment.vertex)
+        for resource in uncovered_producers(alignment, manifest):
+            origin = (
+                _members_produced(resource, cluster, sides)
+                if cluster is not None
+                else None
+            )
+            side, members = origin if origin is not None else (None, [])
+            keys = sorted(
+                {demoted.get((side, member)) or "" for member in members}
+                if side is not None
+                else set()
+            )
+            if not members or "" in keys:
+                if cluster is not None and cluster.declaration.retire == "keep":
+                    why = (
+                        "the cluster sets `retire: keep`, so no member key became "
+                        "a secondary identity to look it up by"
+                    )
+                    remedy = "Drop `retire: keep`, or add"
+                else:
+                    why = (
+                        "no member key it carries became a secondary identity to "
+                        "look it up by"
+                    )
+                    remedy = "Add"
+                raise AlignmentConflictError(
+                    "identity alignment conflict (uncovered producer): resource "
+                    f"{resource!r} upserts {alignment.vertex!r} but derives none of "
+                    f"its key, and {why}. {remedy} the resource to an attribute's "
+                    "sources if its rows carry the aligned inputs."
+                )
+            assert side is not None
+            marks.setdefault(resource, []).append(alignment.vertex)
+            converted.append(
+                ConvertedReference(
+                    resource=resource,
+                    vertex=alignment.vertex,
+                    side=side,
+                    members=tuple(members),
+                    key=keys[0],
+                )
+            )
+            logger.warning(
+                "merge_manifests: resource %r upserts %r but no identity alignment "
+                "derives its key there; its %r observations now look it up by %s "
+                "and are no longer written. Add the resource to the alignment if "
+                "its rows carry the aligned inputs.",
+                resource,
+                alignment.vertex,
+                alignment.vertex,
+                " / ".join(repr(key) for key in keys),
+            )
+
+    def _marking(classes: list[str]) -> Callable[[list[Any]], list[Any]]:
+        def rewrite(pipeline: list[Any]) -> list[Any]:
+            for vertex in classes:
+                pipeline = mark_lookup_only_in_pipeline(pipeline, vertex)
+            return pipeline
+
+        return rewrite
+
+    _rebuild_pipelines(
+        manifest,
+        {resource: _marking(classes) for resource, classes in marks.items()},
+    )
+    return converted
+
+
+def _close_side_routers(
+    manifest: GraphManifest, sides: Mapping[str, GraphManifest]
+) -> None:
+    """Close each resource's routers over the classes of the side it came from.
+
+    An open router passes a value its ``type_map`` does not name through as
+    the class name -- after the union, any class of the merged schema, the
+    other side's included, where the value used to be skipped. Each class the
+    side's relabel renamed already has its ``{old: new}`` entry: the cluster
+    and the canonical map, written into the table. Listing the side's other
+    classes as themselves and setting ``type_map_only`` completes it, so the
+    router routes exactly what it did before the merge. This runs last, so
+    the identity alignments and the reference conversion see routers as they
+    always have. ``router_scope: union`` skips it.
+    """
+    from .rewrite import close_routers_in_pipeline
+
+    ingestion = manifest.ingestion_model
+    if ingestion is None:
+        return
+    open_routers = {
+        resource.name
+        for resource in ingestion.resources
+        if pipeline_has_open_router(resource.pipeline)
+    }
+    vocabulary_of: dict[str, frozenset[str]] = {}
+    for side in ("left", "right"):
+        side_ingestion = sides[side].ingestion_model
+        side_schema = sides[side].graph_schema
+        if side_ingestion is None or side_schema is None:
+            continue
+        vocabulary = frozenset(side_schema.core_schema.vertex_config.vertex_set)
+        for resource in side_ingestion.resources:
+            if resource.name in open_routers:
+                vocabulary_of.setdefault(resource.name, vocabulary)
+
+    def _closing(vocabulary: frozenset[str]) -> Callable[[list[Any]], list[Any]]:
+        return lambda pipeline: close_routers_in_pipeline(pipeline, vocabulary)
+
+    _rebuild_pipelines(
+        manifest,
+        {name: _closing(vocabulary) for name, vocabulary in vocabulary_of.items()},
+    )
+
+
 def _pin_member_references(
     manifest: GraphManifest,
     index: ClusterIndex,
@@ -801,43 +1044,29 @@ def _pin_member_references(
     """Point each reference to a re-keyed member at that member's demoted key.
 
     A resource that only *references* a member -- every step producing the
-    merged class is ``lookup_only``, the edge-only source shape -- carries the
-    member's own key and nothing of the merged identity. Left on the primary,
-    its edges would look the endpoint up by a key its rows cannot compute and
-    resolve nothing. Its edge steps are rewritten to select the secondary the
-    member's key was demoted to, which is what the key it carries still finds.
+    merged class only looks it up (``lookup_only`` on a vertex step or a
+    router), the edge-only source shape -- carries the member's own key and
+    nothing of the merged identity. Left on the primary, its edges would look
+    the endpoint up by a key its rows cannot compute and resolve nothing. Its
+    edge steps are rewritten to select the secondary the member's key was
+    demoted to, which is what the key it carries still finds; an endpoint a
+    router role fills is pinned for the merged class only.
 
-    A resource that upserts the class is not touched here: it has to produce
-    the merged identity, and an identity alignment refuses one that derives
-    nothing for it. Nor is a reference to a member that kept its key as the
-    primary, or whose key was not demoted (``retire: keep``) -- the latter is
-    logged, since its edges will not resolve.
+    A router produces every member of its side, so a resource may reference
+    several; that is one reference when their keys were demoted to the same
+    secondary, and refused when they were not. A resource that upserts the
+    class is not touched here. Nor is a reference to a member that kept its
+    key as the primary, or whose key was not demoted (``retire: keep``) -- the
+    latter is logged, since its edges will not resolve.
     """
     ingestion = manifest.ingestion_model
     schema = manifest.graph_schema
     if ingestion is None or schema is None or not rekeyed:
         return
     union_vertices = schema.core_schema.vertex_config.vertex_set
-    side_of: dict[str, Side] = {}
-    for side in ("left", "right"):
-        side_ingestion = sides[side].ingestion_model
-        if side_ingestion is not None:
-            for resource in side_ingestion.resources:
-                side_of.setdefault(resource.name, side)
 
     selectors_by_resource: dict[str, dict[str, str]] = {}
     for resource in ingestion.resources:
-        side = side_of.get(resource.name)
-        if side is None:
-            continue
-        side_schema = sides[side].graph_schema
-        side_ingestion = sides[side].ingestion_model
-        if side_schema is None or side_ingestion is None:
-            continue
-        side_pipeline = next(
-            r.pipeline for r in side_ingestion.resources if r.name == resource.name
-        )
-        side_vertices = side_schema.core_schema.vertex_config.vertex_set
         for cluster in index.vertices:
             if cluster.into not in rekeyed:
                 continue
@@ -845,21 +1074,21 @@ def _pin_member_references(
                 resource.pipeline, cluster.into, known_vertices=union_vertices
             )
             if not steps or not all(
-                step.get("type") == "vertex" and step.get("lookup_only")
-                for step in steps
+                step_looks_up(step, cluster.into) for step in steps
             ):
                 continue
-            members = sorted(
-                member
-                for member in cluster.members(side)
-                if _steps_producing(side_pipeline, member, known_vertices=side_vertices)
-            )
-            if len(members) > 1:
+            origin = _members_produced(resource.name, cluster, sides)
+            if origin is None or not origin[1]:
+                continue
+            side, members = origin
+            keys = {demoted.get((side, member)) for member in members}
+            named = sorted(key for key in keys if key is not None)
+            if len(named) > 1:
                 raise MergeIdentityError(
                     f"merge_manifests: resource {resource.name!r} references "
-                    f"{side} members {members} of {cluster.into!r}, which were "
-                    "keyed differently before the merge; its edges cannot be "
-                    "pointed at one demoted key. Reference each member from "
+                    f"{side} members {members} of {cluster.into!r}, whose keys were "
+                    f"demoted to different secondary identities {named}; its edges "
+                    "cannot be pointed at one of them. Reference each member from "
                     "its own resource.",
                     check="ambiguous reference",
                     subjects=(
@@ -867,10 +1096,7 @@ def _pin_member_references(
                         *(subject(side, member) for member in members),
                     ),
                 )
-            if not members:
-                continue
-            selector = demoted.get((side, members[0]))
-            if selector is None:
+            if None in keys:
                 if cluster.declaration.retire == "keep":
                     logger.warning(
                         "merge_manifests: resource %r references %s:%s by its "
@@ -878,32 +1104,25 @@ def _pin_member_references(
                         "edges to %r will not resolve",
                         resource.name,
                         side,
-                        members[0],
+                        ", ".join(members),
                         cluster.into,
                     )
                 continue
-            selectors_by_resource.setdefault(resource.name, {})[cluster.into] = selector
-
-    if not selectors_by_resource:
-        return
-    from graflo.architecture.contract.ingestion.resource import Resource
+            selectors_by_resource.setdefault(resource.name, {})[cluster.into] = named[0]
 
     from .rewrite import rewrite_endpoint_selectors_in_pipeline
 
-    resources: list[Resource] = []
-    for resource in ingestion.resources:
-        selectors = selectors_by_resource.get(resource.name)
-        if selectors is None:
-            resources.append(resource)
-            continue
-        payload = resource.to_dict(skip_defaults=False)
-        payload["pipeline"] = rewrite_endpoint_selectors_in_pipeline(
-            resource.pipeline, selectors
+    def _pinning(selectors: dict[str, str]) -> Callable[[list[Any]], list[Any]]:
+        return lambda pipeline: rewrite_endpoint_selectors_in_pipeline(
+            pipeline, selectors
         )
-        resources.append(Resource.model_validate(payload))
-    ingestion.resources = resources
-    manifest.ingestion_model = IngestionModel.model_validate(
-        ingestion.to_dict(skip_defaults=False)
+
+    _rebuild_pipelines(
+        manifest,
+        {
+            resource: _pinning(selectors)
+            for resource, selectors in selectors_by_resource.items()
+        },
     )
 
 
@@ -1421,6 +1640,31 @@ def merge_manifests(
     ``op.canonical_maps``; putting the maps on the op itself keeps the whole
     recipe in one document.
     """
+    manifest, _converted = _merge_manifests(
+        left,
+        right,
+        op,
+        bump_version=bump_version,
+        finish_init=finish_init,
+        strict_references=strict_references,
+        dynamic_edge_feedback=dynamic_edge_feedback,
+        canonical_maps=canonical_maps,
+    )
+    return manifest
+
+
+def _merge_manifests(
+    left: GraphManifest,
+    right: GraphManifest,
+    op: MergeManifestsOp,
+    *,
+    bump_version: bool | Literal["minor"] = "minor",
+    finish_init: bool = True,
+    strict_references: bool = False,
+    dynamic_edge_feedback: bool = False,
+    canonical_maps: Sequence[tuple[Side, CanonicalMap]] = (),
+) -> tuple[GraphManifest, list[ConvertedReference]]:
+    """:func:`merge_manifests`, and the resources it turned into references."""
     if not isinstance(op, MergeManifestsOp):
         raise TypeError(f"merge_manifests expects MergeManifestsOp, got {type(op)!r}")
     maps = _coerce_side_maps(canonical_maps)
@@ -1453,6 +1697,9 @@ def merge_manifests(
     side_maps = resolution.side_maps
 
     member_keys, member_property_names = _capture_all_member_state(
+        index, left_schema, right_schema, side_maps
+    )
+    member_identity = _member_identity_fields(
         index, left_schema, right_schema, side_maps
     )
 
@@ -1523,6 +1770,7 @@ def merge_manifests(
             index=index,
             sides=sides,
             side_maps=side_maps,
+            member_identity=member_identity,
             canonical_maps=[
                 ("left", resolution.declared.left),
                 ("right", resolution.declared.right),
@@ -1537,7 +1785,12 @@ def merge_manifests(
     # a member at the key they still carry.
     rekeyed |= alignment_labels & index.labels
     demoted = _retire_member_keys(result, index, member_keys, rekeyed)
+    converted = _convert_uncovered_producers(
+        result, op.identity_alignments, index, sides, demoted
+    )
     _pin_member_references(result, index, sides, demoted, rekeyed)
+    if op.router_scope == "side":
+        _close_side_routers(result, sides)
 
     _apply_merge_naming(result, op)
 
@@ -1546,7 +1799,7 @@ def merge_manifests(
             strict_references=strict_references,
             dynamic_edge_feedback=dynamic_edge_feedback,
         )
-    return result
+    return result, converted
 
 
 def _apply_merge_naming(manifest: GraphManifest, op: MergeManifestsOp) -> None:
@@ -1581,6 +1834,7 @@ def _apply_identity_alignments(
     index: ClusterIndex,
     sides: Mapping[str, GraphManifest],
     side_maps: SideMaps,
+    member_identity: Mapping[str, set[str]],
     canonical_maps: Sequence[tuple[Side, CanonicalMap]],
     finish_init: bool,
     strict_references: bool,
@@ -1634,6 +1888,10 @@ def _apply_identity_alignments(
             canonical_maps=all_maps,
             sides=sides,
             cluster_members=cluster_members,
+            member_identity=member_identity.get(alignment.vertex),
+            # Converted into references once the member keys are demoted:
+            # see _convert_uncovered_producers.
+            uncovered_producers="allow",
         )
         out = apply_evolution(
             out,

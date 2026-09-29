@@ -11,13 +11,20 @@ edge behavior keyed by :class:`~graflo.architecture.graph_types.identifiers.Edge
 When :attr:`EdgeDerivation.relation_from_key` is true, the registry records the
 edge id so :class:`~graflo.architecture.schema.db_aware.EdgeConfigDBAware` (with
 overlay) can align TigerGraph DDL with runtime.
+
+An endpoint selector names the identity an edge endpoint is matched on. It is
+*plain* -- ``None`` / ``"identity"`` for the primary, a secondary identity's
+name, or a field list -- or *per class*: ``{Class: plain}``, for an endpoint a
+``vertex_router`` fills with rows of several classes. A class the mapping does
+not name is matched on its primary identity. :func:`selector_for` reduces
+either form to the plain selector one concrete class uses.
 """
 
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypeAlias
 
 from pydantic import Field
 
@@ -28,6 +35,31 @@ from graflo.onto import (
     PRIMARY_IDENTITY_SELECTOR,
     EndpointAmbiguityPolicy,
 )
+
+PlainSelector: TypeAlias = str | list[str]
+"""A secondary identity's name, a field list, ``"identity"`` or ``"secondary"``."""
+
+EndpointSelector: TypeAlias = PlainSelector | dict[str, PlainSelector]
+"""A plain selector, or one per endpoint class (``{Class: plain}``)."""
+
+
+def selector_for(
+    selector: EndpointSelector | None, vertex: str
+) -> PlainSelector | None:
+    """The plain selector *selector* applies to endpoint class *vertex*.
+
+    A per-class mapping that does not name *vertex* leaves it on its primary
+    identity (``None``).
+    """
+    if isinstance(selector, dict):
+        return selector.get(vertex)
+    return selector
+
+
+def _is_primary(selector: EndpointSelector | None) -> bool:
+    if isinstance(selector, dict):
+        return all(_is_primary(value) for value in selector.values())
+    return selector in (None, PRIMARY_IDENTITY_SELECTOR)
 
 
 class EdgeDerivation(ConfigBaseModel):
@@ -61,14 +93,15 @@ class EdgeDerivation(ConfigBaseModel):
         default=False,
         description="If True, derive the per-document relation label from the location key during assembly.",
     )
-    source_match: str | list[str] | None = Field(
+    source_match: EndpointSelector | None = Field(
         default=None,
         description=(
             "Identity selector for the source endpoint: None/'identity' for the "
-            "primary identity, or a secondary identity name / field list."
+            "primary identity, a secondary identity name / field list, or a "
+            "mapping of endpoint class to one of those."
         ),
     )
-    target_match: str | list[str] | None = Field(
+    target_match: EndpointSelector | None = Field(
         default=None,
         description="Identity selector for the target endpoint; see source_match.",
     )
@@ -90,10 +123,7 @@ class EdgeDerivation(ConfigBaseModel):
 
     def uses_secondary_identity(self) -> bool:
         """True when either endpoint is matched on something other than the primary identity."""
-        return any(
-            selector not in (None, PRIMARY_IDENTITY_SELECTOR)
-            for selector in (self.source_match, self.target_match)
-        )
+        return not (_is_primary(self.source_match) and _is_primary(self.target_match))
 
     def is_empty(self) -> bool:
         if self.relation_from_key or self.emit_inverse:
@@ -134,6 +164,40 @@ class EndpointMatch:
         )
 
 
+@dataclass(frozen=True)
+class EndpointRule:
+    """Endpoint selectors for edges an edge step names only per document.
+
+    A step whose endpoint comes from a router role, or whose relation comes
+    from the data, has no single edge id to register at load time. The rule
+    stands for every edge it can write: ``None`` in :attr:`source`,
+    :attr:`target` or :attr:`relation` is whatever the document resolves, and
+    a per-class selector is reduced to the concrete class when the rule is
+    applied.
+    """
+
+    source: str | None
+    target: str | None
+    relation: str | None
+    source_match: EndpointSelector | None = None
+    target_match: EndpointSelector | None = None
+    on_ambiguous: EndpointAmbiguityPolicy | None = None
+
+    def applies_to(self, edge_id: EdgeId) -> bool:
+        return all(
+            fixed is None or fixed == actual
+            for fixed, actual in zip((self.source, self.target, self.relation), edge_id)
+        )
+
+    def resolve(self, edge_id: EdgeId) -> EndpointMatch:
+        source, target, _relation = edge_id
+        return EndpointMatch(
+            source=selector_for(self.source_match, source),
+            target=selector_for(self.target_match, target),
+            on_ambiguous=self.on_ambiguous,
+        )
+
+
 class EdgeDerivationRegistry:
     """Mutable store for ingestion-time edge behavior keyed by :class:`EdgeId`.
 
@@ -145,6 +209,7 @@ class EdgeDerivationRegistry:
         self._relation_from_key: dict[EdgeId, bool] = {}
         self._vertex_weights: dict[EdgeId, list[Weight]] = {}
         self._endpoint_match: dict[EdgeId, EndpointMatch] = {}
+        self._endpoint_rules: list[EndpointRule] = []
 
     def mark_relation_from_key(self, edge_id: EdgeId) -> None:
         self._relation_from_key[edge_id] = True
@@ -162,8 +227,30 @@ class EdgeDerivationRegistry:
             return
         self._endpoint_match[edge_id] = match
 
+    def add_endpoint_rule(self, rule: EndpointRule) -> None:
+        """Record selectors for the edges a data-driven edge step can write.
+
+        A later rule covering the same edge wins, as a later
+        :meth:`set_endpoint_match` does.
+        """
+        if rule in self._endpoint_rules:
+            return
+        self._endpoint_rules.append(rule)
+
     def endpoint_match_for(self, edge_id: EdgeId) -> EndpointMatch | None:
-        return self._endpoint_match.get(edge_id)
+        """How *edge_id* locates its endpoints, or ``None`` for the primary identity.
+
+        An edge registered by id wins; otherwise the last rule covering it
+        decides, reduced to the edge's concrete classes.
+        """
+        match = self._endpoint_match.get(edge_id)
+        if match is not None:
+            return match
+        for rule in reversed(self._endpoint_rules):
+            if rule.applies_to(edge_id):
+                resolved = rule.resolve(edge_id)
+                return None if resolved.is_default() else resolved
+        return None
 
     def has_endpoint_matches(self) -> bool:
         """Whether any edge locates its endpoints by a secondary identity.
@@ -171,7 +258,7 @@ class EdgeDerivationRegistry:
         Such edges are resolved against database state at write time, which
         makes cross-batch write ordering semantic for the resource.
         """
-        return bool(self._endpoint_match)
+        return bool(self._endpoint_match or self._endpoint_rules)
 
     def merge_vertex_weights(self, edge_id: EdgeId, rules: list[Weight]) -> None:
         """Append vertex weight rules for *edge_id*, deduplicating by stable fingerprint."""
@@ -197,6 +284,7 @@ class EdgeDerivationRegistry:
             for k, v in self._vertex_weights.items()
         }
         out._endpoint_match = dict(self._endpoint_match)
+        out._endpoint_rules = list(self._endpoint_rules)
         return out
 
     def merge_from(self, other: EdgeDerivationRegistry) -> None:
@@ -207,6 +295,8 @@ class EdgeDerivationRegistry:
             self.merge_vertex_weights(eid, weights)
         for eid, match in other._endpoint_match.items():
             self.set_endpoint_match(eid, match)
+        for rule in other._endpoint_rules:
+            self.add_endpoint_rule(rule)
 
 
 def _weight_fingerprint(w: Weight) -> str:

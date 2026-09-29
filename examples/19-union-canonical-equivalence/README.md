@@ -181,11 +181,21 @@ rows carry nothing the funnel can digest. So merge points the resource's
   target_match: by_company_id
 ```
 
-A resource that *upserts* the merged class must derive its identity instead.
-`--uncovered-producer-demo` drops the `lookup_only` and the alignment refuses:
-the resource derives none of the funnel attributes, so every `Firm` record it
-upserts would complete no branch and be dropped. Add it to the alignment's
-sources or `local_key`, or keep it a reference.
+A resource that *upserts* the merged class must derive its identity — or be
+read as a reference. `--uncovered-producer-demo` drops the `lookup_only`: the
+resource derives none of the funnel attributes, so every `Firm` record it
+upserted would complete no branch and be dropped. The key its rows carry is
+the only thing that still finds a `Company`, so merge puts the `lookup_only`
+back and pins the edge as above, and warns that those records are no longer
+written. That is the right reading for a reference, and the warning is the
+signal for a resource meant to *own* the class: add that one to the
+alignment's sources.
+
+The same holds for a `vertex_router` that sends rows to several classes by a
+type field. Only the merged class becomes a lookup — `lookup_only: [Company]`
+— and a role-based edge is pinned per class, `target_match: {Company:
+by_company_id}`; the router's other classes are still written and matched on
+their own keys.
 
 ## Re-keying without an alignment
 
@@ -223,7 +233,7 @@ uv run python build_union.py --forgotten-member-demo  # incomplete → completio
 uv run python build_union.py --shared-name-demo       # incomplete → completion: declare the pair
 uv run python build_union.py --shared-name-demo --union-right   # …or union it by name
 uv run python build_union.py --flag-identity-demo     # re-key on a flagged shared property
-uv run python build_union.py --uncovered-producer-demo  # a resource the alignment misses → conflict
+uv run python build_union.py --uncovered-producer-demo  # a resource the alignment misses → a reference
 ```
 
 The two incompleteness demos print their completion as YAML, ready to paste

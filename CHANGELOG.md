@@ -6,6 +6,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [Unreleased]
+
+### Added
+
+- `vertex_router` takes `lookup_only`: `true` for every class it routes to, or a list of classes.
+- Per-class endpoint selectors, `source_match` / `target_match: {Class: selector}`, for an endpoint
+  a router role fills; a class they do not name matches on its primary identity.
+- `vertex_router` takes `type_map_only`: a value its `type_map` does not name is skipped instead of
+  routed as the class of that name.
+- `MergeManifestsOp.router_scope` (`side` | `union`), below.
+
+### Changed
+
+- Merge turns a resource that upserts an aligned class without deriving its key into a reference:
+  its productions of the class become lookups on the member's demoted key and its edges are
+  pinned, with a warning and a `reference_conversion` preview note that those records are no
+  longer written. It was refused, and still is when no member key was demoted (`retire: keep`).
+  Called directly, `validate_alignment` refuses all such resources in one error.
+- The cast logs the vertex and edge documents it drops for want of an identity value.
+- Merge closes each side's routers over that side's classes: renamed classes keep their
+  `{old: new}` entries, the rest are listed as themselves, and `type_map_only` is set. A value
+  naming only the other side's class is skipped, as before the merge, where it used to write that
+  class. `router_scope: union` keeps routers open.
+
+### Fixed
+
+- Edge steps whose endpoint comes from a router role, or whose relation comes from the data,
+  ignored `source_match` / `target_match` and lost their edges at cast time.
+- The identity-alignment collision check compares targets with the members' own keys: a key the
+  cluster declares or flags no longer trips it, and a member's own key no longer slips past it.
+
 ## [1.14.0]
 
 ### Added

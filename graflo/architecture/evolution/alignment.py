@@ -49,11 +49,13 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from graflo.architecture.contract.ingestion.resource import (
     find_vertex_producing_levels,
+    is_open_router,
     resolve_pipeline_level,
+    step_looks_up,
     step_produces_vertices,
 )
 from graflo.architecture.contract.ingestion.steps.normalize import (
@@ -533,8 +535,8 @@ def _producing_steps(
     """Normalized steps at *path* in *resource* that produce *vertex*.
 
     The two tiers of :func:`find_vertex_producing_levels`, within one level:
-    the steps naming the class explicitly when any does, else every router
-    there — each routes the raw discriminator value as the class name.
+    the steps naming the class explicitly when any does, else every open
+    router there — each routes the raw discriminator value as the class name.
     """
     pipeline = list(_resource_pipelines(manifest).get(resource, []))
     level = resolve_pipeline_level(pipeline, list(path))
@@ -544,15 +546,15 @@ def _producing_steps(
     explicit = [step for step in steps if vertex in step_produces_vertices(step)]
     if explicit or vertex not in _vertex_set(manifest):
         return explicit
-    return [step for step in steps if step.get("type") == "vertex_router"]
+    return [step for step in steps if is_open_router(step)]
 
 
 def _routed_values(routers: list[dict], vertex: str) -> tuple[str, ...]:
     """Discriminator values *routers* send onto *vertex*.
 
-    The ``type_map`` keys mapping to it. A router without such an entry routes
-    the raw value that *is* the class name, so that is the value which reaches
-    it.
+    The ``type_map`` keys mapping to it. An open router without such an entry
+    routes the raw value that *is* the class name, so that is the value which
+    reaches it; a closed one reaches it only through its table.
     """
     values: set[str] = set()
     for step in routers:
@@ -612,6 +614,8 @@ def validate_alignment(
     canonical_maps: Sequence[VocabularyMap] = (),
     sides: SideManifests | None = None,
     cluster_members: ClusterMembers | None = None,
+    member_identity: Collection[str] | None = None,
+    uncovered_producers: Literal["refuse", "allow"] = "refuse",
 ) -> None:
     """Fail loudly when *alignment* contradicts *manifest* or the canonical maps.
 
@@ -626,6 +630,18 @@ def validate_alignment(
     *sides* are the pre-merge side manifests, required by member-keyed
     sources; *cluster_members* are the aligned cluster's members per side,
     which lets a member key be checked against the cluster it claims.
+
+    *member_identity* are the identity fields the aligned class's records
+    carry — for a merged class, its members' own pre-merge keys under their
+    canonical names. A target attribute named like one would overwrite that
+    key's value with the derived one. It defaults to the class's current
+    identity in *manifest*, which in a merge is only the intermediate one the
+    alignment replaces.
+
+    *uncovered_producers* decides a resource that upserts the class but
+    derives none of its key (see :func:`uncovered_producers`): ``refuse`` it,
+    or ``allow`` it for a caller that turns it into a reference -- merge does,
+    once the member keys it can look the class up by exist.
     """
     schema = manifest.graph_schema
     if schema is None:
@@ -690,7 +706,11 @@ def validate_alignment(
             if production.type_field is not None:
                 raw_inputs.setdefault(resource, []).append(production.type_field)
 
-    current_identity = set(vertex_config.identity_fields(alignment.vertex))
+    current_identity = set(
+        member_identity
+        if member_identity is not None
+        else vertex_config.identity_fields(alignment.vertex)
+    )
     into_names = [attribute.name for attribute in alignment.attributes]
     if alignment.local_key is not None:
         into_names.append(alignment.local_key.name)
@@ -698,8 +718,8 @@ def validate_alignment(
     if colliding:
         raise _conflict(
             "identity collision",
-            f"target attributes {colliding} are already primary-identity "
-            f"fields of {alignment.vertex!r}",
+            f"target attributes {colliding} are already identity fields of "
+            f"{alignment.vertex!r}'s records",
             "Pick canonical attribute names distinct from the current key; "
             "the alignment replaces the identity wholesale.",
         )
@@ -734,7 +754,8 @@ def validate_alignment(
                 )
 
     levels = resolve_derivation_levels(alignment, manifest, productions=productions)
-    _check_uncovered_producers(alignment, manifest)
+    if uncovered_producers == "refuse":
+        _check_uncovered_producers(alignment, manifest)
     _check_derivation_signatures(alignment)
 
     # Scratch fields exist only for the column-presence (list) form; a
@@ -829,39 +850,47 @@ def _raw_properties(
     }
 
 
-def _check_uncovered_producers(
+def uncovered_producers(
     alignment: IdentityAlignment, manifest: GraphManifest
-) -> None:
-    """Refuse a resource that upserts the class but derives none of its key.
+) -> list[str]:
+    """Resources that upsert the aligned class but derive none of its key, sorted.
 
     Every record of the class keys on the funnel over the alignment's
     attributes. A resource the alignment never names derives none of them, so
     each record it upserts completes no branch and is dropped -- the whole
-    resource, and every edge it emits to the class, silently. A resource
-    whose steps producing the class are all ``lookup_only`` upserts nothing;
-    merge points its edges at the member key it carries instead.
+    resource, and every edge it emits to the class. A resource whose steps
+    producing the class only look it up (``lookup_only``, on a vertex step or
+    a router) upserts nothing and is not listed.
     """
     covered = _referenced_resources(alignment)
     known = _vertex_set(manifest)
-    for resource, pipeline in sorted(_resource_pipelines(manifest).items()):
-        if resource in covered:
-            continue
-        upserting = [
-            step
+    return [
+        resource
+        for resource, pipeline in sorted(_resource_pipelines(manifest).items())
+        if resource not in covered
+        and any(
+            not step_looks_up(step, alignment.vertex)
             for step in _steps_producing_anywhere(pipeline, alignment.vertex, known)
-            if not (step.get("type") == "vertex" and step.get("lookup_only"))
-        ]
-        if upserting:
-            raise _conflict(
-                "uncovered producer",
-                f"resource {resource!r} produces {alignment.vertex!r} but the "
-                "alignment derives none of its funnel attributes there, so "
-                "every record it upserts would complete no branch and be dropped",
-                "Add the resource to an attribute's sources or to local_key, "
-                "or, if it only references the class, mark its vertex step "
-                "`lookup_only: true` — merge then points its edges at the "
-                "demoted member key.",
-            )
+        )
+    ]
+
+
+def _check_uncovered_producers(
+    alignment: IdentityAlignment, manifest: GraphManifest
+) -> None:
+    """Refuse the :func:`uncovered_producers` of *alignment*, all of them at once."""
+    uncovered = uncovered_producers(alignment, manifest)
+    if uncovered:
+        raise _conflict(
+            "uncovered producer",
+            f"resources {uncovered} produce {alignment.vertex!r} but the "
+            "alignment derives none of its funnel attributes there, so every "
+            "record they upsert would complete no branch and be dropped",
+            "Add a resource whose rows carry the aligned inputs to an "
+            "attribute's sources; mark the step of one that only references the "
+            "class `lookup_only` (on a vertex_router, `lookup_only: "
+            f"[{alignment.vertex}]`). Merge does the latter itself.",
+        )
 
 
 def _steps_producing_anywhere(
@@ -1055,6 +1084,8 @@ def alignment_to_ops(
     canonical_maps: Sequence[VocabularyMap] = (),
     sides: SideManifests | None = None,
     cluster_members: ClusterMembers | None = None,
+    member_identity: Collection[str] | None = None,
+    uncovered_producers: Literal["refuse", "allow"] = "refuse",
 ) -> list[ManifestOp]:
     """Merge the alignment into an ordered list of fundamental ops.
 
@@ -1071,6 +1102,8 @@ def alignment_to_ops(
             canonical_maps=canonical_maps,
             sides=sides,
             cluster_members=cluster_members,
+            member_identity=member_identity,
+            uncovered_producers=uncovered_producers,
         )
     sides = _require_sides(alignment, sides)
     productions = (

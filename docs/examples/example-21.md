@@ -38,7 +38,11 @@ router in place: `type_map` becomes `{firm: Company, shop: Company, person:
 Person}` and `vertex_from_map`
 keys are remapped, with the collapsed types' column maps **unioned** — one vertex
 field reading two different columns raises rather than silently keeping the
-last. And `allow_observation_fusion` is *not* needed: a router emits at most one
+last. At the end the merge closes the router over its own side's classes: the
+table gains `Firm: Company`, `Shop: Company` and `Person: Person` — the raw
+class names the router used to pass through — and `type_map_only: true`, so a
+`kind` naming one of the other side's classes is skipped, as it was before the
+merge. And `allow_observation_fusion` is *not* needed: a router emits at most one
 vertex per document, so two branches pointing at one class cannot fuse
 observations. Only `allow_merges=True` is required, for naming two members on a
 side.

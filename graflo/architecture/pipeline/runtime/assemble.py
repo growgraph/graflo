@@ -10,6 +10,7 @@ from graflo.architecture.graph_types import AssemblyContext, EdgeId, LocationInd
 from graflo.architecture.graph_types.edge_derivation import (
     EdgeDerivation,
     EdgeDerivationRegistry,
+    selector_for,
 )
 from graflo.architecture.graph_types.merge import fuse_doc_basis
 from graflo.architecture.schema.edge import (
@@ -127,10 +128,16 @@ def _emit_edge_documents(
     the relation was fixed, read from a field, mapped, or taken from a key.
     """
     source_fields = vertex_config.match_fields(
-        edge.source, derivation.source_match if derivation is not None else None
+        edge.source,
+        selector_for(derivation.source_match, edge.source)
+        if derivation is not None
+        else None,
     )
     target_fields = vertex_config.match_fields(
-        edge.target, derivation.target_match if derivation is not None else None
+        edge.target,
+        selector_for(derivation.target_match, edge.target)
+        if derivation is not None
+        else None,
     )
     _fuse_vertices_for_edge(
         ctx,

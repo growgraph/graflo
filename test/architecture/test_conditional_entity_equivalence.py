@@ -957,12 +957,17 @@ class TestDynamicRouterFusion:
         return normalize_actor_step(dict(descend["pipeline"][0]))
 
     def test_the_renames_are_written_into_the_table(self) -> None:
-        union = _build_dynamic_member_union()
+        router = self._router(_build_dynamic_member_union())
 
-        assert self._router(union)["type_map"] == {
+        assert router["type_map"] == {
             "Firm": "Company",
             "Shop": "Company",
+            # Merge then closes the router over the left side as handed in:
+            # its other classes, as themselves.
+            "Company": "Company",
+            "Person": "Person",
         }
+        assert router["type_map_only"] is True
 
     def test_each_member_fuses_through_its_own_marker(self) -> None:
         union = _build_dynamic_member_union()

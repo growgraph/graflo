@@ -2616,6 +2616,20 @@ class MergeManifestsOp(ConfigBaseModel):
         """
         return "union_right" if value == "fuse_right" else value
 
+    router_scope: Literal["side", "union"] = PydanticField(
+        default="side",
+        description=(
+            "What a ``vertex_router`` may route a discriminator value missing "
+            "from its ``type_map`` to, after the merge. ``side`` closes each "
+            "router over its own side's classes: merge writes every class of "
+            "that side into the table, under its merged name, and sets "
+            "``type_map_only``, so a value the side never modeled is skipped "
+            "as it was before the merge. ``union`` leaves routers open: such a "
+            "value can name any class of the merged schema, the other side's "
+            "included -- for sources that share type names and ids."
+        ),
+    )
+
     allow_merges: bool = PydanticField(
         default=False,
         description=(

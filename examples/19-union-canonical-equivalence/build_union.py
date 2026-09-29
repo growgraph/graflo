@@ -28,9 +28,10 @@ the resource pipelines as ops. The source manifests stay pure. Each member's
 own key is demoted to a lookup-only secondary identity, and ``r_agreements`` —
 which only *references* a ``Firm`` by ``firm_id`` — has its edge pointed at
 that demoted key. ``--uncovered-producer-demo`` makes that resource upsert
-``Firm`` instead, and merge refuses: its records would derive no funnel
-attribute. ``--flag-identity-demo`` re-keys the class without an alignment,
-by flagging the one property every member carries.
+``Firm`` instead: its records would derive no funnel attribute, so merge turns
+the step back into a lookup on the demoted key, and warns that those records
+are no longer written. ``--flag-identity-demo`` re-keys the class without an
+alignment, by flagging the one property every member carries.
 
 Each refusal is one problem: merge stops at the first. ``--plot-dir`` draws
 every mode instead — the declaration graph, with *all* the conflicts in it —
@@ -51,6 +52,7 @@ the picture also shows the two identity disagreements behind it.
 
 from __future__ import annotations
 
+import textwrap
 from pathlib import Path
 
 import click
@@ -308,6 +310,7 @@ def build_union(
     if uncovered_producer:
         # r_agreements now upserts Firm, and the alignment derives nothing
         # there: every agreement's Firm record would complete no funnel branch.
+        # Merge makes it a reference again -- a lookup on the demoted key.
         manifest_a = _upserting_agreements(manifest_a)
 
     # The op carries the cluster, the canonical map and the identity
@@ -417,7 +420,7 @@ def plot_modes(plot_dir: Path) -> list[Path]:
     "--uncovered-producer-demo",
     is_flag=True,
     help="Make `r_agreements` upsert `Firm` rather than reference it, to see "
-    "the alignment refuse a resource it derives nothing for.",
+    "merge turn a resource the alignment derives nothing for into a reference.",
 )
 @click.option(
     "--union-right",
@@ -488,6 +491,18 @@ def main(
             "  secondary identities: "
             f"{[(s.name, s.fields) for s in company.secondary_identities]}"
         )
+        if uncovered_producer_demo:
+            agreements = next(
+                r
+                for r in union.require_ingestion_model().resources
+                if r.name == "r_agreements"
+            )
+            click.echo("  r_agreements, as merged:")
+            click.echo(
+                textwrap.indent(
+                    yaml.safe_dump(agreements.pipeline, sort_keys=False), "    "
+                ).rstrip()
+            )
         return
     output.parent.mkdir(parents=True, exist_ok=True)
     FileHandle.dump(union.to_dict(), output)

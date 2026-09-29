@@ -153,6 +153,7 @@ FindingKind = Literal[
     "identity_funnel_conflict",
     "secondary_identity_conflict",
     "edge_conflict",
+    "reference_conversion",
 ]
 
 #: A refusal's ``check`` phrase to the finding kind it is an instance of. The
@@ -1878,8 +1879,22 @@ def preview_merge(
             ).build()
     if not attempt:
         return preview
-    outcome, subjects = _attempt(left, right, op, canonical_maps)
-    return preview.with_outcome(outcome, subjects=subjects)
+    outcome, subjects, notes = _attempt(left, right, op, canonical_maps)
+    preview = preview.with_outcome(outcome, subjects=subjects)
+    known = {n.id for n in preview.nodes}
+    return preview.model_copy(
+        update={
+            "findings": [
+                *preview.findings,
+                *(
+                    note.model_copy(
+                        update={"nodes": [n for n in note.nodes if n in known]}
+                    )
+                    for note in notes
+                ),
+            ]
+        }
+    )
 
 
 def _attempt(
@@ -1887,17 +1902,22 @@ def _attempt(
     right: GraphManifest,
     op: MergeManifestsOp,
     canonical_maps: Sequence[tuple[Side, CanonicalMap]],
-) -> tuple[MergeOutcome, tuple[str, ...]]:
-    """Merge for real, and turn whichever way it went into an outcome."""
+) -> tuple[MergeOutcome, tuple[str, ...], list[MergeFinding]]:
+    """Merge for real, and turn whichever way it went into an outcome.
+
+    A merge that went through may still have changed what a resource does:
+    each resource it turned from upserting a merged class into referencing it
+    writes none of those records any more, which is a ``note``.
+    """
     from .alignment import AlignmentConflictError
     from .merge import (
         MergeIdentityError,
         MergeNameConflictError,
-        merge_manifests,
+        _merge_manifests,
     )
 
     try:
-        merged = merge_manifests(
+        merged, converted = _merge_manifests(
             left, right, op, canonical_maps=canonical_maps, finish_init=False
         )
     except (
@@ -1909,8 +1929,26 @@ def _attempt(
         UnknownMemberError,
         ValueError,
     ) as exc:
-        return outcome_from_exception(exc)
-    return outcome_from_manifest(merged), ()
+        return (*outcome_from_exception(exc), [])
+    notes = [
+        MergeFinding(
+            kind="reference_conversion",
+            severity="note",
+            message=(
+                f"resource {ref.resource!r} upserted {ref.vertex!r} but no identity "
+                f"alignment derives its key there, so it now looks {ref.vertex!r} up "
+                f"by {ref.key!r} and writes none of those records; add it to the "
+                "alignment if its rows carry the aligned inputs"
+            ),
+            source="merge",
+            nodes=[
+                subject("merged", ref.vertex),
+                *(subject(ref.side, member) for member in ref.members),
+            ],
+        )
+        for ref in converted
+    ]
+    return outcome_from_manifest(merged), (), notes
 
 
 __all__ = [

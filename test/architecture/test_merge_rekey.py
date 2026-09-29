@@ -10,6 +10,7 @@ merged class.
 from __future__ import annotations
 
 import asyncio
+import logging
 
 import pytest
 
@@ -305,6 +306,54 @@ class TestAlignmentDemotesMemberKeys:
         )
         assert _secondaries(merged) == {"by_x_id": ["x_id"], "by_y_id": ["y_id"]}
 
+    @pytest.mark.parametrize(
+        "equivalence",
+        [
+            VertexEquivalence(
+                left="X",
+                right="Y",
+                into="Z",
+                identity=["name"],
+                properties=[NAME_EQUIVALENCE],
+            ),
+            VertexEquivalence(
+                left="X",
+                right="Y",
+                into="Z",
+                properties=[
+                    PropertyEquivalence(
+                        left="name", right="cname", into="name", identity=True
+                    )
+                ],
+            ),
+        ],
+        ids=["declared", "flagged"],
+    )
+    def test_target_named_like_the_merges_own_key_is_not_a_collision(
+        self, equivalence: VertexEquivalence
+    ) -> None:
+        """The collision guards a key the records carry, not one the merge wrote.
+
+        ``name`` is neither member's key; the declaration made it ``Z``'s key
+        only until the alignment replaces it.
+        """
+        merged = _merge(equivalence, alignments=[_alignment(name="name")])
+        assert _z(merged).identity_funnel is not None
+        assert _secondaries(merged) == {"by_x_id": ["x_id"], "by_y_id": ["y_id"]}
+
+    def test_target_named_like_a_members_own_key_is_a_collision(self) -> None:
+        with pytest.raises(AlignmentConflictError, match="identity collision"):
+            _merge(
+                VertexEquivalence(
+                    left="X",
+                    right="Y",
+                    into="Z",
+                    identity=["name"],
+                    properties=[NAME_EQUIVALENCE],
+                ),
+                alignments=[_alignment(name="x_id")],
+            )
+
     def test_raw_column_named_like_the_other_sides_rename_target_is_accepted(
         self,
     ) -> None:
@@ -342,11 +391,48 @@ class TestAlignmentDemotesMemberKeys:
 
 
 class TestResourcesOutsideTheAlignment:
-    def test_an_upserting_producer_the_alignment_misses_is_refused(self) -> None:
-        """``r_ap`` upserts ``X`` records that would derive no funnel attribute."""
-        with pytest.raises(AlignmentConflictError, match="r_ap"):
-            _merge(
+    def test_an_upserting_producer_the_alignment_misses_becomes_a_reference(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """``r_ap`` carries ``X``'s own key and nothing of the new one.
+
+        Upserting would write nothing -- no record completes a funnel branch --
+        so it looks ``Z`` up by the key it carries, and merge says so.
+        """
+        with caplog.at_level(logging.WARNING):
+            merged = _merge(
                 VertexEquivalence(left="X", right="Y", into="Z"),
+                alignments=[_alignment()],
+                left=_side_a(reference_step={"vertex": "X"}),
+            )
+        z_step = next(s for s in _pipeline(merged, "r_ap") if s.get("vertex") == "Z")
+        assert z_step["lookup_only"] is True
+        assert collect_endpoint_selectors(_pipeline(merged, "r_ap")) == [
+            ("Z", "by_x_id")
+        ]
+        assert "r_ap" in caplog.text and "by_x_id" in caplog.text
+
+    def test_a_converted_reference_still_emits_its_edge(self) -> None:
+        merged = _merge(
+            VertexEquivalence(left="X", right="Y", into="Z"),
+            alignments=[_alignment()],
+            left=_side_a(reference_step={"vertex": "X"}),
+        )
+        caster = DocumentCaster(merged.require_ingestion_model())
+        result = asyncio.run(
+            caster.cast_batch(
+                [{"ap_id": "p1", "x_id": "x1"}], "r_ap", params=IngestionParams()
+            )
+        )
+        assert not result.graph.vertices.get("Z")
+        assert sum(len(edges) for edges in result.graph.edges.values()) == 1
+
+    def test_retire_keep_leaves_an_uncovered_producer_nothing_to_look_up_by(
+        self,
+    ) -> None:
+        with pytest.raises(AlignmentConflictError, match="retire: keep"):
+            _merge(
+                VertexEquivalence(left="X", right="Y", into="Z", retire="keep"),
                 alignments=[_alignment()],
                 left=_side_a(reference_step={"vertex": "X"}),
             )
@@ -386,6 +472,231 @@ class TestResourcesOutsideTheAlignment:
         assert collect_endpoint_selectors(_pipeline(merged, "r_ap")) == [
             ("Z", "by_x_id")
         ]
+
+
+def _side_a_routed() -> GraphManifest:
+    """``X`` and ``C`` keyed on ``x_id``; ``RA`` routes change rows to either by type."""
+    manifest = GraphManifest.from_config(
+        {
+            "schema": {
+                "metadata": {"name": "a", "version": "1.0.0"},
+                "graph": {
+                    "vertex_config": {
+                        "vertices": [
+                            {
+                                "name": "X",
+                                "properties": ["x_id", "name"],
+                                "identity": ["x_id"],
+                            },
+                            {"name": "C", "properties": ["x_id"], "identity": ["x_id"]},
+                            {
+                                "name": "Change",
+                                "properties": ["change_id"],
+                                "identity": ["change_id"],
+                            },
+                        ]
+                    },
+                    "edge_config": {
+                        "edges": [
+                            {"source": "Change", "target": "X", "relation": "impacts"},
+                            {"source": "Change", "target": "C", "relation": "impacts"},
+                        ]
+                    },
+                },
+            },
+            "ingestion_model": {
+                "resources": [
+                    {"name": "r_x", "pipeline": [{"vertex": "X"}]},
+                    {
+                        "name": "RA",
+                        "pipeline": [
+                            {
+                                "from": {"x_id": "blaId"},
+                                "type": "vertex_router",
+                                "type_field": "ciType",
+                            },
+                            {"role": "change", "type": "vertex", "vertex": "Change"},
+                            {
+                                "relation": "impacts",
+                                "source": "Change",
+                                "target_role": "ciType",
+                                "type": "edge",
+                            },
+                        ],
+                    },
+                ]
+            },
+        }
+    )
+    manifest.finish_init()
+    return manifest
+
+
+def _merge_routed(
+    *, right: GraphManifest | None = None, router_scope: str = "side"
+) -> GraphManifest:
+    return merge_manifests(
+        _side_a_routed(),
+        right if right is not None else _side_b(),
+        MergeManifestsOp.model_validate(
+            {
+                "vertex_equivalences": [
+                    VertexEquivalence(left="X", right="Y", into="Z")
+                ],
+                "identity_alignments": [_alignment()],
+                "allow_self_relations": True,
+                "router_scope": router_scope,
+            }
+        ),
+        bump_version=False,
+    )
+
+
+def _side_b_with_org() -> GraphManifest:
+    """``Y``, plus ``Org``: a class only this side declares, keyed like A's CIs."""
+    manifest = GraphManifest.from_config(
+        {
+            "schema": {
+                "metadata": {"name": "b", "version": "1.0.0"},
+                "graph": {
+                    "vertex_config": {
+                        "vertices": [
+                            {
+                                "name": "Y",
+                                "properties": ["y_id", "cname"],
+                                "identity": ["y_id"],
+                            },
+                            {
+                                "name": "Org",
+                                "properties": ["x_id"],
+                                "identity": ["x_id"],
+                            },
+                        ]
+                    },
+                    "edge_config": {"edges": []},
+                },
+            },
+            "ingestion_model": {
+                "resources": [
+                    {"name": "r_y", "pipeline": [{"vertex": "Y"}]},
+                    {"name": "r_org", "pipeline": [{"vertex": "Org"}]},
+                ]
+            },
+        }
+    )
+    manifest.finish_init()
+    return manifest
+
+
+def _cast_ra(merged: GraphManifest, rows: list[dict]):
+    caster = DocumentCaster(merged.require_ingestion_model())
+    return asyncio.run(caster.cast_batch(rows, "RA", params=IngestionParams())).graph
+
+
+class TestRoutersKeepToTheirSide:
+    """After the union, a value passed through could name the other side's classes."""
+
+    ORG_ROW = [{"blaId": "o7", "ciType": "Org", "change_id": "c1"}]
+
+    def test_a_router_is_closed_over_its_own_side(self) -> None:
+        """Renamed classes keep their entries; the rest are listed as themselves."""
+        router, _change, _edge = _pipeline(_merge_routed(), "RA")
+        assert router["type_map"] == {"X": "Z", "C": "C", "Change": "Change"}
+        assert router["type_map_only"] is True
+
+    def test_a_value_only_the_other_side_declares_is_skipped(self) -> None:
+        graph = _cast_ra(_merge_routed(right=_side_b_with_org()), self.ORG_ROW)
+        assert not graph.vertices.get("Org")
+        assert not [edge_id for edge_id, docs in graph.edges.items() if docs]
+
+    def test_router_scope_union_keeps_the_router_open(self) -> None:
+        merged = _merge_routed(right=_side_b_with_org(), router_scope="union")
+        router, _change, _edge = _pipeline(merged, "RA")
+        assert not router.get("type_map_only")
+        graph = _cast_ra(merged, self.ORG_ROW)
+        assert [dict(d) for d in graph.vertices["Org"]] == [{"x_id": "o7"}]
+
+
+class TestRoutedReferences:
+    """A router that references ``X`` among other classes it routes to."""
+
+    def test_only_the_merged_class_becomes_a_lookup(self) -> None:
+        router, _change, edge = _pipeline(_merge_routed(), "RA")
+        assert router["lookup_only"] == ["Z"]
+        assert edge["target_match"] == {"Z": "by_x_id"}
+
+    def test_the_merged_class_is_looked_up_and_the_rest_still_written(self) -> None:
+        caster = DocumentCaster(_merge_routed().require_ingestion_model())
+        rows = [
+            {"blaId": "x1", "ciType": "X", "change_id": "c1"},
+            {"blaId": "k9", "ciType": "C", "change_id": "c1"},
+        ]
+        graph = asyncio.run(
+            caster.cast_batch(rows, "RA", params=IngestionParams())
+        ).graph
+        assert not graph.vertices.get("Z")
+        assert [dict(d) for d in graph.vertices["C"]] == [{"x_id": "k9"}]
+        targets = {
+            edge_id[1]: [dict(t) for _s, t, *_ in docs]
+            for edge_id, docs in graph.edges.items()
+        }
+        assert targets == {"Z": [{"x_id": "x1"}], "C": [{"x_id": "k9"}]}
+
+    def test_members_sharing_a_demoted_key_are_one_reference(self) -> None:
+        """A router reaches every member on its side; one key serves them all."""
+        left = _side_a_routed()
+        side = GraphManifest.from_config(
+            {
+                **left.to_dict(skip_defaults=True),
+                "ingestion_model": {
+                    "resources": [
+                        {
+                            "name": "RA",
+                            "pipeline": [
+                                {
+                                    "from": {"x_id": "blaId"},
+                                    "type": "vertex_router",
+                                    "type_field": "ciType",
+                                    "lookup_only": True,
+                                },
+                                {"role": "change", "vertex": "Change"},
+                                {
+                                    "relation": "impacts",
+                                    "source": "Change",
+                                    "target_role": "ciType",
+                                    "type": "edge",
+                                },
+                            ],
+                        }
+                    ]
+                },
+            }
+        )
+        side.finish_init()
+        merged = merge_manifests(
+            side,
+            _side_b(properties=["y_id", "cname"]),
+            MergeManifestsOp(
+                vertex_equivalences=[
+                    VertexEquivalence(
+                        left=["X", "C"],
+                        right="Y",
+                        into="Z",
+                        identity=IdentityFunnel(
+                            branches=[
+                                IdentityBranch(id="x", fields=["x_id"]),
+                                IdentityBranch(id="y", fields=["y_id"]),
+                            ]
+                        ),
+                    )
+                ],
+                allow_merges=True,
+                allow_self_relations=True,
+            ),
+            bump_version=False,
+        )
+        _router, _change, edge = _pipeline(merged, "RA")
+        assert edge["target_match"] == {"Z": "by_x_id"}
 
 
 class TestAlignmentDerivations:
@@ -481,3 +792,25 @@ def test_pin_to_retired_rewrites_flat_edge_steps() -> None:
     assert collect_endpoint_selectors(out.ingestion_model.resources[0].pipeline) == [
         ("X", "by_x_id")
     ]
+
+
+def test_preview_notes_each_resource_merge_turns_into_a_reference() -> None:
+    """Converting a producer drops its writes: the preview says so, without blocking."""
+    from graflo.architecture.evolution.preview import preview_merge
+
+    preview = preview_merge(
+        _side_a(reference_step={"vertex": "X"}),
+        _side_b(),
+        MergeManifestsOp(
+            vertex_equivalences=[VertexEquivalence(left="X", right="Y", into="Z")],
+            identity_alignments=[_alignment()],
+            canonical_maps={"left": CanonicalMap(vertices={"Ap": "Zp"})},
+            allow_self_relations=True,
+        ),
+    )
+    assert preview.outcome.status == "merged"
+    notes = [f for f in preview.findings if f.kind == "reference_conversion"]
+    assert len(notes) == 1
+    assert notes[0].severity == "note"
+    assert "r_ap" in notes[0].message and "by_x_id" in notes[0].message
+    assert notes[0] not in preview.blocking

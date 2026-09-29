@@ -43,9 +43,14 @@ class VertexRouterActor(VertexProducingActor):
     addressing uses a single internal key. A downstream dynamic ``EdgeActor`` references
     this slot via ``source_role`` / ``target_role`` (or ``source_type_field`` /
     ``target_type_field``) using the same segment name.
+
+    ``lookup_only`` (every routed class, or the listed ones) is handed to the
+    vertex actor of each class it covers, so those rows locate edge endpoints
+    and are never written.
     """
 
     def __init__(self, config: VertexRouterActorConfig):
+        self.config = config
         self.type_field = config.type_field
         # Config normalization guarantees role is always present.
         self.role: str = config.role or config.type_field
@@ -75,6 +80,10 @@ class VertexRouterActor(VertexProducingActor):
             items["type_map"] = self.type_map
         if self.vertex_from_map:
             items["vertex_from_map"] = self.vertex_from_map
+        if self.config.type_map_only:
+            items["type_map_only"] = True
+        if self.config.lookup_only:
+            items["lookup_only"] = self.config.lookup_only
         items["vertex_types"] = sorted(self._vertex_actors.keys())
         return items
 
@@ -82,6 +91,15 @@ class VertexRouterActor(VertexProducingActor):
         self.vertex_config = init_ctx.vertex_config
         self._init_ctx = init_ctx
         self._vertex_actors.clear()
+        if isinstance(self.config.lookup_only, list):
+            unknown = sorted(
+                set(self.config.lookup_only) - self.vertex_config.vertex_set
+            )
+            if unknown:
+                raise ValueError(
+                    f"vertex_router on {self.type_field!r}: lookup_only names "
+                    f"{unknown}, which the schema does not declare"
+                )
 
     def _get_or_create_wrapper(self, vertex_type: str) -> ActorWrapper | None:
         from .wrapper import ActorWrapper
@@ -113,6 +131,7 @@ class VertexRouterActor(VertexProducingActor):
                     "from": per_type_from,
                     "keep_fields": list(self.keep_fields) if self.keep_fields else None,
                     "extraction_scope": self.extraction_scope,
+                    "lookup_only": self.config.looks_up(vertex_type),
                 }
             )
             wrapper = ActorWrapper.from_config(config)
@@ -149,6 +168,14 @@ class VertexRouterActor(VertexProducingActor):
         if raw_vtype is None:
             logger.debug(
                 "VertexRouterActor: type_field '%s' not in doc, skipping",
+                self.type_field,
+            )
+            return ctx
+        if self.config.type_map_only and raw_vtype not in self.type_map:
+            logger.debug(
+                "VertexRouterActor: value %r of '%s' is not in the closed "
+                "type_map, skipping",
+                raw_vtype,
                 self.type_field,
             )
             return ctx

@@ -16,10 +16,14 @@ from graflo.architecture.graph_types import (
 from graflo.architecture.graph_types.edge_derivation import (
     EdgeDerivation,
     EndpointMatch,
+    EndpointRule,
+    EndpointSelector,
+    selector_for,
 )
 from graflo.architecture.schema.edge import Edge, EdgeConfig
 from graflo.architecture.schema.inverse_realization import inverse_emission_refusal
 from graflo.architecture.schema.vertex import VertexConfig, VertexName
+from graflo.onto import PRIMARY_IDENTITY_SELECTOR
 
 from .base import Actor, ActorInitContext
 
@@ -213,6 +217,9 @@ class EdgeActor(Actor):
         else:
             # Dynamic mode: cache will be populated per-document.
             self._edge_cache.clear()
+            self._register_endpoint_rule(
+                init_ctx, self._static_source, self._static_target
+            )
             self._check_inverse_emission(init_ctx, None)
 
     def _check_inverse_emission(
@@ -265,8 +272,8 @@ class EdgeActor(Actor):
             init_ctx.edge_derivation.set_endpoint_match(
                 inverse_id,
                 EndpointMatch(
-                    source=derivation.target_match,
-                    target=derivation.source_match,
+                    source=selector_for(derivation.target_match, target),
+                    target=selector_for(derivation.source_match, source),
                     on_ambiguous=derivation.on_ambiguous,
                 ),
             )
@@ -277,27 +284,117 @@ class EdgeActor(Actor):
         """Validate endpoint identity selectors and record them for the writer.
 
         Resolving here fails fast at manifest load with the vertex name and the
-        declared alternatives, rather than mid-ingest on the first batch.
+        declared alternatives, rather than mid-ingest on the first batch. A
+        relation read from the data leaves the edge id unknown until then, so
+        the selectors are recorded as a rule over every relation.
         """
-        derivation = self.derivation
-        if not derivation.uses_secondary_identity() and derivation.on_ambiguous is None:
-            return
-
         source_type, target_type, _ = edge_id
-        vertex_config = self.vertex_config
-        if vertex_config is not None:
-            # Raises with the declared alternatives when a selector is unknown.
-            vertex_config.match_fields(source_type, derivation.source_match)
-            vertex_config.match_fields(target_type, derivation.target_match)
-
+        self._validate_selectors(source_type, target_type)
+        if not self._selects_endpoints():
+            return
+        if self._relation_from_data():
+            self._add_endpoint_rule(init_ctx, source_type, target_type)
+            return
+        derivation = self.derivation
         init_ctx.edge_derivation.set_endpoint_match(
             edge_id,
             EndpointMatch(
-                source=derivation.source_match,
-                target=derivation.target_match,
+                source=selector_for(derivation.source_match, source_type),
+                target=selector_for(derivation.target_match, target_type),
                 on_ambiguous=derivation.on_ambiguous,
             ),
         )
+
+    def _register_endpoint_rule(
+        self,
+        init_ctx: ActorInitContext,
+        source: str | None,
+        target: str | None,
+    ) -> None:
+        """Validate and record the selectors of a step whose edges are named per document.
+
+        *source* / *target* are the endpoints fixed at config time, ``None``
+        for one a router role fills.
+        """
+        self._validate_selectors(source, target)
+        if self._selects_endpoints():
+            self._add_endpoint_rule(init_ctx, source, target)
+
+    def _selects_endpoints(self) -> bool:
+        """Whether the writer needs to know how this step matches its endpoints."""
+        derivation = self.derivation
+        return (
+            derivation.uses_secondary_identity() or derivation.on_ambiguous is not None
+        )
+
+    def _relation_from_data(self) -> bool:
+        derivation = self.derivation
+        return derivation.relation_field is not None or derivation.relation_from_key
+
+    def _add_endpoint_rule(
+        self, init_ctx: ActorInitContext, source: str | None, target: str | None
+    ) -> None:
+        """Record a rule over the edges this step can write.
+
+        The relation is fixed only when the step names one and reads none from
+        the data.
+        """
+        derivation = self.derivation
+        if self._relation_from_data():
+            relation = None
+        elif self.edge is not None:
+            relation = self.edge.relation
+        else:
+            relation = self._static_relation
+        init_ctx.edge_derivation.add_endpoint_rule(
+            EndpointRule(
+                source=source,
+                target=target,
+                relation=relation,
+                source_match=derivation.source_match,
+                target_match=derivation.target_match,
+                on_ambiguous=derivation.on_ambiguous,
+            )
+        )
+
+    def _validate_selectors(self, source: str | None, target: str | None) -> None:
+        self._validate_selector("source_match", self.derivation.source_match, source)
+        self._validate_selector("target_match", self.derivation.target_match, target)
+
+    def _validate_selector(
+        self, name: str, selector: EndpointSelector | None, endpoint: str | None
+    ) -> None:
+        """Refuse a selector no class this endpoint can be declares.
+
+        *endpoint* is the class fixed at config time, ``None`` for one a router
+        role fills. A plain selector on such an endpoint is resolved against
+        each routed class when the edge is rendered; a per-class one is checked
+        here, entry by entry, and on a fixed endpoint may name only that class.
+
+        Raises:
+            ValueError: naming the selector, the class and what it declares.
+        """
+        vertex_config = self.vertex_config
+        if vertex_config is None:
+            return
+        if isinstance(selector, dict):
+            unknown = sorted(set(selector) - vertex_config.vertex_set)
+            if unknown:
+                raise ValueError(
+                    f"{name} names {unknown}, which the schema does not declare"
+                )
+            if endpoint is not None:
+                foreign = sorted(set(selector) - {endpoint})
+                if foreign:
+                    raise ValueError(
+                        f"{name} names {foreign}, but the endpoint is always "
+                        f"{endpoint!r}"
+                    )
+            for vertex, plain in selector.items():
+                # Raises with the declared alternatives when a selector is unknown.
+                vertex_config.match_fields(vertex, plain)
+        elif endpoint is not None and selector not in (None, PRIMARY_IDENTITY_SELECTOR):
+            vertex_config.match_fields(endpoint, selector)
 
     # ------------------------------------------------------------------
     # Dynamic-mode helpers
@@ -491,10 +588,14 @@ class EdgeActor(Actor):
         if edge is None:
             return ctx
 
-        # Build derivation: slot names for dynamic sides so render_edge can filter.
+        # Build derivation: slot names for dynamic sides so render_edge can filter,
+        # and the endpoint selectors, which render reduces to the concrete classes.
         derivation = EdgeDerivation(
             match_source=self._source_slot_key,
             match_target=self._target_slot_key,
+            source_match=self.derivation.source_match,
+            target_match=self.derivation.target_match,
+            on_ambiguous=self.derivation.on_ambiguous,
             emit_inverse=self.derivation.emit_inverse,
         )
         ctx.record_edge_intent(edge=edge, location=lindex, derivation=derivation)
