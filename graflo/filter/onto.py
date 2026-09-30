@@ -113,6 +113,12 @@ DUNDER_TO_CMP: MappingProxyType[str, ComparisonOperator] = MappingProxyType(
     }
 )
 
+#: Keys a leaf entry may carry. ``operator`` and ``foo`` are the authored
+#: spellings of ``unary_op``.
+_LEAF_KEYS: frozenset[str] = frozenset(
+    {"kind", "field", "value", "cmp_operator", "unary_op", "operator", "foo"}
+)
+
 #: Inverse of :data:`DUNDER_TO_CMP`, so expressions authored in list form
 #: (``["==", value, field]``) — which carry no ``unary_op`` — can still be
 #: evaluated in Python, like every other flavor renders them.
@@ -196,6 +202,11 @@ class FilterExpression(ConfigBaseModel):
         if self.kind == "leaf":
             if self.operator is not None or self.deps:
                 raise ValueError("leaf expression must not have operator or deps")
+            if self.cmp_operator is None and self.unary_op is None:
+                raise ValueError(
+                    "leaf expression requires cmp_operator or operator"
+                    + (f" (field {self.field!r})" if self.field else "")
+                )
             # IS_NULL / IS_NOT_NULL are unary; clear any spurious value list
             if self.cmp_operator in (
                 ComparisonOperator.IS_NULL,
@@ -216,7 +227,9 @@ class FilterExpression(ConfigBaseModel):
         result = []
         for item in v:
             if isinstance(item, (dict, list)):
-                result.append(FilterExpression.from_dict(item))
+                # Not `from_dict`: a serialized expression (`kind` / `operator`
+                # + `deps`) has to come back as the expression it was.
+                result.append(parse_filter_expression(item))
             else:
                 result.append(item)
         return result
@@ -247,15 +260,35 @@ class FilterExpression(ConfigBaseModel):
                 return cast(Self, cls.from_list(data))
             elif data[0] in LogicalOperator:
                 return cls(kind="composite", operator=data[0], deps=data[1])
+            raise ValueError(
+                f"filter list must start with a comparison or logical operator, "
+                f"got {data[0]!r}"
+            )
         elif isinstance(data, dict):
+            if data.get("kind") is not None:
+                return cls.model_validate(data)
             k = next(iter(data.keys()))
             norm_k = k.upper() if isinstance(k, str) else k
             if norm_k in LogicalOperator:
+                if len(data) > 1:
+                    raise ValueError(
+                        "a logical filter entry takes one logical operator key, "
+                        f"got {sorted(str(key) for key in data)}"
+                    )
                 deps: list[FilterExpression] = [cls.from_dict(v) for v in data[k]]
                 return cls(
                     kind="composite", operator=LogicalOperator(norm_k), deps=deps
                 )
             else:
+                # The model is built by hand below, so `extra="forbid"` never
+                # sees these keys: an unknown one would be dropped silently.
+                unknown = sorted(str(key) for key in data if key not in _LEAF_KEYS)
+                if unknown:
+                    raise ValueError(
+                        f"unknown filter key(s) {unknown}; a leaf takes "
+                        f"{sorted(_LEAF_KEYS - {'kind', 'foo', 'unary_op'})}, a "
+                        f"logical entry one of {sorted(_LOGICAL_OPERATOR_JSON_VALUES)}"
+                    )
                 unary_op = data.get("operator") or data.get("foo")
                 cmp_operator = data.get("cmp_operator")
                 if cmp_operator is None and unary_op is not None:
@@ -350,17 +383,43 @@ class FilterExpression(ConfigBaseModel):
             return self._cast_python_composite(kind=kind, **kwargs)
         raise ValueError(f"kind {kind} not implemented")
 
+    def _in_members(self) -> list[Any]:
+        """The members an ``IN`` tests against.
+
+        ``value: [[a, b]]`` names the same set as ``value: [a, b]``.
+        """
+        if len(self.value) == 1 and isinstance(self.value[0], list):
+            return list(self.value[0])
+        return list(self.value)
+
+    @staticmethod
+    def _graph_literal(value: Any) -> str:
+        """One value as a literal of the graph query languages."""
+        if isinstance(value, str):
+            escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+            return f'"{escaped}"'
+        if value is None:
+            return "null"
+        return f"{value}"
+
+    @staticmethod
+    def _sql_literal(value: Any) -> str:
+        """One value as a SQL literal: strings and ISO datetimes single-quoted."""
+        if value is None:
+            return "null"
+        if isinstance(value, (int, float)):
+            return str(value)
+        escaped = str(value).replace("'", "''")
+        return f"'{escaped}'"
+
     def _cast_value(self) -> str:
-        value = f"{self.value[0]}" if len(self.value) == 1 else f"{self.value}"
+        if self.cmp_operator == ComparisonOperator.IN:
+            # Always a list, whatever its length: `x IN "a"` is not membership.
+            members = ", ".join(self._graph_literal(v) for v in self._in_members())
+            return f"[{members}]"
         if len(self.value) == 1:
-            if isinstance(self.value[0], str):
-                escaped = self.value[0].replace("\\", "\\\\").replace('"', '\\"')
-                value = f'"{escaped}"'
-            elif self.value[0] is None:
-                value = "null"
-            else:
-                value = f"{self.value[0]}"
-        return value
+            return self._graph_literal(self.value[0])
+        return f"{self.value}"
 
     def _cast_arango(self, doc_name: str) -> str:
         if self.cmp_operator == ComparisonOperator.IS_NULL:
@@ -441,12 +500,22 @@ class FilterExpression(ConfigBaseModel):
     def _cast_sql(self) -> str:
         """Render leaf as SQL WHERE fragment: \"column\" op value (strings/dates single-quoted)."""
         if not self.field:
-            return ""
+            # An empty fragment would be dropped from the WHERE clause, and the
+            # query would run without the condition.
+            raise ValueError(
+                f"a SQL condition needs a field: {self.cmp_operator} {self.value}"
+            )
         quoted = self._quote_sql_field(self.field)
         if self.cmp_operator == ComparisonOperator.IS_NULL:
             return f"{quoted} IS NULL"
         if self.cmp_operator == ComparisonOperator.IS_NOT_NULL:
             return f"{quoted} IS NOT NULL"
+        if self.cmp_operator == ComparisonOperator.IN:
+            members = self._in_members()
+            if not members:
+                raise ValueError(f"IN on {self.field!r} needs at least one value")
+            rendered = ", ".join(self._sql_literal(v) for v in members)
+            return f"{quoted} IN ({rendered})"
         if self.cmp_operator == ComparisonOperator.EQ:
             op_str = "="
         elif self.cmp_operator == ComparisonOperator.NEQ:
@@ -461,15 +530,7 @@ class FilterExpression(ConfigBaseModel):
         else:
             op_str = str(self.cmp_operator)
         value = self.value[0] if self.value else None
-        if value is None:
-            value_str = "null"
-        elif isinstance(value, (int, float)):
-            value_str = str(value)
-        else:
-            # Strings and ISO datetimes: single-quoted for SQL
-            value_str = str(value).replace("'", "''")
-            value_str = f"'{value_str}'"
-        return f"{quoted} {op_str} {value_str}"
+        return f"{quoted} {op_str} {self._sql_literal(value)}"
 
     def _cast_restpp(self, field_types: dict[str, Any] | None = None) -> str:
         if not self.field:
@@ -478,6 +539,11 @@ class FilterExpression(ConfigBaseModel):
             return f'{self.field}=""'
         if self.cmp_operator == ComparisonOperator.IS_NOT_NULL:
             return f'{self.field}!=""'
+        if self.cmp_operator == ComparisonOperator.IN:
+            # The REST filter syntax compares one attribute with one value.
+            raise ValueError(
+                f"IN on {self.field!r} is not expressible as a TigerGraph REST filter"
+            )
         if self.cmp_operator == ComparisonOperator.EQ:
             op_str = "="
         elif self.cmp_operator == ComparisonOperator.NEQ:
@@ -524,7 +590,7 @@ class FilterExpression(ConfigBaseModel):
         if field_val is None:
             return False
         if self.cmp_operator == ComparisonOperator.IN:
-            return field_val in self.value
+            return field_val in self._in_members()
         # List-form expressions (["==", value, field]) carry no unary_op; fall
         # back to the dunder implied by cmp_operator so they evaluate the same
         # way they render.
@@ -611,6 +677,28 @@ class FilterExpression(ConfigBaseModel):
         return OperatorMapping[self.operator](
             [dep(kind=kind, **kwargs) for dep in self.deps]
         )
+
+
+def render_conjunct(
+    expr: FilterExpression,
+    *,
+    kind: ExpressionFlavor,
+    doc_name: str = "doc",
+    **kwargs: Any,
+) -> str:
+    """Render *expr* as one operand of an ``AND`` of conditions.
+
+    Callers that collect several conditions and join them with ``AND`` must
+    render each through this function. Every target language binds ``AND``
+    tighter than ``OR``, so a bare ``a OR b`` beside ``c`` would mean
+    ``a OR (b AND c)``; an ``OR`` condition is therefore parenthesised. ``AND``
+    and ``NOT`` conditions and single comparisons keep their meaning unwrapped,
+    and ``IF_THEN`` renders its own parentheses.
+    """
+    rendered = str(expr(doc_name=doc_name, kind=kind, **kwargs))
+    if expr.kind == "composite" and expr.operator == LogicalOperator.OR:
+        return f"({rendered})"
+    return rendered
 
 
 def parse_filter_expression(raw: Any) -> FilterExpression:

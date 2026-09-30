@@ -5,6 +5,7 @@ from __future__ import annotations
 import abc
 import pathlib
 import re
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Literal, Self
 
 import suthing
@@ -149,8 +150,9 @@ class FileConnector(ResourceConnector):
     Attributes:
         regex: Regular expression pattern for matching filenames
         sub_path: Path to search for matching files (default: "./")
-        time_filter: Optional structured filter on a date/time column (shared with
-            :class:`TableConnector`), using :class:`~graflo.architecture.contract.bindings.column_time_filter.ColumnTimeFilter`.
+        time_filter: Refused when set. A file is read whole, so a window
+            declared here would not be applied; filter the rows in a pipeline
+            step, or bind a :class:`TableConnector`.
     """
 
     regex: str | None = None
@@ -164,12 +166,12 @@ class FileConnector(ResourceConnector):
             object.__setattr__(self, "sub_path", pathlib.Path(self.sub_path))
         if self.row_annotations:
             raise ValueError("row_annotations is not implemented for FileConnector")
+        if self.time_filter is not None:
+            raise ValueError(
+                "time_filter is not implemented for FileConnector: a file is read "
+                "whole, so the window would not be applied"
+            )
         return self
-
-    @property
-    def date_field(self) -> str | None:
-        """Column used for time filtering, if any (compat alias for ``time_filter.column``)."""
-        return self.time_filter.column if self.time_filter else None
 
     def matches(self, resource_identifier: str) -> bool:
         """Check if connector matches a filename.
@@ -325,38 +327,54 @@ class TableConnector(ResourceConnector):
     def bound_source_kind(self) -> BoundSourceKind:
         return BoundSourceKind.SQL_TABLE
 
-    def build_where_clause(self, base_alias: str | None = None) -> str:
+    def where_conditions(
+        self,
+        base_alias: str | None = None,
+        extra_filters: Sequence[FilterExpression] = (),
+    ) -> list[str]:
+        """The connector's SQL conditions, each safe as one operand of ``AND``.
+
+        In order: the time filter, the declared ``filters``, then
+        *extra_filters* (conditions supplied for one run). With *base_alias*,
+        unqualified columns are qualified with it.
+        """
+        from graflo.filter.onto import render_conjunct
+        from graflo.onto import ExpressionFlavor
+
+        raw: list[Any] = []
+        if self.time_filter is not None:
+            raw.append(self.time_filter.as_filter_expression())
+        raw.extend(self.filters)
+        raw.extend(extra_filters)
+
+        conditions: list[str] = []
+        for item in raw:
+            filt_expr = self._coerce_filter_expression(item, base_alias)
+            if filt_expr is None:
+                continue
+            rendered = render_conjunct(filt_expr, kind=ExpressionFlavor.SQL)
+            if rendered:
+                conditions.append(rendered)
+        return conditions
+
+    def build_where_clause(
+        self,
+        base_alias: str | None = None,
+        extra_filters: Sequence[FilterExpression] = (),
+    ) -> str:
         """Build SQL WHERE clause from time filter **and** general filters.
 
         Returns:
             WHERE clause string (without the WHERE keyword) or empty string if no filters
         """
-        from graflo.onto import ExpressionFlavor
+        return " AND ".join(self.where_conditions(base_alias, extra_filters))
 
-        conditions: list[str] = []
-
-        if self.time_filter is not None:
-            expr = self.time_filter.as_filter_expression()
-            if expr is not None:
-                filt_expr = self._coerce_filter_expression(expr, base_alias)
-                if filt_expr is not None:
-                    rendered = filt_expr(kind=ExpressionFlavor.SQL)
-                    if rendered:
-                        conditions.append(str(rendered))
-
-        # General-purpose FilterExpression filters
-        for filt in self.filters:
-            filt_expr = self._coerce_filter_expression(filt, base_alias)
-            if filt_expr is not None:
-                rendered = filt_expr(kind=ExpressionFlavor.SQL)
-                if rendered:
-                    conditions.append(str(rendered))
-
-        if conditions:
-            return " AND ".join(conditions)
-        return ""
-
-    def build_query(self, effective_schema: str | None = None) -> str:
+    def build_query(
+        self,
+        effective_schema: str | None = None,
+        *,
+        extra_filters: Sequence[FilterExpression] = (),
+    ) -> str:
         """Build a complete SQL SELECT query.
 
         When ``view`` is set, delegates to ``view.build_sql()``. Otherwise
@@ -365,6 +383,9 @@ class TableConnector(ResourceConnector):
 
         Args:
             effective_schema: Schema to use if ``self.schema_name`` is None.
+            extra_filters: Conditions for this run only, such as a date range
+                supplied at ingestion time. They are ANDed with the declared
+                ones and qualified like them.
 
         Returns:
             Complete SQL query string.
@@ -374,11 +395,14 @@ class TableConnector(ResourceConnector):
             from graflo.filter.select import SelectSpec
 
             if isinstance(self.view, SelectSpec):
-                query = self.view.build_sql(schema=schema, base_table=self.table_name)
-                where = self.build_where_clause(base_alias=self.view.base_alias)
-                if where:
-                    return self._append_where_condition(query, where)
-                return query
+                return self.view.build_sql(
+                    schema=schema,
+                    base_table=self.table_name,
+                    extra_conditions=self.where_conditions(
+                        base_alias=self.view.effective_base_alias(),
+                        extra_filters=extra_filters,
+                    ),
+                )
         base_alias = self.base_alias if self.joins else None
         base_ref = f'"{schema}"."{self.table_name}"'
         if base_alias:
@@ -422,18 +446,13 @@ class TableConnector(ResourceConnector):
         query = f"SELECT {select_clause} FROM {from_clause}"
 
         # --- WHERE ---
-        where = self.build_where_clause(base_alias=base_alias)
+        where = self.build_where_clause(
+            base_alias=base_alias, extra_filters=extra_filters
+        )
         if where:
             query += f" WHERE {where}"
 
         return query
-
-    @staticmethod
-    def _append_where_condition(query: str, condition: str) -> str:
-        """Append a SQL condition to *query* preserving an existing WHERE clause."""
-        if re.search(r"\bWHERE\b", query, flags=re.IGNORECASE):
-            return f"{query} AND {condition}"
-        return f"{query} WHERE {condition}"
 
     @staticmethod
     def _qualified_column_ref(column: str, base_alias: str | None) -> str:

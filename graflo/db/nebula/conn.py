@@ -50,7 +50,7 @@ from graflo.db.nebula.util import (
     render_filters_ngql,
     wait_for_space_ready,
 )
-from graflo.filter.onto import FilterExpression
+from graflo.filter.onto import FilterExpression, render_conjunct
 from graflo.onto import AggregationType, DBType, ExpressionFlavor
 
 logger = logging.getLogger(__name__)
@@ -909,7 +909,8 @@ class NebulaConnection(Connection):
                 ff = FilterExpression.from_dict(filters)
             else:
                 ff = filters
-            fc = str(ff(doc_name="e", kind=self._expression_flavor()))
+            # Joined with the far-end predicate by AND in the query builder.
+            fc = render_conjunct(ff, doc_name="e", kind=self._expression_flavor())
 
         q = fetch_edges_ngql(
             from_type,

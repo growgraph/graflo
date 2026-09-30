@@ -32,7 +32,7 @@ import json
 import logging
 import pathlib
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from shutil import copyfileobj
 from typing import IO, Any, TextIO, TypeVar, cast
@@ -259,38 +259,38 @@ class TableChunker(FileChunker):
         self.sep = kwargs.pop("sep", ",")
         super().__init__(**kwargs)
         self.header: list[str]
+        self._records: Iterator[list[str]] = iter(())
 
-    def _prepare_iteration(self):
-        """Read the header row and prepare for iteration."""
-        super()._prepare_iteration()
-        # After super()._prepare_iteration(), file_obj is guaranteed to be open
+    def _text_lines(self) -> Iterator[str]:
+        """The open file as text lines, whichever mode it was opened in."""
         if self.file_obj is None:
             raise RuntimeError("File should be opened by parent _prepare_iteration()")
-        try:
-            header_line = next(self.file_obj)
-        except StopIteration:
-            # An empty file has no header row. Leave the header empty and let
-            # iteration yield nothing; raising StopIteration from here would
-            # surface as `RuntimeError: generator raised StopIteration` (PEP 479)
-            # to any caller iterating batches.
-            self.header = []
-            return
-        if isinstance(header_line, bytes):
-            header_line = header_line.decode(self.encoding or "utf-8")
-        self.header = header_line.rstrip("\n").split(self.sep)
+        for line in self.file_obj:
+            if isinstance(line, bytes):
+                yield line.decode(self.encoding or "utf-8")
+            else:
+                yield line
 
-    def __next__(self):
-        """Get the next batch of rows as dictionaries.
+    def _prepare_iteration(self):
+        """Open one CSV reader over the file and read the header record from it.
 
-        Returns:
-            list[dict]: Next batch of rows as dictionaries
+        One reader serves the header and every row: a quoted field may then
+        hold the separator or a newline, and rows are split on ``sep`` like the
+        header.
         """
-        lines = super().__next__()
-        lines2 = [
-            next(csv.reader([line.rstrip()], skipinitialspace=True)) for line in lines
-        ]
-        dressed = [dict(zip(self.header, row)) for row in lines2]
-        return dressed
+        super()._prepare_iteration()
+        self._records = csv.reader(
+            self._text_lines(), delimiter=self.sep, skipinitialspace=True
+        )
+        # An empty file has no header record. Leave the header empty and let
+        # iteration yield nothing; a StopIteration escaping from here would
+        # surface as `RuntimeError: generator raised StopIteration` (PEP 479)
+        # to any caller iterating batches.
+        self.header = next(self._records, [])
+
+    def _next_item(self) -> dict[str, str]:
+        """The next record as a dictionary keyed by the header."""
+        return dict(zip(self.header, next(self._records)))
 
 
 class JsonlChunker(FileChunker):

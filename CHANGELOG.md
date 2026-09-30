@@ -12,8 +12,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A `tests` workflow.** Every pull request runs the suites that need no database container:
   everything outside `test/db`, `test/data_source` and `test/object_storage`.
+- **`TableConnector.build_query(extra_filters=...)`.** Conditions for one run, ANDed with the
+  connector's own and qualified like them. `graflo.filter.sql.datetime_range_filter` builds a
+  run's date range as such a condition.
+- **`graflo.filter.onto.render_conjunct`** renders a filter as one operand of an `AND`, and
+  **`SelectSpec.effective_base_alias()`** returns the alias a view's query gives its base table,
+  or `None` when it gives none.
 
 ### Changed
+
+- **Filters are checked when they load.** A filter entry with an unknown key, a condition with
+  neither `cmp_operator` nor `operator`, and a logical entry with more than one operator key are
+  refused. They used to load and then render to nothing, or fail when the query was built. A view's
+  `where` is checked when the manifest loads, not when the query is built.
+- **A SQL condition with no `field` is refused** instead of being dropped from the `WHERE`
+  clause.
+- **`FileConnector` refuses `time_filter`.** A file is read whole, so the window was accepted and
+  never applied. `FileConnector.date_field` is removed.
+- **A failed SQL source query raises.** `SQLDataSource.iter_batches` logged the error and yielded
+  nothing, so a query the database rejected looked like an empty table.
+- **A `.tsv` file is read with a tab separator** unless `sep` is given.
 
 - **uv is pinned to one release line.** `pyproject.toml` sets `[tool.uv] required-version`, and
   the workflows pin a release within it. A different uv minor rewrote `uv.lock` wholesale with
@@ -39,6 +57,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An `OR` filter beside another condition changed meaning.** A table connector joins its
+  `filters` entries, its `time_filter`, a view's `where` and a run's date range with `AND` and
+  added no parentheses, so `a OR b` beside `c` read as `a OR (b AND c)`. An `OR` condition is now
+  parenthesised wherever conditions are joined, including the edge lookups of the ArangoDB, Neo4j,
+  Memgraph, FalkorDB and NebulaGraph connections.
+- **`IN` rendered one value.** In SQL it produced `"status" IN 'open'`: the first value, without
+  parentheses. It now lists every member, `IN ('open', 'in_progress')`, and in AQL, Cypher, nGQL
+  and GSQL a one-member `IN` is a list, not a scalar. TigerGraph's REST filter syntax cannot express
+  `IN` and refuses it.
+- **A `select` view without joins produced invalid SQL** when the connector also declared
+  `filters` or a `time_filter`: the conditions were qualified with a `base` alias the query did not
+  declare.
+- **A nested logical filter was lost under joins.** Qualifying a connector's filters with the base
+  alias re-read a nested `AND` / `OR` as a single comparison.
+- **A run's date range was dropped when the connector named its date column.**
+  `IngestionParams.datetime_after` / `datetime_before` applied only when the column came from
+  `datetime_column`, so bindings built with `datetime_columns` read the whole table. The range now
+  applies in both cases, next to any window the connector declares, and is qualified with the base
+  alias under joins.
+- **`max_items` did not reach a SQL source.** The reader stopped after that many rows while the
+  database planned and ran the unbounded query. The statement is now bounded to the limit.
+- **The CSV reader split records on physical lines and always on commas.** A quoted field holding
+  a newline was cut in two, a file with another separator came back as one field per row, and a
+  quoted header cell holding the separator was split. One reader now parses the header and every
+  record with the file's separator, and `max_items` counts records.
+- **`Resource.encoding` was not used when reading files.**
 - **Edit links on API reference pages** pointed under `docs/` instead of at the module's source
   file.
 - **The docs workflow did not run on changes under `examples/`**, although the example pages are

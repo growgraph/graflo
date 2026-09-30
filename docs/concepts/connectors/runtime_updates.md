@@ -126,8 +126,8 @@ The rules:
 - An interval is a fixed length of time, written as a [pandas `Timedelta`](https://pandas.pydata.org/docs/reference/api/pandas.Timedelta.html) string. Months and years have no fixed length and are rejected; for a calendar month, give `start` and `end`.
 - Quote dates in YAML (`start: "2026-01-08"`). An unquoted date is read as a date object, not a string, and the manifest fails to load.
 - The conditions are added to the query's `WHERE` clause with `AND`, next to the connector's `filters`.
-- A `time_filter` with only `column` adds no condition.
-- A file connector accepts a `time_filter`, but reading files does not apply it.
+- A `time_filter` with only `column` adds no condition of its own. It names the column that a run's `datetime_after` and `datetime_before` apply to; a connector that names no column takes it from `datetime_column`. The run's range is added next to any window the connector declares.
+- A file connector refuses a `time_filter`: a file is read whole, so the window would not be applied.
 
 ## What to read next
 

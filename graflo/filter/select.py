@@ -10,12 +10,17 @@ static vertex type) use kind="select".
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from typing import Any, Literal, Self
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from graflo.architecture.base import ConfigBaseModel
-from graflo.filter.onto import FilterExpression
+from graflo.filter.onto import (
+    FilterExpression,
+    parse_filter_expression,
+    render_conjunct,
+)
 from graflo.onto import ExpressionFlavor
 
 # Unquoted SQL identifiers (column / alias) for ergonomic select items.
@@ -210,6 +215,38 @@ class SelectSpec(ConfigBaseModel):
     source_type_column: str | None = None
     target_type_column: str | None = None
 
+    @field_validator("where", mode="before")
+    @classmethod
+    def _check_where(cls, v: Any) -> Any:
+        """Parse ``where`` when the view loads, so a bad entry is reported then.
+
+        The value is kept as authored: replacing a mapping with its parsed model
+        would change the canonical form of the manifest that carries it.
+        """
+        if isinstance(v, (dict, list)):
+            try:
+                parse_filter_expression(v)
+            except ValueError as e:
+                raise ValueError(f"where: {e}") from e
+        return v
+
+    def where_expression(self) -> FilterExpression | None:
+        """The ``where`` clause as a filter expression, or ``None``."""
+        if not self.where:
+            return None
+        return parse_filter_expression(self.where)
+
+    def effective_base_alias(self) -> str | None:
+        """The alias the generated query gives the base table, or ``None``.
+
+        A ``type_lookup`` view always joins, so it always aliases. A ``select``
+        view aliases the base table only when it has joins; conditions added to
+        a join-less view must name columns unqualified.
+        """
+        if self.kind == "type_lookup" or self.joins:
+            return self.base_alias
+        return None
+
     @model_validator(mode="after")
     def _validate_type_lookup_side_options(self) -> Self:
         if self.kind != "type_lookup":
@@ -285,21 +322,28 @@ class SelectSpec(ConfigBaseModel):
         self,
         schema: str,
         base_table: str,
+        extra_conditions: Sequence[str] = (),
     ) -> str:
         """Build SQL SELECT query.
 
         Args:
             schema: Schema name (e.g. "public")
             base_table: Base table name (from TableConnector.table_name)
+            extra_conditions: Rendered conditions to AND onto the view's own
+                ``WHERE``. Each must already be safe as one operand of ``AND``
+                (see :func:`~graflo.filter.onto.render_conjunct`) and name base
+                columns through :meth:`effective_base_alias`.
 
         Returns:
             Complete SQL query string
         """
         if self.kind == "type_lookup":
-            return self._build_type_lookup_sql(schema, base_table)
-        return self._build_select_sql(schema, base_table)
+            return self._build_type_lookup_sql(schema, base_table, extra_conditions)
+        return self._build_select_sql(schema, base_table, extra_conditions)
 
-    def _build_type_lookup_sql(self, schema: str, base_table: str) -> str:
+    def _build_type_lookup_sql(
+        self, schema: str, base_table: str, extra_conditions: Sequence[str] = ()
+    ) -> str:
         """Expand type_lookup shorthand to full SQL."""
         if not self.source or not self.target:
             raise ValueError("type_lookup requires source and target column names")
@@ -353,14 +397,21 @@ class SelectSpec(ConfigBaseModel):
             f'LEFT JOIN {t_ref} t ON {ba}."{tgt_fk}" = t."{tgt_ident}"'
         )
 
-        where_clause = f's."{src_ident}" IS NOT NULL AND t."{tgt_ident}" IS NOT NULL'
+        conditions = [
+            f's."{src_ident}" IS NOT NULL',
+            f't."{tgt_ident}" IS NOT NULL',
+            *extra_conditions,
+        ]
+        where_clause = " AND ".join(conditions)
         return f"SELECT {select_clause} FROM {from_clause} WHERE {where_clause}"
 
-    def _build_select_sql(self, schema: str, base_table: str) -> str:
+    def _build_select_sql(
+        self, schema: str, base_table: str, extra_conditions: Sequence[str] = ()
+    ) -> str:
         """Build SQL from full select spec."""
         from_table = self.from_ or base_table
         base_ref = f'"{schema}"."{from_table}"'
-        base_alias = self.base_alias if self.joins else None
+        base_alias = self.effective_base_alias()
         if base_alias:
             base_ref_aliased = f"{base_ref} {base_alias}"
         else:
@@ -394,17 +445,13 @@ class SelectSpec(ConfigBaseModel):
         query = f"SELECT {select_clause} FROM {from_clause}"
 
         # WHERE
-        if self.where:
-            from graflo.filter.onto import parse_filter_expression
-
-            we = (
-                parse_filter_expression(self.where)
-                if isinstance(self.where, (dict, list))
-                else self.where
-            )
-            where_str = we(kind=ExpressionFlavor.SQL)
-            if where_str:
-                query += f" WHERE {where_str}"
+        conditions: list[str] = []
+        where = self.where_expression()
+        if where is not None:
+            conditions.append(render_conjunct(where, kind=ExpressionFlavor.SQL))
+        conditions.extend(extra_conditions)
+        if conditions:
+            query += f" WHERE {' AND '.join(conditions)}"
 
         return query
 

@@ -1,7 +1,7 @@
 """Tests for ingestion datetime range params and SQL WHERE building."""
 
 from graflo.architecture.contract.bindings import ColumnTimeFilter, TableConnector
-from graflo.filter.sql import datetime_range_where_sql
+from graflo.filter.sql import datetime_range_filter, datetime_range_where_sql
 from graflo.hq.caster import IngestionParams
 
 
@@ -73,15 +73,13 @@ def test_sql_query_where_combines_connector_and_ingestion_datetime():
         table_name="events",
         time_filter=ColumnTimeFilter(column="dt", not_equals="2020-01-01"),
     )
-    connector_where = connector.build_where_clause()
-    dt_where = datetime_range_where_sql(
-        "2020-06-01",
-        "2020-07-01",
-        connector.date_field or "dt",
+    date_range = datetime_range_filter("2020-06-01", "2020-07-01", "dt")
+    assert date_range is not None
+
+    query = connector.build_query(extra_filters=[date_range])
+
+    assert query == (
+        'SELECT * FROM "public"."events" '
+        "WHERE \"dt\" != '2020-01-01' "
+        "AND \"dt\" >= '2020-06-01' AND \"dt\" < '2020-07-01'"
     )
-    where_parts = [p for p in [connector_where, dt_where] if p]
-    combined = " AND ".join(where_parts)
-    assert "\"dt\" != '2020-01-01'" in combined
-    assert "\"dt\" >= '2020-06-01'" in combined
-    assert "\"dt\" < '2020-07-01'" in combined
-    assert combined.count(" AND ") == 2

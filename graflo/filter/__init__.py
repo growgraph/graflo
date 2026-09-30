@@ -30,6 +30,7 @@ from .onto import (
     FilterExpression,
     LogicalOperator,
     parse_filter_expression,
+    render_conjunct,
 )
 from .select import ALL_BASE_COLUMNS, JoinClause, SelectSpec
 
@@ -41,4 +42,5 @@ __all__ = [
     "LogicalOperator",
     "SelectSpec",
     "parse_filter_expression",
+    "render_conjunct",
 ]

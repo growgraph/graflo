@@ -48,7 +48,11 @@ from graflo.db.graph_introspection import (
     GraphSchemaInferencer,
     strip_internal_properties,
 )
-from graflo.filter.onto import FilterExpression, parse_filter_expression
+from graflo.filter.onto import (
+    FilterExpression,
+    parse_filter_expression,
+    render_conjunct,
+)
 from graflo.onto import AggregationType, DBType
 
 logger = logging.getLogger(__name__)
@@ -722,8 +726,9 @@ class Neo4jConnection(Connection):
         # Add additional filters if provided
         if filters is not None:
             ff = FilterExpression.from_dict(filters)
-            filter_clause = ff(doc_name="r", kind=self.expression_flavor())
-            where_clauses.append(str(filter_clause))
+            where_clauses.append(
+                render_conjunct(ff, doc_name="r", kind=self.expression_flavor())
+            )
 
         where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 

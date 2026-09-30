@@ -47,7 +47,11 @@ from graflo.db.cypher import cypher_rel_pattern, rel_merge_props_map_from_row_in
 from graflo.db.field_type_support import assert_schema_field_types_supported
 from graflo.db.graph_introspection import GraphSchemaInferencer
 from graflo.db.util import serialize_value
-from graflo.filter.onto import FilterExpression, parse_filter_expression
+from graflo.filter.onto import (
+    FilterExpression,
+    parse_filter_expression,
+    render_conjunct,
+)
 from graflo.onto import AggregationType, DBType
 
 logger = logging.getLogger(__name__)
@@ -865,8 +869,9 @@ class FalkordbConnection(Connection):
         # Add additional filters if provided
         if filters is not None:
             ff = FilterExpression.from_dict(filters)
-            filter_clause = ff(doc_name="r", kind=self.expression_flavor())
-            where_clauses.append(str(filter_clause))
+            where_clauses.append(
+                render_conjunct(ff, doc_name="r", kind=self.expression_flavor())
+            )
 
         where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 

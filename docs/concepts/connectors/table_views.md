@@ -41,8 +41,8 @@ print(connector.build_query())
 Each entry of `filters` is one condition. A condition on one column has three keys:
 
 - `field`: the column.
-- `cmp_operator`: one of `==`, `!=`, `>`, `>=`, `<`, `<=`, `IS_NULL`, `IS_NOT_NULL`.
-- `value`: what the column is compared with. Strings are quoted in the SQL, numbers are not. `IS_NULL` and `IS_NOT_NULL` take no value.
+- `cmp_operator`: one of `==`, `!=`, `>`, `>=`, `<`, `<=`, `IN`, `IS_NULL`, `IS_NOT_NULL`.
+- `value`: what the column is compared with. Strings are quoted in the SQL, numbers are not. `IN` takes a list and keeps the rows whose column equals one of its members: `value: [open, in_progress]` gives `"status" IN ('open', 'in_progress')`. `IS_NULL` and `IS_NOT_NULL` take no value.
 
 The entries are joined with `AND`. To combine conditions in another way, write the logical operator as a key with a list of conditions under it:
 
@@ -75,10 +75,22 @@ WHERE ("status" = 'open' OR "status" = 'in_progress') AND "plant" = 'north'
 
 A condition nested under another is wrapped in parentheses, so the SQL keeps the structure of the YAML.
 
-!!! warning "Keep `OR` inside `AND`"
-    GraFlo joins the top-level conditions of a query with `AND` and does not put parentheses around them. The top-level conditions are the `filters` entries, the window of a `time_filter`, and the conditions a view adds. An `OR` entry next to any of them changes meaning: `a OR b AND c` reads as `a OR (b AND c)`. Nest the `OR` in one `AND:` entry with the other conditions, as above, or make it the connector's only condition.
+The same holds at the top level. GraFlo joins the `filters` entries, the window of a `time_filter`, the conditions of a view and a run's date range with `AND`, and puts an `OR` entry in parentheses, so each entry means the same next to the others as it does alone:
 
-The syntax is the same as that of a vertex type's `filters` in the schema. The long form, `operator: AND` with the conditions under `deps:`, is accepted too. Each entry is parsed when the manifest loads, so an unknown `cmp_operator` is reported then, not when the query runs.
+```yaml
+filters:
+  - OR:
+      - {field: status, cmp_operator: "==", value: open}
+      - {field: status, cmp_operator: "==", value: in_progress}
+  - {field: plant, cmp_operator: "==", value: north}
+```
+
+```sql
+SELECT * FROM "public"."work_orders"
+WHERE ("status" = 'open' OR "status" = 'in_progress') AND "plant" = 'north'
+```
+
+The syntax is the same as that of a vertex type's `filters` in the schema. The long form, `operator: AND` with the conditions under `deps:`, is accepted too. Each entry is parsed when the manifest loads, so an unknown key, an unknown `cmp_operator` or a condition with no operator is reported then, not when the query runs.
 
 For a date or time window, use `time_filter`, described in [Runtime connector updates](runtime_updates.md#time-windows-with-time_filter).
 
@@ -251,11 +263,11 @@ The keys of a `select` view:
     Without `select`, the view selects `all_base`. The `as` key is optional; `alias` is accepted in its place.
 
 - `joins`: joins with the keys described in [Join other tables with `joins`](#join-other-tables-with-joins).
-- `where`: one condition, in the syntax of `filters`. It is parsed when the query is built. When the view has joins, qualify each column with `base.` or a join alias.
+- `where`: one condition, in the syntax of `filters`. It is checked when the manifest loads. When the view has joins, qualify each column with `base.` or a join alias.
 - `from`: the table to read. By default it is the connector's `table_name`.
 - `base_alias`: the name of the connector's own table in the query, `base` by default.
 
-The connector's `filters` and `time_filter` also apply to a view: GraFlo adds them to the view's `WHERE` as conditions on the base table. That works on a `type_lookup` view and on a `select` view with joins. On a `select` view without joins, write the conditions in `where`.
+The connector's `filters` and `time_filter` also apply to a view: GraFlo adds them to the view's `WHERE` as conditions on the base table. In a view that joins, their columns are qualified with the base alias.
 
 If you can create a view in the database, you can point `table_name` at it instead. GraFlo reads a database view like a table.
 

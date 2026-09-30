@@ -21,7 +21,7 @@ from os.path import join
 
 from arango import ArangoClient
 
-from graflo.filter.onto import FilterExpression
+from graflo.filter.onto import FilterExpression, render_conjunct
 from graflo.onto import ExpressionFlavor
 
 logger = logging.getLogger(__name__)
@@ -170,7 +170,8 @@ def fetch_fields_query(
             if isinstance(filters, FilterExpression)
             else FilterExpression.from_dict(filters)
         )
-        extrac_filter_clause = f" && {ff(doc_name='_cdoc', kind=ExpressionFlavor.AQL)}"
+        condition = render_conjunct(ff, doc_name="_cdoc", kind=ExpressionFlavor.AQL)
+        extrac_filter_clause = f" && {condition}"
     else:
         extrac_filter_clause = ""
 

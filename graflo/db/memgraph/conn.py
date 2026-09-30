@@ -97,7 +97,11 @@ from graflo.db.conn import (
 from graflo.db.cypher import cypher_rel_pattern, rel_merge_props_map_from_row_props
 from graflo.db.field_type_support import assert_schema_field_types_supported
 from graflo.db.graph_introspection import GraphSchemaInferencer
-from graflo.filter.onto import FilterExpression, parse_filter_expression
+from graflo.filter.onto import (
+    FilterExpression,
+    parse_filter_expression,
+    render_conjunct,
+)
 from graflo.onto import AggregationType, DBType
 
 logger = logging.getLogger(__name__)
@@ -1077,8 +1081,9 @@ class MemgraphConnection(Connection):
         # Add relationship property filters
         if filters is not None:
             ff = FilterExpression.from_dict(filters)
-            filter_str = ff(doc_name="r", kind=self.expression_flavor())
-            where_clauses.append(str(filter_str))
+            where_clauses.append(
+                render_conjunct(ff, doc_name="r", kind=self.expression_flavor())
+            )
 
         if where_clauses:
             q += f" WHERE {' AND '.join(where_clauses)}"

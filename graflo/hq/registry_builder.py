@@ -32,7 +32,7 @@ from graflo.connections.provider import (
 from graflo.data_source.factory import DataSourceFactory
 from graflo.data_source.registry import DataSourceRegistry
 from graflo.data_source.sql import SQLConfig, SQLDataSource
-from graflo.filter.sql import datetime_range_where_sql
+from graflo.filter.sql import datetime_range_filter
 
 if TYPE_CHECKING:
     from graflo.architecture.contract.bindings import Bindings
@@ -300,8 +300,11 @@ class RegistryBuilder:
         )
         logger.info(f"For resource name {resource_name} {len(files)} files were found")
 
+        encoding = self.ingestion_model.fetch_resource_config(resource_name).encoding
         for file_path in files:
-            file_source = DataSourceFactory.create_file_data_source(path=file_path)
+            file_source = DataSourceFactory.create_file_data_source(
+                path=file_path, encoding=encoding
+            )
             registry.register(file_source, resource_name=resource_name)
 
     # ------------------------------------------------------------------
@@ -364,32 +367,28 @@ class RegistryBuilder:
                     vertex_config=self.schema.core_schema.vertex_config,
                 )
 
+            # The run's date range is one more condition on the connector's
+            # query: it applies whether the column comes from the connector or
+            # from the run, beside any window the connector declares itself.
             date_column = connector.date_field or ingestion_params.datetime_column
-            if (
-                ingestion_params.datetime_after or ingestion_params.datetime_before
-            ) and date_column:
-                # Handled below via build_query + appended WHERE.
-                pass
-            elif ingestion_params.datetime_after or ingestion_params.datetime_before:
-                logger.warning(
-                    "datetime_after/datetime_before set but no date column: "
-                    "set TableConnector.date_field or IngestionParams.datetime_column for resource %s",
-                    resource_name,
-                )
+            run_filters = []
+            if ingestion_params.datetime_after or ingestion_params.datetime_before:
+                if date_column:
+                    date_range = datetime_range_filter(
+                        ingestion_params.datetime_after,
+                        ingestion_params.datetime_before,
+                        date_column,
+                    )
+                    if date_range is not None:
+                        run_filters.append(date_range)
+                else:
+                    logger.warning(
+                        "datetime_after/datetime_before set but no date column: "
+                        "set TableConnector.date_field or IngestionParams.datetime_column for resource %s",
+                        resource_name,
+                    )
 
-            query = connector.build_query(effective_schema)
-
-            if date_column and date_column != connector.date_field:
-                dt_where = datetime_range_where_sql(
-                    ingestion_params.datetime_after,
-                    ingestion_params.datetime_before,
-                    date_column,
-                )
-                if dt_where:
-                    if " WHERE " in query:
-                        query += f" AND {dt_where}"
-                    else:
-                        query += f" WHERE {dt_where}"
+            query = connector.build_query(effective_schema, extra_filters=run_filters)
 
             connection_string = postgres_config.to_sqlalchemy_connection_string()
 
