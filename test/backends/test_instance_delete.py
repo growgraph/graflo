@@ -17,9 +17,9 @@ from graflo.db.arango.conn import ArangoConnection
 from graflo.db.conn import ConnectionCapability
 from graflo.db.cypher.delete import delete_nodes_query, delete_relationships_query
 from graflo.db.falkordb.conn import FalkordbConnection
+from graflo.db.graflo_backend.connection import GraFloBackendConnection
 from graflo.db.manager import ConnectionManager
 from graflo.db.memgraph.conn import MemgraphConnection
-from graflo.db.nebula.conn import NebulaConnection
 from graflo.db.neo4j.conn import Neo4jConnection
 from graflo.db.postgres import target_write
 from graflo.db.postgres.conn import PostgresConnection
@@ -38,12 +38,15 @@ def test_the_backends_that_delete() -> None:
         DBType.FALKORDB,
         DBType.TIGERGRAPH,
         DBType.POSTGRES,
+        DBType.NEBULA,
     }
 
 
 def test_a_backend_without_it_says_so() -> None:
     with pytest.raises(NotImplementedError, match="deleting vertices"):
-        NebulaConnection.delete_vertices(cast(Any, object()), "t", [{"id": 1}], ("id",))
+        GraFloBackendConnection.delete_vertices(
+            cast(Any, object()), "t", [{"id": 1}], ("id",)
+        )
 
 
 # -- Cypher ---------------------------------------------------------------------

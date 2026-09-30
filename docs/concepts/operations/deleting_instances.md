@@ -26,8 +26,7 @@ identity fields, and GraFlo translates them to the names the database stores.
 
 | Target | Removes |
 |---|---|
-| ArangoDB, Neo4j, Memgraph, FalkorDB, TigerGraph, PostgreSQL | Vertices with their edges, and edges |
-| NebulaGraph | Nothing: a vertex id is shared by every vertex type written with the same identity values, so one type's vertex cannot be removed alone |
+| ArangoDB, Neo4j, Memgraph, FalkorDB, TigerGraph, PostgreSQL, NebulaGraph | Vertices with their edges, and edges |
 | File backend | Nothing: its chunks are append-only |
 
 On a target that cannot remove, both calls raise `ValueError` before a

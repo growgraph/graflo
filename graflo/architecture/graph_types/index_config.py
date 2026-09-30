@@ -66,11 +66,11 @@ class Index(ConfigBaseModel):
     Attributes:
         name: Optional name of the index
         fields: List of fields to index
-        unique: Whether the index enforces uniqueness
+        unique: Whether the index enforces uniqueness; off unless declared
         type: Type of index to create
-        deduplicate: Whether to deduplicate index entries
-        sparse: Whether to create a sparse index
-        exclude_edge_endpoints: Whether to exclude edge endpoints from index
+        deduplicate: ArangoDB only: whether to deduplicate array index entries
+        sparse: ArangoDB only: whether to leave out documents missing a field
+        exclude_edge_endpoints: Has no effect
     """
 
     name: str | None = Field(
@@ -82,8 +82,11 @@ class Index(ConfigBaseModel):
         description="List of field names included in this index.",
     )
     unique: bool = Field(
-        default=True,
-        description="If True, index enforces uniqueness on the field combination.",
+        default=False,
+        description=(
+            "If True, the index is a uniqueness constraint on the field "
+            "combination, and a write repeating a value is rejected."
+        ),
     )
     type: IndexType = Field(
         default=IndexType.PERSISTENT,
@@ -91,15 +94,15 @@ class Index(ConfigBaseModel):
     )
     deduplicate: bool = Field(
         default=True,
-        description="Whether to deduplicate index entries (e.g. ArangoDB).",
+        description="ArangoDB only: whether to deduplicate array index entries.",
     )
     sparse: bool = Field(
         default=False,
-        description="If True, create a sparse index (exclude null/missing values).",
+        description="ArangoDB only: if True, leave out documents missing an indexed field.",
     )
     exclude_edge_endpoints: bool = Field(
         default=False,
-        description="If True, do not add _from/_to to edge index (e.g. ArangoDB).",
+        description="Has no effect: no backend adds endpoint fields to a declared index.",
     )
 
     def __iter__(self):

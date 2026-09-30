@@ -65,13 +65,14 @@ class TestGateConditions:
             _runtime(), IngestionParams(), _conn(), bulk_enabled=True
         ) == (1, SerialReason.BULK_SESSION)
 
-    def test_graflo_backend_serializes(self) -> None:
-        assert effective_in_flight(
+    def test_the_file_backend_does_not_serialize(self) -> None:
+        in_flight, reason = effective_in_flight(
             _runtime(),
             IngestionParams(),
             _conn(DBType.GRAFLO_BACKEND),
             bulk_enabled=False,
-        ) == (1, SerialReason.GRAFLO_BACKEND)
+        )
+        assert reason is None and in_flight > 1
 
     def test_extra_weights_serialize(self) -> None:
         runtime = _runtime(extra_weights=(object(),))

@@ -37,8 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Removing vertices and edges.** `GraphEngine.delete_vertices` removes vertices with every
   edge that touches them, and `GraphEngine.delete_edges` removes the edges of one declared edge
   between endpoint pairs, both by identity under logical names. Implemented on ArangoDB, Neo4j,
-  Memgraph, FalkorDB, TigerGraph and PostgreSQL, declared by
-  `ConnectionCapability.INSTANCE_DELETE`; NebulaGraph and the file backend refuse.
+  Memgraph, FalkorDB, TigerGraph, PostgreSQL and NebulaGraph, declared by
+  `ConnectionCapability.INSTANCE_DELETE`; the file backend refuses.
 - **`aggregate` on the file backend**, with the Cypher backends' return shapes.
 - **`FilterExpression.matches(doc)`** evaluates a filter against a document in Python, including a
   document with a field named `kind` or `doc_name`.
@@ -100,8 +100,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ArangoDB, naming the vertex or edge it is declared on. It used to become a plain index.
 - **`run_mode: run_only` is refused** in TigerGraph bulk-load options. The job is named after a
   session id that is new on every run, so no existing job could match.
-- **The file backend is written by one operation at a time** whoever writes it; the bound moved
-  from the ingest into `DBWriter`.
+- **Several writers can write one file-backend directory at once**, in one process or several.
+  Each creates its own chunk files and adds them to `INDEX.json` under a lock on `.lock` in the
+  directory. The ingest no longer writes a file-backend target one operation at a time.
 - **Neo4j, Memgraph and FalkorDB answer `fetch_present_documents` by batch position**, as the
   contract says, and `insert_return_batch` raises saying what to use instead. Neo4j raised on all
   three.
@@ -134,6 +135,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Three-way merge reads the fields a pipeline maps** (a vertex step's `from`, a router's
   `vertex_from_map`), and an op on a relation its side renamed reads the renamed relation's
   endpoints.
+- **An index is not unique unless it declares `unique: true`.** `Index.unique` defaulted to
+  `true`, so ArangoDB and PostgreSQL built every declared index, and Neo4j every declared
+  relationship index, as a uniqueness constraint. Add `unique: true` where repeated values must
+  be rejected. Identity indexes are unchanged.
+- **A NebulaGraph VID starts with its tag**: `<tag>::<identity values>`. Vertices of two tags with
+  the same identity values were one vertex, sharing their edges. A space written by an earlier
+  version must be written again. `vertex_address`, and the endpoints `fetch_edges` returns, leave
+  the tag out.
+- **A PostgreSQL edge table stores every identity field of its endpoints.** An endpoint with a
+  composite identity gets one `source__<field>` or `target__<field>` column per field and a
+  foreign key to the whole primary key; a one-field identity keeps `source_id` / `target_id`. An
+  edge table written by an earlier version for a composite identity must be written again.
+  `fetch_edges` refuses a table with a composite endpoint.
 
 - **uv is pinned to one release line.** `pyproject.toml` sets `[tool.uv] required-version`, and
   the workflows pin a release within it. A different uv minor rewrote `uv.lock` wholesale with
@@ -260,6 +274,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A vertex weight dropped edges**: weights were paired with a record's edges by position
   across all entries, so a record with more edges than weight vertices lost the rest.
 - **RDF inference linked each object of a property with several ranges under every range.**
+- **Two PostgreSQL endpoints sharing their first identity field were one endpoint**: edge tables
+  stored only that field.
 
 ## [1.14.1]
 

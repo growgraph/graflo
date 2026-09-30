@@ -49,13 +49,8 @@ _CONCURRENT_UPSERT_SAFE_FLAVORS = frozenset(
     {DBType.POSTGRES, DBType.ARANGO, DBType.TIGERGRAPH, DBType.NEBULA}
 )
 
+
 #: Targets written by one operation at a time, whatever ``max_concurrent`` says.
-#: The chunked-file backend numbers a new chunk from the index it read when the
-#: connection opened, and rewrites the whole index on close, so two connections
-#: writing at once overwrite each other's chunks and index entries.
-_SINGLE_WRITER_FLAVORS = frozenset({DBType.GRAFLO_BACKEND})
-
-
 def _weight_source_fields(weight: Weight) -> list[str]:
     """Vertex fields a weight reads: ``fields`` then ``map`` keys, deduplicated."""
     return list(dict.fromkeys([*weight.fields, *weight.map]))
@@ -802,11 +797,7 @@ class DBWriter:
         ``asyncio.run`` calls must not carry a semaphore bound to a closed loop.
         """
         loop = asyncio.get_running_loop()
-        bound = (
-            1
-            if conn_conf.connection_type in _SINGLE_WRITER_FLAVORS
-            else self.max_concurrent
-        )
+        bound = self.max_concurrent
         if (
             self._semaphore is None
             or self._semaphore_loop is not loop

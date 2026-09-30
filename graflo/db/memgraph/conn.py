@@ -518,7 +518,7 @@ class MemgraphConnection(Connection):
             if db_vertex:
                 identity_fields = db_vertex.identity_fields(label)
                 if identity_fields:
-                    identity_idx = Index(fields=identity_fields)
+                    identity_idx = Index(fields=identity_fields, unique=True)
                     seen = {tuple(ix.fields) for ix in index_list}
                     if tuple(identity_idx.fields) not in seen:
                         index_list = [identity_idx, *index_list]

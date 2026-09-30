@@ -219,12 +219,12 @@ def _high_water_of_concurrent_writes(
     return state["high_water"]
 
 
-def test_the_file_backend_is_written_by_one_operation_at_a_time(monkeypatch, tmp_path):
+def test_the_file_backend_keeps_its_concurrency(monkeypatch, tmp_path):
     from graflo.connections.graflo_backend import GraFloBackendConfig
 
     conn_conf = GraFloBackendConfig(output_dir=tmp_path)
 
-    assert _high_water_of_concurrent_writes(monkeypatch, conn_conf, 4) == 1
+    assert _high_water_of_concurrent_writes(monkeypatch, conn_conf, 4) > 1
 
 
 def test_other_targets_keep_their_concurrency(monkeypatch):

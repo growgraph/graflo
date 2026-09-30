@@ -104,8 +104,12 @@ ConnectionManager.flavors_supporting(ConnectionCapability.SCHEMA_INTROSPECTION)
 
 On a PostgreSQL target each vertex type becomes a table. Each edge type
 becomes a table named `{source}_{target}_{relation}_edges` (`relates` when the
-edge has no relation) with `source_id` and `target_id` columns, one column per
-edge property, and an `id` key so that parallel edges can coexist.
+edge has no relation) with the endpoint columns, one column per edge property,
+and an `id` key so that parallel edges can coexist. An endpoint whose vertex
+type has one identity field is stored in `source_id` or `target_id`. One with
+a composite identity is stored in a column per field, `source__<field>` or
+`target__<field>`; edge queries (`graph_neighbors`) refuse such a table,
+because they address a vertex by one value.
 
 ## The file backend
 
@@ -131,6 +135,10 @@ empty (`person____department`). When a name contains characters other than
 letters, digits and underscores, `INDEX.json` uses a JSON array of the edge
 key instead and the chunk file gets an encoded name. `INDEX.json` also records
 the GraFlo version, the creation time and a hash of the schema.
+
+Several writers, in one process or in several, can write one directory at the
+same time. Each claims its own chunk files and adds them to `INDEX.json` while
+holding a lock on the file `.lock` in the directory.
 
 The config is `GraFloBackendConfig` from `graflo.connections`:
 

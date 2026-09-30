@@ -11,6 +11,7 @@ from typing import Any
 from graflo.architecture.graph_types import EdgeDirection
 from graflo.architecture.schema.vertex import Field
 from graflo.db.nebula.util import (
+    VID_SEPARATOR,
     escape_nebula_string,
     make_vid,
     nebula_type_for_field,
@@ -125,7 +126,7 @@ def batch_upsert_vertices_ngql(
     """Return a list of ``UPSERT VERTEX`` statements for a document batch."""
     statements: list[str] = []
     for doc in docs:
-        vid = make_vid(doc, match_keys)
+        vid = make_vid(tag_name, doc, match_keys)
         stmt = upsert_vertex_ngql(tag_name, vid, doc, tag_fields)
         if stmt:
             statements.append(stmt)
@@ -145,7 +146,7 @@ def insert_vertices_ngql(
     cols = ", ".join(f"`{f}`" for f in ordered_fields)
     value_parts: list[str] = []
     for doc in docs:
-        vid = make_vid(doc, match_keys)
+        vid = make_vid(tag_name, doc, match_keys)
         escaped_vid = escape_nebula_string(vid)
         vals = ", ".join(serialize_nebula_value(doc.get(f)) for f in ordered_fields)
         value_parts.append(f'"{escaped_vid}":({vals})')
@@ -226,12 +227,14 @@ def fetch_edges_ngql(
     filter_clause: str = "",
     limit: int | None = None,
     direction: EdgeDirection = EdgeDirection.OUT,
+    to_key: str | None = None,
 ) -> str:
     """Build a GO query for fetching edges incident to one vertex.
 
     ``$$`` is the vertex at the far end of whichever orientation ``GO`` walked,
     so the ``to_vid`` predicate keeps meaning "the other endpoint" under
-    ``REVERSELY`` and ``BIDIRECT`` without special-casing.
+    ``REVERSELY`` and ``BIDIRECT`` without special-casing. *to_key* matches the
+    far end's VID without its tag, whatever tag it has.
     """
     escaped_from = escape_nebula_string(from_vid)
     over = f"`{edge_type}`" if edge_type else "*"
@@ -239,6 +242,9 @@ def fetch_edges_ngql(
     if to_vid:
         escaped_to = escape_nebula_string(to_vid)
         where_parts.append(f'id($$) == "{escaped_to}"')
+    elif to_key:
+        escaped_key = escape_nebula_string(f"{VID_SEPARATOR}{to_key}")
+        where_parts.append(f'id($$) ENDS WITH "{escaped_key}"')
     if filter_clause:
         where_parts.append(filter_clause)
     where = " WHERE " + " AND ".join(where_parts) if where_parts else ""

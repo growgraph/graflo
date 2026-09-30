@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections.abc import Sequence
 from datetime import date, datetime
 from datetime import time as dt_time
 from decimal import Decimal
@@ -148,15 +149,33 @@ def serialize_nebula_value(value: Any) -> str:
 # ---------------------------------------------------------------------------
 
 
-def make_vid(doc: dict[str, Any], match_keys: list[str] | tuple[str, ...]) -> str:
-    """Derive a VID string from a document's match-key values.
+#: Joins the tag and each identity value in a VID.
+VID_SEPARATOR = "::"
 
-    When a single match key is used the raw value is taken.  When multiple keys
-    are present the values are joined with ``::`` so the VID is deterministic
-    and unique for the combination.
+
+def vertex_key(doc: dict[str, Any], match_keys: Sequence[str]) -> str:
+    """A vertex's identity values joined with ``::``: its VID without the tag."""
+    return VID_SEPARATOR.join(str(doc.get(k, "")) for k in match_keys)
+
+
+def tag_vid(tag: str, key: str) -> str:
+    """The VID of the vertex of *tag* whose :func:`vertex_key` is *key*.
+
+    The tag leads the VID because a VID is space-wide: without it, vertices of
+    two tags with the same identity values would be one vertex carrying both
+    tags, and would share their edges.
     """
-    parts = [str(doc.get(k, "")) for k in match_keys]
-    return "::".join(parts)
+    return f"{tag}{VID_SEPARATOR}{key}"
+
+
+def make_vid(tag: str, doc: dict[str, Any], match_keys: Sequence[str]) -> str:
+    """The VID of *doc* as a vertex of *tag*, keyed on *match_keys*."""
+    return tag_vid(tag, vertex_key(doc, match_keys))
+
+
+def key_of_vid(vid: str) -> str:
+    """:func:`vertex_key` of a VID: what follows the tag. A tag name has no ``::``."""
+    return vid.split(VID_SEPARATOR, 1)[1] if VID_SEPARATOR in vid else vid
 
 
 # ---------------------------------------------------------------------------

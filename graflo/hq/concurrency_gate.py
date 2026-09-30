@@ -13,8 +13,6 @@ import logging
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from graflo.onto import DBType
-
 if TYPE_CHECKING:
     from graflo.architecture.pipeline.runtime.resource import ResourceRuntime
     from graflo.connections.onto import DBConfig
@@ -32,7 +30,6 @@ class SerialReason(StrEnum):
     EXTRA_WEIGHTS = "extra_weights"
     BLANK_VERTICES = "blank_vertices"
     SECONDARY_IDENTITY = "secondary_identity_endpoints"
-    GRAFLO_BACKEND = "graflo_backend"
 
 
 def effective_in_flight(
@@ -57,9 +54,7 @@ def effective_in_flight(
       positionally within a batch, so batch composition and order matter;
     - ``SECONDARY_IDENTITY`` — edges located by a secondary identity resolve
       their endpoints against database state, so a later batch's edges must not
-      race an earlier batch's vertex writes;
-    - ``GRAFLO_BACKEND`` — the chunked-file backend rewrites its index on every
-      writer close and is not safe for concurrent writers.
+      race an earlier batch's vertex writes.
     """
     if params.max_in_flight_batches == 1:
         return 1, SerialReason.USER_OVERRIDE
@@ -67,8 +62,6 @@ def effective_in_flight(
         return 1, SerialReason.DYNAMIC_EDGES
     if bulk_enabled:
         return 1, SerialReason.BULK_SESSION
-    if conn_conf is not None and conn_conf.connection_type == DBType.GRAFLO_BACKEND:
-        return 1, SerialReason.GRAFLO_BACKEND
     if runtime is not None:
         # getattr, not attribute access: duck-typed runtimes (test doubles,
         # minimal stubs) may not carry the full ResourceRuntime surface.

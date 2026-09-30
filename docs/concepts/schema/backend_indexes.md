@@ -26,25 +26,25 @@ schema:
         vertex_indexes:
             machine:
             -   fields: [plant, model]
-                unique: false
         edge_specs:
         -   source: work_order
             target: machine
             relation: targets
             indexes:
             -   fields: [opened_at]
-                unique: false
 ```
 
-An index entry takes `fields` and, optionally, `unique` (default `true`),
-`type` (`persistent`, the default, `hash`, `skiplist` or `fulltext`),
-`sparse`, `deduplicate` and `name`. Every backend builds `persistent`, `hash`
-and `skiplist` as a plain index. Only ArangoDB builds `fulltext`; on any other
-target a `fulltext` index is refused when the schema is applied, with the
-vertex or edge it is declared on. Because `unique` defaults to
-`true`, ArangoDB and PostgreSQL build a declared index as a uniqueness
-constraint and reject duplicate values. Write `unique: false` unless that is
-what you want.
+An index entry takes `fields` and, optionally, `unique` (default `false`),
+`type` (`persistent`, the default, `hash`, `skiplist` or `fulltext`) and
+`name`. Every backend builds `persistent`, `hash` and `skiplist` as a plain
+index. Only ArangoDB builds `fulltext`; on any other target a `fulltext` index
+is refused when the schema is applied, with the vertex or edge it is declared
+on. With `unique: true`, ArangoDB and PostgreSQL build the index as a
+uniqueness constraint and reject a write that repeats a value; the table below
+says what the other backends do with it.
+
+`sparse` and `deduplicate` are ArangoDB index options; the other backends
+ignore them.
 
 An `edge_specs` entry can also set `relation_name`, the name the database
 stores the relation under. TigerGraph native inverses are set per relation in
@@ -88,7 +88,7 @@ logs a warning, because every filtered read on that tag then fails with
 | NebulaGraph | A tag index over the identity fields, always created, because `LOOKUP` and filtered `MATCH` need it | A tag index | An edge index |
 | ArangoDB | A unique persistent index over the identity fields, created with the collection; none when the identity is `_key`, which ArangoDB indexes itself | As declared, with `unique` and `type` applied | As declared, on each edge collection |
 | TigerGraph | The primary key (`PRIMARY_ID`, or `PRIMARY KEY` for a composite identity), which TigerGraph indexes itself | Single-field indexes only; a multi-field index is skipped with a warning | Not supported; skipped with a log message |
-| PostgreSQL | The vertex table's `PRIMARY KEY` | `CREATE INDEX`, or `CREATE UNIQUE INDEX` when `unique: true` | Not created. Every edge table gets an index on `target_id`, and a unique index over `source_id`, `target_id` and the edge's properties when it has properties |
+| PostgreSQL | The vertex table's `PRIMARY KEY` | `CREATE INDEX`, or `CREATE UNIQUE INDEX` when `unique: true` | Not created. Every edge table gets an index on its target columns, and a unique index over its endpoint columns and the edge's properties when it has properties |
 | GraFlo file backend | None | None | None |
 
 On ArangoDB, TigerGraph and PostgreSQL the identity is covered when the

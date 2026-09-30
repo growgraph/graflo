@@ -74,10 +74,12 @@ schema:
                 fields:
                 -   created
             entity:
-            -   fields:
+            -   unique: true
+                fields:
                 -   id
                 -   ent_type
-            -   fields:
+            -   unique: true
+                fields:
                 -   id
                 -   ent_db_type
             mention:
@@ -89,7 +91,8 @@ schema:
             target: entity
             purpose:
             indexes:
-            -   fields:
+            -   unique: true
+                fields:
                 -   _from
                 -   _to
                 -   publication@_id
@@ -107,7 +110,8 @@ schema:
             purpose: convolution
             indexes_mode: replace
             indexes:
-            -   fields:
+            -   unique: true
+                fields:
                 -   _from
                 -   _to
                 -   obs_date
@@ -120,7 +124,8 @@ schema:
             target: entity
             purpose:
             indexes:
-            -   fields:
+            -   unique: true
+                fields:
                 -   _from
                 -   _to
                 -   publication@_id

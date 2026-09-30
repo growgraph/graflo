@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 from typing import Any, Protocol
 
 from psycopg2 import sql
@@ -102,8 +102,31 @@ _PG_TYPE_TO_FIELD_TYPE: dict[str, FieldType] = {
 
 #: Columns graflo writes onto an edge table for its own bookkeeping. They are
 #: the structure, not properties of the relation, so they must not surface as
-#: `Field`s on a recovered edge.
+#: `Field`s on a recovered edge. A composite endpoint adds the
+#: ``source__<field>`` / ``target__<field>`` columns of :func:`edge_endpoint_columns`.
 EDGE_ENDPOINT_COLUMNS = frozenset({"source_id", "target_id"})
+
+
+def edge_endpoint_columns(side: str, fields: Sequence[str]) -> list[str]:
+    """Columns of an edge table holding the identity of its *side* endpoint.
+
+    A one-field identity is stored in ``{side}_id``. A composite identity gets
+    one ``{side}__{field}`` column per field, in identity order, so endpoints
+    sharing a first field value stay apart.
+    """
+    fields = list(fields) or ["id"]
+    if len(fields) == 1:
+        return [f"{side}_id"]
+    return [f"{side}__{field}" for field in fields]
+
+
+def is_edge_bookkeeping_column(column: str) -> bool:
+    """Whether *column* of an edge table is its row id or an endpoint column."""
+    return (
+        column == "id"
+        or column in EDGE_ENDPOINT_COLUMNS
+        or column.startswith(("source__", "target__"))
+    )
 
 
 def field_type_from_postgres(declared: str | None) -> FieldType | None:
@@ -187,27 +210,129 @@ def delete_rows_query(schema: str, table: str, columns: list[str]) -> str:
 def delete_referencing_rows_query(
     schema: str,
     table: str,
-    column: str,
+    columns: list[str],
     vertex_table: str,
-    referenced: str,
     match_keys: list[str],
 ) -> str:
-    """Remove the rows of *table* whose *column* refers to a vertex matched in ``VALUES %s``.
+    """Remove the rows of *table* whose endpoint *columns* hold a vertex matched in ``VALUES %s``.
 
-    Edge tables hold endpoint values as text, so the comparison is on text.
+    *columns* hold the vertex's *match_keys*, in order. Edge tables hold
+    endpoint values as text, so the comparison is on text.
     """
+    held = ", ".join(f"{_quote_ident(c)}::text" for c in columns)
+    if len(columns) > 1:
+        held = f"({held})"
+    referenced = ", ".join(f"v.{_quote_ident(k)}::text" for k in match_keys)
     cols = ", ".join(f"v.{_quote_ident(k)}" for k in match_keys)
     return (
         f"DELETE FROM {_quote_ident(schema)}.{_quote_ident(table)} "
-        f"WHERE {_quote_ident(column)}::text IN ("
-        f"SELECT v.{_quote_ident(referenced)}::text "
+        f"WHERE {held} IN ("
+        f"SELECT {referenced} "
         f"FROM {_quote_ident(schema)}.{_quote_ident(vertex_table)} v "
         f"WHERE ({cols}) IN (VALUES %s))"
     )
 
 
+def edge_table_ddl(
+    schema: str,
+    table: str,
+    *,
+    source_table: str,
+    source_fields: Sequence[str],
+    target_table: str,
+    target_fields: Sequence[str],
+    properties: Sequence[tuple[str, str]],
+) -> tuple[str, str, str | None]:
+    """``CREATE TABLE`` for an edge table, the same without foreign keys, and its unique index.
+
+    *properties* are ``(column, type)`` pairs. The unique index covers the
+    endpoint columns and the properties, and there is none without properties.
+    """
+    source_columns = edge_endpoint_columns("source", source_fields)
+    target_columns = edge_endpoint_columns("target", target_fields)
+    qualified = f"{_quote_ident(schema)}.{_quote_ident(table)}"
+    column_defs = [
+        f"{_quote_ident('id')} BIGSERIAL PRIMARY KEY",
+        *(f"{_quote_ident(c)} {_PG_TEXT} NOT NULL" for c in source_columns),
+        *(f"{_quote_ident(c)} {_PG_TEXT} NOT NULL" for c in target_columns),
+        *(f"{_quote_ident(name)} {kind}" for name, kind in properties),
+    ]
+
+    def foreign_key(columns: list[str], vertex: str, fields: Sequence[str]) -> str:
+        return (
+            f"FOREIGN KEY ({', '.join(_quote_ident(c) for c in columns)}) "
+            f"REFERENCES {_quote_ident(schema)}.{_quote_ident(vertex)} "
+            f"({', '.join(_quote_ident(f) for f in list(fields) or ['id'])})"
+        )
+
+    keys = [
+        foreign_key(source_columns, source_table, source_fields),
+        foreign_key(target_columns, target_table, target_fields),
+    ]
+    create = (
+        f"CREATE TABLE IF NOT EXISTS {qualified} ({', '.join([*column_defs, *keys])})"
+    )
+    create_without_keys = (
+        f"CREATE TABLE IF NOT EXISTS {qualified} ({', '.join(column_defs)})"
+    )
+    unique = None
+    if properties:
+        indexed = [*source_columns, *target_columns, *(name for name, _ in properties)]
+        unique = (
+            f"CREATE UNIQUE INDEX IF NOT EXISTS "
+            f"{_quote_ident(_edge_unique_index_name(table))} ON {qualified} "
+            f"({', '.join(_quote_ident(c) for c in indexed)})"
+        )
+    return create, create_without_keys, unique
+
+
 def _edge_unique_index_name(table: str) -> str:
     return f"{table}_edge_uniq"
+
+
+def _identity_fields(schema: Schema | None, vertex_name: str) -> list[str]:
+    """Identity fields of *vertex_name* in *schema*; ``["id"]`` when unknown."""
+    if schema is not None:
+        fields = schema.core_schema.vertex_config.identity_fields(vertex_name)
+        if fields:
+            return list(fields)
+    return ["id"]
+
+
+def _endpoint_fields(
+    match_keys: tuple[str, ...] | None,
+    schema: Schema | None,
+    vertex_name: str,
+    side: str,
+    row: dict[str, Any],
+) -> list[str]:
+    """The identity fields an edge row stores for its *side* endpoint.
+
+    An exported endpoint document is keyed by those fields, since ``DBWriter``
+    resolves endpoints on them. Without *match_keys* or a schema they are read
+    off a composite endpoint's column names.
+    """
+    if match_keys:
+        return list(match_keys)
+    if schema is not None:
+        return _identity_fields(schema, vertex_name)
+    prefix = f"{side}__"
+    composite = [c[len(prefix) :] for c in row if c.startswith(prefix)]
+    return composite or ["id"]
+
+
+def _edge_table_columns(conn: Any, pg_schema: str, table: str) -> frozenset[str]:
+    """Column names of *table*, read from the catalogue once per connection."""
+    cache: dict[str, frozenset[str]] = conn.__dict__.setdefault(
+        "_edge_table_column_cache", {}
+    )
+    if table not in cache:
+        cache[table] = frozenset(
+            str(column["name"])
+            for column in conn.get_table_columns(table, schema_name=pg_schema)
+            if column.get("name")
+        )
+    return cache[table]
 
 
 def _edge_weight_columns_from_schema(
@@ -465,91 +590,31 @@ class PostgresTargetWriteMixin:
     def _create_edge_table(self, edge: Edge) -> None:
         pg_schema = _pg_schema_name(self.config)
         table = edge_table_name(edge.source, edge.target, edge.relation)
-        source_table = vertex_table_name(edge.source)
-        target_table = vertex_table_name(edge.target)
-
-        src_pk = "id"
-        tgt_pk = "id"
         schema = getattr(self, "_target_schema", None)
-        if schema is not None:
-            vc = schema.core_schema.vertex_config
-            src_fields = vc.identity_fields(edge.source)
-            tgt_fields = vc.identity_fields(edge.target)
-            if src_fields:
-                src_pk = src_fields[0]
-            if tgt_fields:
-                tgt_pk = tgt_fields[0]
-
-        weight_cols = list(edge.properties) if edge.properties else []
-        col_defs: list[sql.Composable] = [
-            sql.SQL("{} BIGSERIAL PRIMARY KEY").format(sql.Identifier("id")),
-            sql.SQL("{} {} NOT NULL").format(
-                sql.Identifier("source_id"), sql.SQL(_PG_TEXT)
-            ),
-            sql.SQL("{} {} NOT NULL").format(
-                sql.Identifier("target_id"), sql.SQL(_PG_TEXT)
-            ),
-        ]
-        for field in weight_cols:
-            col_defs.append(
-                sql.SQL("{} {}").format(
-                    sql.Identifier(field.name),
-                    sql.SQL(_pg_column_type_for_field(field)),
-                )
-            )
-        fk_clauses: list[sql.Composable] = []
-        fk_source = sql.SQL("FOREIGN KEY (source_id) REFERENCES {}.{} ({})").format(
-            sql.Identifier(pg_schema),
-            sql.Identifier(source_table),
-            sql.Identifier(src_pk),
-        )
-        fk_target = sql.SQL("FOREIGN KEY (target_id) REFERENCES {}.{} ({})").format(
-            sql.Identifier(pg_schema),
-            sql.Identifier(target_table),
-            sql.Identifier(tgt_pk),
-        )
-        fk_clauses = [fk_source, fk_target]
-        create_q = sql.SQL("CREATE TABLE IF NOT EXISTS {}.{} ({})").format(
-            sql.Identifier(pg_schema),
-            sql.Identifier(table),
-            sql.SQL(", ").join([*col_defs, *fk_clauses]),
+        create, create_without_keys, unique = edge_table_ddl(
+            pg_schema,
+            table,
+            source_table=vertex_table_name(edge.source),
+            source_fields=_identity_fields(schema, edge.source),
+            target_table=vertex_table_name(edge.target),
+            target_fields=_identity_fields(schema, edge.target),
+            properties=[
+                (field.name, _pg_column_type_for_field(field))
+                for field in edge.properties
+            ],
         )
         with self.conn.cursor() as cursor:
             try:
-                cursor.execute(create_q)
+                cursor.execute(create)
             except Exception as exc:
                 logger.warning(
                     "Edge table %s creation with FK failed: %s; creating without FK",
                     table,
                     exc,
                 )
-                create_q_no_fk = sql.SQL(
-                    "CREATE TABLE IF NOT EXISTS {}.{} ({})"
-                ).format(
-                    sql.Identifier(pg_schema),
-                    sql.Identifier(table),
-                    sql.SQL(", ").join(col_defs),
-                )
-                cursor.execute(create_q_no_fk)
-            if weight_cols:
-                # weight_cols holds Field objects; the index needs column names.
-                unique_cols = sql.SQL(", ").join(
-                    sql.Identifier(column)
-                    for column in (
-                        "source_id",
-                        "target_id",
-                        *(field.name for field in weight_cols),
-                    )
-                )
-                idx_q = sql.SQL(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS {} ON {}.{} ({})"
-                ).format(
-                    sql.Identifier(_edge_unique_index_name(table)),
-                    sql.Identifier(pg_schema),
-                    sql.Identifier(table),
-                    unique_cols,
-                )
-                cursor.execute(idx_q)
+                cursor.execute(create_without_keys)
+            if unique is not None:
+                cursor.execute(unique)
         self.conn.commit()
 
     def upsert_docs_batch(
@@ -621,10 +686,8 @@ class PostgresTargetWriteMixin:
         table = edge_table_name(source_class, target_class, relation_name)
         match_keys_source = match_keys_source or ("id",)
         match_keys_target = match_keys_target or ("id",)
-        src_key = match_keys_source[0]
-        tgt_key = match_keys_target[0]
 
-        rows: list[tuple] = []
+        rows: list[tuple[tuple, tuple, dict[str, Any]]] = []
         weight_keys: set[str] = set()
         for item in docs_edges:
             if not isinstance(item, (list, tuple)) or len(item) < 2:
@@ -634,20 +697,24 @@ class PostgresTargetWriteMixin:
             weight_keys.update(weight.keys())
             rows.append(
                 (
-                    source_doc.get(src_key),
-                    target_doc.get(tgt_key),
+                    tuple(source_doc.get(k) for k in match_keys_source),
+                    tuple(target_doc.get(k) for k in match_keys_target),
                     weight,
                 )
             )
         if not rows:
             return
 
-        columns = ["source_id", "target_id", *sorted(weight_keys)]
+        columns = [
+            *edge_endpoint_columns("source", match_keys_source),
+            *edge_endpoint_columns("target", match_keys_target),
+            *sorted(weight_keys),
+        ]
         col_idents = sql.SQL(", ").join(sql.Identifier(c) for c in columns)
-        # No conflict target: the edge table's unique index covers
-        # (source_id, target_id) plus any weight columns, so naming a fixed pair
-        # fails with "no unique or exclusion constraint matching" as soon as the
-        # edge carries properties. A bare DO NOTHING matches whichever index exists.
+        # No conflict target: the edge table's unique index covers the endpoint
+        # columns plus any weight columns, so naming a fixed set fails with
+        # "no unique or exclusion constraint matching" as soon as the edge
+        # carries properties. A bare DO NOTHING matches whichever index exists.
         upsert_q = sql.SQL(
             "INSERT INTO {}.{} ({}) VALUES %s ON CONFLICT DO NOTHING"
         ).format(
@@ -656,13 +723,9 @@ class PostgresTargetWriteMixin:
             col_idents,
         )
         values = [
-            (
-                source_id,
-                target_id,
-                *[weight.get(k) for k in sorted(weight_keys)],
-            )
-            for source_id, target_id, weight in rows
-            if source_id is not None and target_id is not None
+            (*source, *target, *[weight.get(k) for k in sorted(weight_keys)])
+            for source, target, weight in rows
+            if None not in source and None not in target
         ]
         if not values:
             return
@@ -678,28 +741,37 @@ class PostgresTargetWriteMixin:
         *,
         chunk_size: int = DEFAULT_DELETE_CHUNK_SIZE,
     ) -> None:
-        """Remove vertex rows and, first, the edge rows whose foreign keys refer to them."""
+        """Remove vertex rows and, first, the rows of every edge table naming them.
+
+        Edge tables are found by name, as :meth:`delete_graph_structure` finds
+        them: a foreign key is not always there to follow.
+        """
         keys = list(match_keys)
         rows = deletable_docs(key_docs, keys)
         if not rows:
             return
         pg_schema = _pg_schema_name(self.config)
         table = vertex_table_name(class_name)
-        referencing = [
-            (other["table_name"], fk["column"], fk.get("references_column") or keys[0])
-            for other in self.get_tables(pg_schema)
-            for fk in self.get_foreign_keys(other["table_name"], pg_schema)
-            if fk["references_table"] == table
-        ]
+        present = [row["table_name"] for row in self.get_tables(pg_schema)]
+        vertex_tables = {t for t in present if not t.endswith(EDGE_TABLE_SUFFIX)}
+        referencing: list[tuple[str, list[str]]] = []
+        for other in present:
+            parts = split_edge_table_name(other, vertex_tables | {table})
+            if parts is None:
+                continue
+            source, target, _ = parts
+            for side, end in (("source", source), ("target", target)):
+                if end == table:
+                    referencing.append((other, edge_endpoint_columns(side, keys)))
         values = [tuple(doc[k] for k in keys) for doc in rows]
         with self.conn.cursor() as cursor:
             for start in range(0, len(values), chunk_size):
                 chunk = values[start : start + chunk_size]
-                for other, column, referenced in referencing:
+                for other, columns in referencing:
                     execute_values(
                         cursor,
                         delete_referencing_rows_query(
-                            pg_schema, other, column, table, referenced, keys
+                            pg_schema, other, columns, table, keys
                         ),
                         chunk,
                     )
@@ -719,17 +791,23 @@ class PostgresTargetWriteMixin:
         chunk_size: int = DEFAULT_DELETE_CHUNK_SIZE,
     ) -> None:
         """Remove edge rows between endpoint pairs, by the values an insert stores."""
-        source_key = (match_keys_source or ("id",))[0]
-        target_key = (match_keys_target or ("id",))[0]
-        pairs = deletable_endpoints(endpoints, (source_key,), (target_key,))
+        source_keys = match_keys_source or ("id",)
+        target_keys = match_keys_target or ("id",)
+        pairs = deletable_endpoints(endpoints, source_keys, target_keys)
         if not pairs:
             return
         query = delete_rows_query(
             _pg_schema_name(self.config),
             edge_table_name(source_class, target_class, relation_name),
-            ["source_id", "target_id"],
+            [
+                *edge_endpoint_columns("source", source_keys),
+                *edge_endpoint_columns("target", target_keys),
+            ],
         )
-        values = [(str(s[source_key]), str(t[target_key])) for s, t in pairs]
+        values = [
+            (*(str(s[k]) for k in source_keys), *(str(t[k]) for k in target_keys))
+            for s, t in pairs
+        ]
         with self.conn.cursor() as cursor:
             for start in range(0, len(values), chunk_size):
                 execute_values(cursor, query, values[start : start + chunk_size])
@@ -795,12 +873,23 @@ class PostgresTargetWriteMixin:
         ``fetch_all_edges``'s ``collection_name``. Endpoints live in
         ``source_id`` / ``target_id``; ``define_edge_indexes`` indexes the latter,
         so the inbound branch is not a sequential scan.
+
+        Raises:
+            NotImplementedError: When either endpoint has a composite identity,
+                which one address cannot name.
         """
         if edge_type is None:
             raise ValueError(
                 "PostgreSQL fetch_edges requires edge_type (the edge table name)"
             )
         pg_schema = _pg_schema_name(self.config)
+        columns = _edge_table_columns(self, pg_schema, edge_type)
+        if columns and not EDGE_ENDPOINT_COLUMNS <= columns:
+            raise NotImplementedError(
+                f"PostgreSQL edge table {edge_type!r} stores an endpoint with a "
+                "composite identity, and an edge query addresses a vertex by one "
+                "value; read the table with fetch_all_edges"
+            )
         qualified = f"{_quote_ident(pg_schema)}.{_quote_ident(edge_type)}"
 
         extra = ""
@@ -973,11 +1062,11 @@ class PostgresTargetWriteMixin:
     def define_edge_indexes(
         self, edges: list[Edge], schema: Schema | None = None
     ) -> None:
-        """Index ``target_id`` on every edge table, making reverse lookup viable.
+        """Index the target columns of every edge table, making reverse lookup viable.
 
         The only pre-existing edge index is the composite uniqueness constraint,
-        whose leading column is ``source_id`` — it cannot serve a lookup keyed on
-        the target, so reaching an edge from its target end meant a sequential
+        whose leading columns are the source's — it cannot serve a lookup keyed
+        on the target, so reaching an edge from its target end meant a sequential
         scan. That is the whole cost of an undirected edge on PostgreSQL, and it
         is one index per table.
         """
@@ -985,11 +1074,16 @@ class PostgresTargetWriteMixin:
         for edge in edges:
             table = edge_table_name(edge.source, edge.target, edge.relation)
             index_name = f"ix_{table}_target_id"
-            q = sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {}.{} ({})").format(
-                sql.Identifier(index_name),
-                sql.Identifier(pg_schema),
-                sql.Identifier(table),
-                sql.Identifier("target_id"),
+            columns = edge_endpoint_columns(
+                "target",
+                _identity_fields(
+                    schema or getattr(self, "_target_schema", None), edge.target
+                ),
+            )
+            q = (
+                f"CREATE INDEX IF NOT EXISTS {_quote_ident(index_name)} ON "
+                f"{_quote_ident(pg_schema)}.{_quote_ident(table)} "
+                f"({', '.join(_quote_ident(c) for c in columns)})"
             )
             try:
                 with self.conn.cursor() as cursor:
@@ -1023,8 +1117,8 @@ class PostgresTargetWriteMixin:
 
         Reads the catalogue rather than sampling rows: the graph shape lives in
         the table layout graflo writes -- one table per vertex type, and
-        ``{source}_{target}_{relation}_edges`` with ``source_id`` / ``target_id``
-        for each edge type -- so ``information_schema`` answers the whole
+        ``{source}_{target}_{relation}_edges`` with the endpoint columns of
+        :func:`edge_endpoint_columns` for each edge type -- so ``information_schema`` answers the whole
         question and ``sample_limit`` is accepted only for interface symmetry.
 
         Distinct from :meth:`introspect_schema`, which infers a graph from an
@@ -1075,7 +1169,7 @@ class PostgresTargetWriteMixin:
                 continue
             source, target, relation = parts
             names, types = columns(table)
-            weights = [c for c in names if c not in EDGE_ENDPOINT_COLUMNS]
+            weights = [c for c in names if not is_edge_bookkeeping_column(c)]
             edges.append(
                 GraphEdgeIntrospection(
                     source=source,
@@ -1095,26 +1189,6 @@ class PostgresTargetWriteMixin:
         return GraphSchemaInferencer(db_flavor=DBType.POSTGRES).infer_schema(
             introspection, schema_name=schema_name or pg_schema
         )
-
-    def _endpoint_key(
-        self, match_keys: tuple[str, ...] | None, vertex_name: str
-    ) -> str:
-        """Name the column that ``source_id`` / ``target_id`` actually holds.
-
-        Edge tables store the endpoint's *first identity field* value rather
-        than a surrogate (see :meth:`_create_edge_table`), so an exported
-        endpoint document has to be keyed by that field's name: ``DBWriter``
-        resolves endpoints on ``identity_fields[0]`` and finds nothing under a
-        generic ``"id"``.
-        """
-        if match_keys:
-            return match_keys[0]
-        schema = getattr(self, "_target_schema", None)
-        if schema is not None:
-            fields = schema.core_schema.vertex_config.identity_fields(vertex_name)
-            if fields:
-                return fields[0]
-        return "id"
 
     def fetch_all_edges(
         self,
@@ -1136,18 +1210,20 @@ class PostgresTargetWriteMixin:
             f"SELECT * FROM {_quote_ident(pg_schema)}.{_quote_ident(table)}"
             f"{limit_clause}"
         )
-        source_key = self._endpoint_key(match_keys_source, source_class)
-        target_key = self._endpoint_key(match_keys_target, target_class)
         rows = self.read(q)
+        schema = getattr(self, "_target_schema", None)
         result: list[list[dict[str, Any]]] = []
         for row in rows:
-            source_doc = {source_key: row.get("source_id")}
-            target_doc = {target_key: row.get("target_id")}
-            weight = {
-                k: v
-                for k, v in row.items()
-                if k not in ("source_id", "target_id", "id")
-            }
+            docs: list[dict[str, Any]] = []
+            for side, keys, vertex in (
+                ("source", match_keys_source, source_class),
+                ("target", match_keys_target, target_class),
+            ):
+                fields = _endpoint_fields(keys, schema, vertex, side, row)
+                columns = edge_endpoint_columns(side, fields)
+                docs.append({f: row.get(c) for f, c in zip(fields, columns)})
+            source_doc, target_doc = docs
+            weight = {k: v for k, v in row.items() if not is_edge_bookkeeping_column(k)}
             if relation_name and "relation" not in weight:
                 weight["relation"] = relation_name
             result.append([source_doc, target_doc, weight])

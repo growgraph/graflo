@@ -117,16 +117,20 @@ match your write path exactly. A mismatch does not raise: the anchor resolves
 to an address that exists nowhere, and traversal returns an empty result that
 looks like a vertex without neighbors.
 
+The address carries no vertex type: `fetch_edges` receives the type beside
+it. A store whose ids are unique across types only when they name the type
+adds it there. NebulaGraph does: a VID is `<tag>::<identity values>`, because
+two tags written under one VID would be one vertex sharing its edges.
+
 #### Edge rows in traversal
 
-`graflo/db/traversal.py` reads the endpoints of an edge row from the first
-column it recognizes: `_from`, `source_id`, `src`, `_src`, `from`, `from_id`
-or `_from_key` for the source, and the matching names for the target (listed
-in `_SOURCE_KEYS` and `_TARGET_KEYS`). If your `fetch_edges` returns
-endpoints under another name, those rows are dropped from every traversal,
-again without an error. Return one of the accepted names, or add yours to the
-two tuples. `normalize_edge_row` logs a warning once per unrecognized row
-shape; watch for it the first time you run the traversal suites.
+`graflo/db/traversal.py` reads the endpoints of an edge row from the pair of
+columns `EDGE_ROW_ENDPOINT_KEYS` names for your flavor, or from a
+`(start, properties, end)` triple as the Cypher backends return. Add your
+flavor's pair there. A row without them is dropped from every traversal,
+again without an error; `normalize_edge_row` logs a warning once per
+unrecognized row shape, so watch for it the first time you run the traversal
+suites.
 
 ### 4. Wire up the tests
 
