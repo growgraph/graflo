@@ -21,42 +21,42 @@ class TestRelationIdentification:
     def test_detect_separator(self):
         """Test separator detection."""
         # Test underscore separator
-        assert detect_separator("rel_cluster_containment_host") == "_"
+        assert detect_separator("rel_plant_containment_machine") == "_"
 
         # Test hyphen separator
-        assert detect_separator("rel-cluster-containment-host") == "-"
+        assert detect_separator("rel-plant-containment-machine") == "-"
 
         # Test dot separator
-        assert detect_separator("rel.cluster.containment.host") == "."
+        assert detect_separator("rel.plant.containment.machine") == "."
 
         # Test default when no separator
-        assert detect_separator("relclustercontainmenthost") == "_"
+        assert detect_separator("relplantcontainmentmachine") == "_"
 
         # Test mixed separators (should pick most common)
-        assert detect_separator("rel_cluster-containment_host") == "_"
+        assert detect_separator("rel_plant-containment_machine") == "_"
 
     def test_split_by_separator(self):
         """Test splitting by separator."""
         # Test underscore separator
-        assert split_by_separator("rel_cluster_containment_host", "_") == [
+        assert split_by_separator("rel_plant_containment_machine", "_") == [
             "rel",
-            "cluster",
+            "plant",
             "containment",
-            "host",
+            "machine",
         ]
 
         # Test hyphen separator
-        assert split_by_separator("rel-cluster-containment-host", "-") == [
+        assert split_by_separator("rel-plant-containment-machine", "-") == [
             "rel",
-            "cluster",
+            "plant",
             "containment",
-            "host",
+            "machine",
         ]
 
         # Test multiple consecutive separators
-        assert split_by_separator("rel__cluster___containment", "_") == [
+        assert split_by_separator("rel__plant___containment", "_") == [
             "rel",
-            "cluster",
+            "plant",
             "containment",
         ]
 
@@ -65,15 +65,15 @@ class TestRelationIdentification:
 
     def test_fuzzy_match_fragment(self):
         """Test fuzzy matching of fragments to vertex names."""
-        vertex_names = ["cluster", "host", "user", "product", "category"]
+        vertex_names = ["plant", "machine", "user", "product", "category"]
 
         # Test exact match (case-insensitive)
-        assert fuzzy_match_fragment("cluster", vertex_names) == "cluster"
-        assert fuzzy_match_fragment("CLUSTER", vertex_names) == "cluster"
+        assert fuzzy_match_fragment("plant", vertex_names) == "plant"
+        assert fuzzy_match_fragment("PLANT", vertex_names) == "plant"
 
         # Test substring match
-        assert fuzzy_match_fragment("clust", vertex_names) == "cluster"
-        assert fuzzy_match_fragment("hosts", vertex_names) == "host"
+        assert fuzzy_match_fragment("plan", vertex_names) == "plant"
+        assert fuzzy_match_fragment("machines", vertex_names) == "machine"
 
         # Test fuzzy match
         assert fuzzy_match_fragment("usr", vertex_names) == "user"
@@ -83,23 +83,23 @@ class TestRelationIdentification:
         assert fuzzy_match_fragment("xyz", vertex_names) is None
 
         # Test empty vertex names
-        assert fuzzy_match_fragment("cluster", []) is None
+        assert fuzzy_match_fragment("plant", []) is None
 
     def test_infer_edge_vertices_from_table_name_with_fks(self):
         """Test inference when foreign keys are available."""
-        pk_columns = ["cluster_id", "host_id"]
+        pk_columns = ["plant_id", "machine_id"]
         fk_columns = [
-            {"column": "cluster_id", "references_table": "cluster"},
-            {"column": "host_id", "references_table": "host"},
+            {"column": "plant_id", "references_table": "plant"},
+            {"column": "machine_id", "references_table": "machine"},
         ]
-        vertex_names = ["cluster", "host", "user"]
+        vertex_names = ["plant", "machine", "user"]
 
         # Test with FK references (most reliable)
         source, target, relation = infer_edge_vertices_from_table_name(
-            "prop_cluster_containment_host", pk_columns, fk_columns, vertex_names
+            "prop_plant_containment_machine", pk_columns, fk_columns, vertex_names
         )
-        assert source == "cluster"
-        assert target == "host"
+        assert source == "plant"
+        assert target == "machine"
         assert relation == "containment"
 
         # Test self-reference
@@ -116,24 +116,24 @@ class TestRelationIdentification:
 
     def test_infer_edge_vertices_from_table_name_fuzzy_matching(self):
         """Test inference using fuzzy matching when FKs are not available."""
-        pk_columns = ["cluster_id", "host_id"]
+        pk_columns = ["plant_id", "machine_id"]
         fk_columns = []
-        vertex_names = ["cluster", "host", "user", "product", "category"]
+        vertex_names = ["plant", "machine", "user", "product", "category"]
 
         # Test fuzzy matching from table name
         source, target, relation = infer_edge_vertices_from_table_name(
-            "prop_cluster_containment_host", pk_columns, fk_columns, vertex_names
+            "prop_plant_containment_machine", pk_columns, fk_columns, vertex_names
         )
-        assert source == "cluster"
-        assert target == "host"
+        assert source == "plant"
+        assert target == "machine"
         assert relation == "containment"
 
         # Test with different separator
         source, target, relation = infer_edge_vertices_from_table_name(
-            "rel-cluster-containment-host", pk_columns, fk_columns, vertex_names
+            "rel-plant-containment-machine", pk_columns, fk_columns, vertex_names
         )
-        assert source == "cluster"
-        assert target == "host"
+        assert source == "plant"
+        assert target == "machine"
         assert relation == "containment"
 
         # Test product_category_mapping connector
@@ -149,45 +149,45 @@ class TestRelationIdentification:
 
     def test_infer_edge_vertices_from_key_fragments(self):
         """Test inference from key column fragments."""
-        pk_columns = ["cluster_id", "host_id"]
+        pk_columns = ["plant_id", "machine_id"]
         fk_columns = []
-        vertex_names = ["cluster", "host"]
+        vertex_names = ["plant", "machine"]
 
         # Test matching from PK column names
         source, target, relation = infer_edge_vertices_from_table_name(
             "rel_containment", pk_columns, fk_columns, vertex_names
         )
-        assert source == "cluster"
-        assert target == "host"
+        assert source == "plant"
+        assert target == "machine"
         assert relation == "containment"
 
         # Test with FK column fragments
         fk_columns_with_fragments = [
-            {"column": "source_cluster_id", "references_table": None},
-            {"column": "target_host_id", "references_table": None},
+            {"column": "source_plant_id", "references_table": None},
+            {"column": "target_machine_id", "references_table": None},
         ]
         source, target, relation = infer_edge_vertices_from_table_name(
             "rel_containment", pk_columns, fk_columns_with_fragments, vertex_names
         )
-        assert source == "cluster"
-        assert target == "host"
+        assert source == "plant"
+        assert target == "machine"
         assert relation == "containment"
 
     def test_infer_edge_vertices_priority(self):
         """Test that FK references take priority over fuzzy matching."""
         pk_columns = ["wrong_id", "also_wrong_id"]
         fk_columns = [
-            {"column": "cluster_id", "references_table": "cluster"},
-            {"column": "host_id", "references_table": "host"},
+            {"column": "plant_id", "references_table": "plant"},
+            {"column": "machine_id", "references_table": "machine"},
         ]
-        vertex_names = ["cluster", "host", "wrong", "also_wrong"]
+        vertex_names = ["plant", "machine", "wrong", "also_wrong"]
 
         # FK references should override fuzzy matches from table/column names
         source, target, relation = infer_edge_vertices_from_table_name(
             "rel_wrong_also_wrong", pk_columns, fk_columns, vertex_names
         )
-        assert source == "cluster"
-        assert target == "host"
+        assert source == "plant"
+        assert target == "machine"
         # Relation should still be inferred from table name
         assert relation is not None
 
@@ -195,7 +195,7 @@ class TestRelationIdentification:
         """Test inference when no matches are found."""
         pk_columns = ["xyz_id", "abc_id"]
         fk_columns = []
-        vertex_names = ["cluster", "host"]
+        vertex_names = ["plant", "machine"]
 
         source, target, relation = infer_edge_vertices_from_table_name(
             "rel_xyz_abc", pk_columns, fk_columns, vertex_names
@@ -206,7 +206,7 @@ class TestRelationIdentification:
 
         # Test with empty vertex names
         source, target, relation = infer_edge_vertices_from_table_name(
-            "rel_cluster_host", pk_columns, fk_columns, []
+            "rel_plant_machine", pk_columns, fk_columns, []
         )
         assert source is None
         assert target is None
@@ -214,19 +214,19 @@ class TestRelationIdentification:
 
     def test_infer_edge_vertices_complex_connectors(self):
         """Test inference with complex naming patterns."""
-        vertex_names = ["cluster", "host", "user", "product", "category"]
+        vertex_names = ["plant", "machine", "user", "product", "category"]
 
         # Test pattern: rel_<source>_<relation>_<target>_<number>
-        pk_columns = ["cluster_id", "cluster_id_2"]
+        pk_columns = ["plant_id", "plant_id_2"]
         fk_columns = [
-            {"column": "cluster_id", "references_table": "cluster"},
-            {"column": "cluster_id_2", "references_table": "cluster"},
+            {"column": "plant_id", "references_table": "plant"},
+            {"column": "plant_id_2", "references_table": "plant"},
         ]
         source, target, relation = infer_edge_vertices_from_table_name(
-            "rel_cluster_containment_cluster_2", pk_columns, fk_columns, vertex_names
+            "rel_plant_containment_plant_2", pk_columns, fk_columns, vertex_names
         )
-        assert source == "cluster"
-        assert target == "cluster"
+        assert source == "plant"
+        assert target == "plant"
         assert relation == "containment"
 
         # Test pattern without rel_ prefix
@@ -453,23 +453,23 @@ class TestHelperFunctions:
 
     def test_extract_key_fragments(self):
         """Test extraction of key fragments from PK and FK columns."""
-        pk_columns = ["cluster_id", "host_id"]
+        pk_columns = ["plant_id", "machine_id"]
         fk_columns = [
-            {"column": "source_cluster_id", "references_table": "cluster"},
-            {"column": "target_host_id", "references_table": "host"},
+            {"column": "source_plant_id", "references_table": "plant"},
+            {"column": "target_machine_id", "references_table": "machine"},
         ]
         separator = "_"
 
         fragments = _extract_key_fragments(pk_columns, fk_columns, separator)
 
         # Should extract unique fragments in order (PK first, then FK)
-        assert "cluster" in fragments
-        assert "host" in fragments
+        assert "plant" in fragments
+        assert "machine" in fragments
         assert "id" in fragments
         assert "source" in fragments
         assert "target" in fragments
         # Check order: PK fragments come first
-        assert fragments.index("cluster") < fragments.index("source")
+        assert fragments.index("plant") < fragments.index("source")
 
     def test_match_vertices_from_table_fragments(self):
         """Test matching vertices from table name fragments."""
@@ -519,8 +519,8 @@ class TestHelperFunctions:
 
     def test_match_vertices_from_key_fragments(self):
         """Test matching vertices from key fragments."""
-        key_fragments = ["cluster", "host", "id"]
-        vertex_names = ["cluster", "host"]
+        key_fragments = ["plant", "machine", "id"]
+        vertex_names = ["plant", "machine"]
         matcher = FuzzyMatcher(vertex_names, threshold=0.6, enable_cache=True)
         matched_set = set()
 
@@ -528,18 +528,18 @@ class TestHelperFunctions:
             key_fragments, matcher, matched_set, None, None
         )
 
-        # Should match cluster and host
-        assert "cluster" in matched_vertices
-        assert "host" in matched_vertices
-        assert "cluster" in key_matched
-        assert "host" in key_matched
+        # Should match plant and machine
+        assert "plant" in matched_vertices
+        assert "machine" in matched_vertices
+        assert "plant" in key_matched
+        assert "machine" in key_matched
         # Should not include "id" (not a vertex)
         assert "id" not in matched_vertices
 
     def test_match_vertices_from_key_fragments_with_existing(self):
         """Test matching when some vertices already matched from table name."""
-        key_fragments = ["cluster", "host"]
-        vertex_names = ["cluster", "host", "user"]
+        key_fragments = ["plant", "machine"]
+        vertex_names = ["plant", "machine", "user"]
         matcher = FuzzyMatcher(vertex_names, threshold=0.6, enable_cache=True)
         matched_set = {"user"}  # Already matched from table name
 
@@ -547,40 +547,40 @@ class TestHelperFunctions:
             key_fragments, matcher, matched_set, "user", None
         )
 
-        # Should include user (from table name) and cluster/host (from keys)
+        # Should include user (from table name) and plant/machine (from keys)
         assert "user" in matched_vertices
-        assert "cluster" in matched_vertices
-        assert "host" in matched_vertices
-        # Key matched should only include cluster and host
-        assert "cluster" in key_matched
-        assert "host" in key_matched
+        assert "plant" in matched_vertices
+        assert "machine" in matched_vertices
+        # Key matched should only include plant and machine
+        assert "plant" in key_matched
+        assert "machine" in key_matched
         assert "user" not in key_matched
 
     def test_extract_fk_vertex_names(self):
         """Test extraction of vertex names from foreign keys."""
         fk_columns = [
-            {"column": "cluster_id", "references_table": "cluster"},
-            {"column": "host_id", "references_table": "host"},
+            {"column": "plant_id", "references_table": "plant"},
+            {"column": "machine_id", "references_table": "machine"},
         ]
 
         fk_vertex_names = _extract_fk_vertex_names(fk_columns)
 
-        assert fk_vertex_names == ["cluster", "host"]
+        assert fk_vertex_names == ["plant", "machine"]
 
     def test_extract_fk_vertex_names_with_none(self):
         """Test extraction when some FKs don't have references_table."""
         fk_columns = [
-            {"column": "cluster_id", "references_table": "cluster"},
-            {"column": "host_id", "references_table": None},
+            {"column": "plant_id", "references_table": "plant"},
+            {"column": "machine_id", "references_table": None},
         ]
 
         fk_vertex_names = _extract_fk_vertex_names(fk_columns)
 
-        assert fk_vertex_names == ["cluster"]
+        assert fk_vertex_names == ["plant"]
 
     def test_determine_source_target_vertices_priority_fk(self):
         """Test that FK references take highest priority."""
-        fk_vertex_names = ["cluster", "host"]
+        fk_vertex_names = ["plant", "machine"]
         source_idx, target_idx = None, None
         source_vertex, target_vertex = None, None
         key_matched = ["wrong", "also_wrong"]
@@ -597,15 +597,15 @@ class TestHelperFunctions:
         )
 
         # FK should override fuzzy matches
-        assert source == "cluster"
-        assert target == "host"
+        assert source == "plant"
+        assert target == "machine"
 
     def test_determine_source_target_vertices_priority_table_name(self):
         """Test that table name matches take priority over key matches."""
         fk_vertex_names = []
         source_idx, target_idx = 1, 3
         source_vertex, target_vertex = "user", "product"
-        key_matched = ["cluster", "host"]
+        key_matched = ["plant", "machine"]
         matched_vertices = ["user", "product"]
 
         source, target = _determine_source_target_vertices(
@@ -627,8 +627,8 @@ class TestHelperFunctions:
         fk_vertex_names = []
         source_idx, target_idx = None, None
         source_vertex, target_vertex = None, None
-        key_matched = ["cluster", "host"]
-        matched_vertices = ["cluster", "host", "user"]
+        key_matched = ["plant", "machine"]
+        matched_vertices = ["plant", "machine", "user"]
 
         source, target = _determine_source_target_vertices(
             fk_vertex_names,
@@ -641,8 +641,8 @@ class TestHelperFunctions:
         )
 
         # Key-matched vertices should be used
-        assert source == "cluster"
-        assert target == "host"
+        assert source == "plant"
+        assert target == "machine"
 
     def test_determine_source_target_vertices_self_reference(self):
         """Test self-reference case."""

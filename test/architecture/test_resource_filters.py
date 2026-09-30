@@ -169,12 +169,12 @@ class TestTableConnectorBuildQuery:
             kind="leaf",
             field="class_name",
             cmp_operator=ComparisonOperator.EQ,
-            value=["server"],
+            value=["machine"],
         )
         tp = TableConnector(table_name="classes", filters=[f])
         q = tp.build_query("myschema")
         assert "WHERE" in q
-        assert "\"class_name\" = 'server'" in q
+        assert "\"class_name\" = 'machine'" in q
 
     def test_with_multiple_filters(self):
         f1 = FilterExpression(
@@ -211,7 +211,7 @@ class TestTableConnectorBuildQuery:
         assert "base.*" in q
 
     def test_with_two_joins_same_table(self):
-        """CMDB-style: two joins to same table with different aliases."""
+        """Relation-table style: two joins to same table with different aliases."""
         jc_s = JoinClause(
             table="classes",
             alias="s",
@@ -235,14 +235,14 @@ class TestTableConnectorBuildQuery:
             cmp_operator=ComparisonOperator.IS_NOT_NULL,
         )
         tp = TableConnector(
-            table_name="cmdb_rel_ci",
+            table_name="asset_relation",
             joins=[jc_s, jc_t],
             filters=[f1, f2],
         )
-        q = tp.build_query("sn")
+        q = tp.build_query("mx")
         # Both JOINs present
-        assert '"sn"."classes" s' in q
-        assert '"sn"."classes" t' in q
+        assert '"mx"."classes" s' in q
+        assert '"mx"."classes" t' in q
         assert 'base."parent" = s."id"' in q
         assert 'base."child" = t."id"' in q
         # IS NOT NULL filters
@@ -339,11 +339,11 @@ class TestTableConnectorBuildQuery:
         expr = FilterExpression.model_validate(
             {
                 "cmp_operator": ComparisonOperator.IS_NOT_NULL,
-                "field": "source.sys_id",
+                "field": "source.record_id",
             }
         )
         assert expr.kind == "leaf"
-        assert expr(kind=ExpressionFlavor.SQL) == 'source."sys_id" IS NOT NULL'
+        assert expr(kind=ExpressionFlavor.SQL) == 'source."record_id" IS NOT NULL'
 
     def test_untagged_composite_operator_not_consumed_as_unary(self):
         """Logical ``operator`` + ``deps`` must stay composite (not unary_op)."""
@@ -444,7 +444,7 @@ class TestAutoJoin:
     """enrich_edge_pattern_with_joins adds JoinClauses from edge defs."""
 
     def _make_schema_and_patterns(self):
-        """Build a minimal Schema + Connectors for the CMDB-like scenario."""
+        """Build a minimal Schema + Connectors for the relation-table scenario."""
         from graflo.architecture.contract.ingestion import IngestionModel
         from graflo.architecture.schema import Schema
 
@@ -454,13 +454,13 @@ class TestAutoJoin:
                 "core_schema": {
                     "vertex_config": {
                         "vertices": [
-                            {"name": "server", "properties": ["id", "class_name"]},
-                            {"name": "database", "properties": ["id", "class_name"]},
+                            {"name": "machine", "properties": ["id", "class_name"]},
+                            {"name": "line", "properties": ["id", "class_name"]},
                         ],
                     },
                     "edge_config": {
                         "edges": [
-                            {"source": "server", "target": "database"},
+                            {"source": "machine", "target": "line"},
                         ],
                     },
                 },
@@ -475,8 +475,8 @@ class TestAutoJoin:
                         "pipeline": [
                             {
                                 "edge": {
-                                    "from": "server",
-                                    "to": "database",
+                                    "from": "machine",
+                                    "to": "line",
                                     "match_source": "parent",
                                     "match_target": "child",
                                 }
@@ -489,13 +489,15 @@ class TestAutoJoin:
         ingestion_model.finish_init(schema.core_schema)
 
         bindings = Bindings()
-        server_connector = TableConnector(table_name="classes", schema_name="sn")
-        bindings.add_connector(server_connector)
-        bindings.bind_resource("server", server_connector)
-        database_connector = TableConnector(table_name="classes", schema_name="sn")
-        bindings.add_connector(database_connector)
-        bindings.bind_resource("database", database_connector)
-        relations_connector = TableConnector(table_name="cmdb_rel_ci", schema_name="sn")
+        machine_connector = TableConnector(table_name="classes", schema_name="mx")
+        bindings.add_connector(machine_connector)
+        bindings.bind_resource("machine", machine_connector)
+        line_connector = TableConnector(table_name="classes", schema_name="mx")
+        bindings.add_connector(line_connector)
+        bindings.bind_resource("line", line_connector)
+        relations_connector = TableConnector(
+            table_name="asset_relation", schema_name="mx"
+        )
         bindings.add_connector(relations_connector)
         bindings.bind_resource("abc_relations", relations_connector)
         return schema, ingestion_model, bindings
@@ -596,20 +598,20 @@ class TestAutoJoin:
             vertex_config=schema.core_schema.vertex_config,
         )
 
-        q = connector.build_query("sn")
+        q = connector.build_query("mx")
         assert "LEFT JOIN" in q
         assert "IS NOT NULL" in q
-        assert '"sn"."cmdb_rel_ci"' in q
+        assert '"mx"."asset_relation"' in q
 
     def test_enrichment_raises_when_vertex_has_multiple_sql_sources(self):
         from graflo.hq.auto_join import enrich_edge_connector_with_joins
 
         schema, ingestion_model, bindings = self._make_schema_and_patterns()
         extra = TableConnector(
-            name="server_alt", table_name="classes_alt", schema_name="sn"
+            name="machine_alt", table_name="classes_alt", schema_name="mx"
         )
         bindings.add_connector(extra)
-        bindings.bind_resource("server", extra)
+        bindings.bind_resource("machine", extra)
         resource = ingestion_model.fetch_resource("abc_relations")
         connector = bindings.get_connectors_for_resource("abc_relations")[0]
         with pytest.raises(ValueError, match="Multiple TableConnectors"):

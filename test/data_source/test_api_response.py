@@ -137,7 +137,7 @@ def test_detect_carry_params_dict_body() -> None:
 
 
 def test_detect_carry_params_list_envelope() -> None:
-    body = [{"kind": "Host", "results": [{"id": 1}], "results_id": "tok-abc"}]
+    body = [{"kind": "Machine", "results": [{"id": 1}], "results_id": "tok-abc"}]
     assert detect_carry_params(body) == {"results_id": "0.results_id"}
 
 

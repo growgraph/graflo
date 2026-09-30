@@ -1,0 +1,42 @@
+# What the lift cannot work out for itself.
+#
+# A lift sees structure: which edges leave `directed` unstated, which types
+# carry no grounding, where a float has no unit. It cannot see meaning. This
+# file says four things the schema does not: what each type and relation
+# denotes (grounding, edge_grounding), which properties change over time
+# (stateful), which types are measured at a point in time (observed), and the
+# unit of each existing measurement (measured).
+
+grounding:
+    Machine:
+        iri: http://www.w3.org/ns/prov#Entity
+        exact_match:
+        -   http://www.w3.org/ns/prov#Entity
+        -   http://www.w3.org/ns/sosa/FeatureOfInterest
+    ProductionLine:
+        iri: http://www.w3.org/ns/prov#Entity
+        synonyms: [Line, AssemblyLine]
+
+edge_grounding:
+-   source: Machine
+    target: ProductionLine
+    relation: installed_on
+    iri: http://www.w3.org/ns/prov#wasInfluencedBy
+-   source: Machine
+    target: Machine
+    relation: feeds
+    iri: http://www.w3.org/ns/prov#wasInfluencedBy
+
+# Facts that change over time. They move off the entity onto `MachineState`
+# (and `ProductionLineState`), which holds each value over an interval: a new
+# value closes `valid_to` of the old one instead of overwriting it.
+stateful:
+    Machine: [status]
+    ProductionLine: [operating_mode]
+
+# Types that get measured at a time.
+observed: [Machine]
+
+# UCUM tokens. UCUM has no currency, so currency would use ISO-4217 (USD).
+measured:
+    Machine.operating_temp: Cel

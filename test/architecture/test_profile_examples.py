@@ -17,7 +17,7 @@ import yaml
 from graflo.architecture.profile import check_manifest_config
 
 EXAMPLES_DIR = pathlib.Path(__file__).resolve().parents[2] / "examples"
-REFERENCE = EXAMPLES_DIR / "22-state-core" / "reference.yaml"
+REFERENCE = EXAMPLES_DIR / "23-state-core-lift" / "reference.yaml"
 
 
 def _manifest_paths() -> list[pathlib.Path]:

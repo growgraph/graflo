@@ -1,45 +1,63 @@
-# Migrate graph DB to graph DB
+# Graph DB migration
 
-Move an existing labeled property graph from one database to another — no manifest YAML required. GraFlo introspects the source schema and data, sanitizes for the target flavor, and loads in one `migrate_graph()` call.
+You have a graph in one database and want the same graph in another: Neo4j to
+ArangoDB, ArangoDB to TigerGraph, a graph database to PostgreSQL tables. This
+guide moves it with one call and no manifest: GraFlo reads the schema and the
+data from the source, adapts the names to the target and writes them. After
+this guide you will have the graph in the target and know how to check it.
 
-!!! warning "`migrate_graph()` cannot complete a move today"
+To save a graph to disk and load it later, read
+[Graph export and replay](graph_export_and_replay.md) instead. For what the
+operations do and which backends support them, read
+[Graph export and migration](../concepts/operations/graph_export_migration.md).
 
-    Introspection and export both work, and every step below runs — but the
-    final write raises `ValueError: Empty resource container`, for **every**
-    source/target pair. `migrate_graph()` builds an empty `IngestionModel` and
-    then asks `DBWriter` to write through it, which has no resource to resolve.
+## What you need
 
-    Until that is fixed, use the pieces directly: `GraphEngine.export_graph()`
-    and `infer_schema_from_graph()` are unaffected, and
-    `define_schema()` + `ingest()` with an authored manifest is the working
-    path to load the result.
+- GraFlo installed (`pip install graflo`). The drivers for every backend come
+  with it.
+- A source that GraFlo can read as a graph: Neo4j, ArangoDB, PostgreSQL
+  holding a graph that GraFlo wrote, or a GraFlo file backend.
+- A target: any of the eight backends (ArangoDB, Neo4j, TigerGraph, FalkorDB,
+  Memgraph, NebulaGraph, PostgreSQL, the file backend).
+- Connection settings for both. Each config class loads them with
+  `from_env()` (environment variables) or `from_docker_env()` (the container
+  settings shipped under `docker/`); see
+  [Database connections](database_connections.md).
 
+## Steps
 
-## Prerequisites
-
-- Python 3.11+
-- Source: **Neo4j**, **ArangoDB**, **PostgreSQL**, or a **GraFlo file backend** (see [Capability guard](../concepts/operations/graph_export_migration.md#capability-guard))
-- Target: any supported output `DBType` — ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph, PostgreSQL, or file backend
-- Connection configs via `from_env()`, `from_docker_env()`, or constructors
-
-## When to use this
-
-- **Neo4j → ArangoDB** (or any other LPG) — vendor migration without rewriting ETL
-- **Production graph → PostgreSQL** — relational vertex + junction edge tables
-- **Any graph source → TigerGraph** — target sanitization records TigerGraph-safe stored names in the profile; exported data keeps its source keys and is mapped onto them at write time
-
-For large graphs or repeated replays, export to a [GraFlo file backend](graph_export_and_replay.md) first, then load from disk.
-
-## Step 1 — Direct graph → graph
+### 1. Describe the two databases
 
 ```python
-from graflo import GraphEngine, DBType
-from graflo.db import Neo4jConfig, ArangoConfig
+from graflo import DBType, GraphEngine
+from graflo.connections import ArangoConfig, Neo4jConfig
 
-source = Neo4jConfig.from_docker_env()
-target = ArangoConfig.from_docker_env()
-
+source = Neo4jConfig.from_env()
+target = ArangoConfig.from_env()
 engine = GraphEngine(target_db_flavor=DBType.ARANGO)
+```
+
+`migrate_graph` takes the target backend from the target config.
+`target_db_flavor` tells the other engine methods which backend the names
+should suit, so set it to the same backend.
+
+### 2. Look at the source before moving it
+
+```python
+schema = engine.infer_schema_from_graph(source, sample_limit=100)
+print([v.name for v in schema.core_schema.vertex_config.vertices])
+print([e.edge_id for e in schema.core_schema.edge_config.edges])
+```
+
+This prints the vertex types and the edge types that will be moved. Neo4j and
+ArangoDB have no schema catalog, so the schema is recovered from
+`sample_limit` records per type. If a type has a property that the sample
+missed, raise `sample_limit`. PostgreSQL and the file backend read a catalog
+and do not sample.
+
+### 3. Move the graph
+
+```python
 engine.migrate_graph(
     source,
     target,
@@ -49,70 +67,64 @@ engine.migrate_graph(
 )
 ```
 
-`migrate_graph()` introspects the source once, applies target **`Sanitizer`** rules, defines DDL on the target, and writes vertices and edges via **`DBWriter`**.
+This reads the schema, reads every vertex and edge into memory, creates the
+namespace and the types on the target, and writes. `recreate_schema=True`
+drops types that already exist on the target. With `recreate_schema=False`, a
+target that already holds a graph raises `SchemaExistsError`.
 
-## Step 2 — Other target flavors
+For a trial run on a large graph, add `data_limit=1000`: at most that many
+records per vertex type and per edge type are read.
 
-Use the same API; only the target config and `GraphEngine(target_db_flavor=...)` change:
+### 4. Check the target
 
 ```python
-from graflo.db import TigergraphConfig, PostgresConfig
+moved = engine.infer_schema_from_graph(target)
+print([v.name for v in moved.core_schema.vertex_config.vertices])
+```
 
-# Neo4j → TigerGraph
-tg_engine = GraphEngine(target_db_flavor=DBType.TIGERGRAPH)
-tg_engine.migrate_graph(
+This works on every backend. If the source had a type that the target cannot
+store under its own name, you see the name the target stores it under.
+
+## What you should see
+
+The target holds one vertex type per source vertex type and one edge type per
+source edge type, with the same records. On a PostgreSQL target the vertex
+types are tables, and each edge type is a table named
+`{source}_{target}_{relation}_edges` with `source_id` and `target_id` columns.
+
+## Options
+
+| Argument | Default | Effect |
+|---|---|---|
+| `recreate_schema` | `True` | Drop the target's existing types before defining them |
+| `clear_data` | `False` | Delete existing records on the target before writing |
+| `create_namespace` | `True` | Create the target database, graph or space if missing; `False` requires it to exist |
+| `graph_target_namespace` | `None` | Name of the target database, graph or space; see [Graph namespace and schema](graph_namespace_and_schema.md) |
+| `sample_limit` | `100` | Records sampled per type when the source has no schema catalog |
+| `data_limit` | `None` | Cap on records read per vertex type and per edge type |
+
+## Other targets
+
+Only the target config changes, and the engine's flavor with it:
+
+```python
+from graflo.connections import PostgresConfig, TigergraphConfig
+
+GraphEngine(target_db_flavor=DBType.TIGERGRAPH).migrate_graph(
     Neo4jConfig.from_env(), TigergraphConfig.from_env(), recreate_schema=True
 )
-
-# ArangoDB → PostgreSQL (relational graph tables)
-pg_engine = GraphEngine(target_db_flavor=DBType.POSTGRES)
-pg_engine.migrate_graph(
+GraphEngine(target_db_flavor=DBType.POSTGRES).migrate_graph(
     ArangoConfig.from_env(), PostgresConfig.from_env(), recreate_schema=True
 )
 ```
 
-## Step 3 — Schema only (no data load)
+A source that GraFlo cannot read as a graph (TigerGraph, FalkorDB, Memgraph,
+NebulaGraph) raises `ValueError` naming the backends that can be read. Build
+a file backend from the original data instead and migrate from that; see
+[Graph export and replay](graph_export_and_replay.md).
 
-To inspect or edit the inferred schema before loading:
+## What to read next
 
-```python
-schema = engine.infer_schema_from_graph(
-    Neo4jConfig.from_env(),
-    target_db_flavor=DBType.ARANGO,
-    sample_limit=100,
-)
-```
-
-Or export schema + data in memory for small graphs:
-
-```python
-output = engine.export_graph(Neo4jConfig.from_env())
-# output.graph_schema, output.data (GraphContainer)
-```
-
-## Source vs target matrix
-
-| | As **source** (introspection) | As **target** (`migrate_graph`) |
-|---|---|---|
-| Neo4j | yes | yes |
-| ArangoDB | yes | yes |
-| GraFlo file backend | yes | yes |
-| PostgreSQL | no (use SQL ingestion) | yes (relational graph) |
-| TigerGraph, FalkorDB, Memgraph, NebulaGraph | no* | yes |
-
-\*Use a file backend as an intermediate store when the live database does not support graph export yet.
-
-List export-capable backends in code:
-
-```python
-from graflo.db.manager import ConnectionManager
-
-ConnectionManager.graph_export_flavors()
-# [DBType.NEO4J, DBType.ARANGO, DBType.GRAFLO_BACKEND]
-```
-
-## Related documentation
-
-- [Graph export and migration](../concepts/operations/graph_export_migration.md) — full API reference and file backend layout
-- [Graph export and replay](graph_export_and_replay.md) — chunked on-disk intermediate
-- [Quick start — Graph export and migration](../getting_started/quickstart.md#graph-export-and-migration)
+- [Graph export and migration](../concepts/operations/graph_export_migration.md): what each operation does and its limits.
+- [Graph export and replay](graph_export_and_replay.md): keep a copy on disk between source and target.
+- [A graph on disk, without a database (14)](../examples/file-backend-export/index.md): runnable scripts.

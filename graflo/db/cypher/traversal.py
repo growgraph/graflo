@@ -132,8 +132,8 @@ def cypher_graph_neighbors(
 
     One hop fans out one pattern per relation that touches the anchor type.
     More than one hop issues a single pattern over every allowed relation at
-    once, so a walk can cross relation types — change → server → application →
-    service — which a pattern per relation never could. The reached node's type
+    once, so a walk can cross relation types — work order → machine → line →
+    product — which a pattern per relation never could. The reached node's type
     is then read from its labels.
 
     Direction is decided per edge, exactly as in the backend-neutral default

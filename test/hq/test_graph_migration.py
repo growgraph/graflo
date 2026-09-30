@@ -105,3 +105,43 @@ def test_infer_schema_from_graph_requires_only_introspection(
         mock_open.call_args.kwargs["require"]
         is ConnectionCapability.SCHEMA_INTROSPECTION
     )
+
+
+def test_migrate_graph_moves_vertices_and_edges_between_file_backends(
+    tmp_path,
+) -> None:
+    """The whole move, with no database: seed one file backend, migrate, read back."""
+    from graflo.connections.graflo_backend import GraFloBackendConfig
+    from graflo.db.manager import ConnectionManager
+
+    schema = _sample_schema()
+    schema.core_schema.edge_config = EdgeConfig(
+        edges=[Edge(source="person", target="person", relation="knows")]
+    )
+    source = GraFloBackendConfig(output_dir=tmp_path / "source")
+    target = GraFloBackendConfig(output_dir=tmp_path / "target")
+    with ConnectionManager(connection_config=source) as conn:
+        conn.init_db(schema, recreate_schema=True)
+        conn.upsert_docs_batch(
+            [{"id": "1", "name": "Alice"}, {"id": "2", "name": "Bob"}],
+            "person",
+            match_keys=["id"],
+        )
+        conn.insert_edges_batch(
+            [[{"id": "1"}, {"id": "2"}, {}]],
+            "person",
+            "person",
+            "knows",
+            match_keys_source=("id",),
+            match_keys_target=("id",),
+        )
+
+    GraphEngine(target_db_flavor=DBType.GRAFLO_BACKEND).migrate_graph(
+        source, target, recreate_schema=True
+    )
+
+    with ConnectionManager(connection_config=target) as conn:
+        people = conn.fetch_all_docs("person")
+        edges = conn.fetch_all_edges("person", "person", "knows")
+    assert sorted(doc["name"] for doc in people) == ["Alice", "Bob"]
+    assert len(edges) == 1

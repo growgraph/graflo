@@ -162,7 +162,7 @@ def build_subschema(
         selection: Survivors, as produced by :func:`select_induced`.
         drop_properties: Vertex name -> property names to omit. Callers are
             responsible for never listing an identity-bearing field; dropping one
-            yields a schema that validates and is semantically a lie.
+            yields a schema that validates but is wrong.
 
     Returns:
         Schema: a slice that round-trips through ``Schema.model_validate``.

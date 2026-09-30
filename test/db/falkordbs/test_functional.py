@@ -369,21 +369,21 @@ class TestRelationships:
         _ = clean_db
         with ConnectionManager(connection_config=conn_conf) as db:
             nodes = [
-                {"id": "serviceA", "name": "Auth"},
-                {"id": "serviceB", "name": "Users"},
-                {"id": "serviceC", "name": "Permissions"},
+                {"id": "machineA", "name": "Press"},
+                {"id": "machineB", "name": "Lathe"},
+                {"id": "machineC", "name": "Conveyor"},
             ]
-            db.upsert_docs_batch(nodes, "Service", match_keys=["id"])
+            db.upsert_docs_batch(nodes, "Machine", match_keys=["id"])
 
             edges = [
-                [{"id": "serviceA"}, {"id": "serviceB"}, {}],
-                [{"id": "serviceB"}, {"id": "serviceC"}, {}],
-                [{"id": "serviceC"}, {"id": "serviceA"}, {}],
+                [{"id": "machineA"}, {"id": "machineB"}, {}],
+                [{"id": "machineB"}, {"id": "machineC"}, {}],
+                [{"id": "machineC"}, {"id": "machineA"}, {}],
             ]
             db.insert_edges_batch(
                 edges,
-                source_class="Service",
-                target_class="Service",
+                source_class="Machine",
+                target_class="Machine",
                 relation_name="DEPENDS_ON",
                 match_keys_source=["id"],
                 match_keys_target=["id"],
@@ -391,7 +391,7 @@ class TestRelationships:
 
             # Detect cycle
             result = db.execute(
-                "MATCH p=(s:Service)-[:DEPENDS_ON*]->(s) "
+                "MATCH p=(s:Machine)-[:DEPENDS_ON*]->(s) "
                 "RETURN length(p) as cycle_length LIMIT 1"
             )
             assert len(result.result_set) > 0, "Cycle not detected"

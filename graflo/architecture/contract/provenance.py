@@ -28,11 +28,10 @@ class ManifestMetadata(ConfigBaseModel):
 
     Two kinds of thing live here, and both are properties of the manifest
     rather than of any one block. **Provenance** is a content address covering
-    all three blocks together, so it cannot hang off the schema's metadata
-    without lying about what it addresses. **Name and description** are the
+    all three blocks together, so it cannot hang off the schema's metadata,
+    which covers the schema alone. **Name and description** are the
     manifest's own identity: a manifest that carries only bindings has no
-    schema to borrow a name from, and was literally unnameable before this
-    block held one.
+    schema to borrow a name from.
 
     Every field here is excluded from the manifest's content hash --
     :func:`~graflo.architecture.evolution.hashing.manifest_hash` covers the

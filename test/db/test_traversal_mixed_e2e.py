@@ -1,9 +1,10 @@
 """A multi-hop neighbourhood must cross relation types on every backend.
 
-The question an impact analysis asks -- which services does this change reach?
--- walks change -> server <- app <- service, three different relations. A
-backend that follows one relation per pattern answers "only the server", which
-is wrong rather than partial, so the assertions compare exact reached sets.
+The question an impact analysis asks -- which products does this work order
+reach? -- walks work_order -> machine <- line <- product, three different
+relations. A backend that follows one relation per pattern answers "only the
+machine", which is wrong rather than partial, so the assertions compare exact
+reached sets.
 """
 
 from __future__ import annotations
@@ -23,22 +24,22 @@ from graflo.hq.graph_engine import GraphEngine
 from test.db.backends import backend_params, config_for
 
 SPACE = "gf_traversal_mixed_e2e"
-TYPES = ("change", "server", "app", "service")
+TYPES = ("work_order", "machine", "line", "product")
 
-# change C1 -targets-> server S1; app A1 -runs_on-> S1; service P1 -depends_on-> A1
-#   hops=1 from C1 (any): {S1}
-#   hops=2 from C1 (any): {S1, A1}
-#   hops=3 from C1 (any): {S1, A1, P1}
+# work_order W1 -targets-> machine M1; line L1 -uses-> M1; product P1 -depends_on-> L1
+#   hops=1 from W1 (any): {M1}
+#   hops=2 from W1 (any): {M1, L1}
+#   hops=3 from W1 (any): {M1, L1, P1}
 LINKS: dict[str, tuple[str, str, str]] = {
     # resource: (source type, target type, relation)
-    "targets": ("change", "server", "targets"),
-    "runs_on": ("app", "server", "runs_on"),
-    "depends_on": ("service", "app", "depends_on"),
+    "targets": ("work_order", "machine", "targets"),
+    "uses": ("line", "machine", "uses"),
+    "depends_on": ("product", "line", "depends_on"),
 }
 ROWS: dict[str, str] = {
-    "targets": "src,dst\nC1,S1\n",
-    "runs_on": "src,dst\nA1,S1\n",
-    "depends_on": "src,dst\nP1,A1\n",
+    "targets": "src,dst\nW1,M1\n",
+    "uses": "src,dst\nL1,M1\n",
+    "depends_on": "src,dst\nP1,L1\n",
 }
 
 
@@ -164,16 +165,16 @@ def reached(container: GraphContainer) -> dict[str, set[str]]:
 @pytest.mark.parametrize(
     "hops,expected",
     [
-        (1, {"server": {"S1"}}),
-        (2, {"server": {"S1"}, "app": {"A1"}}),
-        (3, {"server": {"S1"}, "app": {"A1"}, "service": {"P1"}}),
+        (1, {"machine": {"M1"}}),
+        (2, {"machine": {"M1"}, "line": {"L1"}}),
+        (3, {"machine": {"M1"}, "line": {"L1"}, "product": {"P1"}}),
     ],
 )
 def test_a_walk_crosses_relation_types(ingested, hops, expected):
     db, manifest = ingested
     container = db.graph_neighbors(
-        "change",
-        "C1",
+        "work_order",
+        "W1",
         hops=hops,
         direction=EdgeDirection.ANY,
         schema=manifest.require_schema(),
@@ -184,13 +185,13 @@ def test_a_walk_crosses_relation_types(ingested, hops, expected):
 def test_a_mapping_key_on_a_declared_property_anchors_the_walk(ingested):
     db, manifest = ingested
     container = db.graph_neighbors(
-        "change",
-        {"key": "C1"},
+        "work_order",
+        {"key": "W1"},
         hops=1,
         direction=EdgeDirection.ANY,
         schema=manifest.require_schema(),
     )
-    assert reached(container) == {"server": {"S1"}}
+    assert reached(container) == {"machine": {"M1"}}
 
 
 def test_a_mapping_key_on_an_undeclared_property_is_refused(ingested):
@@ -198,8 +199,8 @@ def test_a_mapping_key_on_an_undeclared_property_is_refused(ingested):
     db, manifest = ingested
     with pytest.raises(ValueError, match="not a declared property"):
         db.graph_neighbors(
-            "change",
-            {"key` == 1 RETURN 1 //": "C1"},
+            "work_order",
+            {"key` == 1 RETURN 1 //": "W1"},
             hops=1,
             schema=manifest.require_schema(),
         )
@@ -208,11 +209,11 @@ def test_a_mapping_key_on_an_undeclared_property_is_refused(ingested):
 def test_the_relation_filter_bounds_the_walk(ingested):
     db, manifest = ingested
     container = db.graph_neighbors(
-        "change",
-        "C1",
+        "work_order",
+        "W1",
         hops=3,
         direction=EdgeDirection.ANY,
-        edge_types=["targets", "runs_on"],
+        edge_types=["targets", "uses"],
         schema=manifest.require_schema(),
     )
-    assert reached(container) == {"server": {"S1"}, "app": {"A1"}}
+    assert reached(container) == {"machine": {"M1"}, "line": {"L1"}}

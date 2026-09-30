@@ -129,7 +129,7 @@ def apply_add_resource_transforms(
     """Append transform steps to named resources' pipelines, in place.
 
     Raises when the manifest carries no ``ingestion_model`` (an ingestion-only
-    op silently dropped would be a lie in the revision log), when a named
+    op dropped without an error would appear in the revision log as applied), when a named
     resource does not exist, when a registry name collides with a different
     body, when a step's ``call.use`` resolves against neither the existing
     registry nor ``op.transforms``, or when an ``op.at`` path does not resolve

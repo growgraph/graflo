@@ -1,197 +1,192 @@
-# 21 — Identity alignment on a routed source
+# How do I combine manifests when one source decides the type per row?
 
-Source A is one view: a heterogeneous stream discriminated by `kind`, routed by
-a **single `vertex_router`** nested under a `descend`. An equivalence collapses
-two of its classes (`Firm`, `Shop`) onto `Company`; `person` keeps flowing
-through the same router.
+This is the plant of the manifest union example (20), with one difference. The
+maintenance system keeps a single register for everything it maintains, and a
+`type` column says whether a row is a machine or a production line. Its
+manifest sends each row to its type with a router. The sensor feed reports
+devices, as in that example, and a device is the same machine as a register
+row when their serial numbers agree.
 
-**The router is never split.** Splitting the resource — one per collapsing class
-— would scan the view twice and duplicate a discriminator the source already
-carries. Everything below exists so that one router keeps serving every
-`type_field` value it serves today.
+You want machines and devices to become one type, `Machine`, matched on the
+serial number, while production lines keep going to their own type. Splitting
+the register into one resource per type would read the table twice and repeat
+what the `type` column already says. When GraFlo combines the manifests, the
+router stays whole, and the matching applies only to the rows the router sends
+to `Machine`.
 
-## The member is the unit
-
-An equivalence names its **members** — the classes it collapses, per side:
-
-```python
-VertexEquivalence(left=["Firm", "Shop"], right=["Org", "Branch"])
+```mermaid
+flowchart LR
+    register[register.csv] --> router{type column}
+    router -- machine --> Machine
+    router -- line --> ProductionLine
+    devices[devices.csv] -- same serial number --> Machine
 ```
 
-No `into`: `canonical_map.yaml`, carried on the same op as `canonical_maps`,
-renames `Firm` to `Company`, and that names the merged class. Members are
-named as the manifest names them — or by their canonical name, so `Company`
-would name `Firm` just as well, here and in the member keys below.
+## What you need
 
-Every record that becomes `Company` was produced *as one member* by *one
-resource*. B's resources each produce one member with a plain `vertex` step.
-The view produces two: `Firm` for `kind: firm` rows and `Shop` for
-`kind: shop` rows, through the router. Canonical attributes are derived per
-member, and that is the whole idea of what follows.
+- GraFlo installed (`pip install graflo`). No database is needed.
+- The merge declarations of [Combine two manifests](../20-manifest-union/README.md)
+  and the router of [One table that holds many kinds of things](../07-vertex-router-type-map/README.md).
 
-## What the collapse already does to the router
+## The data
 
-Nothing here is new. The per-side relabel (`CanonicalizeOp`) rewrites the
-router in place: `type_map` becomes `{firm: Company, shop: Company, person:
-Person}` and `vertex_from_map`
-keys are remapped, with the collapsed types' column maps **unioned** — one vertex
-field reading two different columns raises rather than silently keeping the
-last. At the end the merge closes the router over its own side's classes: the
-table gains `Firm: Company`, `Shop: Company` and `Person: Person` — the raw
-class names the router used to pass through — and `type_map_only: true`, so a
-`kind` naming one of the other side's classes is skipped, as it was before the
-merge. And `allow_observation_fusion` is *not* needed: a router emits at most one
-vertex per document, so two branches pointing at one class cannot fuse
-observations. Only `allow_merges=True` is required, for naming two members on a
-side.
+[`data/register.csv`](data/register.csv), from the maintenance system:
 
-Notice what the rewrite loses: after it, nothing in the union says that `shop`
-once meant `Shop`. That is why the alignment resolves against the sides as
-handed to merge, below.
+| type | asset_id | serial_number | name |
+|---|---|---|---|
+| machine | A1 | HP-0042 | Hydraulic press |
+| machine | A2 | | Conveyor |
+| line | L1 | | Assembly line 1 |
 
-## Deriving per member
+[`data/devices.csv`](data/devices.csv) is the sensor feed of example 20: `D7`
+(`hp-0042`) is the hydraulic press, and `D9` (`LT-0007`) is a lathe the
+register does not list.
 
-Every kind in `data/view.csv` carries the shared business key in **one**
-column, `secondary_key`, each member under its own marker — `abc_` for firms,
-`def_` for shops. So column presence cannot tell the members apart; which
-member a document *is* must decide the derivation. `sources` is keyed by
-resource, because derivation inputs are that resource's raw columns, and the
-view's entry is keyed by **member**:
+## Steps
 
-```python
-AlignmentAttribute(
-    name="match_key",
-    sources={
-        "r_view": SharedDerivation(
-            spec=DerivationSpec(input=["secondary_key"], foo="affix_gated_key"),
-            members={"Firm": {"prefix": "abc_"}, "Shop": {"prefix": "def_"}},
-        ),
-        "r_b": DerivationSpec(
-            input=["shared_raw"], foo="affix_gated_key", params={"prefix": "abc_"}
-        ),
-        "r_branch": DerivationSpec(
-            input=["shared_raw"], foo="affix_gated_key", params={"prefix": "def_"}
-        ),
-    },
-)
-```
+### 1. Route the register rows by type
 
-`SharedDerivation` is the compact spelling of a dict keyed by member — one
-call, the members that share it, and only the parameter that differs. It
-expands to `{"Firm": DerivationSpec(..., params={"prefix": "abc_"}), "Shop":
-...}`, which is what you write when more than a parameter varies (a different
-column, a different function), or `members=["A", "B", ...]` when nothing does.
-
-Nothing names `kind`, `firm` or `shop`. The lowering asks the pre-collapse left
-side how `r_view` produces `Shop` — a router over `kind`, key `shop` — and
-guards the step accordingly. What lands in the pipeline:
+The `register` resource of [`manifest_maintenance.yaml`](manifest_maintenance.yaml)
+has one step. The router reads the `type` column of each row and makes the row
+a vertex of the type that `type_map` names:
 
 ```yaml
-- transform:
-    when: {field: kind, in: [firm]}
-    call: {foo: affix_gated_key, input: [secondary_key], output: [match_key],
-           params: {prefix: abc_}}
-- transform:
-    when: {field: kind, in: [shop]}
-    call: {foo: affix_gated_key, input: [secondary_key], output: [match_key],
-           params: {prefix: def_}}
+-   name: register
+    pipeline:
+    -   vertex_router:
+            type_field: type
+            type_map:
+                machine: Machine
+                line: ProductionLine
 ```
 
-A guarded step that does not fire **writes nothing** — no output, no `None` —
-so each member's step is the single writer of `match_key` for its own rows and
-the two cannot clobber each other. A member produced by a plain `vertex` step
-gets no guard at all: the level *is* the member. The `local_key` sources are
-keyed the same way, which is how the two side-local namespaces (`firm:`,
-`shop:`) come out of one resource without a hand-written gate.
+The sensor feed's manifest, [`manifest_sensors.yaml`](manifest_sensors.yaml),
+is the one from example 20.
 
-The gate is derived, not written, for a reason: it is exactly the test the
-router applies (`type_map` lookup, exact match), read from the same manifest
-the router is defined in. A hand-written `gate="kind", gate_prefix="firm"`
-would restate that knowledge with a different (prefix) semantics and drift
-from it silently.
+### 2. Declare how the manifests combine
 
-## The marker is a filter, not a cleanup
+[`merge.yaml`](merge.yaml) holds the same three declarations as example 20.
+The maintenance manifest already calls its type `Machine`, so the
+equivalence names the combined type with `into` instead of a map of names:
 
-`affix_gated_key` reads **one** field, and the marker on that value *is* the
-admission test: carry it and you are stripped and accepted as canonical key
-material, omit it and you get `None`.
+```yaml
+canonical_maps:
+    right: {properties: {Device: {serial: serial_number}}}
 
-The marker is an affix *pair* — `prefix` and `suffix`, each defaulting to `""`,
-which every string carries. So a marker can lead (`ext_42`), trail
-(`42-legacy`), or bracket the key, and naming neither admits everything while
-stripping nothing. This example only needs the leading half.
+vertex_equivalences:
+-   left: Machine
+    right: Device
+    into: Machine
 
-The contrast is with `gated_normalized_key`, which gates on a *sibling* field
-and whose `strip_prefix` is `str.removeprefix` — a silent no-op when the prefix
-is absent. Under it both spellings normalize to `alpha` and fuse, and the marker
-carries no authority. Example 19 keeps that idiom, which is the right one when
-participation is decided by a different column than the key itself.
+identity_alignments:
+-   vertex: Machine
+    attributes:
+    -   name: match_key
+        sources:
+            register: {foo: normalized_key, input: [serial_number]}
+            devices: {foo: normalized_key, input: [serial]}
+    local_key:
+        sources:
+            register: {field: asset_id, tag: maintenance}
+            devices: {field: device_id, tag: sensors}
+```
 
-Because the test lives on the value, every side runs the identical one-field
-call, so the two normal forms cannot drift apart.
+The identity alignment names the `register` resource as a whole (`foo` names
+the function that computes the key). Nothing in it mentions the `type` column
+or production lines.
 
-## Falling through
-
-`None` is a fall-through, not a drop. It is an empty value to identity digests,
-so the funnel branch listing `match_key` is skipped and the record lands on its
-side-local key — still ingested, just outside the cross-source cluster.
-`data/view.csv` makes three cases visible:
-
-- `f1` (`abc_alpha`) fuses with B's `o1`; `s1` (`def_beta`) fuses with `br1`.
-- `f2` carries a bare `alpha` — same business name, no marker — and keys as
-  `firm:f2`.
-- `s2` carries `abc_alpha`, byte-for-byte the key that fused `f1`. Under a
-  value-only test it would be admitted, stripped, and fused with the firm.
-  Keyed by member, the shop derivation requires `def_`, so it keys as
-  `shop:s2`. **The member decides, not the marker.**
-- `person` rows carry `abc_9`, and nothing happens: the guards never fire for
-  them, so the derivations do not run at all — not "derived and dropped".
-
-## When the list form is enough
-
-If each member carried its key in its **own** column (`firm_ref`, `shop_ref`),
-the other column being empty already selects, and `sources["r_view"]` can be a
-plain **list** of specs — no member names, no guards. That form lowers to one
-scratch field per spec and a `coalesce_fields` step as the single writer,
-because two unguarded steps writing `match_key` *would* clobber behind a
-router. Behind the router every one of those steps, the coalesce included,
-carries one `when` on `kind` admitting the values that route onto `Company`,
-so a `person` row is never handed a `match_key`. Reach for it when columns
-select; key by member when the member must.
-
-## Delivering through the router
-
-A router's child `VertexActor` runs at a `LocationIndex` whose transform buffer
-is empty, so derived attributes reach it only through the merged observation —
-subject to `keep_fields` and `extraction_scope`. A plain `vertex` step reads the
-buffer directly and is unaffected. This router sets `keep_fields`, so the
-alignment emits `EnsureExtractedFieldsOp`, which adds `match_key` / `local_key`
-to that list. Only the aligned class's projection is touched; the router keeps
-serving `Person` exactly as before.
-
-Derivations also land at the router's *level*: `alignment_to_ops` resolves the
-level that produces each member and targets it with
-`AddResourceTransformsOp.at`. Appended at the root they would derive nothing —
-an actor reads its transform buffer at its own `LocationIndex` with no ancestor
-fallback, and a `descend` subtree runs *before* its own level's transforms.
-`--root-demo` forces the root and gets a loud `AlignmentConflictError` instead.
-
-## Run it
-
-No live graph database required.
+### 3. Build the combined manifest
 
 ```bash
 cd examples/21-router-union-alignment
-uv run python build_union.py          # → artifacts/manifest_union.yaml
-uv run python inspect_fusion.py       # which records fuse, and to what
-uv run python build_union.py --root-demo   # derive at the root → conflict
+uv run graflo merge manifest_maintenance.yaml manifest_sensors.yaml \
+    --op merge.yaml -o artifacts/manifest_union.yaml
 ```
 
-`inspect_fusion.py` shows six records collapsing to four vertices — one fused
-pair per member, plus the unmarked `firm` row and the mis-marked `shop` row
-each keeping their own — and `Person`, emitted by the same router, carrying
-none of the canonical attributes.
+```text
+schema: 2 vertices, 0 edges, version 1.1.0
+resources: 2
+written: artifacts/manifest_union.yaml
+```
 
-See example 19 for the canonical-map / n-ary-cluster recipe this builds on,
-example 17 for identity funnels on a single manifest, and example 18 for
-*discovering* cross-resource identity instead of declaring it.
+In [`artifacts/manifest_union.yaml`](artifacts/manifest_union.yaml) the
+`register` resource keeps its one router, followed by the steps that compute
+the keys:
+
+```yaml
+- vertex_router:
+    type_field: type
+    type_map:
+      machine: Machine
+      line: ProductionLine
+      Machine: Machine
+      ProductionLine: ProductionLine
+    type_map_only: true
+- transform:
+    call:
+      module: graflo.util.transform
+      foo: normalized_key
+      params: {}
+      output:
+      - match_key
+      input:
+      - serial_number
+    when:
+      field: type
+      in:
+      - machine
+# the step that computes local_key follows, with the same `when`
+```
+
+The router is not split. GraFlo adds the type names themselves to `type_map`
+and closes the table with `type_map_only: true`, so the router accepts the same
+`type` values as before and no others.
+
+Each key step carries `when: {field: type, in: [machine]}`. GraFlo derived that
+condition from the router: the step runs only for the rows the router sends to
+`Machine`, and a production line row never gets a key.
+
+## What you should see
+
+`uv run python inspect_fusion.py` runs both files through the combined manifest
+and prints the vertex each record becomes:
+
+```text
+resource  own key  vertex type     matched on      vertex id
+register  A1       Machine         hp-0042         303d50890862
+register  A2       Machine         maintenance:A2  d154517d907c
+register  L1       ProductionLine  -               L1
+devices   D7       Machine         hp-0042         303d50890862
+devices   D9       Machine         lt-0007         27ded24b71df
+4 machine records -> 3 vertices
+```
+
+The machine row `A1` is matched on its serial number and lands on the same
+vertex as the device `D7`. `A2` has no serial number and falls back to its own
+key. The line row `L1` goes through the same router to `ProductionLine` and
+keeps its own identity, `asset_id`. The three machine vertices are the ones
+example 20 produces.
+
+## Also possible
+
+If the router sent two of its types into the combined type, say `machine` rows
+to `Machine` and `robot` rows to `Robot`, the equivalence would list both
+(`left: [Machine, Robot]`, with `allow_merges: true`). The register's entry in
+the alignment can then be keyed by type, and each type gets its own step,
+guarded on its own `type` value:
+
+```yaml
+register:
+    Machine: {foo: normalized_key, input: [serial_number]}
+    Robot: {foo: normalized_key, input: [serial_number]}
+```
+
+See [one derivation per type](../../docs/concepts/schema/merging_manifests.md#a-resource-that-produces-several-members).
+
+## What to read next
+
+- [Version control for a manifest](../22-version-control/README.md): two people
+  changed the same manifest, and their changes are merged against the version
+  they started from.
+- [Routed sources](../../docs/concepts/schema/merging_manifests.md#routed-sources):
+  why the union closes a router over its own side's types.

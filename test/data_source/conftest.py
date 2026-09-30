@@ -92,14 +92,14 @@ class MockEnvelopeAPIHandler(BaseHTTPRequestHandler):
 
 
 class MockSessionTokenAPIHandler(BaseHTTPRequestHandler):
-    """BMC-like list envelope requiring results_id on pages after the first."""
+    """List-envelope API requiring results_id on pages after the first."""
 
     records = [
         {"id": 1, "name": "Alice", "age": 30},
         {"id": 2, "name": "Bob", "age": 25},
         {"id": 3, "name": "Charlie", "age": 35},
     ]
-    session_token = "SG9zdABuco8EWAIAB9oAAAV84w=="
+    session_token = "TWFjaABuco8EWAIAB9oAAAV84w=="
     page_size = 2
 
     def do_GET(self):
@@ -147,7 +147,7 @@ class MockSessionTokenAPIHandler(BaseHTTPRequestHandler):
         )
         response = [
             {
-                "kind": "Host",
+                "kind": "Machine",
                 "count": len(self.records),
                 "offset": offset,
                 "results": paginated,
@@ -229,7 +229,7 @@ def mock_envelope_api_server():
 
 @pytest.fixture(scope="function")
 def mock_session_token_api_server():
-    """Fixture for BMC-like list envelope with results_id carry token."""
+    """Fixture for a list-envelope API with results_id carry token."""
     server = MockAPIServer(handler=MockSessionTokenAPIHandler)
     port = server.start()
     yield server, port

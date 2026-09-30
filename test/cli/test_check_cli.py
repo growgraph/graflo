@@ -19,7 +19,7 @@ from graflo.architecture.profile import ProfileReport
 from graflo.cli.main import graflo
 
 EXAMPLES_DIR = pathlib.Path(__file__).resolve().parents[2] / "examples"
-REFERENCE = EXAMPLES_DIR / "22-state-core" / "reference.yaml"
+REFERENCE = EXAMPLES_DIR / "23-state-core-lift" / "reference.yaml"
 
 UNGROUNDED: dict = {
     "metadata": {"name": "ungrounded"},

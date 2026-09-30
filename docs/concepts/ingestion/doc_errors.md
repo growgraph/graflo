@@ -1,79 +1,143 @@
-# Document cast errors and doc error sink
+# Document cast errors
 
-When a **resource** maps a **source document** (one item from a batch: a JSON object, CSV row as dict, grouped RDF subject, API element, etc.) into graph data, a single document can fail while others in the same batch succeed. Ingestion behavior is controlled by **`IngestionParams`** on **`Caster`** (and the same parameters flow through **`GraphEngine`** and the **`ingest`** CLI).
+Real data has bad records: a date that does not parse, a field of the wrong
+type, a value a function cannot handle. When one record fails while it is
+[cast](../glossary.md#casting), GraFlo skips it, keeps loading the rest, and
+records what went wrong. This page shows how to choose between skipping and
+stopping, how to keep every failure in a file you can read afterwards, and how
+to stop a run that fails too often, from Python and from the command line.
 
-## `on_doc_error`
+## What happens to a failing record
 
-- **`skip`** (default): the bad document is skipped; the batch continues. Failures are recorded (see below) and a summary is logged at WARNING for the batch.
-- **`fail`**: any document exception fails the whole batch (same as a hard error during casting).
+A record, or document, is one item of a batch: a CSV row, a JSON object, the
+properties of one RDF subject, one API result, one Kafka message. Two kinds of
+failure are recorded:
 
-## Persisting failures: `doc_error_sink_path`
+- **Document failure**: casting the record raised an error, so none of its
+  vertices and edges is written. By default the record is skipped and the
+  rest of the batch continues.
+- **Transform failure**: one transform step raised, but the resource tolerates
+  it (`tolerate_transform_errors`, on by default). The step's output fields
+  are set to `null`, and the record is cast and written without them.
 
-Set **`IngestionParams.doc_error_sink_path`** to a filesystem path (convention: **`*.jsonl.gz`**). The caster appends **gzip-compressed JSONL**: each line is one JSON object matching **`DocCastFailure`** (resource name, **`doc_index`** within the batch, exception type, message, traceback, optional document preview). Writes are serialized with an internal async lock so concurrent batches do not corrupt the file.
+After a batch with failures, GraFlo logs one warning that names the resource,
+the number of failures and the first error.
 
-Records use **`failure_kind`**: **`document`** (default) when the whole source document failed, or **`transform`** when a single transform step failed but the document was still ingested (see below). Transform rows also include **`location_path`**, **`transform_label`**, and **`nulled_fields`**.
+## Skip or stop
 
-Each append may add a new gzip member to the file (normal for log-style gzip). Tools such as **`zcat`**, **`gzip -dc`**, or **`pigz -dc`** stream all concatenated members, for example:
+`IngestionParams.on_doc_error` chooses what a document failure does:
 
-```bash
-zcat errors.jsonl.gz | head
-```
+- `skip` (default): the record is skipped, and the batch continues.
+- `fail`: the first failing record of the batch, in batch order, raises its
+  error, and the ingest stops.
 
-## When no file sink is configured
-
-If **`doc_error_sink_path`** is **`None`**, skipped failures are emitted as structured **`logger.error`** entries (with JSON-serializable metadata in the log **`extra`** under **`doc_cast_failure`**). Use a file sink when you need durable, replayable records for debugging or reprocessing.
-
-## Optional caps
-
-- **`max_doc_errors`**: if the **total** number of persisted failure records across the run (document **and** transform) exceeds this limit, ingestion raises **`DocErrorBudgetExceeded`** (after writing the failures that pushed over the limit). Use this to stop a bad source early.
-
-## Per-transform tolerance: `tolerate_transform_errors`
-
-On each ingestion resource (**`ResourceConfig`** in YAML under **`ingestion_model.resources`**), **`tolerate_transform_errors`** defaults to **`True`**. When enabled, a failing transform step sets its declared output fields to **`None`**, records a **`failure_kind=transform`** row in the doc error sink, and the rest of the pipeline (vertices, edges, later transforms) still runs for that document. Set **`tolerate_transform_errors: false`** on a resource to restore fail-fast behavior for transform exceptions (the whole document is lost unless **`on_doc_error=skip`** at the caster).
-
-Transform failures are persisted through the same **`doc_error_sink_path`** and count toward **`max_doc_errors`** as full document failures. With **`on_doc_error=fail`**, tolerated transform errors do not fail the batch; only unhandled document-level exceptions do.
-
-- **`doc_error_preview_max_bytes`** and **`doc_error_preview_keys`**: bound the size and shape of the **`doc_preview`** field on **`DocCastFailure`** so logs and files stay readable and bounded.
-
-## CLI
-
-The **`ingest`** command accepts:
-
-```bash
-uv run ingest \
-  --db-config-path config/db.yaml \
-  --schema-path config/manifest.yaml \
-  --source-path data/ \
-  --on-doc-error skip \
-  --doc-error-sink ./artifacts/doc_cast_failures.jsonl.gz
-```
-
-## Programmatic use
-
-```python
-from pathlib import Path
-
-from graflo.hq.caster import IngestionParams
-
-ingestion_params = IngestionParams(
-    on_doc_error="skip",
-    doc_error_sink_path=Path("artifacts/doc_cast_failures.jsonl.gz"),
-    max_doc_errors=10_000,
-)
-```
-
-Per-resource transform tolerance in YAML:
+Transform failures that the resource tolerates do not stop an ingest, though
+they count toward the budget described below. To make a failing transform
+fail its record instead, set `tolerate_transform_errors: false` on the
+resource:
 
 ```yaml
 ingestion_model:
   resources:
-    - name: metrics
-      tolerate_transform_errors: true
-      apply:
-        - transform: {call: {use: parse_metric}}
-        - vertex: Metric
+    - name: readings
+      tolerate_transform_errors: false
+      pipeline:
+        - transform:
+            call: { use: parse_reading }
+        - vertex: reading
 ```
 
-## Extensibility
+## Keeping the failures in a file
 
-Additional sink types can implement the **`DocErrorSink`** protocol (**`async write_failures(failures)`**) and be wired from your own orchestration code; the built-in path is **`JsonlGzDocErrorSink`** behind **`doc_error_sink_path`**.
+Set `doc_error_sink_path` to append every failure, of both kinds, to a
+gzip-compressed JSON Lines file. The usual suffix is `.jsonl.gz`.
+
+```python
+from pathlib import Path
+
+from graflo.hq import IngestionParams
+
+params = IngestionParams(
+    on_doc_error="skip",
+    doc_error_sink_path=Path("artifacts/cast_failures.jsonl.gz"),
+    max_doc_errors=10_000,
+)
+engine.ingest(manifest=manifest, target_db_config=conn_conf, ingestion_params=params)
+```
+
+The file is appended to, never overwritten, so one file can collect the
+failures of several runs. Each append adds a gzip member, which `zcat` and
+`gzip -dc` read as one stream:
+
+```bash
+zcat artifacts/cast_failures.jsonl.gz | head
+```
+
+Each line is one failure, with these fields:
+
+| Field | Holds |
+|---|---|
+| `resource_name` | the resource that cast the record |
+| `doc_index` | the position of the record within its batch |
+| `failure_kind` | `document` or `transform` |
+| `exception_type`, `message` | the error |
+| `traceback` | the formatted traceback, cut to 16,384 characters |
+| `doc_preview` | a JSON copy of the record, to find it again |
+| `location_path` | for a transform failure, where in the record the step ran |
+| `transform_label` | for a transform failure, the named transform or `module.foo` |
+| `nulled_fields` | for a transform failure, the output fields set to `null` |
+
+`doc_index` counts within one batch, so use `doc_preview` to find the record
+in the source. Two settings keep the preview small: `doc_error_preview_keys`
+keeps only the listed fields of the record, and `doc_error_preview_max_bytes`
+(default 4096) cuts the preview to that many bytes and marks it as truncated.
+
+Without `doc_error_sink_path`, each failure is logged at `ERROR` instead, with
+the same fields attached to the log record under `doc_cast_failure`. Use a
+file when you want to read or replay the failures later.
+
+## Stopping a run that fails too often
+
+`max_doc_errors` sets a budget for the run. When the number of failures, of
+both kinds, exceeds it, GraFlo writes the batch's failures to the file and
+raises `DocErrorBudgetExceeded`, which carries the total, the limit and the
+path of the file. Use it to stop early on a source that is mostly bad instead
+of loading a fraction of it. The default, `None`, sets no budget.
+
+```python
+from graflo.hq import DocErrorBudgetExceeded
+
+try:
+    engine.ingest(
+        manifest=manifest, target_db_config=conn_conf, ingestion_params=params
+    )
+except DocErrorBudgetExceeded as err:
+    print(
+        f"{err.total_failures} failures, limit {err.limit}: see {err.doc_error_sink_path}"
+    )
+```
+
+## From the command line
+
+`graflo ingest` takes the error policy and the file:
+
+```bash
+graflo ingest \
+  --db-config-path config/db.yaml \
+  --schema-path manifest.yaml \
+  --source-path data \
+  --on-doc-error skip \
+  --doc-error-sink artifacts/cast_failures.jsonl.gz
+```
+
+`--on-doc-error` takes `skip` (default) or `fail`, and `--doc-error-sink` sets
+`doc_error_sink_path`. The command sets no failure budget; use Python for
+`max_doc_errors` and the preview settings.
+
+## What to read next
+
+- [Transforms](transforms.md): the steps whose failures are recorded as
+  transform failures.
+- [Parallelism](parallelism.md): the other settings of an ingest run.
+- [`IngestionParams` reference](../../reference/hq/ingestion_parameters.md):
+  every field, with its default.

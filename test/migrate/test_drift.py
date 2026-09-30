@@ -16,27 +16,27 @@ from graflo.migrate.drift import compare_live_schema
 from graflo.onto import DBType
 
 DECLARED: dict[str, Any] = {
-    "metadata": {"name": "estate", "version": "1.0.0"},
+    "metadata": {"name": "plant", "version": "1.0.0"},
     "graph": {
         "vertex_config": {
             "vertices": [
                 {
-                    "name": "server",
+                    "name": "machine",
                     "properties": [
                         {"name": "key", "type": "STRING"},
-                        {"name": "os", "type": "STRING"},
+                        {"name": "model", "type": "STRING"},
                     ],
                     "identity": ["key"],
                 },
                 {
-                    "name": "app",
+                    "name": "line",
                     "properties": [{"name": "key", "type": "STRING"}],
                     "identity": ["key"],
                 },
             ]
         },
         "edge_config": {
-            "edges": [{"source": "app", "target": "server", "relation": "runs_on"}]
+            "edges": [{"source": "line", "target": "machine", "relation": "uses"}]
         },
     },
 }
@@ -56,7 +56,7 @@ def _observed(
 ) -> Schema:
     """An introspected schema, built the way a Cypher backend builds one."""
     result = GraphIntrospectionResult(
-        name="estate",
+        name="plant",
         vertices=[
             GraphVertexIntrospection(name=name, properties=props)
             for name, props in vertices.items()
@@ -72,8 +72,8 @@ def test_a_database_matching_its_schema_has_no_drift() -> None:
     drift = compare_live_schema(
         _declared(),
         _observed(
-            {"server": ["key", "os"], "app": ["key"]},
-            [("app", "runs_on", "server")],
+            {"machine": ["key", "model"], "line": ["key"]},
+            [("line", "uses", "machine")],
         ),
         db_flavor=DBType.NEO4J,
     )
@@ -87,40 +87,40 @@ def test_a_planted_property_is_reported_as_undeclared() -> None:
     drift = compare_live_schema(
         _declared(),
         _observed(
-            {"server": ["key", "os", "os_family"], "app": ["key"]},
-            [("app", "runs_on", "server")],
+            {"machine": ["key", "model", "model_series"], "line": ["key"]},
+            [("line", "uses", "machine")],
         ),
         db_flavor=DBType.NEO4J,
     )
     assert drift.has_drift
-    assert drift.undeclared_properties == {"server": ["os_family"]}
+    assert drift.undeclared_properties == {"machine": ["model_series"]}
 
 
 def test_types_edges_and_properties_are_compared_both_ways() -> None:
     drift = compare_live_schema(
         _declared(),
         _observed(
-            {"server": ["key"], "ghost": ["key"]},
-            [("ghost", "haunts", "server")],
+            {"machine": ["key"], "ghost": ["key"]},
+            [("ghost", "haunts", "machine")],
         ),
         db_flavor=DBType.NEO4J,
         sampled=True,
     )
     assert drift.undeclared_vertices == ["ghost"]
-    assert drift.missing_vertices == ["app"]
-    assert drift.missing_properties == {"server": ["os"]}
-    assert drift.undeclared_edges == [("ghost", "haunts", "server")]
-    assert drift.missing_edges == [("app", "runs_on", "server")]
+    assert drift.missing_vertices == ["line"]
+    assert drift.missing_properties == {"machine": ["model"]}
+    assert drift.undeclared_edges == [("ghost", "haunts", "machine")]
+    assert drift.missing_edges == [("line", "uses", "machine")]
     assert drift.sampled
 
 
 def test_storage_names_are_mapped_back_to_logical_names() -> None:
-    declared = _declared(vertex_storage_names={"server": "Server", "app": "App"})
+    declared = _declared(vertex_storage_names={"machine": "Machine", "line": "Line"})
     drift = compare_live_schema(
         declared,
         _observed(
-            {"Server": ["key", "os"], "App": ["key"]},
-            [("App", "runs_on", "Server")],
+            {"Machine": ["key", "model"], "Line": ["key"]},
+            [("Line", "uses", "Machine")],
         ),
         db_flavor=DBType.NEO4J,
     )
@@ -132,7 +132,7 @@ def test_storage_names_are_mapped_back_to_logical_names() -> None:
 def test_an_untyped_introspection_raises_no_type_drift() -> None:
     """Cypher introspection reports no property types; that is not drift."""
     observed = _observed(
-        {"server": ["key", "os"], "app": ["key"]}, [("app", "runs_on", "server")]
+        {"machine": ["key", "model"], "line": ["key"]}, [("line", "uses", "machine")]
     )
     assert all(
         field.type is None

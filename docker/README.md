@@ -112,7 +112,7 @@ docker compose --env-file .env --profile graflo.nebula up -d
 You can use `NebulaConfig.from_docker_env()` in your Python code to connect:
 
 ```python
-from graflo.db.connection.onto import NebulaConfig
+from graflo.connections import NebulaConfig
 
 config = NebulaConfig.from_docker_env()
 ```
@@ -125,7 +125,7 @@ NB: The standard ArangoDB port is 8529, but the `.env` config in graflo uses 853
 
 **Programmatic Connection:**
 ```python
-from graflo.db.connection.onto import ArangoConfig
+from graflo.connections import ArangoConfig
 
 config = ArangoConfig.from_docker_env()
 ```
@@ -138,7 +138,7 @@ NB: The standard Neo4j port is 7474, but the `.env` config in graflo uses 7475.
 
 **Programmatic Connection:**
 ```python
-from graflo.db.connection.onto import Neo4jConfig
+from graflo.connections import Neo4jConfig
 
 config = Neo4jConfig.from_docker_env()
 ```
@@ -149,7 +149,7 @@ PostgreSQL can be used as a source database for ingesting data into graph databa
 
 **Programmatic Connection:**
 ```python
-from graflo.db.connection.onto import PostgresConfig
+from graflo.connections import PostgresConfig
 
 config = PostgresConfig.from_docker_env()
 ```
@@ -160,7 +160,7 @@ FalkorDB is a Redis-based graph database that supports OpenCypher.
 
 **Programmatic Connection:**
 ```python
-from graflo.db.connection.onto import FalkordbConfig
+from graflo.connections import FalkordbConfig
 
 config = FalkordbConfig.from_docker_env()
 ```
@@ -179,7 +179,7 @@ docker compose --env-file .env --profile graflo.minio up -d
 - S3 API: `http://127.0.0.1:9000` (host port configurable via `MINIO_API_PORT` in `.env`)
 - Web console: `http://127.0.0.1:9001` (configurable via `MINIO_CONSOLE_PORT`)
 
-The S3 API and the console use **different** host ports. Tools such as boto3 and `examples/10-tigergraph-bulk-s3` must reach the **API** port (`MINIO_API_PORT` / `MINIO_ENDPOINT`), not the console URL (e.g. `/endpoints` on the console port).
+The S3 API and the console use **different** host ports. Tools such as boto3 and `examples/13-tigergraph-bulk-s3` must reach the **API** port (`MINIO_API_PORT` / `MINIO_ENDPOINT`), not the console URL (e.g. `/endpoints` on the console port).
 
 **Port conflicts:** If `docker compose` fails with `port is already allocated` (often **9001**), another process is using that host port. Set `MINIO_CONSOLE_PORT` (and `MINIO_API_PORT` if needed) to free values in `docker/minio/.env`, remove any stuck container (`docker rm -f graflo.minio`), then `docker compose --env-file .env --profile graflo.minio up -d` again. While the MinIO container is not running, you will see connection refused on the API port even if something unrelated responds on 9001.
 
@@ -189,7 +189,7 @@ Default credentials are `minioadmin` / `minioadmin` (`MINIO_ROOT_USER` / `MINIO_
 
 **Programmatic connection (boto3 / bulk staging):**
 ```python
-from graflo.db import MinioConfig
+from graflo.object_storage import MinioConfig
 from graflo.object_storage import ensure_staging_bucket_for_config
 
 config = MinioConfig.from_docker_env()
@@ -232,7 +232,7 @@ Memgraph is a high-performance, in-memory graph database that supports OpenCyphe
 
 **Programmatic Connection:**
 ```python
-from graflo.db.connection.onto import MemgraphConfig
+from graflo.connections import MemgraphConfig
 
 config = MemgraphConfig.from_docker_env()
 ```

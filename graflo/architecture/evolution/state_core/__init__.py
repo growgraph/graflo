@@ -1,4 +1,4 @@
-"""``state-core``: lifting an arbitrary manifest into a twin-ready schema.
+"""``state-core``: lifting a manifest into one that tracks state and measurements.
 
 A meta-layer rather than a model. Given any manifest and a statement of what its
 types *mean*, :func:`plan_lift` emits the operations that add temporal validity

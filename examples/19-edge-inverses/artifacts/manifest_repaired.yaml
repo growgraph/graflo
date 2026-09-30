@@ -1,0 +1,84 @@
+schema:
+    metadata:
+        name: staffing
+        version: 1.1.0
+    core_schema:
+        vertex_config:
+            vertices:
+            -   name: person
+                properties:
+                -   name: person_id
+                -   name: name
+                identity:
+                -   person_id
+            -   name: institution
+                properties:
+                -   name: institution_id
+                -   name: title
+                identity:
+                -   institution_id
+        edge_config:
+            edges:
+            -   source: person
+                target: institution
+                relation: employed_by
+                properties:
+                -   name: since
+                directed: true
+            -   source: institution
+                target: person
+                relation: employs
+                properties:
+                -   name: since
+                directed: true
+            -   source: person
+                target: institution
+                relation: alumnus_of
+                directed: true
+            -   source: person
+                target: person
+                relation: collaborates_with
+                directed: false
+            inverses:
+            -   relation: alumnus_of
+                inverse: has_alumnus
+            -   relation: employed_by
+                inverse: employs
+            symmetric:
+            -   collaborates_with
+    db_profile:
+        db_flavor: neo4j
+ingestion_model:
+    resources:
+    -   name: hr
+        pipeline:
+        -   vertex: person
+        -   vertex: institution
+        -   edge:
+                from: person
+                to: institution
+                relation: employed_by
+        -   edge:
+                from: institution
+                to: person
+                relation: employs
+        infer_edges: false
+    -   name: registry
+        pipeline:
+        -   vertex: person
+        -   vertex: institution
+        -   edge:
+                from: person
+                to: institution
+                relation: employed_by
+                emit_inverse: true
+        infer_edges: false
+    -   name: alumni
+        pipeline:
+        -   vertex: person
+        -   vertex: institution
+        -   edge:
+                from: person
+                to: institution
+                relation: alumnus_of
+        infer_edges: false

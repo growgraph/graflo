@@ -123,7 +123,8 @@ class IngestionParams(BaseModel):
         ge=1,
         description=(
             "Maximum number of source items (rows / JSON objects / grouped "
-            "RDF subjects) to ingest for each resource. Not a batch count."
+            "RDF subjects) to read from each data source; a resource fed by several "
+            "files or tables reads up to this many from each. Not a batch count."
         ),
     )
     batch_size: int = Field(

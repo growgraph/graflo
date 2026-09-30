@@ -14,21 +14,16 @@ schema:
                 -   {name: name, type: STRING}
                 -   {name: dob, type: STRING}
                 identity: [id]
-                # Two sources identify the same person differently: the CRM has
-                # email, billing has phone + country. The first complete branch
-                # wins, so a row is keyed by the strongest evidence it carries.
+                # Branches are tried in order. The first one whose fields are
+                # all filled in is hashed into id; name and date of birth are
+                # the weakest evidence, so they come last.
                 identity_funnel:
-                    digest: sha256
-                    include_branch_id: true
                     branches:
                     -   id: email
-                        when_all_present: [email]
                         fields: [email]
                     -   id: phone
-                        when_all_present: [phone, country]
                         fields: [phone, country]
                     -   id: weak
-                        when_all_present: [name, dob]
                         fields: [name, dob]
         edge_config:
             edges: []

@@ -17,13 +17,9 @@ from click.testing import CliRunner
 
 from graflo.cli.main import graflo
 
-EXAMPLE = (
-    pathlib.Path(__file__).resolve().parents[2]
-    / "examples"
-    / "19-union-canonical-equivalence"
-)
-LEFT = EXAMPLE / "manifest_a.yaml"
-RIGHT = EXAMPLE / "manifest_b.yaml"
+FIXTURES = pathlib.Path(__file__).resolve().parents[1] / "data" / "merge_union"
+LEFT = FIXTURES / "manifest_a.yaml"
+RIGHT = FIXTURES / "manifest_b.yaml"
 
 
 @pytest.fixture

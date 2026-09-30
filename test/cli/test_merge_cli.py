@@ -1,10 +1,9 @@
 """``graflo merge`` end to end through Click.
 
-The verb is ``examples/19-union-canonical-equivalence/build_union.py``
-generalised, so the example's own fixtures are the fixtures here: if the CLI
-does not reproduce that script's recipe -- the op and its canonical maps
-applied together, in one step -- it is not the same operation and the
-example's README points somewhere wrong.
+The fixtures under ``test/data/merge_union`` are two manifests with
+overlapping vertex types, a canonical map and an op document. The verb
+applies the op and its canonical maps together, in one step, exactly as
+``merge_manifests`` does when called from Python.
 
 Exit codes carry the load: 1 means merge looked at the manifests and
 refused, 2 means the command could not be run. A CI job that cannot tell those
@@ -21,13 +20,12 @@ from click.testing import CliRunner
 
 from graflo.cli.main import graflo
 
-EXAMPLES_DIR = pathlib.Path(__file__).resolve().parents[2] / "examples"
-EX19 = EXAMPLES_DIR / "19-union-canonical-equivalence"
-MANIFEST_A = EX19 / "manifest_a.yaml"
-MANIFEST_B = EX19 / "manifest_b.yaml"
-CANONICAL_MAP = EX19 / "canonical_map.yaml"
+FIXTURES = pathlib.Path(__file__).resolve().parents[1] / "data" / "merge_union"
+MANIFEST_A = FIXTURES / "manifest_a.yaml"
+MANIFEST_B = FIXTURES / "manifest_b.yaml"
+CANONICAL_MAP = FIXTURES / "canonical_map.yaml"
 
-#: The n-ary boundary cluster from ``build_union.py``, in canonical names.
+#: The n-ary boundary cluster of ``boundary_op.yaml``, in canonical names.
 BOUNDARY_OP: dict = {
     "op": "merge_manifests",
     "allow_merges": True,
@@ -133,7 +131,7 @@ def test_the_example_op_document_composes_from_the_shell(
             str(MANIFEST_A),
             str(MANIFEST_B),
             "--op",
-            str(EX19 / "boundary_op.yaml"),
+            str(FIXTURES / "boundary_op.yaml"),
             "--canonical-map",
             f"left={CANONICAL_MAP}",
             "-o",
@@ -157,7 +155,7 @@ def test_without_a_map_an_unnamed_cluster_is_refused(tmp_path: pathlib.Path) -> 
             str(MANIFEST_A),
             str(MANIFEST_B),
             "--op",
-            str(EX19 / "boundary_op.yaml"),
+            str(FIXTURES / "boundary_op.yaml"),
             "--dry-run",
         ],
     )

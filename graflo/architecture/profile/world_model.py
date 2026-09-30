@@ -295,9 +295,9 @@ _A4 = "declared-units"
 def _has_row_level_unit(element) -> bool:
     """Whether *element* declares a property that carries the unit as data.
 
-    An abstract type whose instances each measure something different cannot
-    name one unit in its contract without lying, so declaring a unit-valued
-    property is the honest form and passes this assertion.
+    An abstract type whose instances each measure something different has no
+    single correct unit to declare in the schema, so a unit-valued property
+    declares it per row instead, and passes this assertion.
     """
     return _any_iri_in(getattr(element, "properties", []) or [], UNIT_PROPERTY_IRIS)
 

@@ -475,7 +475,7 @@ class TestResourcesOutsideTheAlignment:
 
 
 def _side_a_routed() -> GraphManifest:
-    """``X`` and ``C`` keyed on ``x_id``; ``RA`` routes change rows to either by type."""
+    """``X`` and ``C`` keyed on ``x_id``; ``RA`` routes work-order rows to either by type."""
     manifest = GraphManifest.from_config(
         {
             "schema": {
@@ -490,16 +490,24 @@ def _side_a_routed() -> GraphManifest:
                             },
                             {"name": "C", "properties": ["x_id"], "identity": ["x_id"]},
                             {
-                                "name": "Change",
-                                "properties": ["change_id"],
-                                "identity": ["change_id"],
+                                "name": "WorkOrder",
+                                "properties": ["work_order_id"],
+                                "identity": ["work_order_id"],
                             },
                         ]
                     },
                     "edge_config": {
                         "edges": [
-                            {"source": "Change", "target": "X", "relation": "impacts"},
-                            {"source": "Change", "target": "C", "relation": "impacts"},
+                            {
+                                "source": "WorkOrder",
+                                "target": "X",
+                                "relation": "targets",
+                            },
+                            {
+                                "source": "WorkOrder",
+                                "target": "C",
+                                "relation": "targets",
+                            },
                         ]
                     },
                 },
@@ -513,13 +521,17 @@ def _side_a_routed() -> GraphManifest:
                             {
                                 "from": {"x_id": "blaId"},
                                 "type": "vertex_router",
-                                "type_field": "ciType",
+                                "type_field": "assetType",
                             },
-                            {"role": "change", "type": "vertex", "vertex": "Change"},
                             {
-                                "relation": "impacts",
-                                "source": "Change",
-                                "target_role": "ciType",
+                                "role": "work_order",
+                                "type": "vertex",
+                                "vertex": "WorkOrder",
+                            },
+                            {
+                                "relation": "targets",
+                                "source": "WorkOrder",
+                                "target_role": "assetType",
                                 "type": "edge",
                             },
                         ],
@@ -553,7 +565,7 @@ def _merge_routed(
 
 
 def _side_b_with_org() -> GraphManifest:
-    """``Y``, plus ``Org``: a class only this side declares, keyed like A's CIs."""
+    """``Y``, plus ``Org``: a class only this side declares, keyed like A's machines."""
     manifest = GraphManifest.from_config(
         {
             "schema": {
@@ -596,12 +608,12 @@ def _cast_ra(merged: GraphManifest, rows: list[dict]):
 class TestRoutersKeepToTheirSide:
     """After the union, a value passed through could name the other side's classes."""
 
-    ORG_ROW = [{"blaId": "o7", "ciType": "Org", "change_id": "c1"}]
+    ORG_ROW = [{"blaId": "o7", "assetType": "Org", "work_order_id": "w1"}]
 
     def test_a_router_is_closed_over_its_own_side(self) -> None:
         """Renamed classes keep their entries; the rest are listed as themselves."""
-        router, _change, _edge = _pipeline(_merge_routed(), "RA")
-        assert router["type_map"] == {"X": "Z", "C": "C", "Change": "Change"}
+        router, _work_order, _edge = _pipeline(_merge_routed(), "RA")
+        assert router["type_map"] == {"X": "Z", "C": "C", "WorkOrder": "WorkOrder"}
         assert router["type_map_only"] is True
 
     def test_a_value_only_the_other_side_declares_is_skipped(self) -> None:
@@ -611,7 +623,7 @@ class TestRoutersKeepToTheirSide:
 
     def test_router_scope_union_keeps_the_router_open(self) -> None:
         merged = _merge_routed(right=_side_b_with_org(), router_scope="union")
-        router, _change, _edge = _pipeline(merged, "RA")
+        router, _work_order, _edge = _pipeline(merged, "RA")
         assert not router.get("type_map_only")
         graph = _cast_ra(merged, self.ORG_ROW)
         assert [dict(d) for d in graph.vertices["Org"]] == [{"x_id": "o7"}]
@@ -621,15 +633,15 @@ class TestRoutedReferences:
     """A router that references ``X`` among other classes it routes to."""
 
     def test_only_the_merged_class_becomes_a_lookup(self) -> None:
-        router, _change, edge = _pipeline(_merge_routed(), "RA")
+        router, _work_order, edge = _pipeline(_merge_routed(), "RA")
         assert router["lookup_only"] == ["Z"]
         assert edge["target_match"] == {"Z": "by_x_id"}
 
     def test_the_merged_class_is_looked_up_and_the_rest_still_written(self) -> None:
         caster = DocumentCaster(_merge_routed().require_ingestion_model())
         rows = [
-            {"blaId": "x1", "ciType": "X", "change_id": "c1"},
-            {"blaId": "k9", "ciType": "C", "change_id": "c1"},
+            {"blaId": "x1", "assetType": "X", "work_order_id": "w1"},
+            {"blaId": "k9", "assetType": "C", "work_order_id": "w1"},
         ]
         graph = asyncio.run(
             caster.cast_batch(rows, "RA", params=IngestionParams())
@@ -656,14 +668,14 @@ class TestRoutedReferences:
                                 {
                                     "from": {"x_id": "blaId"},
                                     "type": "vertex_router",
-                                    "type_field": "ciType",
+                                    "type_field": "assetType",
                                     "lookup_only": True,
                                 },
-                                {"role": "change", "vertex": "Change"},
+                                {"role": "work_order", "vertex": "WorkOrder"},
                                 {
-                                    "relation": "impacts",
-                                    "source": "Change",
-                                    "target_role": "ciType",
+                                    "relation": "targets",
+                                    "source": "WorkOrder",
+                                    "target_role": "assetType",
                                     "type": "edge",
                                 },
                             ],
@@ -695,7 +707,7 @@ class TestRoutedReferences:
             ),
             bump_version=False,
         )
-        _router, _change, edge = _pipeline(merged, "RA")
+        _router, _work_order, edge = _pipeline(merged, "RA")
         assert edge["target_match"] == {"Z": "by_x_id"}
 
 

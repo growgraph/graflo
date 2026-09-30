@@ -1,0 +1,69 @@
+schema:
+    metadata:
+        name: shop
+    graph:
+        vertex_config:
+            vertices:
+            -   name: users
+                properties: [id, name, email, created_at]
+                identity: [id]
+            -   name: products
+                properties: [id, name, price, description, created_at]
+                identity: [id]
+        edge_config:
+            edges:
+            -   source: users
+                target: products
+                relation: purchases
+                properties: [purchase_date, quantity, total_amount]
+            -   source: users
+                target: users
+                relation: follows
+                properties: [created_at]
+ingestion_model:
+    resources:
+    -   name: users
+        pipeline:
+        -   vertex: users
+    -   name: products
+        pipeline:
+        -   vertex: products
+    -   name: purchases
+        pipeline:
+        -   vertex: users
+            from:
+                id: user_id
+        -   vertex: products
+            from:
+                id: product_id
+    -   name: follows
+        pipeline:
+        -   vertex: users
+            from:
+                id: follower_id
+        -   vertex: users
+            from:
+                id: followed_id
+bindings:
+    connectors:
+    -   name: users
+        table_name: users
+        resource_name: users
+    -   name: products
+        table_name: products
+        resource_name: products
+    -   name: purchases
+        table_name: purchases
+        resource_name: purchases
+    -   name: follows
+        table_name: follows
+        resource_name: follows
+    connector_connection:
+    -   connector: users
+        conn_proxy: shop_db
+    -   connector: products
+        conn_proxy: shop_db
+    -   connector: purchases
+        conn_proxy: shop_db
+    -   connector: follows
+        conn_proxy: shop_db

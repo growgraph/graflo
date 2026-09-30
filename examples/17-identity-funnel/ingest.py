@@ -1,54 +1,37 @@
-"""
-Ingest two customer sources that identify the same people by different keys,
-using an identity funnel to derive one deterministic synthetic id.
+"""Records arrive with different identifiers filled in. How do I still get one vertex per thing?
 
-No live graph database required:
+Reads ``manifest.yaml``, loads the CRM and billing files into the file backend
+in ``artifacts/csv-backend``, and prints how many ``party`` records were
+written and how many distinct ids they carry. Run it from this directory:
 
-    cd examples/17-identity-funnel
     uv run python ingest.py
-    uv run python inspect_identities.py
 """
-
-from __future__ import annotations
 
 from pathlib import Path
 
-import click
-from _common import (
-    DEFAULT_CSV_BACKEND_DIR,
-    MANIFEST_PATH,
-    backend_config,
-    example_workdir,
-)
 from suthing import FileHandle
 
-from graflo import DBType, GraphEngine, GraphManifest
+from graflo import GraphManifest
+from graflo.architecture.backend import GraFloBackendReader
+from graflo.connections import GraFloBackendConfig
+from graflo.hq import GraphEngine
 from graflo.hq.caster import IngestionParams
 
+manifest = GraphManifest.from_config(FileHandle.load("manifest.yaml"))
+manifest.finish_init()
 
-@click.command()
-@click.option(
-    "--output-dir",
-    type=click.Path(path_type=Path),
-    default=DEFAULT_CSV_BACKEND_DIR,
-    show_default=True,
-    help="GraFlo file backend root directory.",
+backend = GraFloBackendConfig(output_dir=Path("artifacts/csv-backend"))
+engine = GraphEngine(target_db_flavor=backend.connection_type)
+engine.define_and_ingest(
+    manifest=manifest,
+    target_db_config=backend,
+    ingestion_params=IngestionParams(clear_data=True),
+    recreate_schema=True,
 )
-def main(output_dir: Path) -> None:
-    """Define schema and ingest both CSV resources into an on-disk backend."""
-    manifest = GraphManifest.from_config(FileHandle.load(MANIFEST_PATH))
-    manifest.finish_init()
-    backend = backend_config(output_dir)
-    engine = GraphEngine(target_db_flavor=DBType.GRAFLO_BACKEND)
-    with example_workdir():
-        engine.define_and_ingest(
-            manifest=manifest,
-            target_db_config=backend,
-            ingestion_params=IngestionParams(clear_data=True),
-            recreate_schema=True,
-        )
-    click.echo(f"Identity-funnel demo → GraFlo file backend: {backend.output_dir}")
 
-
-if __name__ == "__main__":
-    main()
+# The file backend appends records; records with the same id are one vertex
+# in a database, so count the ids as well.
+reader = GraFloBackendReader(backend.output_dir)
+parties = [doc for batch in reader.iter_vertex_batches("party") for doc in batch]
+distinct = {doc["id"] for doc in parties}
+print(f"party: {len(parties)} records, {len(distinct)} distinct ids")

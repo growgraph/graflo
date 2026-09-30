@@ -1,30 +1,23 @@
 schema:
     metadata:
-        name: source-a-view+source-b
+        name: maintenance+sensors
         version: 1.1.0
     core_schema:
         vertex_config:
             vertices:
-            -   name: Company
+            -   name: Machine
                 properties:
-                -   name: company_id
-                -   name: secondary_key
-                -   name: shop_id
-                -   name: branch_id
-                -   name: shared_raw
-                -   name: org_id
+                -   name: asset_id
+                -   name: serial_number
+                -   name: name
+                -   name: device_id
+                -   name: model
                 -   name: match_key
                 -   name: local_key
                 -   name: id
                 identity:
                 -   id
-                filters: []
-                blank: false
-                assigned: false
-                hash_identity_properties: []
                 identity_funnel:
-                    digest: sha256
-                    include_branch_id: true
                     branches:
                     -   id: match_key
                         fields:
@@ -33,233 +26,91 @@ schema:
                         fields:
                         -   local_key
                 secondary_identities:
-                -   name: by_branch_id
+                -   name: by_asset_id
                     fields:
-                    -   branch_id
-                -   name: by_company_id
+                    -   asset_id
+                -   name: by_device_id
                     fields:
-                    -   company_id
-                -   name: by_org_id
-                    fields:
-                    -   org_id
-                -   name: by_shop_id
-                    fields:
-                    -   shop_id
-            -   name: Person
+                    -   device_id
+            -   name: ProductionLine
                 properties:
-                -   name: person_id
-                -   name: secondary_key
+                -   name: asset_id
+                -   name: name
                 identity:
-                -   person_id
-                filters: []
-                blank: false
-                assigned: false
-                hash_identity_properties: []
-                secondary_identities: []
-            force_types: {}
-            identity_from_all_properties: true
-        edge_config:
-            edges: []
-            inverses: []
-            symmetric: []
+                -   asset_id
+        edge_config: {}
     db_profile:
-        db_flavor: arango
-        vertex_storage_names: {}
-        vertex_property_names: {}
         vertex_indexes:
-            Company:
+            Machine:
             -   fields:
-                -   branch_id
+                -   asset_id
                 unique: false
-                type: persistent
-                deduplicate: true
-                sparse: false
-                exclude_edge_endpoints: false
             -   fields:
-                -   company_id
+                -   device_id
                 unique: false
-                type: persistent
-                deduplicate: true
-                sparse: false
-                exclude_edge_endpoints: false
-            -   fields:
-                -   org_id
-                unique: false
-                type: persistent
-                deduplicate: true
-                sparse: false
-                exclude_edge_endpoints: false
-            -   fields:
-                -   shop_id
-                unique: false
-                type: persistent
-                deduplicate: true
-                sparse: false
-                exclude_edge_endpoints: false
-        edge_specs: []
-        native_inverses: []
 ingestion_model:
-    edges_on_duplicate: ignore
-    endpoints_on_ambiguous: all
     resources:
-    -   name: r_view
+    -   name: register
         pipeline:
-        -   key: records
-            pipeline:
-            -   type_field: kind
-                keep_fields:
-                -   firm_id
-                -   shop_id
-                -   person_id
-                -   secondary_key
-                -   match_key
-                -   local_key
+        -   vertex_router:
+                type_field: type
                 type_map:
-                    firm: Company
-                    shop: Company
-                    person: Person
-                    Firm: Company
-                    Shop: Company
-                    Person: Person
-                type: vertex_router
+                    machine: Machine
+                    line: ProductionLine
+                    Machine: Machine
+                    ProductionLine: ProductionLine
                 type_map_only: true
-            -   call:
+        -   transform:
+                call:
                     module: graflo.util.transform
-                    foo: affix_gated_key
-                    params:
-                        prefix: abc_
+                    foo: normalized_key
+                    params: {}
                     output:
                     -   match_key
                     input:
-                    -   secondary_key
+                    -   serial_number
                 when:
-                    field: kind
+                    field: type
                     in:
-                    -   firm
-                type: transform
-            -   call:
-                    module: graflo.util.transform
-                    foo: affix_gated_key
-                    params:
-                        prefix: def_
-                    output:
-                    -   match_key
-                    input:
-                    -   secondary_key
-                when:
-                    field: kind
-                    in:
-                    -   shop
-                type: transform
-            -   call:
+                    -   machine
+        -   transform:
+                call:
                     module: graflo.util.transform
                     foo: tagged_key
                     params:
-                        tag: firm
+                        tag: maintenance
                         sep: ':'
                     output:
                     -   local_key
                     input:
-                    -   firm_id
+                    -   asset_id
                 when:
-                    field: kind
+                    field: type
                     in:
-                    -   firm
-                type: transform
-            -   call:
-                    module: graflo.util.transform
-                    foo: tagged_key
-                    params:
-                        tag: shop
-                        sep: ':'
-                    output:
-                    -   local_key
-                    input:
-                    -   shop_id
-                when:
-                    field: kind
-                    in:
-                    -   shop
-                type: transform
-            type: descend
-        encoding: utf-8
-        merge_collections: []
-        extra_weights: []
-        types: {}
-        infer_edges: true
-        infer_edge_only: []
-        infer_edge_except: []
-        drop_trivial_input_fields: false
-        fail_fast: false
-        tolerate_transform_errors: true
-    -   name: r_b
+                    -   machine
+    -   name: devices
         pipeline:
-        -   vertex: Company
+        -   vertex: Machine
             type: vertex
+            from:
+                serial_number: serial
         -   transform:
                 call:
                     module: graflo.util.transform
-                    foo: affix_gated_key
-                    params:
-                        prefix: abc_
+                    foo: normalized_key
+                    params: {}
                     output:
                     -   match_key
                     input:
-                    -   shared_raw
+                    -   serial
         -   transform:
                 call:
                     module: graflo.util.transform
                     foo: tagged_key
                     params:
-                        tag: b
+                        tag: sensors
                         sep: ':'
                     output:
                     -   local_key
                     input:
-                    -   org_id
-        encoding: utf-8
-        merge_collections: []
-        extra_weights: []
-        types: {}
-        infer_edges: true
-        infer_edge_only: []
-        infer_edge_except: []
-        drop_trivial_input_fields: false
-        fail_fast: false
-        tolerate_transform_errors: true
-    -   name: r_branch
-        pipeline:
-        -   vertex: Company
-            type: vertex
-        -   transform:
-                call:
-                    module: graflo.util.transform
-                    foo: affix_gated_key
-                    params:
-                        prefix: def_
-                    output:
-                    -   match_key
-                    input:
-                    -   shared_raw
-        -   transform:
-                call:
-                    module: graflo.util.transform
-                    foo: tagged_key
-                    params:
-                        tag: br
-                        sep: ':'
-                    output:
-                    -   local_key
-                    input:
-                    -   branch_id
-        encoding: utf-8
-        merge_collections: []
-        extra_weights: []
-        types: {}
-        infer_edges: true
-        infer_edge_only: []
-        infer_edge_except: []
-        drop_trivial_input_fields: false
-        fail_fast: false
-        tolerate_transform_errors: true
-    transforms: []
+                    -   device_id

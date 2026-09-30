@@ -1,0 +1,39 @@
+schema:
+    metadata:
+        name: maintenance
+        version: 1.0.0
+    graph:
+        vertex_config:
+            vertices:
+            -   name: Asset
+                properties:
+                -   asset_id
+                -   serial_number
+                -   name
+                identity:
+                -   asset_id
+            -   name: WorkOrder
+                properties:
+                -   work_order_id
+                identity:
+                -   work_order_id
+        edge_config:
+            edges:
+            -   source: WorkOrder
+                target: Asset
+                relation: targets
+ingestion_model:
+    resources:
+    -   name: assets
+        pipeline:
+        -   vertex: Asset
+    # A work order names an asset by asset_id. It does not create the asset.
+    -   name: work_orders
+        pipeline:
+        -   vertex: WorkOrder
+        -   vertex: Asset
+            lookup_only: true
+        -   from: WorkOrder
+            to: Asset
+            relation: targets
+    transforms: []

@@ -1,5 +1,0 @@
-vertices:
-    Firm: Company
-properties:
-    Firm:
-        firm_id: company_id

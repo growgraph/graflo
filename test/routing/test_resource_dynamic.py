@@ -66,7 +66,7 @@ def _build_bound_schema(
 
 
 def _setup_db() -> str:
-    """Create a SQLite file DB with CMDB-like tables and return the connection string.
+    """Create a SQLite file DB with asset tables and return the connection string.
 
     Uses a temporary file so that multiple SQLAlchemy engines can share it
     (in-memory SQLite is connection-private).
@@ -91,11 +91,11 @@ def _setup_db() -> str:
             text(
                 """
                 INSERT INTO classes (id, class_name, description) VALUES
-                    ('1', 'server', 'Web Server'),
-                    ('2', 'database', 'PostgreSQL'),
-                    ('3', 'server', 'App Server'),
-                    ('4', 'database', 'MySQL'),
-                    ('5', 'network', 'Router')
+                    ('1', 'machine', 'Hydraulic press'),
+                    ('2', 'line', 'Assembly line 1'),
+                    ('3', 'machine', 'Lathe'),
+                    ('4', 'line', 'Assembly line 2'),
+                    ('5', 'sensor', 'Vibration sensor')
                 """
             )
         )
@@ -115,9 +115,9 @@ def _setup_db() -> str:
             text(
                 """
                 INSERT INTO relations (id, s__class_name, t__class_name, type_display) VALUES
-                    (1, '1', '2', 'runs_on'),
-                    (2, '3', '4', 'runs_on'),
-                    (3, '1', '5', 'connects_to')
+                    (1, '1', '2', 'installed_on'),
+                    (2, '3', '4', 'installed_on'),
+                    (3, '1', '5', 'monitored_by')
                 """
             )
         )
@@ -128,7 +128,7 @@ def _setup_db() -> str:
 def _setup_polymorphic_objects_relations_db() -> str:
     """SQLite DB: mixed ``relations`` rows + ``objects`` lookup by id (type per row).
 
-    Mirrors a common CMDB pattern: one relation table, one polymorphic object table.
+    Mirrors a common pattern: one relation table, one polymorphic object table.
     Used with :class:`SelectSpec` ``kind="type_lookup"`` on ``TableConnector.view``,
     together with a ``vertex_router`` + dynamic ``edge`` pipeline that reads
     ``source_type`` and ``target_type`` from the generated aliases.
@@ -196,68 +196,68 @@ class TestFilteredVertexResources:
         """Each Resource's generated query returns only its filtered rows."""
         conn_str = _setup_db()
 
-        # Resource "server" -> classes WHERE class_name = 'server'
-        f_server = FilterExpression(
+        # Resource "machine" -> classes WHERE class_name = 'machine'
+        f_machine = FilterExpression(
             kind="leaf",
             field="class_name",
             cmp_operator=ComparisonOperator.EQ,
-            value=["server"],
+            value=["machine"],
         )
-        tp_server = TableConnector(
+        tp_machine = TableConnector(
             table_name="classes",
-            filters=[f_server],
+            filters=[f_machine],
         )
 
-        # Resource "database" -> classes WHERE class_name = 'database'
-        f_db = FilterExpression(
+        # Resource "line" -> classes WHERE class_name = 'line'
+        f_line = FilterExpression(
             kind="leaf",
             field="class_name",
             cmp_operator=ComparisonOperator.EQ,
-            value=["database"],
+            value=["line"],
         )
-        tp_db = TableConnector(
+        tp_line = TableConnector(
             table_name="classes",
-            filters=[f_db],
+            filters=[f_line],
         )
 
         # SQLite doesn't use schemas, so we use "main" as effective_schema
         # but build_query quotes it -- SQLite ignores schema prefix on tables
         # so we pass None and rely on the default "public" which SQLite also ignores.
         # We'll just use the raw query from build_where_clause instead.
-        query_server = "SELECT * FROM classes"
-        where_server = tp_server.build_where_clause()
-        if where_server:
-            query_server += f" WHERE {where_server}"
+        query_machine = "SELECT * FROM classes"
+        where_machine = tp_machine.build_where_clause()
+        if where_machine:
+            query_machine += f" WHERE {where_machine}"
 
-        query_db = "SELECT * FROM classes"
-        where_db = tp_db.build_where_clause()
-        if where_db:
-            query_db += f" WHERE {where_db}"
+        query_line = "SELECT * FROM classes"
+        where_line = tp_line.build_where_clause()
+        if where_line:
+            query_line += f" WHERE {where_line}"
 
         # Execute the queries
-        ds_server = SQLDataSource(
+        ds_machine = SQLDataSource(
             config=SQLConfig(
                 connection_string=conn_str,
-                query=query_server,
+                query=query_machine,
             )
         )
-        ds_db = SQLDataSource(
+        ds_line = SQLDataSource(
             config=SQLConfig(
                 connection_string=conn_str,
-                query=query_db,
+                query=query_line,
             )
         )
 
-        server_rows = list(ds_server)
-        db_rows = list(ds_db)
+        machine_rows = list(ds_machine)
+        line_rows = list(ds_line)
 
-        # server has 2 rows (id 1, 3)
-        assert len(server_rows) == 2
-        assert all(r["class_name"] == "server" for r in server_rows)
+        # machine has 2 rows (id 1, 3)
+        assert len(machine_rows) == 2
+        assert all(r["class_name"] == "machine" for r in machine_rows)
 
-        # database has 2 rows (id 2, 4)
-        assert len(db_rows) == 2
-        assert all(r["class_name"] == "database" for r in db_rows)
+        # line has 2 rows (id 2, 4)
+        assert len(line_rows) == 2
+        assert all(r["class_name"] == "line" for r in line_rows)
 
     def test_build_query_filter_sql_renders_correctly(self):
         """Verify build_where_clause() renders FilterExpression filters."""
@@ -265,11 +265,11 @@ class TestFilteredVertexResources:
             kind="leaf",
             field="class_name",
             cmp_operator=ComparisonOperator.EQ,
-            value=["server"],
+            value=["machine"],
         )
         tp = TableConnector(table_name="classes", filters=[f])
         where = tp.build_where_clause()
-        assert "\"class_name\" = 'server'" in where
+        assert "\"class_name\" = 'machine'" in where
 
 
 # ---------------------------------------------------------------
@@ -286,23 +286,23 @@ class TestEdgeResourceAutoJoin:
             vertex_config={
                 "vertices": [
                     {
-                        "name": "server",
+                        "name": "machine",
                         "properties": ["id", "class_name", "description"],
                     },
                     {
-                        "name": "database",
+                        "name": "line",
                         "properties": ["id", "class_name", "description"],
                     },
                     {
-                        "name": "network",
+                        "name": "sensor",
                         "properties": ["id", "class_name", "description"],
                     },
                 ],
             },
             edge_config={
                 "edges": [
-                    {"source": "server", "target": "database"},
-                    {"source": "server", "target": "network"},
+                    {"source": "machine", "target": "line"},
+                    {"source": "machine", "target": "sensor"},
                 ],
             },
             resources=[
@@ -331,8 +331,8 @@ class TestEdgeResourceAutoJoin:
                         },
                         {
                             "edge": {
-                                "from": "server",
-                                "to": "database",
+                                "from": "machine",
+                                "to": "line",
                                 "match_source": "s__class_name",
                                 "match_target": "t__class_name",
                                 "relation_field": "type_display",
@@ -356,9 +356,9 @@ class TestEdgeResourceAutoJoin:
             name="classes_connector", table_name="classes", schema_name="main"
         )
         patterns_table = {
-            "server": tp_classes,
-            "database": tp_classes,
-            "network": tp_classes,
+            "machine": tp_classes,
+            "line": tp_classes,
+            "sensor": tp_classes,
             "relations": tp_edge,
         }
 
@@ -401,9 +401,9 @@ class TestEdgeResourceAutoJoin:
         tp_edge = TableConnector(name="relations_connector", table_name="relations")
         tp_classes = TableConnector(name="classes_connector", table_name="classes")
         patterns_table = {
-            "server": tp_classes,
-            "database": tp_classes,
-            "network": tp_classes,
+            "machine": tp_classes,
+            "line": tp_classes,
+            "sensor": tp_classes,
             "relations": tp_edge,
         }
         bindings = Bindings(
@@ -490,32 +490,32 @@ class TestEdgeResourceAutoJoin:
         resource = _bound_ingestion_model(schema).fetch_resource("relations")
 
         doc = {
-            "type_display": "runs_on",
+            "type_display": "installed_on",
             "s__id": "1",
-            "s__class_name": "server",
-            "s__description": "Web Server",
+            "s__class_name": "machine",
+            "s__description": "Hydraulic press",
             "t__id": "2",
-            "t__class_name": "database",
-            "t__description": "PostgreSQL",
+            "t__class_name": "line",
+            "t__description": "Assembly line 1",
         }
 
         result = resource(doc)
 
         # Should have vertices
         vertex_keys = [k for k in result if isinstance(k, str)]
-        assert "server" in vertex_keys
-        assert "database" in vertex_keys
+        assert "machine" in vertex_keys
+        assert "line" in vertex_keys
 
-        # server should have the routed vertex doc
-        server_docs = result["server"]
-        assert len(server_docs) >= 1
-        assert any(d.get("id") == "1" for d in server_docs)
+        # machine should have the routed vertex doc
+        machine_docs = result["machine"]
+        assert len(machine_docs) >= 1
+        assert any(d.get("id") == "1" for d in machine_docs)
 
-        db_docs = result["database"]
-        assert len(db_docs) >= 1
-        assert any(d.get("id") == "2" for d in db_docs)
+        line_docs = result["line"]
+        assert len(line_docs) >= 1
+        assert any(d.get("id") == "2" for d in line_docs)
 
-        assert len(result[("server", "database", "runs_on")]) == 1
+        assert len(result[("machine", "line", "installed_on")]) == 1
 
     def test_vertex_router_registers_wrappers_lazily(self):
         """VertexRouterActor creates only wrappers used by routed documents."""
@@ -533,17 +533,17 @@ class TestEdgeResourceAutoJoin:
 
         resource(
             {
-                "type_display": "runs_on",
+                "type_display": "installed_on",
                 "s__id": "1",
-                "s__class_name": "server",
-                "s__description": "Web Server",
+                "s__class_name": "machine",
+                "s__description": "Hydraulic press",
                 "t__id": "2",
-                "t__class_name": "database",
-                "t__description": "PostgreSQL",
+                "t__class_name": "line",
+                "t__description": "Assembly line 1",
             }
         )
-        assert set(router_actors[0]._vertex_actors.keys()) == {"server"}
-        assert set(router_actors[1]._vertex_actors.keys()) == {"database"}
+        assert set(router_actors[0]._vertex_actors.keys()) == {"machine"}
+        assert set(router_actors[1]._vertex_actors.keys()) == {"line"}
 
     def test_vertex_router_with_vertex_from_map_maps_doc_fields_to_vertex_fields(
         self,

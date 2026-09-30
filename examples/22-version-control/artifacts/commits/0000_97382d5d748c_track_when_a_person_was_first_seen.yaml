@@ -1,0 +1,11 @@
+id: 97382d5d748c
+ops:
+-   additions:
+        person:
+        -   created_at
+    op: add_vertex_properties
+tree_before: 6fb36128d4ac1f8cfb2a5c1a08c6a913be99995d43e6fd22784a1415f9991263
+tree: b44c7b3f9b308732d42aca170f2664c5458874618563ee8d2655433320288cac
+label: track when a person was first seen
+created_at: '2026-01-01T00:00:00+00:00'
+parents: []

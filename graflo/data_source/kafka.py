@@ -160,7 +160,9 @@ class KafkaDataSource(AbstractDataSource):
     ) -> Iterator[list[dict]]:
         """Poll Kafka until limit, idle timeout, or max wait is reached.
 
-        Offsets are committed after each yielded batch (at-least-once).
+        A batch's offsets are committed when the next batch is requested. With
+        read-ahead (``batch_prefetch``) that can happen before the batch is
+        written, so a crash may lose records rather than repeat them.
         Non-JSON-object payloads are skipped with a warning.
         """
         if batch_size < 1:

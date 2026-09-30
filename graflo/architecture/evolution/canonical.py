@@ -7,7 +7,7 @@ unmapped, and *idempotent*: a canonical name is a fixed point nothing maps away
 from. An equivalence cluster on a
 :class:`~graflo.architecture.evolution.ops.MergeManifestsOp` says *which*
 classes across the two sides are one, and may leave what they are called to
-the map. Renames merge, so "canonicalize, then declare equivalences in
+the map. Renames compose, so "canonicalize, then declare equivalences in
 canonical names" and "declare equivalences in raw names, then canonicalize"
 are the same function; :func:`resolve_clusters` computes it directly — one
 composite relabel per side, applied as a single

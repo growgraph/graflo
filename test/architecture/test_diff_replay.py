@@ -235,22 +235,26 @@ class TestMergeCommitRelabel:
     @staticmethod
     def _sides() -> tuple[GraphManifest, GraphManifest, MergeManifestsOp]:
         left = _manifest(
-            [{"name": "server", "properties": ["id", "serial"], "identity": ["id"]}],
-            resources=[{"name": "cmdb", "pipeline": [{"vertex": "server"}]}],
+            [{"name": "machine", "properties": ["id", "serial"], "identity": ["id"]}],
+            resources=[{"name": "maintenance", "pipeline": [{"vertex": "machine"}]}],
         )
         right = _manifest(
-            [{"name": "host", "properties": ["id", "sn"], "identity": ["id"]}],
-            resources=[{"name": "scan", "pipeline": [{"vertex": "host"}]}],
+            [{"name": "device", "properties": ["id", "sn"], "identity": ["id"]}],
+            resources=[{"name": "sensors", "pipeline": [{"vertex": "device"}]}],
         )
         op = MergeManifestsOp.model_validate(
             {
                 "vertex_equivalences": [
                     {
-                        "left": "server",
-                        "right": "host",
-                        "into": "machine",
+                        "left": "machine",
+                        "right": "device",
+                        "into": "equipment",
                         "properties": [
-                            {"left": "serial", "right": "sn", "into": "hw_serial"}
+                            {
+                                "left": "serial",
+                                "right": "sn",
+                                "into": "nameplate_serial",
+                            }
                         ],
                     }
                 ]

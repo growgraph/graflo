@@ -48,7 +48,7 @@ graflo.add_command(merge_cmd, name="merge")
 # through a refusal that reports a single entry.
 graflo.add_command(canonical_check_cmd, name="canonical-check")
 
-# Lifting a manifest into a twin-ready schema. A planner over the same op
+# Lifting a manifest into one that tracks state and measurements. A planner over the same op
 # vocabulary `graflo evolve` applies, so the conversion is reviewable before it
 # runs and invertible after.
 graflo.add_command(lift_cmd, name="lift")

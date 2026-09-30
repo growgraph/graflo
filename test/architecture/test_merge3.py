@@ -627,7 +627,7 @@ def test_the_merge_base_of_two_branches_is_their_fork_point() -> None:
 
 
 def test_unrelated_lineages_have_no_merge_base() -> None:
-    """Which is the signal that the operation you want is merge, not merge."""
+    """Which is the signal that the operation you want is a union, not a three-way merge."""
     history, (_root, left, _right) = _linear_history()
     stranger = build_commit(
         _person(["id"]), [AddVertexPropertiesOp(additions={"person": ["x"]})]

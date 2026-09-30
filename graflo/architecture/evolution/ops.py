@@ -591,7 +591,7 @@ class ReplaceIdentityOp(ConfigBaseModel):
     referenced the old one must be repointed or retired.
 
     Not covered: ``blank`` vertices cannot retire by demotion (they cannot declare
-    secondary identities at all), and a no-op replacement does not bump the version.
+    secondary identities at all).
     """
 
     op: Literal["replace_identity"] = "replace_identity"

@@ -1,0 +1,21 @@
+id: f42a0133eee7
+parents:
+-   97382d5d748c
+ops:
+-   op: replace_identity
+    replacements:
+        person:
+            to:
+                mode: natural
+                identity:
+                -   ssn
+            retire: keep
+            endpoints: follow_new
+-   additions:
+        person:
+        -   ssn_verified
+    op: add_vertex_properties
+tree_before: b44c7b3f9b308732d42aca170f2664c5458874618563ee8d2655433320288cac
+tree: dc9d83b5b286b35448c4e96477b29d55c08f4a581b5247f022bea8bcd208b081
+label: key people by SSN
+created_at: '2026-01-01T00:00:00+00:00'

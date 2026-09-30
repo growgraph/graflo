@@ -1465,8 +1465,8 @@ class ArangoConnection(Connection):
         anchor_filter = " AND ".join(clauses)
 
         # Every allowed relation, not only those touching the anchor type: a
-        # walk of more than one hop crosses relations (change -> server <- app
-        # <- service), and a traversal restricted to the anchor's own edge
+        # walk of more than one hop crosses relations (work_order -> machine <-
+        # line <- product), and a traversal restricted to the anchor's own edge
         # collections stops at the first hop.
         allowed = set(edge_types) if edge_types is not None else None
         collections: list[str] = []

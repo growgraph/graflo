@@ -1,0 +1,8 @@
+source_type,source_id,relation,target_type,target_id
+Person,1,EMPLOYED_BY,Institution,6
+Person,2,EMPLOYED_BY,Institution,7
+Person,3,EMPLOYED_BY,Institution,6
+Person,1,COLLEAGUE_OF,Person,3
+Person,1,OWNS,Vehicle,5
+Person,3,OWNS,Vehicle,4
+Institution,7,FUNDS,Institution,6

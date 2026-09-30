@@ -1,6 +1,6 @@
 """Test that top-level package 0xffff does not produce a spurious self-edge.
 
-Uses schema from test/config/schema/debian-eco.yaml (same as examples/4-ingest-neo4j).
+Uses the package and bug schema in test/config/schema/debian-eco.yaml.
 Verifies that package->package edges never have source==target when the package
 does not depend on itself. Related to actor_util._iter_emitter_receiver_group_pairs.
 """

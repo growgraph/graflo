@@ -1,0 +1,117 @@
+schema:
+    metadata:
+        name: maintenance+sensors
+        version: 1.1.0
+    core_schema:
+        vertex_config:
+            vertices:
+            -   name: Machine
+                properties:
+                -   name: asset_id
+                -   name: serial_number
+                -   name: name
+                -   name: device_id
+                -   name: model
+                -   name: match_key
+                -   name: local_key
+                -   name: id
+                identity:
+                -   id
+                identity_funnel:
+                    branches:
+                    -   id: match_key
+                        fields:
+                        -   match_key
+                    -   id: local_key
+                        fields:
+                        -   local_key
+                secondary_identities:
+                -   name: by_asset_id
+                    fields:
+                    -   asset_id
+                -   name: by_device_id
+                    fields:
+                    -   device_id
+            -   name: WorkOrder
+                properties:
+                -   name: work_order_id
+                identity:
+                -   work_order_id
+        edge_config:
+            edges:
+            -   source: WorkOrder
+                target: Machine
+                relation: targets
+    db_profile:
+        vertex_indexes:
+            Machine:
+            -   fields:
+                -   asset_id
+                unique: false
+            -   fields:
+                -   device_id
+                unique: false
+ingestion_model:
+    resources:
+    -   name: assets
+        pipeline:
+        -   vertex: Machine
+            type: vertex
+        -   transform:
+                call:
+                    module: graflo.util.transform
+                    foo: normalized_key
+                    params: {}
+                    output:
+                    -   match_key
+                    input:
+                    -   serial_number
+        -   transform:
+                call:
+                    module: graflo.util.transform
+                    foo: tagged_key
+                    params:
+                        tag: maintenance
+                        sep: ':'
+                    output:
+                    -   local_key
+                    input:
+                    -   asset_id
+    -   name: work_orders
+        pipeline:
+        -   vertex: WorkOrder
+            type: vertex
+        -   vertex: Machine
+            lookup_only: true
+            type: vertex
+        -   source: WorkOrder
+            target: Machine
+            relation: targets
+            type: edge
+            target_match: by_asset_id
+    -   name: devices
+        pipeline:
+        -   vertex: Machine
+            type: vertex
+            from:
+                serial_number: serial
+        -   transform:
+                call:
+                    module: graflo.util.transform
+                    foo: normalized_key
+                    params: {}
+                    output:
+                    -   match_key
+                    input:
+                    -   serial
+        -   transform:
+                call:
+                    module: graflo.util.transform
+                    foo: tagged_key
+                    params:
+                        tag: sensors
+                        sep: ':'
+                    output:
+                    -   local_key
+                    input:
+                    -   device_id

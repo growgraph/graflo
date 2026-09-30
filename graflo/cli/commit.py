@@ -400,7 +400,7 @@ def merge3_cmd(
             click.echo(f"    right: {[op.op for op in conflict.right_ops]}")
         raise click.ClickException(
             "unresolved conflicts; re-run with --take left/right, or resolve "
-            "them through the server API"
+            "them per slot in Python with merge_three_way(..., resolutions=...)"
         )
 
     resolutions = []

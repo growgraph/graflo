@@ -161,7 +161,7 @@ def test_ingest_manifest_to_file_backend(
     from graflo.hq.caster import IngestionParams
 
     example_dir = (
-        Path(__file__).resolve().parents[2] / "examples" / "13-graph-export-migration"
+        Path(__file__).resolve().parents[2] / "examples" / "14-file-backend-export"
     )
     manifest = GraphManifest.from_config(FileHandle.load(example_dir / "manifest.yaml"))
     manifest.finish_init()

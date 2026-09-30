@@ -1,18 +1,25 @@
-# GraFlo ontology (meta-model RDF)
+# GraFlo ontology
 
-GraFlo ships an **OWL ontology** that describes GraFlo’s own configuration language — not your domain knowledge graph, but the **manifest contract**: `GraphManifest`, `Schema`, `IngestionModel`, `Resource` pipelines (YAML `ResourceConfig`), `ProtoTransform` definitions, and `Bindings`.
+A manifest is a YAML file, but catalogs, lineage tools and SPARQL endpoints
+work with RDF. GraFlo ships an OWL ontology, with the prefix `gf:`, that
+describes the manifest itself: its schema, resources, transforms and bindings.
+This page shows what the vocabulary covers and how to convert a manifest to RDF
+and back, from Python or the shell, without losing anything the manifest says.
 
-This is separate from **user-domain RDF** ingestion, where `RdfInferenceManager` reads an external OWL/RDFS TBox (`ex:Person`, `ex:publication`, …) and produces a GraFlo `Schema` + ingestion wiring.
+The ontology describes manifests, not your domain. Building a manifest from
+your own OWL or RDFS ontology (`ex:Machine`, `ex:WorkOrder`, ...) is a different
+task, done by `RdfInferenceManager`; see the
+[RDF inference example (10)](../../examples/infer-from-rdf/index.md).
 
 ```mermaid
 flowchart TB
-    subgraph domain ["User domain (existing)"]
-        UOWL["OWL/RDFS ontology<br/>ex:Person, ex:Publication"]
+    subgraph domain ["Your domain"]
+        UOWL["OWL/RDFS ontology<br/>ex:Machine, ex:WorkOrder"]
         UOWL --> RIM["RdfInferenceManager"]
         RIM --> LPG["GraFlo Schema + IngestionModel"]
     end
 
-    subgraph meta ["GraFlo meta-model (new)"]
+    subgraph meta ["The manifest as RDF"]
         YAML["GraphManifest YAML"]
         YAML --> SER["ManifestRdfSerializer"]
         SER --> GFOWL["gf: GraphManifest RDF"]
@@ -36,9 +43,9 @@ The Turtle source lives in the package at `graflo/rdf/ontology/graflo.ttl`. Cons
 
 ## Interactive visualization
 
-The explorer below is a **class graph** from `graflo.ttl`. Classes are grouped into the blocks the manifest merges — the bands are derived from what `gf:GraphManifest` points at, not hand-assigned. Within a band, columns run **left to right from general to specific**: a class sits one column right of whatever contains it (`gf:Schema` → `gf:CoreSchema` → `gf:VertexConfig` → `gf:Vertex` → `gf:Field`) or generalises it (`gf:Actor` → `gf:VertexProducingActor` → `gf:VertexActor`), and specialization always wins, so a subclass is never level with its superclass. Classes at the same distance stay in the same column — `gf:Vertex` and `gf:Edge` are peers. The layout is deterministic: the same ontology always draws the same picture.
+The explorer below is a **class graph** from `graflo.ttl`. Classes are grouped into the blocks a manifest is made of; the bands are derived from what `gf:GraphManifest` points at, not hand-assigned. Within a band, columns run **left to right from general to specific**: a class sits one column right of whatever contains it (`gf:Schema` → `gf:CoreSchema` → `gf:VertexConfig` → `gf:Vertex` → `gf:Field`) or generalises it (`gf:Actor` → `gf:VertexProducingActor` → `gf:VertexActor`), and specialization always wins, so a subclass is never level with its superclass. Classes at the same distance stay in the same column — `gf:Vertex` and `gf:Edge` are peers. The layout is deterministic: the same ontology always draws the same picture.
 
-Only the taxonomy is drawn by default; **select a class** to reveal its properties, or switch the filter to *Display all*. `gf:GrafloArtifact` is the superclass of nearly every class, so its 28 links are hidden by default — tick **Show GrafloArtifact** to bring them back. Drag, scroll to zoom, click to focus. Regenerate with `uv run python docs/_build/scripts/build_ontology_viz.py` after ontology edits.
+Only the taxonomy is drawn by default; **select a class** to reveal its properties, or switch the filter to *Display all*. `gf:GrafloArtifact` is the superclass of nearly every class, so its links are hidden by default — tick **Show GrafloArtifact** to bring them back. Drag, scroll to zoom, click to focus. Regenerate with `uv run python docs/_build/scripts/build_ontology_viz.py` after ontology edits.
 
 If the embedded viewer is blank in an IDE browser preview, use **Open full screen** in a normal browser tab.
 
@@ -92,7 +99,7 @@ If the embedded viewer is blank in an IDE browser preview, use **Open full scree
 - `gf:Bindings`, and `gf:BoundConnector` with one subclass per connector model: `gf:FileConnector`, `gf:TableConnector`, `gf:SparqlConnector`, `gf:APIConnector`, `gf:KafkaConnector`
 - `gf:ResourceConnectorBinding`, `gf:ConnectorConnectionBinding`, `gf:StagingProxyBinding`
 
-**Semantic grounding** (optional, added in 1.4.0)
+**Semantic grounding** (optional)
 
 An element may be anchored to an external vocabulary through a `semantics:` block on the schema metadata, a vertex, an edge, or a field:
 
@@ -115,15 +122,15 @@ This maps to `gf:semanticIri`, `skos:exactMatch`, `skos:altLabel`, and — field
 
 Grounding survives a fold. When two definitions of one type or property are combined — by `merge_vertices`, or by a `merge_manifests` equivalence — `exact_match` and `synonyms` union, since they are sets of claims. A single-valued `iri` cannot: two sides denoting different concepts denote neither exactly, so a disagreement clears it rather than electing one. `unit` is the exception that refuses outright — unlike an `iri`, two units mean the combined property would hold numerically incomparable values, which is a defect in the data rather than in its description.
 
-**Declared, symmetric and native inverses** (added in 1.7.0)
+**Declared, symmetric and native inverses**
 
 `gf:EdgeConfig` points at its declared inverse pairs through `gf:hasInverse`; each `gf:EdgeInverse` carries `gf:relation` and `gf:inverseRelation` (the pair is unordered), ordered by `gf:artifactIndex`. Relations declared as their own inverse are `gf:symmetricRelation` literals on the `gf:EdgeConfig`. A `gf:DatabaseProfile` names each relation whose inverse the database maintains with `gf:nativeInverseRelation`. The inverse type's name is not repeated on the profile — it is the declared pair's other relation. The third realization needs no term: a *materialized* inverse is an ordinary `gf:Edge`, and the `emit_inverse` flag that feeds it rides in the step's `gf:stepPayload` like every other step option.
 
-These are reified, string-valued terms describing a GraFlo contract, not OWL axioms over your relations. Going the other way, schema inference from an ontology does read `owl:inverseOf` and `owl:SymmetricProperty`, and turns them into `edge_config.inverses` and `edge_config.symmetric`.
+These are reified, string-valued terms describing a manifest, not OWL axioms over your relations. Going the other way, schema inference from an ontology does read `owl:inverseOf` and `owl:SymmetricProperty`, and turns them into `edge_config.inverses` and `edge_config.symmetric`.
 
-**List field types** (added in 1.6.0)
+**List field types**
 
-`gf:FieldType` covers all nine `FieldType` members: `gf:UUID` and `gf:LIST` joined the seven scalars, and a list's element type rides on `gf:itemType` (domain `gf:Field`, range `gf:FieldType`).
+`gf:FieldType` has one individual for each of the nine `FieldType` members, `gf:UUID` and `gf:LIST` included, and a list's element type is given by `gf:itemType` (domain `gf:Field`, range `gf:FieldType`).
 
 ```yaml
 properties:
@@ -132,9 +139,7 @@ properties:
       item_type: STRING
 ```
 
-Before this, an unmapped enum value emitted no triple at all, so a `UUID` or `LIST<STRING>` property came back from RDF as an untyped field with nothing raised. A test exhaustive over `FieldType` now guards the mapping.
-
-**Naming convention** (optional, added in 1.5.0)
+**Naming convention** (optional)
 
 Schema metadata may declare how the schema spells the identifiers it *invents*:
 
@@ -150,7 +155,7 @@ metadata:
 
 This maps to `gf:hasNamingConvention` and a `gf:NamingConvention` node carrying `gf:vertexCase`, `gf:relationCase`, `gf:propertyCase` (each a `gf:NameCase` individual) and `gf:singularVertexNames`.
 
-Two things the block is careful about. `property_case` defaults to `preserve` because a property name binds to a key in the source document — restyling one without emitting the matching `transform.rename` yields a column that silently never populates. And like `semantics:`, the block is **descriptive**: it records the convention the names follow so a later author extending the schema need not infer it, but nothing consults it at runtime and declaring it does not rewrite anything.
+Two things the block is careful about. `property_case` defaults to `preserve` because a property name binds to a key in the source document — restyling one without the matching `transform.rename` leaves a property that never receives a value, and nothing reports it. And like `semantics:`, the block is **descriptive**: it records the convention the names follow so a later author extending the schema need not infer it, but nothing consults it at runtime and declaring it does not rewrite anything.
 
 **Enumerations** (named individuals): `gf:DBType` (ArangoDB, Neo4j, …), transform target/strategy, key-selection mode, edge duplicate policy, bound source kind.
 
@@ -201,22 +206,23 @@ restored = ManifestRdfDeserializer().from_turtle(
 
 ## CLI
 
-After `pip install graflo` (or `uv sync` in the repo):
-
 ```bash
-# Manifest → RDF
-uv run manifest-to-rdf manifest.yaml \
+# Manifest to RDF
+graflo manifest-to-rdf manifest.yaml \
   --base-uri https://growgraph.dev/manifests/academic/v1 \
   --format turtle \
   --output academic.ttl
 
-# RDF → manifest YAML
-uv run rdf-to-manifest academic.ttl \
+# RDF to manifest YAML
+graflo rdf-to-manifest academic.ttl \
   --manifest-uri https://growgraph.dev/manifests/academic/v1 \
   --output manifest.restored.yaml
 ```
 
-Formats: `turtle` (default), `json-ld`, `nt`, `xml`.
+`--format` is `turtle` (default), `json-ld`, `nt` or `xml`; without `--output`
+the result is printed. `--no-include-ontology` leaves the ontology's own
+triples out. `rdf-to-manifest` reads the same formats and `n3`, chosen with
+`--input-format`.
 
 ## Round-trip fidelity
 
@@ -235,8 +241,10 @@ The guaranteed invariant matches the rest of GraFlo config: **semantic canonical
 
 `graflo/rdf/ontology/graflo-context.jsonld` maps common JSON keys to `gf:` IRIs for tools that consume JSON-LD directly. The serializer’s `to_json_ld()` output can be combined with this context in downstream pipelines.
 
-## Related
+## What to read next
 
-- [Example 6 — RDF / Turtle ingestion](../../examples/example-6.md) — **domain** OWL → GraFlo manifest (`RdfInferenceManager`)
-- [API — `graflo.rdf`](../../reference/rdf/index.md)
-- [API — `RdfInferenceManager`](../../reference/hq/rdf_inferencer.md)
+- [RDF inference example (10)](../../examples/infer-from-rdf/index.md): a
+  manifest built from your own ontology with `RdfInferenceManager`.
+- [Conformance profiles](world_model_profile.md): the checks that read the
+  `semantics` block.
+- [API reference for `graflo.rdf`](../../reference/rdf/index.md).

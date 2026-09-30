@@ -61,7 +61,7 @@ class SqlAlchemyMetadataProvider(SqlMetadataProvider):
         enforce keys, so its dialect may not implement the call at all — and
         SQLAlchemy signals that by raising ``NotImplementedError``. Treating it
         as fatal would make an entire class of source un-introspectable over a
-        question whose honest answer is simply "none declared".
+        question whose correct answer is "none declared".
 
         The consequence is real and worth stating: with no foreign keys, edge
         detection falls back to name-based inference, which is weaker.

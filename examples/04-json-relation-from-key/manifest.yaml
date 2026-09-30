@@ -1,0 +1,67 @@
+schema:
+    metadata:
+        name: debian-eco
+        version: 0.0.1
+    graph:
+        vertex_config:
+            vertices:
+            -   name: package
+                properties: [name, version]
+                identity: [name]
+            -   name: maintainer
+                properties: [name, email]
+                identity: [email]
+            -   name: bug
+                properties: [id, subject, severity, date]
+                identity: [id]
+        edge_config:
+            edges:
+            -   source: package
+                target: package
+                identities:
+                -   [relation]
+            -   source: maintainer
+                target: package
+            -   source: package
+                target: bug
+    db_profile: {}
+ingestion_model:
+    resources:
+    -   name: package
+        pipeline:
+        -   vertex: package
+        -   key: maintainer
+            pipeline:
+            -   vertex: maintainer
+        -   key: dependencies
+            pipeline:
+            -   any_key: true
+                pipeline:
+                -   vertex: package
+                    keep_fields: [name]
+        -   edge:
+                from: maintainer
+                to: package
+                exclude_target: dependencies
+        -   edge:
+                from: package
+                to: package
+                relation_from_key: true
+                exclude_source: dependencies
+                match_target: dependencies
+    -   name: bug
+        pipeline:
+        -   transform:
+                rename:
+                    package: name
+                    bug_num: id
+        -   vertex: package
+        -   vertex: bug
+bindings:
+    connectors:
+    -   regex: "^package\\.meta\\.json\\.gz$"
+        sub_path: data
+        resource_name: package
+    -   regex: "^bugs\\.json\\.gz$"
+        sub_path: data
+        resource_name: bug

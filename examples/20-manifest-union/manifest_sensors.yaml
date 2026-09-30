@@ -1,0 +1,22 @@
+schema:
+    metadata:
+        name: sensors
+        version: 1.0.0
+    graph:
+        vertex_config:
+            vertices:
+            -   name: Device
+                properties:
+                -   device_id
+                -   serial
+                -   model
+                identity:
+                -   device_id
+        edge_config:
+            edges: []
+ingestion_model:
+    resources:
+    -   name: devices
+        pipeline:
+        -   vertex: Device
+    transforms: []

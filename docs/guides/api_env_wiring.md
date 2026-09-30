@@ -1,81 +1,137 @@
 # API env wiring
 
-Register REST API `base_url` and credentials from environment variables instead of hard-coding `RestApiConnConfig` in Python.
+You read records from REST APIs, and each API has an address and credentials
+that belong neither in the manifest nor in your code. This guide keeps them in
+environment variables: the manifest names each API by a label, and one call
+loads the address and credentials of every label. Afterwards you can run the
+same manifest against a test API and a production API by changing
+environment variables only.
 
-## Prerequisites
+## What you need
 
-- Python 3.11+
-- A manifest with `APIConnector` entries and `connector_connection` proxy labels
-- Environment variables set per `conn_proxy` label
+- A manifest whose `bindings` read from REST APIs; see
+  [API connector](../concepts/connectors/api_connector.md) for the connector
+  itself.
+- A shell or a process manager where you can set environment variables.
 
-## Step 1 — Declare proxy labels in the manifest
+## Steps
 
-Keep secrets out of YAML. Map each connector to a `conn_proxy` label:
+### 1. Name each API by a label
+
+In `bindings`, give every API [connector](../concepts/glossary.md#connector)
+only a path, and map the connector to a label with `connector_connection`.
+The label is a `conn_proxy`, a name for a connection whose details are
+supplied at run time (see [connection proxy](../concepts/glossary.md#connection-proxy)):
 
 ```yaml
 bindings:
   connectors:
-    - name: users_api
-      path: /api/users
-    - name: orders_api
-      path: /api/orders
+    - name: work_orders_api
+      path: /api/work-orders
+      resource_name: work_orders
+    - name: readings_api
+      path: /api/readings
+      resource_name: readings
   connector_connection:
-    - connector: users_api
-      conn_proxy: user_service
-    - connector: orders_api
-      conn_proxy: order_service
+    - connector: work_orders_api
+      conn_proxy: maintenance_api
+    - connector: readings_api
+      conn_proxy: sensor_feed
 ```
 
-## Step 2 — Set environment variables
+Here work orders come from the maintenance system's API and readings from the
+sensor feed's API. Neither address appears in the manifest.
 
-Each `conn_proxy` maps to an uppercase env prefix (`user_service` → `USER_SERVICE_`):
+### 2. Set the variables
+
+Each label becomes a variable prefix: upper case, `-` replaced by `_`, and a
+trailing `_`. `maintenance_api` reads `MAINTENANCE_API_*`, and a label
+`sensor-feed` would read `SENSOR_FEED_*`.
 
 | Variable | Required | Meaning |
-| -------- | -------- | ------- |
-| `{PREFIX}BASE_URL` | yes | API base URL |
-| `{PREFIX}AUTH_TYPE` | no (default `bearer`) | `bearer`, `basic`, `digest`, or `api_key` |
-| `{PREFIX}TOKEN` | when using bearer/api_key | Token or API key value |
-| `{PREFIX}USERNAME` / `{PREFIX}PASSWORD` | when using basic/digest | Credentials |
-
-Example:
+|---|---|---|
+| `{PREFIX}BASE_URL` | yes | Base URL; the connector's `path` is appended to it |
+| `{PREFIX}AUTH_TYPE` | no, default `bearer` | `bearer`, `basic`, `digest` or `api_key` |
+| `{PREFIX}TOKEN` | for `bearer` and `api_key` | The token or key |
+| `{PREFIX}USERNAME`, `{PREFIX}PASSWORD` | for `basic` and `digest` | The credentials |
+| `{PREFIX}HEADER_NAME` | no, default `Authorization` | The header that carries the token or key |
+| `{PREFIX}PREFIX` | no, default `Bearer` | Text put before a `bearer` token in the header |
 
 ```bash
-export USER_SERVICE_BASE_URL=https://users.example.com
-export USER_SERVICE_AUTH_TYPE=bearer
-export USER_SERVICE_TOKEN=secret
+export MAINTENANCE_API_BASE_URL=https://maintenance.example.com
+export MAINTENANCE_API_TOKEN=...
+export SENSOR_FEED_BASE_URL=https://sensors.example.com
+export SENSOR_FEED_AUTH_TYPE=api_key
+export SENSOR_FEED_HEADER_NAME=X-API-Key
+export SENSOR_FEED_TOKEN=...
 ```
 
-## Step 3 — Register configs at runtime
+### 3. Load the variables and ingest
 
 ```python
-from graflo.connections.provider import InMemoryConnectionProvider
-from graflo.hq.ingestion_parameters import IngestionParams
+from suthing import FileHandle
+
+from graflo import GraphEngine, GraphManifest
+from graflo.connections import ArangoConfig, InMemoryConnectionProvider
+
+manifest = GraphManifest.from_config(FileHandle.load("manifest.yaml"))
+manifest.finish_init()
 
 provider = InMemoryConnectionProvider()
-provider.register_all_api_configs_from_env(bindings=bindings)
+provider.register_all_api_configs_from_env(bindings=manifest.require_bindings())
 
+conn_conf = ArangoConfig.from_env()
+engine = GraphEngine(target_db_flavor=conn_conf.connection_type)
 engine.define_and_ingest(
     manifest=manifest,
     target_db_config=conn_conf,
     connection_provider=provider,
-    ingestion_params=IngestionParams(),
+    recreate_schema=True,
 )
 ```
 
-Override a single prefix when env naming differs:
+`register_all_api_configs_from_env` finds every label used by an API
+connector, reads that label's variables, and ties each connector to its
+label. The provider then hands the address and credentials to the ingest.
+
+### 4. Use other variable names, if you must
+
+When the variables already exist under other names, map a label to its
+prefix:
 
 ```python
 provider.register_all_api_configs_from_env(
-    bindings=bindings,
-    env_prefix_map={"user_service": "USERS_API_"},
+    bindings=manifest.require_bindings(),
+    env_prefix_map={"maintenance_api": "WORK_ORDERS_"},
 )
 ```
 
-## Full runnable example
+`maintenance_api` then reads `WORK_ORDERS_BASE_URL` and the rest; other labels
+keep the default rule.
 
-See [Example 14](../examples/example-14.md) and `examples/14-api-env-wiring/`.
+## What you should see
 
-## Related documentation
+To check the wiring without contacting any API, print what each connector
+resolved to:
 
-- [API connector and pagination](../concepts/connectors/api_connector.md) — pagination, auth types, manual registration
-- [Runtime connector updates](../concepts/connectors/runtime_updates.md) — patch connectors without editing the manifest
+```python
+bindings = manifest.require_bindings()
+for connector in bindings.connectors:
+    api = provider.get_generalized_conn_config(connector).config
+    print(connector.name, api.base_url + connector.path)
+```
+
+```text
+work_orders_api https://maintenance.example.com/api/work-orders
+readings_api https://sensors.example.com/api/readings
+```
+
+Problems show up as a `ValueError` from `register_all_api_configs_from_env`:
+a missing `BASE_URL` names the variable, an unknown `AUTH_TYPE` lists the
+valid ones, and bindings with no API connector tied to a label are refused.
+
+## What to read next
+
+- [API connector](../concepts/connectors/api_connector.md): paths, parameters, pagination and authentication in detail.
+- [API sources from environment variables (12)](../examples/api-env-config/index.md): this guide as a runnable script.
+- [Database connections](database_connections.md): the same idea for the database you write to.

@@ -1,0 +1,68 @@
+@prefix ex: <http://example.org/> .
+
+# Instances only. The classes and properties they use are declared in ontology.ttl.
+
+# --- Institutions ----------------------------------------------------------
+
+ex:mit  a ex:Institution ;
+    ex:instName "MIT" ;
+    ex:country  "USA" .
+
+ex:eth  a ex:Institution ;
+    ex:instName "ETH Zürich" ;
+    ex:country  "Switzerland" .
+
+ex:oxford  a ex:Institution ;
+    ex:instName "University of Oxford" ;
+    ex:country  "UK" .
+
+# --- Researchers -----------------------------------------------------------
+
+ex:alice  a ex:Researcher ;
+    ex:fullName       "Alice Smith" ;
+    ex:orcid          "0000-0001-0001-0001" ;
+    ex:affiliatedWith ex:mit ;
+    ex:authorOf       ex:paper1 .
+
+ex:bob  a ex:Researcher ;
+    ex:fullName       "Bob Jones" ;
+    ex:orcid          "0000-0001-0002-0002" ;
+    ex:affiliatedWith ex:eth ;
+    ex:authorOf       ex:paper2 .
+
+ex:carol  a ex:Researcher ;
+    ex:fullName       "Carol Wu" ;
+    ex:orcid          "0000-0001-0003-0003" ;
+    ex:affiliatedWith ex:oxford ;
+    ex:authorOf       ex:paper3 .
+
+ex:dave  a ex:Researcher ;
+    ex:fullName       "Dave Müller" ;
+    ex:orcid          "0000-0001-0004-0004" ;
+    ex:affiliatedWith ex:eth ;
+    ex:authorOf       ex:paper4 .
+
+# --- Publications ----------------------------------------------------------
+
+ex:paper1  a ex:Publication ;
+    ex:title "Graph Databases: A Survey" ;
+    ex:year  2021 ;
+    ex:doi   "10.1234/paper1" .
+
+ex:paper2  a ex:Publication ;
+    ex:title "Knowledge Graphs in Practice" ;
+    ex:year  2022 ;
+    ex:doi   "10.1234/paper2" ;
+    ex:cites ex:paper1 .
+
+ex:paper3  a ex:Publication ;
+    ex:title "Ontology-Driven Data Integration" ;
+    ex:year  2023 ;
+    ex:doi   "10.1234/paper3" ;
+    ex:cites ex:paper2 .
+
+ex:paper4  a ex:Publication ;
+    ex:title "SPARQL Query Optimization Techniques" ;
+    ex:year  2024 ;
+    ex:doi   "10.1234/paper4" ;
+    ex:cites ex:paper3 .

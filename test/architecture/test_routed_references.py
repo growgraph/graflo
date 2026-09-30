@@ -21,18 +21,18 @@ from graflo.architecture.contract.manifest import GraphManifest
 from graflo.hq.document_caster import DocumentCaster
 from graflo.hq.ingestion_parameters import IngestionParams
 
-IMPACTS_A = ("Change", "ClassA", "impacts")
-IMPACTS_C = ("Change", "ClassC", "impacts")
+TARGETS_A = ("WorkOrder", "ClassA", "targets")
+TARGETS_C = ("WorkOrder", "ClassC", "targets")
 
 #: ``ClassA`` is referenced by its ``code``; ``ClassC`` by its primary ``x_id``.
 PER_CLASS_ROUTER = {
     "type": "vertex_router",
-    "type_field": "ciType",
+    "type_field": "assetType",
     "vertex_from_map": {"ClassA": {"code": "blaId"}, "ClassC": {"x_id": "blaId"}},
 }
 ROWS = [
-    {"blaId": "K1", "ciType": "ClassA", "change_id": "c1"},
-    {"blaId": "k9", "ciType": "ClassC", "change_id": "c1"},
+    {"blaId": "K1", "assetType": "ClassA", "work_order_id": "w1"},
+    {"blaId": "k9", "assetType": "ClassC", "work_order_id": "w1"},
 ]
 
 
@@ -40,7 +40,7 @@ def _manifest(*steps: dict[str, Any]) -> GraphManifest:
     manifest = GraphManifest.from_config(
         {
             "schema": {
-                "metadata": {"name": "cmdb", "version": "1.0.0"},
+                "metadata": {"name": "maintenance", "version": "1.0.0"},
                 "graph": {
                     "vertex_config": {
                         "vertices": [
@@ -58,23 +58,23 @@ def _manifest(*steps: dict[str, Any]) -> GraphManifest:
                                 "identity": ["x_id"],
                             },
                             {
-                                "name": "Change",
-                                "properties": ["change_id"],
-                                "identity": ["change_id"],
+                                "name": "WorkOrder",
+                                "properties": ["work_order_id"],
+                                "identity": ["work_order_id"],
                             },
                         ]
                     },
                     "edge_config": {
                         "edges": [
                             {
-                                "source": "Change",
+                                "source": "WorkOrder",
                                 "target": "ClassA",
-                                "relation": "impacts",
+                                "relation": "targets",
                             },
                             {
-                                "source": "Change",
+                                "source": "WorkOrder",
                                 "target": "ClassC",
-                                "relation": "impacts",
+                                "relation": "targets",
                             },
                         ]
                     },
@@ -97,12 +97,12 @@ def _manifest(*steps: dict[str, Any]) -> GraphManifest:
 def _routed(router: dict[str, Any], **edge: Any) -> GraphManifest:
     return _manifest(
         router,
-        {"role": "change", "vertex": "Change"},
+        {"role": "work_order", "vertex": "WorkOrder"},
         {
             "type": "edge",
-            "source": "Change",
-            "target_role": "ciType",
-            "relation": "impacts",
+            "source": "WorkOrder",
+            "target_role": "assetType",
+            "relation": "targets",
             **edge,
         },
     )
@@ -127,38 +127,40 @@ class TestDataDrivenEdgesKeepTheirSelectors:
         manifest = _routed(
             {
                 "type": "vertex_router",
-                "type_field": "ciType",
+                "type_field": "assetType",
                 "from": {"code": "blaId"},
             },
             target_match="by_code",
         )
         graph = _cast(manifest, ROWS[:1])
-        assert _targets(graph, IMPACTS_A) == [{"code": "K1"}]
-        match = _match(manifest, IMPACTS_A)
+        assert _targets(graph, TARGETS_A) == [{"code": "K1"}]
+        match = _match(manifest, TARGETS_A)
         assert match is not None and match.target == "by_code"
 
     def test_relation_from_the_data_keeps_the_selector(self) -> None:
         manifest = _manifest(
             {"vertex": "ClassA", "from": {"code": "blaId"}, "lookup_only": True},
-            {"vertex": "Change"},
+            {"vertex": "WorkOrder"},
             {
-                "source": "Change",
+                "source": "WorkOrder",
                 "target": "ClassA",
                 "relation_field": "rel",
                 "target_match": "by_code",
             },
         )
-        graph = _cast(manifest, [{"blaId": "K1", "change_id": "c1", "rel": "impacts"}])
-        assert _targets(graph, IMPACTS_A) == [{"code": "K1"}]
+        graph = _cast(
+            manifest, [{"blaId": "K1", "work_order_id": "w1", "rel": "targets"}]
+        )
+        assert _targets(graph, TARGETS_A) == [{"code": "K1"}]
 
 
 class TestPerClassSelectors:
     def test_each_routed_class_matches_on_its_own_identity(self) -> None:
         manifest = _routed(PER_CLASS_ROUTER, target_match={"ClassA": "by_code"})
         graph = _cast(manifest)
-        assert _targets(graph, IMPACTS_A) == [{"code": "K1"}]
-        assert _targets(graph, IMPACTS_C) == [{"x_id": "k9"}]
-        assert _match(manifest, IMPACTS_C) is None
+        assert _targets(graph, TARGETS_A) == [{"code": "K1"}]
+        assert _targets(graph, TARGETS_C) == [{"x_id": "k9"}]
+        assert _match(manifest, TARGETS_C) is None
 
     def test_a_class_the_schema_does_not_declare_is_refused(self) -> None:
         with pytest.raises(ValueError, match="Ghost"):
@@ -171,26 +173,26 @@ class TestPerClassSelectors:
     def test_a_static_endpoint_takes_its_own_class(self) -> None:
         manifest = _manifest(
             {"vertex": "ClassA", "from": {"code": "blaId"}, "lookup_only": True},
-            {"vertex": "Change"},
+            {"vertex": "WorkOrder"},
             {
-                "source": "Change",
+                "source": "WorkOrder",
                 "target": "ClassA",
-                "relation": "impacts",
+                "relation": "targets",
                 "target_match": {"ClassA": "by_code"},
             },
         )
         graph = _cast(manifest, ROWS[:1])
-        assert _targets(graph, IMPACTS_A) == [{"code": "K1"}]
+        assert _targets(graph, TARGETS_A) == [{"code": "K1"}]
 
     def test_a_static_endpoint_naming_another_class_is_refused(self) -> None:
         with pytest.raises(ValueError, match="ClassC"):
             _manifest(
                 {"vertex": "ClassA", "lookup_only": True},
-                {"vertex": "Change"},
+                {"vertex": "WorkOrder"},
                 {
-                    "source": "Change",
+                    "source": "WorkOrder",
                     "target": "ClassA",
-                    "relation": "impacts",
+                    "relation": "targets",
                     "target_match": {"ClassC": "identity"},
                 },
             )
@@ -205,8 +207,8 @@ class TestRouterLookupOnly:
         graph = _cast(manifest)
         assert not graph.vertices.get("ClassA")
         assert not graph.vertices.get("ClassC")
-        assert _targets(graph, IMPACTS_A) == [{"code": "K1"}]
-        assert _targets(graph, IMPACTS_C) == [{"x_id": "k9"}]
+        assert _targets(graph, TARGETS_A) == [{"code": "K1"}]
+        assert _targets(graph, TARGETS_C) == [{"x_id": "k9"}]
 
     def test_listed_classes_are_looked_up_the_rest_written(self) -> None:
         manifest = _routed(
@@ -216,7 +218,7 @@ class TestRouterLookupOnly:
         graph = _cast(manifest)
         assert not graph.vertices.get("ClassA")
         assert [dict(d) for d in graph.vertices["ClassC"]] == [{"x_id": "k9"}]
-        assert _targets(graph, IMPACTS_A) == [{"code": "K1"}]
+        assert _targets(graph, TARGETS_A) == [{"code": "K1"}]
 
     def test_a_listed_class_the_schema_does_not_declare_is_refused(self) -> None:
         with pytest.raises(ValueError, match="Ghost"):
@@ -228,7 +230,7 @@ def test_cast_logs_what_it_prunes_for_want_of_an_identity(
 ) -> None:
     """Pruning a keyless vertex drops data; it must not do so silently."""
     manifest = _routed(
-        {"type": "vertex_router", "type_field": "ciType", "from": {"code": "blaId"}}
+        {"type": "vertex_router", "type_field": "assetType", "from": {"code": "blaId"}}
     )
     with caplog.at_level(logging.WARNING):
         graph = _cast(manifest, ROWS[:1])
@@ -318,7 +320,7 @@ class TestEvolutionKeepsRoutedReferences:
 #: Maps ``blaId`` into every routed class's key, so a routed row is writable.
 KEYED_ROUTER = {
     "type": "vertex_router",
-    "type_field": "ciType",
+    "type_field": "assetType",
     "from": {"x_id": "blaId"},
 }
 
@@ -328,8 +330,8 @@ class TestClosedRouters:
 
     def test_a_value_missing_from_the_table_is_skipped(self) -> None:
         rows = [
-            {"blaId": "x1", "ciType": "ClassA", "change_id": "c1"},
-            {"blaId": "k9", "ciType": "ClassC", "change_id": "c1"},
+            {"blaId": "x1", "assetType": "ClassA", "work_order_id": "w1"},
+            {"blaId": "k9", "assetType": "ClassC", "work_order_id": "w1"},
         ]
         opened = _cast(
             _routed({**KEYED_ROUTER, "type_map": {"ClassC": "ClassC"}}), rows
@@ -354,7 +356,7 @@ class TestClosedRouters:
             step_produces_vertices,
         )
 
-        known = {"ClassA", "ClassC", "Change"}
+        known = {"ClassA", "ClassC", "WorkOrder"}
         opened = {**KEYED_ROUTER, "type_map": {"c": "ClassC"}}
         closed = {**opened, "type_map_only": True}
         assert step_produces_vertices(opened, known_vertices=known) == known

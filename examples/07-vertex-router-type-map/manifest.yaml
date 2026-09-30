@@ -1,0 +1,92 @@
+schema:
+    metadata:
+        name: objects_relations
+    graph:
+        vertex_config:
+            vertices:
+            -   name: person
+                properties:
+                -   id
+                -   name
+                -   age
+                -   email
+                identity:
+                -   id
+            -   name: vehicle
+                properties:
+                -   id
+                -   name
+                -   license_plate
+                -   fuel_type
+                identity:
+                -   id
+            -   name: institution
+                properties:
+                -   id
+                -   name
+                -   industry
+                -   founded_year
+                identity:
+                -   id
+        edge_config:
+            edges:
+            -   source: person
+                target: institution
+                relation: employed_by
+            -   source: person
+                target: person
+                relation: colleague_of
+            -   source: person
+                target: vehicle
+                relation: owns
+            -   source: institution
+                target: institution
+                relation: funds
+    db_profile: {}
+ingestion_model:
+    resources:
+    -   name: objects
+        pipeline:
+        -   vertex_router:
+                type_field: type
+                type_map:
+                    Person: person
+                    Vehicle: vehicle
+                    Institution: institution
+    -   name: relations
+        pipeline:
+        -   vertex_router:
+                type_field: source_type
+                type_map:
+                    Person: person
+                    Vehicle: vehicle
+                    Institution: institution
+                role: source
+                from:
+                    id: source_id
+        -   vertex_router:
+                type_field: target_type
+                type_map:
+                    Person: person
+                    Vehicle: vehicle
+                    Institution: institution
+                role: target
+                from:
+                    id: target_id
+        -   edge:
+                source_role: source
+                target_role: target
+                relation_field: relation
+                relation_map:
+                    EMPLOYED_BY: employed_by
+                    COLLEAGUE_OF: colleague_of
+                    OWNS: owns
+                    FUNDS: funds
+bindings:
+    connectors:
+    -   regex: "^objects\\.csv$"
+        sub_path: data
+        resource_name: objects
+    -   regex: "^relations\\.csv$"
+        sub_path: data
+        resource_name: relations

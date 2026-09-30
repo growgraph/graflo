@@ -50,8 +50,8 @@ KNOWN_NAMESPACES: tuple[str, ...] = (
 
 #: Properties that carry a unit *on the row* rather than in the schema. A type
 #: whose instances each measure something different -- an abstract
-#: ``Observation`` is the case that forces this -- cannot name one unit in its
-#: contract without lying, so declaring the unit as data is the honest form.
+#: ``Observation`` is the case that forces this -- has no single correct unit
+#: to declare in the schema, so the unit is declared as data instead.
 UNIT_PROPERTY_IRIS: frozenset[str] = frozenset(
     {
         "http://qudt.org/schema/qudt/hasUnit",
@@ -118,9 +118,8 @@ class VocabularyResolver(Protocol):
 class PrefixAllowListResolver:
     """Recognises :data:`KNOWN_NAMESPACES`; everything else is ``unknown``.
 
-    The honest v0.1 answer to "does this resolve to a *live* vocabulary": it
-    checks the shape and the namespace and says so, rather than dereferencing
-    anything. ``unknown`` is reported as a warning, never as a failure.
+    Answers "does this resolve to a *live* vocabulary" without dereferencing
+    anything: it checks the shape and the namespace and says so. ``unknown`` is reported as a warning, never as a failure.
     """
 
     namespaces: tuple[str, ...] = KNOWN_NAMESPACES

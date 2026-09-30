@@ -1,4 +1,4 @@
-"""``graflo lift`` -- convert a manifest into a twin-ready schema, via Operations.
+"""``graflo lift`` -- convert a manifest into one that tracks state and measurements, via Operations.
 
 The verb is a thin shell over
 :func:`~graflo.architecture.evolution.state_core.plan_lift`. It reads a manifest
@@ -100,7 +100,7 @@ def lift(
     do_check: bool,
     profile_name: str,
 ) -> None:
-    """Lift MANIFEST into a twin-ready schema.
+    """Lift MANIFEST into a schema that tracks state and measurements.
 
     Adds temporal validity and provenance: mutable facts move onto their own
     `<Type>State` with a validity interval, measurements gain units, and

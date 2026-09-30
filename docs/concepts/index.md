@@ -1,277 +1,220 @@
-# Concepts
+# Concepts overview
 
-GraFlo is a Graph Schema Transformation Language (GSTL) for Labeled Property Graphs (LPG). As a domain-specific language (DSL), it separates graph schema definition from data-source binding and database targeting, enabling a single declarative specification to drive ingestion across heterogeneous sources and databases while keeping transformation logic portable across vendors.
+GraFlo loads records from files, SQL tables, RDF data, REST APIs and Kafka
+topics into a labeled property graph. You describe the graph, and how each
+kind of record maps onto it, once in a manifest written in GSTL, the Graph
+Schema & Transformation Language; the same manifest then loads any of eight
+targets. This page is the map of the concept pages: it follows a record from
+its source to the database, lists what GraFlo reads and writes, and says which
+page answers which question. Terms are defined in the
+[glossary](glossary.md).
 
-## System overview
+## The manifest
 
-GraFlo supports two complementary paths into a graph database:
+A manifest is one YAML file (or one `GraphManifest` object in Python) with
+three blocks. Each block answers one question, and a task may leave out the
+blocks it does not need.
 
-1. **Manifest ingestion** — define a `GraphManifest`, bind tabular/RDF/API sources, cast through actor pipelines.
-2. **Graph migration** — introspect an existing graph DB (or file backend) and load into any supported target with `GraphEngine.migrate_graph()` — no manifest required.
+| Block | Question it answers | Class |
+|---|---|---|
+| `schema` | What does the graph look like? Vertex types, their properties and identity, edge types, and the names and indexes the target database uses. | `Schema` |
+| `ingestion_model` | How does one kind of record become vertices and edges? One resource per kind of record, plus reusable transforms. | `IngestionModel` |
+| `bindings` | Where do the records come from? One connector per file pattern, table, endpoint or topic, wired to a resource by name. | `Bindings` |
 
-### Manifest ingestion pipeline
+A complete manifest for one CSV file of machines:
 
-The manifest path transforms data through six stages with a manifest contract boundary:
-
-```mermaid
-%%{ init: { 
-  "theme": "base",
-  "themeVariables": {
-    "primaryColor": "#90CAF9",
-    "primaryTextColor": "#111111",
-    "primaryBorderColor": "#1E88E5",
-    "lineColor": "#546E7A",
-    "secondaryColor": "#A5D6A7",
-    "tertiaryColor": "#CE93D8"
-  }
-} }%%
-
-flowchart LR
-    MF["<b>GraphManifest</b><br/>schema + ingestion_model + bindings"]
-    SI["<b>Source Instance</b><br/>File · SQL · SPARQL · API"]
-    R["<b>Resource</b><br/>Actor Pipeline"]
-    EX["<b>Extraction</b><br/>Observations + Edge Intents"]
-    AS["<b>Assembly</b><br/>Graph Entity Materialization"]
-    GS["<b>Schema (logical)</b><br/>Vertex/Edge Definitions<br/>Identities · DB Profile"]
-    IM["<b>IngestionModel</b><br/>Resources · Transforms"]
-    BD["<b>Bindings</b><br/>Resource -> Data Source mapping"]
-    GC["<b>GraphContainer</b><br/>Database-Independent Representation"]
-    DB["<b>Graph DB (LPG)</b><br/>ArangoDB · Neo4j · TigerGraph · Others"]
-
-    MF --> GS
-    MF --> IM
-    MF --> BD
-    SI --> R --> EX --> AS --> GC --> DB
-    IM -. configures .-> R
-    GS -. constrains .-> AS
-    BD -. routes sources .-> R
+```yaml
+schema:
+  metadata:
+    name: plant
+  graph:
+    vertex_config:
+      vertices:
+        - name: machine
+          properties: [serial, model]
+          identity: [serial]
+    edge_config:
+      edges: []
+ingestion_model:
+  resources:
+    - name: machines
+      pipeline:
+        - vertex: machine
+bindings:
+  connectors:
+    - regex: "^machines\\.csv$"
+      sub_path: data
+      resource_name: machines
 ```
 
-### Graph migration pipeline
+The manifest names no database and holds no credentials. You choose the
+target when you run it, and a source that needs credentials is named by a
+label (`conn_proxy`) that a connection provider resolves at run time. One
+manifest therefore serves every environment. The
+[creating a manifest](../getting_started/creating_manifest.md) guide explains
+the three blocks step by step, and
+[core components](architecture/core_components.md) lists every key of the
+`schema` and `ingestion_model` blocks.
 
-Live graph databases are first-class **sources**. GraFlo introspects schema and data, sanitizes for the target flavor, and writes in one pass:
+## From a source to the database
 
-```mermaid
-flowchart LR
-    GS["Graph source<br/>Neo4j · ArangoDB · file backend"]
-    INT["introspect_graph_schema<br/>fetch_all_docs / fetch_all_edges"]
-    SAN["Sanitizer<br/>target DBType"]
-    DDL["define_schema<br/>target DDL"]
-    GC["GraphContainer"]
-    TGT["Target<br/>any DBType output"]
-
-    GS --> INT --> GC
-    INT --> SAN --> DDL --> TGT
-    GC --> TGT
-```
-
-Entry points: **`GraphEngine.migrate_graph()`** (schema + data), **`infer_schema_from_graph()`** (schema only), **`export_graph()`** (in-memory `GraFloOutput`). See [Graph export and migration](operations/graph_export_migration.md) and the [Graph DB migration guide](../guides/graph_db_migration.md).
-
-- **SourceSample** — a bounded, verbatim-JSON sample of one or more resources, retaining the
-  connector each document came from. The shared input stage for schema inference, algorithmic or
-  agentic; produced by `GraphEngine.sample_resources()`. See
-  [Sampling and profiling](schema/sampling_and_profiling.md).
-- **Source Instance** — a concrete data artifact (a file, a table, a SPARQL endpoint, an API, a Kafka topic), wrapped by an `AbstractDataSource` with a `DataSourceType` (`FILE`, `SQL`, `SPARQL`, `API`, `KAFKA`, `IN_MEMORY`).
-- **Resource** — a reusable transformation pipeline (actor steps: descend, transform, vertex, edge) that maps raw records to graph elements. Data sources bind to Resources by name via the `DataSourceRegistry`.
-- **GraphManifest** — the canonical top-level contract that merges `schema`, `ingestion_model`, and `bindings`. High-level **contract evolution** (remove/merge vertex types and keep ingestion aligned) is described in [Manifest evolution](schema/manifest_evolution.md).
-- **Schema** — the declarative logical graph model (`Schema`): vertex/edge definitions, identities, typed **`properties`**, and DB profile.
-- **IngestionModel** — reusable resources and transforms used to map records into graph entities.
-- **Bindings** — named `FileConnector` / `TableConnector` / `SparqlConnector` / **`APIConnector`** / **`KafkaConnector`** list plus `resource_connector` (many rows per resource allowed: resource→0..n connectors) and optional `connector_connection` (connector **name** or **hash**→`conn_proxy` for runtime `ConnectionProvider` resolution without secrets in the manifest). **`APIConnector`** carries REST path, HTTP options, and **`PaginationConfig`** (offset, page, or cursor strategies; optional **`carry_params`** for session tokens); see [API connector and pagination](connectors/api_connector.md). **`KafkaConnector`** declares topics / consumer group for finite-batch JSON consume; see [Kafka connector](connectors/kafka_connector.md). **Connector patches** (narrow a SQL **`time_filter`** window, add **`filters`**, …) are **not** part of the stored manifest: load `Bindings`, then apply **`Bindings.apply_connector_update`** / **`replace_connector`** from external config or code before **`GraphEngine`** or registry build; see [Runtime connector updates](connectors/runtime_updates.md) (**`ColumnTimeFilter`** and patch YAML). Optional **`staging_proxy`** maps logical staging profile names to `conn_proxy` keys for **TigerGraph bulk S3 upload** (credentials via `S3GeneralizedConnConfig`, not in YAML). Staging is separate from ingestion connectors; see [Object storage (S3 staging)](operations/object_storage.md). Each connector exposes a **bound source modality** (`BoundSourceKind`: file, SQL table, SPARQL, **API**, **Kafka**) for dispatch, distinct from the abstract ingestion **Resource**. See [TigerGraph bulk load](../guides/tigergraph_bulk_load.md).
-- **Database-Independent Graph Representation** — a `GraphContainer` of vertices and edges, independent of any target database.
-- **Graph DB** — the target LPG store (ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph).
-
-### Data flow detail
-
-The diagram below shows how different source instances (files, SQL tables, RDF/SPARQL)
-flow through the `DataSourceRegistry` into the shared `Resource` pipeline.
+A record takes the same path whatever its source and whatever the target.
 
 ```mermaid
 flowchart LR
-    subgraph sources [Data Sources]
-        TTL["*.ttl / *.rdf files"]
-        Fuseki["SPARQL Endpoint<br/>(Fuseki)"]
-        Files["CSV / JSON files"]
-        PG["PostgreSQL"]
-    end
-    subgraph bindings [Bindings]
-        FP[FileConnector]
-        TP[TableConnector]
-        SP[SparqlConnector]
-        AP[APIConnector]
-    end
-    subgraph datasources [DataSource Layer]
-        subgraph rdfFamily ["RdfDataSource (abstract)"]
-            RdfDS[RdfFileDataSource]
-            SparqlDS[SparqlEndpointDataSource]
-        end
-        FileDS[FileDataSource]
-        SQLDS[SQLDataSource]
-        ApiDS[APIDataSource]
-    end
-    subgraph pipeline [Shared Pipeline]
-        Sch[Schema]
-        Res[Resource Pipeline]
-        Ex[Extraction Phase]
-        Asm[Assembly Phase]
-        GC[GraphContainer]
-        DBW[DBWriter]
-    end
-
-    TTL --> SP --> RdfDS --> Res
-    Fuseki --> SP --> SparqlDS --> Res
-    Files --> FP --> FileDS --> Res
-    PG --> TP --> SQLDS --> Res
-    AP --> ApiDS --> Res
-    Sch --> Res
-    Sch --> Asm
-    Res --> Ex --> Asm --> GC --> DBW
+    SRC["Source<br/>files, a table, RDF,<br/>an API, a topic"]
+    CON["Connector<br/>where to read"]
+    BAT["Batches<br/>of records"]
+    RES["Resource<br/>steps that make<br/>vertices and edges"]
+    GC["Graph in memory<br/>one batch"]
+    WR["Writer<br/>names for the target"]
+    DB["Database<br/>or files on disk"]
+    SCH["Schema<br/>vertex and edge types"]
+    SRC --> CON --> BAT --> RES --> GC --> WR --> DB
+    SCH -. what to keep .-> RES
+    SCH -. how to store .-> WR
 ```
 
-- **Bindings** (`FileConnector`, `TableConnector`, `SparqlConnector`, **`APIConnector`**, **`KafkaConnector`**) describe *where* data comes from (file paths, SQL tables, SPARQL endpoints, REST API paths, Kafka topics). Multiple connectors may attach to the same ingestion resource name; optional **`connector_connection`** entries assign each SQL/SPARQL/**API**/Kafka connector a **`conn_proxy`** by **connector `name` or `hash`** (not by resource name). The `ConnectionProvider` turns that label into real connection config at runtime so manifests stay credential-free. REST pagination is configured on **`APIConnector.pagination`** — see [API connector and pagination](connectors/api_connector.md). Kafka consume is configured on **`KafkaConnector`** — see [Kafka connector](connectors/kafka_connector.md).
-- **DataSources** (`AbstractDataSource` subclasses) handle *how* to read data in batches. Each carries a `DataSourceType` and is registered in the `DataSourceRegistry`.
-- **Resources** define *what* to extract — each **`ResourceConfig`** (manifest `ingestion_model.resources`) is a reusable actor pipeline (descend → transform → vertex → edge) executed at cast time by **`ResourceRuntime`**. Optional **`drop_trivial_input_fields`: `true`** removes top-level keys whose value is `null` or `""` **before** actors run (shallow only; `0` and `false` stay). Optional **`fail_fast`: `true`** makes transform steps fail when required input keys are missing; default **`false`** allows partial rename and skips functional transform steps with missing inputs. Optional **`tolerate_transform_errors`: `true`** (default) continues the pipeline when a transform step fails at runtime. **TigerGraph** physical defaults for missing attributes belong in **`schema.db_profile.default_property_values`** (GSQL `DEFAULT` at DDL time), not in the covariant `GraphContainer` assembly path.
-- **GraphContainer** (covariant graph representation) collects the resulting vertices and edges in a database-independent format.
-- **DBWriter** pushes the graph data into the target LPG store (ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph).
-- **Document cast errors** — when a single source document fails inside a resource, **`IngestionParams.on_doc_error`** chooses skip vs fail-the-batch; optional **gzip JSONL** persistence uses **`doc_error_sink_path`** (CLI **`ingest --doc-error-sink`**). Per-resource **`tolerate_transform_errors`** (default **`true`**) lets a single transform step fail without aborting the rest of the pipeline for that document. Details: [Document cast errors and doc error sink](ingestion/doc_errors.md).
+- **Source**: where the records live: a directory of files, a SQL table, an
+  RDF file or SPARQL endpoint, a REST endpoint, a Kafka topic.
+- **Connector**: an entry in `bindings` that says which source feeds which
+  [resource](glossary.md#resource).
+- **Batches**: GraFlo reads each source in batches (`batch_size`, 10,000
+  records by default). Batch size, parallelism and error handling are
+  [ingestion parameters](glossary.md#ingestion-parameters) of a run, not part
+  of the manifest.
+- **Resource**: the recipe for one kind of record. Its steps run on every
+  record: a `transform` step renames or computes fields, a `vertex` step makes
+  a vertex, an `edge` step connects two vertices, a `descend` step goes into a
+  nested part of a JSON record, and a `vertex_router` step reads the vertex
+  type from a field.
+- **Graph in memory**: the vertices and edges of one batch, independent of any
+  database. The class is `GraphContainer`.
+- **Writer**: writes the vertices, one per identity, so records that share an
+  identity become one vertex, and then the edges. Some databases refuse some names (a
+  reserved word, a hyphen); the writer uses the stored names recorded in
+  `schema.db_profile`, so the names in the manifest never change.
+- **Database**: one of the eight targets below.
+- **Schema**: a vertex step keeps only the properties its vertex type
+  declares, and by default the vertices of one record are connected by the
+  edges the schema declares between their types. A vertex type without an
+  `identity` is identified by all of its properties
+  (`identity_from_all_properties`, on by default).
 
-### Minimal canonical config contract
+## What GraFlo reads
 
-GraFlo serializes configuration models in a minimal canonical form by default:
+Each row is one kind of connector in `bindings`. A connector feeds a resource
+by name, so the same resource can read a file today and a table tomorrow.
 
-- fields equal to defaults are omitted;
-- `None` values are omitted;
-- aliases and normalized DSL shapes are used.
-
-This is intentional for lightweight manifests and LLM-oriented workflows.
-The guaranteed invariant is semantic/idempotent canonical round-trip
-(`parse -> minimal dump -> parse`), not authored-style text preservation.
-
-## Runtime path
-
-1. **Source instance** — Batches from a `DataSourceType` adapter (`FileDataSource`, `SQLDataSource`, `SparqlEndpointDataSource`, `APIDataSource`, …).
-2. **Resource (actors)** — Maps records to graph elements against the logical schema (validated during `IngestionModel.finish_init` / pipeline execution).
-3. **`GraphContainer`** — Intermediate, database-agnostic vertex/edge batches.
-4. **DB-aware projection** — `Schema.resolve_db_aware()` plus `VertexConfigDBAware` / `EdgeConfigDBAware` for the active `DBType`.
-5. **Graph DB** — `DBWriter` + `ConnectionManager` and the backend-specific `Connection` implementation.
-
-| Piece | Role | Code |
-|-------|------|------|
-| **Logical graph schema** | Manifest `schema`: vertex/edge definitions, identities, typed **properties**, DB profile. Constrains pipeline output and projection; not a separate queue between steps. | `Schema`, `VertexConfig`, `EdgeConfig` (under `core_schema`). |
-| **Source instance** | Concrete input: file, SQL table, SPARQL endpoint, API payload, in-memory rows. | `AbstractDataSource` + `DataSourceType`. |
-| **Resource** | Ordered actors; resources are looked up by name when sources are registered. | `ResourceConfig` in `IngestionModel`; `ResourceRuntime` at cast time. |
-| **Covariant graph** (`GraphContainer`) | Batches of vertices/edges before load. | `GraphContainer`. |
-| **DB-aware projection** | Physical names, defaults, indexes for the target. | `Schema.resolve_db_aware()`, `VertexConfigDBAware`, `EdgeConfigDBAware`. |
-| **Graph DB** | Target LPG; each `DBType` has its own connector, orchestrated the same way. | `ConnectionManager`, `DBWriter`, per-backend `Connection`. |
-
-## Supported sources and targets
-
-GraFlo distinguishes **manifest sources** (files, SQL, RDF, APIs — require a `GraphManifest`) from **graph sources** (existing LPGs — use `migrate_graph()` directly).
-
-### Manifest sources (`DataSourceType`)
-
-| DataSourceType | Adapter | DataSource | Schema inference |
+| Connector | Reads | Manifest inferred from the source | Page |
 |---|---|---|---|
-| `FILE` — CSV / JSON / JSONL / Parquet | `FileConnector` | `FileDataSource` | manual |
-| `SQL` — relational tables | `TableConnector` | `SQLDataSource` | automatic for PostgreSQL-style 3NF (PK/FK heuristics) |
-| `SPARQL` — RDF files (`.ttl`, `.rdf`, `.n3`) | `SparqlConnector` | `RdfFileDataSource` | automatic (OWL/RDFS ontology) |
-| `SPARQL` — SPARQL endpoints | `SparqlConnector` | `SparqlEndpointDataSource` | automatic (OWL/RDFS ontology) |
-| `API` — REST APIs | `APIConnector` | `APIDataSource` | manual |
-| `IN_MEMORY` — list / DataFrame | — | `InMemoryDataSource` | manual |
+| `FileConnector` | CSV, JSON, JSON Lines and Parquet files whose names match a regex under a directory | no | [Ingest CSV files](../examples/csv-two-resources/index.md) (1) |
+| `TableConnector` | one SQL table, optionally filtered or joined into a view | yes, from primary and foreign keys | [Table filters and views](connectors/table_views.md) |
+| `SparqlConnector` | the instances of one RDF class, from an RDF file (Turtle, RDF/XML, N-Triples, N3, JSON-LD and others) or a SPARQL endpoint | yes, from an OWL or RDFS ontology | [A graph from an ontology and RDF data](../examples/infer-from-rdf/index.md) (10) |
+| `APIConnector` | a REST endpoint, with offset, page or cursor pagination | no | [API connector](connectors/api_connector.md) |
+| `KafkaConnector` | JSON messages from one or more Kafka topics, read as a finite batch | no | [Kafka connector](connectors/kafka_connector.md) |
 
-Typical flow: PostgreSQL (or CSV/RDF/API) → manifest → any graph target. See [Example 5](../examples/example-5.md) for SQL inference.
+From Python you can also pass records that are already in memory, a list of
+dicts or a DataFrame, through an in-memory data source instead of a
+connector. Where the manifest can be inferred,
+GraFlo writes a draft for you to edit. From a SQL database, entity tables
+become vertex types and link tables (two foreign keys) become edges; see
+[inferring a graph from a SQL database](../guides/sql_schema_inference.md).
+From an ontology, each `owl:Class` becomes a vertex type, each
+`owl:ObjectProperty` an edge type and each `owl:DatatypeProperty` a property;
+see the [RDF example](../examples/infer-from-rdf/index.md) (10). For any source,
+a sample of its records lets GraFlo propose identities; see
+[sampling and profiling](schema/sampling_and_profiling.md).
 
-### Graph sources (introspection / export)
+## What GraFlo writes
 
-| Backend | Introspection API | Notes |
+Every target accepts a manifest ingest and can receive a whole graph moved
+from another database. The file backend keeps a graph on disk as chunked,
+compressed JSON Lines files plus the schema, which is useful for exports and
+for moving a graph between databases.
+
+| Target | Stores vertex and edge types as | Can be read back whole |
 |---|---|---|
-| **Neo4j** | `Connection.introspect_graph_schema()` | `supports_graph_export = True` |
-| **ArangoDB** | same | `supports_graph_export = True` |
-| **PostgreSQL** | `Connection.introspect_graph_schema()` | `supports_graph_export = True` since 1.11.1; reads the catalogue rather than sampling |
-| **GraFlo file backend** | reads `schema.yaml` + gzip JSONL chunks | also a migration **target** |
+| ArangoDB | document and edge collections | yes |
+| Neo4j | labels and relationship types | yes |
+| Memgraph | labels and relationship types | no |
+| FalkorDB | labels and relationship types | no |
+| TigerGraph | vertex and edge types, with native undirected edges and reverse edges | no |
+| NebulaGraph | tags and edge types | no |
+| PostgreSQL | one table per vertex type and one table per edge type | yes |
+| GraFlo file backend | chunked files on disk | yes |
 
-List in code: `ConnectionManager.graph_export_flavors()`.
+A target that can be read back whole is a graph source:
+`GraphEngine.export_graph()` returns its graph in memory, and
+`GraphEngine.migrate_graph()` moves it into any target without a manifest.
+`ConnectionManager.graph_export_flavors()` lists the graph sources in code.
+GraFlo can read the schema of all eight targets. Keep a copy in the file
+backend of a graph you may need to move out of a target that cannot be read
+back. See [graph export and migration](operations/graph_export_migration.md).
 
-Typical flow: Neo4j → ArangoDB (or TigerGraph, PostgreSQL, …) via **`GraphEngine.migrate_graph()`** — no manifest. See [Graph DB migration guide](../guides/graph_db_migration.md).
+Properties may carry a type: `INT`, `UINT`, `FLOAT`, `DOUBLE`, `BOOL`,
+`STRING`, `DATETIME`, `UUID`, and `LIST` of one of those. Types are optional
+on every target; TigerGraph and NebulaGraph use them when they create the
+schema. See [supported field types](architecture/core_components.md#supported-field-types).
 
-TigerGraph, FalkorDB, Memgraph, and NebulaGraph are supported **targets** for manifest ingestion but are not live graph **sources** — they implement neither `fetch_all_docs` nor `fetch_all_edges`, so use a file backend as intermediate storage.
+## Concept pages
 
-### Migration and ingestion targets (`DBType` output)
-
-All supported output backends accept manifest-driven **`ingest()`**. They are also valid `migrate_graph()` *targets*, though that entry point does not currently complete a move — see [Graph export and migration](operations/graph_export_migration.md):
-
-| Target | Native LPG | Notes |
-|---|---|---|
-| ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph | yes | DB-aware projection via `Sanitizer` |
-| **PostgreSQL** | relational graph | vertex tables + junction edge tables |
-| **GraFlo file backend** | on-disk chunks | source and target; see [Example 13](../examples/example-13.md) |
-
-Full reference: [Graph export and migration](operations/graph_export_migration.md).
-
-## Core concepts
-
-### Labeled property graphs
-
-GraFlo targets the LPG model:
-
-- **Vertices** — nodes with typed **properties** and logical **identity** keys for upserts. Identity fallback from all properties is opt-in via `VertexConfig.identity_from_all_properties` (disabled by default). See [Vertex identity modes](schema/vertex_identity.md).
-- **Edges** — relationships between vertices (`directed: true` by default); relationship attributes are declared as **`properties`** on the logical edge. TigerGraph is the only backend with an undirected edge *type* — it projects `directed: false` as `UNDIRECTED EDGE`, and maintains a declared inverse pair (**`edge_config.inverses`**) natively for relations listed in **`db_profile.native_inverses`**; relations that are their own inverse are declared in **`edge_config.symmetric`** and have undirected edges. Elsewhere `directed: false` is a modeling assertion the backend stores as a directed edge; see [Directed, undirected, and bidirectional edges](architecture/core_components.md#directed-undirected-and-bidirectional-edges).
-
-### Schema and ingestion
-
-The `Schema` is the single source of truth for **graph structure** (not for ingestion transforms). **Secondary indexes** and physical naming — storage, relation and property names a backend stores differently — live under **`schema.db_profile`** — see [Backend indexes](schema/backend_indexes.md) and [Manifest-level sanitization](architecture/core_components.md#manifest-level-sanitization). Resources and transforms are part of `IngestionModel`, not `Schema`.
-
-`GraphEngine` orchestrates schema/manifest inference, schema definition, connector creation, and data ingestion. For PostgreSQL workflows, `infer_manifest(...)` returns a full manifest contract and runs target-`DBType` **`Sanitizer`** before returning.
-
-## Topic index
+The pages are grouped as in the navigation. The [glossary](glossary.md) gives
+each term one short definition and links to the page that explains it.
 
 ### Architecture
 
-| Page | Description |
-|------|-------------|
-| [Diagrams](architecture/diagrams.md) | Class-level Mermaid views of `GraphEngine`, `Schema` / `IngestionModel`, `Caster` |
-| [Core components](architecture/core_components.md) | Schema, ingestion, edges, DataSources, resources, actors, transforms |
-| [Capabilities](architecture/capabilities.md) | Product feature overview |
+| Page | Question it answers |
+|---|---|
+| [Diagrams](architecture/diagrams.md) | Which Python objects take part in an ingest, and which owns what? |
+| [Core components](architecture/core_components.md) | Which keys do I write for vertices, edges, resources and their steps, and what does each do? |
 
 ### Schema and manifest
 
-| Page | Description |
-|------|-------------|
-| [Vertex identity](schema/vertex_identity.md) | Natural, hash, and blank identity modes |
-| [Backend indexes](schema/backend_indexes.md) | DB-specific secondary index behavior |
-| [Manifest evolution](schema/manifest_evolution.md) | Contract evolution ops (`RemoveVertexOp`, `AddInverseEdgesOp`, …) |
-| [GraFlo ontology](schema/ontology.md) | Manifest ↔ RDF meta-model |
+| Page | Question it answers |
+|---|---|
+| [Sampling and profiling](schema/sampling_and_profiling.md) | What does GraFlo look at in my sources before it proposes a schema or an identity? |
+| [Vertex identity](schema/vertex_identity.md) | How does GraFlo decide that two records are the same vertex, and what if a record has no key? |
+| [Cross-resource identity discovery](schema/cross_resource_identity.md) | How do I find which columns in two systems identify the same thing? |
+| [Cards](schema/cards.md) | How do I summarize a manifest for a person or a language model at a fixed cost? |
+| [Backend indexes](schema/backend_indexes.md) | Which indexes does each database get, and how do I add more? |
+| [Manifest evolution](schema/manifest_evolution.md) | How do I change a manifest as a list of operations I can review, replay and undo? |
+| [Merging manifests](schema/merging_manifests.md) | How do I combine two manifests that model the same things under different names? |
+| [Version control](schema/versioning.md) | How do I commit, go back to and three-way merge versions of a manifest? |
+| [Live schema drift](schema/live_drift.md) | How do I find what a database holds that its schema does not declare? |
+| [Conformance profiles](schema/world_model_profile.md) | What must a manifest declare to pass the `world-model` profile, and how do I waive a rule? |
+| [GraFlo ontology](schema/ontology.md) | How does a manifest turn into RDF and back, and which vocabulary does it use? |
 
 ### Ingestion
 
-| Page | Description |
-|------|-------------|
-| [Transforms](ingestion/transforms.md) | Named transforms and pipeline steps |
-| [Parallelism](ingestion/parallelism.md) | Batch pipelining, cast workers, write fan-out — which knob to turn, and when graflo runs serially on purpose |
-| [Document cast errors](ingestion/doc_errors.md) | Per-document error policy and doc error sink |
+| Page | Question it answers |
+|---|---|
+| [Transforms](ingestion/transforms.md) | How do I rename, convert and reshape fields before they become vertices and edges? |
+| [Parallelism](ingestion/parallelism.md) | Which setting speeds up an ingest, and when does GraFlo run serially on purpose? |
+| [Document cast errors](ingestion/doc_errors.md) | What happens when one record fails, and where do I find the failures afterwards? |
 
 ### Connectors
 
-| Page | Description |
-|------|-------------|
-| [Table views and SelectSpec](connectors/table_views.md) | SQL `filters`, `view.where`, logical operators |
-| [API connector](connectors/api_connector.md) | REST pagination, `carry_params`, auth via `conn_proxy` |
-| [Kafka connector](connectors/kafka_connector.md) | Finite-batch JSON topic consume via `conn_proxy` |
-| [Runtime connector updates](connectors/runtime_updates.md) | Patches, `time_filter`, pushdown `filters` |
+| Page | Question it answers |
+|---|---|
+| [Table filters and views](connectors/table_views.md) | How do I filter or join SQL tables inside a connector? |
+| [API connector](connectors/api_connector.md) | How do I read a paginated REST endpoint, and where do the credentials go? |
+| [Kafka connector](connectors/kafka_connector.md) | How do I read a topic as a finite batch, and when does the read stop? |
+| [Runtime connector updates](connectors/runtime_updates.md) | How do I narrow a connector to a time window or a filter at run time without editing the manifest? |
 
 ### Operations
 
-| Page | Description |
-|------|-------------|
-| [Graph export and migration](operations/graph_export_migration.md) | Graph sources, `migrate_graph`, file backend, graph→PostgreSQL |
-| [Object storage](operations/object_storage.md) | S3 staging for TigerGraph bulk load |
-| [Migration and practices](operations/migration_and_practices.md) | `migrate_schema` CLI, performance, best practices |
+| Page | Question it answers |
+|---|---|
+| [Graph export and migration](operations/graph_export_migration.md) | How do I copy a whole graph out of a database, onto disk or into another database? |
+| [Object storage](operations/object_storage.md) | How do I stage files in S3 for a TigerGraph bulk load? |
+| [Schema migration](operations/migration_and_practices.md) | How do I apply a changed schema to a database that already holds data? |
 
-## More capabilities
+## What to read next
 
-- **GraFlo ontology (manifest RDF)** — OWL vocabulary at `https://ontology.growgraph.dev/graflo`, plus `manifest-to-rdf` / `rdf-to-manifest` CLI. See [GraFlo ontology](schema/ontology.md).
-- **SPARQL and RDF** — Endpoints and RDF files; optional OWL/RDFS domain schema inference.
-- **Schema inference** — From PostgreSQL 3NF or OWL/RDFS. See [Example 5](../examples/example-5.md).
-- **Graph export and migration** — See [Graph export and migration](operations/graph_export_migration.md) and [Example 13](../examples/example-13.md).
-- **Schema migrations** — Plan and apply guarded schema deltas via `migrate_schema`. See [Migration and practices](operations/migration_and_practices.md#schema-migration).
-- **Typed properties**, **SelectSpec**, and **blank vertices** — see [Capabilities](architecture/capabilities.md).
-- **Batching, concurrency, and ingestion scope filters** — see [Parallelism](ingestion/parallelism.md) and [Migration and practices](operations/migration_and_practices.md#performance-optimization).
+- [Creating a manifest](../getting_started/creating_manifest.md): the three
+  blocks of a manifest, one level deeper than the quick start.
+- [Core components](architecture/core_components.md): the reference for every
+  key you write in `schema` and `ingestion_model`.
+- [Ingest CSV files](../examples/csv-two-resources/index.md): the first
+  example, end to end.

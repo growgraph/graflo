@@ -37,7 +37,7 @@ def protected_property_names(vertex: Vertex) -> set[str]:
 
     Identity-bearing fields: the primary identity, every secondary identity, and
     whatever feeds a hash or funnel digest. Dropping one of these yields a schema
-    that still validates and is semantically a lie — the agent would believe a
+    that still validates but is wrong — the agent would believe a
     type is addressable by fields it cannot actually be addressed by.
     """
     protected: set[str] = set(vertex.identity)

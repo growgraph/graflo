@@ -1,0 +1,11 @@
+# The names and the equivalence, but no key that both sides can fill.
+op: merge_manifests
+
+canonical_maps:
+    left:
+        vertices:
+            Asset: Machine
+
+vertex_equivalences:
+-   left: Asset
+    right: Device

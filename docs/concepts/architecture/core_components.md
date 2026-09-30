@@ -1,690 +1,548 @@
 # Core components
 
-Reference for logical schema pieces, ingestion runtime, actors, and transforms.
+When you know what graph you want, this page gives the exact keys to write it
+down: the vertex and edge types of the `schema`, the
+[resource](../glossary.md#resource) and its steps in the `ingestion_model`, and
+the names a target database stores. Each key comes with its default and the
+rule behind it. How sources are wired to resources is in the
+[creating a manifest](../../getting_started/creating_manifest.md) guide.
 
-## Core Components
+## Schema
 
-### Schema
-The `Schema` is the single source of truth for the LPG structure. It encapsulates:
- 
-- Vertex and edge definitions with optional type information
-- Identity and physical index configurations
-- DB profile defaults and DB-aware projection settings
-- Automatic schema inference from normalized PostgreSQL databases (3NF with PK/FK) or from OWL/RDFS ontologies
-- Graph-source inference from Neo4j, ArangoDB or PostgreSQL via **`Connection.introspect_graph_schema()`** (see [Graph export and migration](../operations/graph_export_migration.md))
-
-### GraFloOutput, GraphContainer, and file backend
-
-**`GraphContainer`** holds database-agnostic vertex and edge batches during ingestion or export. Edge keys are `(source, target, relation)` tuples in Python; JSON serialization uses compact array keys via **`serialize_edge_key`**.
-
-**`GraFloOutput`** bundles a full **`Schema`** with a **`GraphContainer`** for in-memory use (`GraphEngine.export_graph()`). For durable exports, prefer **`GraFloBackendConfig`** — a `Connection` target that writes chunked gzip JSONL under `vertices/` and `edges/` plus `schema.yaml` and `INDEX.json`. See [Graph export and migration](../operations/graph_export_migration.md).
-
-### IngestionModel
-The `IngestionModel` is the source of truth for ingestion runtime behavior. It encapsulates:
-
-- Resource mappings and actor pipelines
-- Reusable named transforms
-- Write-time tolerance policies such as **`endpoints_on_ambiguous`** (how secondary-identity endpoint resolution reacts when several vertices match — see [Secondary identities](../schema/vertex_identity.md#secondary-identities-edge-endpoint-lookup))
-- Runtime initialization against the core schema (`finish_init(schema.core_schema)`)
-
-### Manifest-level sanitization
-
-Stricter engines (notably TigerGraph) reject some identifiers: reserved words, characters such as
-`-` or `.`, a `gsql_sys_` prefix. A name the database cannot store is a **physical** fact, so it is
-resolved in **`schema.db_profile`** and never by renaming the logical model. The profile holds
-four kinds of stored name, each keyed by the logical one:
-
-| Profile field | Stores |
-|---------------|--------|
-| `vertex_storage_names` | vertex collection / label / tag names |
-| `edge_specs[].relation_name` | relation (edge type) names |
-| `vertex_property_names` | vertex attribute names, per vertex |
-| `edge_specs[].property_names` | edge attribute names, per edge (base variant) |
-
-The logical schema and the ingestion model keep their names, so documents stay keyed by logical
-property names end to end. **`DBWriter`** translates every document and field list to stored names
-at the backend call and translates back what it reads; DDL is generated from the schema with the
-stored names folded in. With nothing renamed, both are no-ops.
-
-Reads follow the same split. The schema-aware reads, **`Connection.graph_neighbors`** and
-**`Connection.traverse`**, take and return logical names: anchor keys and edge filters are
-translated in, and vertex documents and edge rows are translated back out, including an edge read
-through its declared inverse name. Backends implement **`_graph_neighbors`**, which sees stored
-names only. The storage-addressed methods (`fetch_docs`, `fetch_edges`, `fetch_all_*`, …) take a
-storage name and return the stored names as they are: they are the database's view, not the
-schema's.
-
-- Implementation lives in **`graflo.architecture.evolution.sanitize`**: `assign_physical_names`
-  computes stored names, deduplicated within each database namespace (a sanitized name never lands
-  on a declared one; vertex and relation names never collide). `with_physical_names` returns the
-  schema with a complete profile, and `physical_schema` the schema as the database stores it.
-- **`SanitizeOp`** / **`apply_sanitize`** record the stored names in the profile, in place and
-  idempotently. **`Sanitizer.sanitize_manifest(manifest)`** is the ergonomic wrapper: it builds the
-  evolution op list for the configured **`DBType`** and applies it.
-- Sanitizing is optional for correctness: **`GraphEngine.define_schema`**, ingestion, migration
-  and the schema-aware reads fill in any stored name the profile lacks, and names already in the
-  profile win. Filling in copies the profile only, and is skipped outright for a flavor with no
-  naming rules.
-  Sanitize to **record** the names in the manifest, so they stay stable as the schema evolves and
-  are visible to anyone reading the database directly.
-- Edges stored as one TigerGraph type declare one attribute list: the union of their properties.
-  Edges that would give one type two discriminators (different edge identities) are refused at
-  define time; give them distinct relations or `relation_name` overrides.
-- **`GraphEngine.infer_manifest(...)`** runs **`Sanitizer`** on the assembled **`GraphManifest`**
-  before returning, so PostgreSQL inference through the engine stays target-flavor-safe.
-- **`SQLInferenceManager`** (`infer_artifacts`, **`infer_complete_schema`**, …) does **not**
-  sanitize; it keeps source column names in resources so you can compose a manifest and then call
-  **`Sanitizer`** once at the boundary (or rely on **`infer_manifest`** when using **`GraphEngine`**).
-
-### Manifest/schema renaming
-
-When you need to rename vertex types, edge relations, or ingestion resource names in bulk,
-use the built-in rename APIs:
-
-- `GraphManifest.rename_entities(vertices=..., edges=..., resources=...)`
-- `Schema.rename_entities(vertices=..., edges=...)`
-
-Each rename argument accepts either:
-
-- a mapping (`dict[str, str]`) for explicit substitutions, or
-- a callable (`Callable[[str], str]`) for programmatic transforms (prefix/suffix/camelize, etc.).
-
-```python
-from graflo.architecture.contract import GraphManifest
-from graflo.util.transform import camel_to_snake
-
-manifest = GraphManifest.from_dict(payload)
-renamed = manifest.rename_entities(
-    vertices={"Person": "author", "Organization": "institution"},
-    edges=lambda relation: f"rel_{camel_to_snake(relation)}",
-    resources=lambda name: f"src_{name}",
-)
-```
-
-`GraphManifest.rename_entities(...)` updates all relevant references consistently:
-
-- schema vertex names + edge endpoints/relations
-- ingestion pipelines (`vertex`, `edge`/`create_edge`, nested `descend`, router mappings)
-- resource edge selectors (`infer_edge_only` / `infer_edge_except`) and `extra_weights`
-- bindings resource references (`connectors[].resource_name`, `resource_connector[].resource`)
-
-This API is meant for deterministic contract refactors and complements (not replaces)
-DB-specific sanitization.
-
-### Vertex
-A `Vertex` describes vertices and their logical identity. It supports:
-
-- Single or compound identity fields (e.g., `["first_name", "last_name"]` instead of `"full_name"`)
-- Property definitions with optional type information
-  - Fields can be specified as strings (backward compatible) or typed `Field` objects
-  - Untyped fields (`type: null`) remain valid for schema-agnostic backends
-  - Duplicate property declarations are normalized by field name
-  - Same type duplicates merge into one field
-  - If one duplicate is typed and the other is untyped, the typed definition wins
-  - Conflicting non-null types for the same field name are rejected
-  - **LIST-typed properties cannot be identity / hash-identity / secondary-identity sources**
-- Filtering conditions
-- **`blank: true`** — placeholder vertex with no natural key; identity defaults to **`id`** when omitted
-- **`assigned: true`** — intentional UUID primary key; identity defaults to **`id`**; mint at assemble (not blank-edge resolution)
-- **`hash_identity_properties`** — when non-empty, SHA256 hash of these source fields produces a deterministic synthetic **`id`** (see [Vertex identity modes](../schema/vertex_identity.md))
-- **`Vertex.identity_mode`** — derived runtime mode: **`natural`**, **`hash`**, **`blank`**, or **`assigned`**
-- **`secondary_identities`** — alternate field-sets for **edge endpoint lookup only** (upserts still use `identity`); paired with pipeline `lookup_only` and edge-step `source_match` / `target_match` (see [Secondary identities](../schema/vertex_identity.md#secondary-identities-edge-endpoint-lookup), [Example 16](../../examples/example-16.md))
-
-#### Supported field types
-
-| `FieldType` | Shape | Notes |
-|-------------|-------|-------|
-| `INT` `UINT` `FLOAT` `DOUBLE` `BOOL` `STRING` `DATETIME` | scalar | Existing scalar types |
-| `UUID` | scalar | Logical UUID; TigerGraph / Nebula / Postgres DDL store as `STRING` / `TEXT` |
-| `LIST` | + required `item_type` (scalar above, including `UUID`) | Homogeneous, **one level** only — no `LIST[LIST[…]]`, no object schemas |
-
-Declare types on each property as a mapping (`name` / `type` / optional `item_type`).
-String shorthand (`properties: [id, name]`) still works and leaves types unset.
-
-**Example — article vertex with scalar + list properties:**
+The `schema` block declares the graph: vertex types, edge types, and the
+profile of the target database. It says nothing about where records come from
+or how they are transformed; that belongs to the `ingestion_model`.
 
 ```yaml
 schema:
   metadata:
-    name: demo
+    name: plant
     version: "1.0.0"
   graph:
     vertex_config:
-      vertices:
-        - name: article
-          # Identity must be a scalar (or untyped) field — never LIST
-          identity: [doi]
-          properties:
-            - name: doi
-              type: STRING
-            - name: title
-              type: STRING
-            - name: year
-              type: INT
-            # Homogeneous list of strings → TigerGraph LIST<STRING>, Neo4j list, PG TEXT[]
-            - name: tags
-              type: LIST
-              item_type: STRING
-            # Homogeneous list of floats
-            - name: topic_scores
-              type: LIST
-              item_type: FLOAT
+      vertices: [...]
     edge_config:
-      edges:
-        - source: article
-          target: article
-          relation: cites
-          properties:
-            - name: contexts
-              type: LIST
-              item_type: STRING
+      edges: [...]
   db_profile: {}
 ```
 
-Equivalent compact forms (same semantics):
+`metadata.name` labels the schema. It also names the namespace in the target
+(the ArangoDB or Neo4j database, the TigerGraph graph, the NebulaGraph space),
+adjusted to the names that database accepts, unless the connection config or
+`db_profile.target_namespace` names another. `metadata.version`, when given,
+is a semantic version such as `1.0.0`. The key `graph` may also be written
+`core_schema`.
+
+### Vertex
+
+A vertex type has a name, its properties, and the properties that identify it.
 
 ```yaml
-# Inline dicts in a list
+vertices:
+  - name: machine
+    properties: [serial, model, installed_on]
+    identity: [serial]
+```
+
+`identity` lists the properties that make two records the same vertex: records
+with the same identity values are written as one vertex. An identity may span
+several properties (`identity: [plant, tag]`). A property named in `identity`
+is added to `properties` if you leave it out. After casting, a vertex with no
+value for any identity property is dropped together with its edges
+(`IngestionParams.drop_empty_identity_docs`, on by default).
+
+When `identity` is omitted, all properties form the identity. That default is
+set per schema by `vertex_config.identity_from_all_properties` (default
+`true`). Set it to `false` to require an explicit `identity` on every vertex
+type; a forgotten key then fails when the schema loads instead of producing
+one vertex per distinct row.
+
+Four declarations cover records without a natural key:
+
+- `blank: true`: a placeholder vertex that gets a random id when the graph is
+  written.
+- `assigned: true`: a vertex whose key is a UUID made when the record is cast.
+- `hash_identity_properties: [a, b]`: a key computed by hashing the listed
+  fields, so the same values always give the same key.
+- `identity_funnel`: ordered alternatives for that hash; the first whose
+  fields are all present is used.
+
+When `identity` is omitted, each of them makes the identity `id`. They are
+mutually exclusive. `secondary_identities` declares other field sets that an
+edge step may match endpoints on. The rules for each are on
+[vertex identity](../schema/vertex_identity.md).
+
+`filters` drops vertex documents that fail a condition when records are cast.
+It applies to the documents a vertex step builds from transform output, one
+transform result at a time, and not to properties taken straight from the
+record or through `from`. The
+[filters and weights example](../../examples/vertex-filters-and-weights/index.md)
+(5) keeps only measurements with a positive value:
+
+```yaml
+- name: metric
+  properties: [name, value]
+  identity: [name, value]
+  filters:
+    - field: value
+      foo: __gt__
+      value: 0
+```
+
+`description` and `semantics` document the type for people and for
+[cards](../schema/cards.md).
+
+### Supported field types
+
+A property is a name and an optional type. Write the short form when you do not
+need types, and the mapping form when you do:
+
+```yaml
 properties:
-  - { name: doi, type: STRING }
+  - serial
+  - { name: model, type: STRING }
+  - { name: installed_on, type: DATETIME }
   - { name: tags, type: LIST, item_type: STRING }
-
-# Untyped (schema-agnostic backends); still fine when you do not need DDL typing
-properties: [doi, title, tags]
 ```
 
-**Invalid (rejected at model validation):**
+| Type | Holds |
+|---|---|
+| `INT`, `UINT` | integers |
+| `FLOAT`, `DOUBLE` | floating point numbers |
+| `BOOL` | booleans |
+| `STRING` | text |
+| `DATETIME` | timestamps |
+| `UUID` | a UUID; TigerGraph, NebulaGraph and PostgreSQL store it as text |
+| `LIST` | a list of values of one scalar type, given by `item_type` |
 
-```yaml
-# LIST without item_type
-- { name: tags, type: LIST }
+Types are optional on every target. ArangoDB, Neo4j, Memgraph, FalkorDB and
+the file backend store each value as it arrives. TigerGraph and NebulaGraph
+declare a typed attribute per property and use `STRING` for an untyped one.
+PostgreSQL stores every scalar property as `TEXT` and a `LIST` as an array.
 
-# Nested / non-scalar item_type
-- { name: matrix, type: LIST, item_type: LIST }
+Rules for `LIST`, each checked when the schema loads:
 
-# item_type on a non-LIST field
-- { name: title, type: STRING, item_type: STRING }
+- `item_type` is required and must be a scalar type; a list of lists or a list
+  of objects is not a `LIST`.
+- `item_type` is only valid together with `type: LIST`.
+- A `LIST` property cannot be an identity, a hash or funnel field, or part of
+  a secondary identity, because two lists have no stable order to compare.
+- NebulaGraph has no list property: defining a schema with a `LIST` property
+  there raises `UnsupportedFieldTypeError`. The other targets store lists
+  (TigerGraph `LIST<T>`, PostgreSQL arrays, Cypher list properties, ArangoDB
+  arrays).
 
-# LIST used as identity
-- name: article
-  identity: [tags]
-  properties:
-    - { name: tags, type: LIST, item_type: STRING }
-```
+For a mixed or nested value, declare a `STRING` property and store JSON in it
+yourself. GraFlo never converts a list to a string on its own.
 
-For mixed or nested payloads that are not a homogeneous scalar list, author an
-explicit `STRING` field and store JSON yourself — that is never an automatic
-fallback from `type: LIST`.
-
-#### Backend support (LIST)
-
-Policy: **native storage or raise** — no soft conversion to `STRING`/JSON.
-
-| Backend | LIST as storable property | Behavior |
-|---------|---------------------------|----------|
-| TigerGraph | Yes — `LIST<T>` attribute | DDL emits `LIST<STRING>`, `LIST<INT>`, … |
-| Neo4j / Memgraph / FalkorDB | Yes — homogeneous list of primitives | Validated at define; lists serialize as properties |
-| ArangoDB | Yes — document array | Validated at define; pass through |
-| Postgres | Yes — SQL arrays | Emitter uses `T[]` for typed LIST columns |
-| NebulaGraph | **No** — composites are query-only | Define/DDL **raises** `UnsupportedFieldTypeError` |
-
-#### Planned field types
-
-Not in `FieldType` yet — do not author these in manifests:
-
-| Type | Status | Sketch |
-|------|--------|--------|
-| `MAP` | follow-up | `key_type` + `value_type` (scalar); native TG/Arango; Cypher targets raise (maps are not storable node/rel properties) |
-| `SET` | follow-up (low) | TigerGraph-oriented; prefer `LIST` elsewhere |
-
-Identity defaults at schema level (`VertexConfig`):
-
-- **`identity_from_all_properties: true`** (default) — vertices without explicit **`identity`** use all **`properties`** names as the logical key.
-- **`identity_from_all_properties: false`** — each non-blank / non-assigned vertex must declare **`identity`** explicitly; blank and assigned vertices still default to **`id`**.
-
-**Blank vertices:** set **`blank: true`** on the vertex entry under **`schema.graph.vertex_config.vertices`**. **`VertexConfig.blank_vertices`** is a derived list of names (not a separate YAML field). **`VertexConfig.hash_identity_vertices`** lists vertices with hash-derived identity; **`VertexConfig.assigned_vertices`** lists intentional UUID-PK vertices. At runtime, **`ResourceRuntime`** keeps only vertex types referenced by that resource’s pipeline (and edge-inference selectors); blank types that are declared in the schema but not used by the resource are not injected automatically—include a **`vertex`** (or edge) step when the placeholder must be populated.
-
-Algorithmic identity inference from record samples: **`graflo.db.identity_inference`** (`IdentityInferencer`, `apply_identity_inference_to_vertices`). See [Vertex identity modes](../schema/vertex_identity.md), [Example 15](../../examples/example-15.md), and [Example 16](../../examples/example-16.md) for secondary-identity edge lookup.
+The same property may be declared twice, for instance once in `properties` and
+once through an identity. Declarations with the same type fold into one, a
+typed declaration wins over an untyped one, and two different types for one
+name are refused.
 
 ### Edge
-An `Edge` describes edges and their logical identities. It allows:
 
-- Optional uniqueness semantics through **`identities`** (multiple candidate keys are allowed)
-- **`properties`**: relationship payload (names and optional types), same accepted forms as vertex properties (strings, `Field`, or dicts with at least `name`)
-- Optional static **`relation`** label (e.g. Neo4j relationship type) when it is not derived at ingest time
-- **`directed`** (default `true`): when `false`, the edge is logically undirected and has no inverse. On TigerGraph, `directed: false` maps to `UNDIRECTED EDGE` DDL; a directed edge whose relation has a declared inverse pair can instead be paired natively (`db_profile.native_inverses`, `WITH REVERSE_EDGE`). A relation declared in `edge_config.symmetric` requires its edges to be undirected.
-
-Ingestion-only controls (**`relation_field`**, **`relation_from_key`**, **`match_source`**, **`match_target`**, vertex-sourced edge payload) live on **`EdgeActor`** steps and **`EdgeDerivation`**, not on the logical `Edge` model.
-
-### Edge properties and configuration
-
-#### Basic logical fields
-- **`source`**: Source vertex name (required)
-- **`target`**: Target vertex name (required)
-- **`identities`**: Logical identity keys for the edge (each key can induce uniqueness)
-- **`directed`**: When `true` (default), `source`→`target` direction matters; when `false`, the edge is logically undirected
-- **`properties`**: Declared relationship attributes (typed or untyped)
-
-**Neo4j, Memgraph, FalkorDB — relationship `MERGE` keys:** Writers match source and target nodes on vertex identity, then `MERGE` the relationship. Which **relationship properties** participate in that `MERGE` (so multiple edges between the same two vertices do not collapse) is derived as follows: use the **first** `identities` key, keep only tokens that refer to relationship payload (skip `source` and `target`; the `relation` token becomes the `relation` property on the relationship where used). If that produces no fields—e.g. `identities` is empty—the writer falls back to **all** names in **`Edge.properties`**. Declare `identities` when the full property list is a superset of what should define edge uniqueness.
-
-#### Relationship type at ingest time
-- **`relation`** on the logical edge: static relationship type when applicable
-- **`relation_field`** on an **edge actor** step: column/field holding dynamic relationship type values (CSV/tabular; see Example 3)
-- **`relation_from_key`** on an **edge actor** step: use JSON object keys as relationship types (nested JSON; see Example 4)
-
-#### Payload from vertices at ingest time
-Vertex fields that should appear on edges are configured via **edge actor** options (e.g. **`vertex_weights`**, maps), not via a `weights` block on the logical `Edge`. DB layers may still use an internal `WeightConfig` built from `Edge.properties` for backends that need it.
-
-#### Edge behavior control
-- Edge physical variants should be modeled with `schema.db_profile.edge_specs[*].purpose` (YAML) / `db_profile.edge_specs[*].purpose` (in code).
-- TigerGraph native inverses: a relation listed in `schema.db_profile.native_inverses` emits `WITH REVERSE_EDGE="<declared inverse>"` on its edge type in GSQL (see [Directed, undirected, and bidirectional edges](#directed-undirected-and-bidirectional-edges)).
-- `Edge.aux` is no longer a behavior switch.
-
-> DB-only physical edge metadata (including `purpose`) is configured under
-> **`schema.db_profile.edge_specs`**, not on `Edge`.
-
-
-#### Directed, undirected, and bidirectional edges
-
-Logical edges are **directed by default** (`directed: true`). Direction matters for ingestion semantics and for evolution ops such as [`AddInverseEdgesOp`](../schema/manifest_evolution.md#5-inverse-and-symmetric-relations).
-
-| Modeling goal | GraFlo config | TigerGraph GSQL (when `db_flavor: tigergraph`) |
-|---------------|---------------|------------------------------------------------|
-| Single direction | `directed: true` (default), one logical edge | `ADD DIRECTED EDGE ...` |
-| A name for the reverse reading, nothing stored (**declared inverse**) | Declared pair only; reads resolve the inverse name to the forward edge followed from its target | One `ADD DIRECTED EDGE` — and no reverse read, which is why TigerGraph wants one of the next two |
-| Portable forward + inverse labels (**materialized inverse**) | Declared pair + two logical directed edges, the inverse fed by `emit_inverse` on the forward steps (`AddInverseEdgesOp`) or by steps of its own | Two `ADD DIRECTED EDGE` statements |
-| Database-maintained pair, one load path (**native inverse**) | Declared pair + one logical relation + `native_inverses: [relation]` | `ADD DIRECTED EDGE ... WITH REVERSE_EDGE="<declared inverse>"` |
-| Symmetric / direction-agnostic | `directed: false` on one logical edge | `ADD UNDIRECTED EDGE ...` |
-
-**Undirected example:**
+An edge type connects a source vertex type to a target vertex type, optionally
+under a relation name.
 
 ```yaml
-edge_config:
-  edges:
-    - source: user
-      target: user
-      relation: friend_of
-      directed: false
-      properties: [on_date]
+edges:
+  - source: machine
+    target: line
+    relation: installed_on
+    properties: [since]
 ```
 
-**Declared inverse, realized natively on TigerGraph** (do not also add the logical edge for the inverse relation — the schema refuses both):
+- `source`, `target`: vertex type names; both must be declared in
+  `vertex_config`.
+- `relation`: the relationship type (Neo4j) or edge type (TigerGraph,
+  NebulaGraph). Omit it when one edge type between the pair is enough. Declare
+  several edges with different relations when the same pair is connected in
+  several ways (see the
+  [relation field example](../../examples/csv-relation-field/index.md) (3)).
+- `properties`: attributes stored on the edge, in the same forms as vertex
+  properties.
+- `identities`: lists of tokens that make an edge unique, so that several edges
+  between the same two vertices stay distinct. `source` and `target` stand for
+  the endpoints; any other token is an edge property and is added to
+  `properties` if missing. Neo4j, Memgraph and FalkorDB match an existing edge
+  (Cypher `MERGE`) on the properties of the first identity, or on all edge
+  properties when no identity names one; see
+  [backend indexes](../schema/backend_indexes.md#edge-upserts-and-merge-neo4j-memgraph-falkordb).
+- `directed` (default `true`): see the next section.
+- `description`, `semantics`: documentation, as on a vertex.
+
+Where the relation comes from when records are cast (a column, a JSON key)
+and which records form an edge are set on the `edge` step, not on the schema
+edge; see [the `edge` step](#the-edge-step).
+
+### Directed, undirected, and bidirectional edges
+
+An edge is directed by default: `machine installed_on line` is not `line
+installed_on machine`. The table lists the other choices.
+
+| You want | Declare | TigerGraph DDL |
+|---|---|---|
+| One direction | one edge, `directed: true` (default) | `ADD DIRECTED EDGE` |
+| A name for the reverse reading, nothing extra stored (a declared inverse) | the pair in `edge_config.inverses` | one `ADD DIRECTED EDGE`; a read of the inverse name raises there, so use one of the next two |
+| Both directions stored, on any target (a materialized inverse) | the pair in `inverses`, an edge for each direction, and `emit_inverse: true` on the forward edge steps | two `ADD DIRECTED EDGE` |
+| Both directions stored, maintained by the database (a native inverse, TigerGraph only) | the pair in `inverses` and the forward relation in `db_profile.native_inverses` | `ADD DIRECTED EDGE ... WITH REVERSE_EDGE` |
+| No direction at all | `directed: false` on the edge | `ADD UNDIRECTED EDGE` |
+
+A relation that is its own inverse (`adjacent_to`) goes in
+`edge_config.symmetric`, and its edges must be `directed: false`. All edges of
+one relation must agree on `directed`, and the relation of an undirected edge
+cannot be part of an inverse pair, because it already reads both ways.
 
 ```yaml
 edge_config:
   edges:
-    - source: user
-      target: user
-      relation: is_following
+    - source: machine
+      target: machine
+      relation: standby_for
   inverses:
-    - relation: is_following
-      inverse: is_followed_by
-db_profile:
-  db_flavor: tigergraph
-  native_inverses: [is_following]
+    - relation: standby_for
+      inverse: covered_by
 ```
 
-`edge_config.inverses` is the logical declaration and backend-agnostic; `native_inverses` is TigerGraph-only physical metadata keyed by relation — TigerGraph sets the reverse type on the edge type, which spans every `(source, target)` pair of the relation — and it names nothing itself: the paired type takes the declared inverse's name. A native inverse needs a declared pair, is refused next to explicit edges carrying the inverse name, and cannot apply to a symmetric relation. A relation that is its own inverse is declared in `edge_config.symmetric`, and its edges must be `directed: false`. See [Inverse and symmetric relations](../schema/manifest_evolution.md#5-inverse-and-symmetric-relations) for the full rules and the ops that author them.
+A declared inverse is a statement about the model: a read may ask for
+`covered_by`, and GraFlo follows the stored `standby_for` edge from its
+target. Store the inverse only when the target needs it. A native inverse
+needs `db_profile.db_flavor: tigergraph`, is refused next to declared edges of
+the inverse name, and cannot apply to a symmetric relation.
 
-**What the other backends do with `directed: false`**
+TigerGraph is the only target with an undirected edge type. Everywhere else
+`directed: false` is stored as a directed edge and read as a statement about
+the model: a read may follow it either way. Those targets accept the
+declaration: when the schema is applied, each logs one message per undirected
+edge saying what it does with it, and
+`Connection.edge_direction_diagnostics(schema)` returns the same messages as
+data.
 
-TigerGraph is the only target with an undirected edge *type*. Everywhere else the edge is **stored** directed, and `directed: false` is an assertion about the model: endpoint order carries no meaning, so it carries no declared inverse, and a read may follow it either way.
+`Connection.fetch_edges(from_type, from_id, direction=...)` reads the edges of
+one vertex. `direction` is an `EdgeDirection`
+(`from graflo.architecture.graph_types import EdgeDirection`): `OUT`, the
+default, follows edges that start at the vertex, `IN` those that end there,
+and `ANY` both; `to_type` and `to_id` constrain the vertex at the other end.
+Read an undirected edge with `ANY`. A reverse read (`IN` or `ANY`) costs:
 
-Following it either way is what `Connection.fetch_edges(..., direction=...)` does. `EdgeDirection` names the orientations followed from the anchor vertex — `OUT` (the default, and the historical behaviour), `IN`, or `ANY` — and `to_type` / `to_id` constrain the vertex at the *other* end, whichever end that is. `default_direction_for_edge(edge)` derives it from the schema: an undirected edge reads as `ANY`.
-
-| Backend | Native undirected | Reverse read |
-|---------|-------------------|--------------|
-| TigerGraph | yes — `UNDIRECTED EDGE` | **schema-time only**: an `UNDIRECTED` type answers both ways; a *directed* type needs a native inverse (`WITH REVERSE_EDGE`), else the read raises |
-| ArangoDB | no | free — the edge index covers `_from` and `_to`, so `ANY` matches either orientation |
-| Neo4j / Memgraph / FalkorDB | no | cheap — the pattern drops or flips its arrow (`-[r]-`, `<-[r]-`) |
-| Nebula | no | cheap — `GO … REVERSELY` / `BIDIRECT` |
-| PostgreSQL | no | free — every edge table is defined with an index on `target_id`, so `IN` filters on it and `ANY` is a `UNION` of both lookups |
-| GraFlo file backend | no | direction **is** the storage partition key, so the reverse view is never stored; `fetch_edges` answers it from an in-process index over the batches it reads |
-
-Declaring `directed: false` against a backend with no undirected type is **not an error** — the flag is already present in working manifests, and refusing it would reject valid schemas. Each backend instead reports one diagnostic per undirected edge when the schema is applied, stating what that target actually does; `Connection.edge_direction_diagnostics(schema)` returns them as data, and `report_edge_direction_support` logs them. The matrix itself is [`graflo.architecture.schema.edge_direction`](../../reference/architecture/schema/edge_direction.md) — beside the schema and below every backend, so that choosing how to realize a declared inverse can consult it without a database driver; the read-path assertion and the diagnostics built on it are in [`graflo.db.edge_direction_support`](../../reference/db/edge_direction_support.md).
-
-!!! warning "TigerGraph fails loudly rather than under-reporting"
-    Reverse reachability there is fixed when the edge type is created, so an `IN` / `ANY` read of a directed type with no paired reverse type raises `UnsupportedEdgeDirectionError`. Silently returning only the outgoing half would hand back a partial neighbourhood with no signal.
-
-!!! warning "`identities` stay endpoint-ordered"
-    On an undirected edge the `source` and `target` tokens in an [identity key](#edge) still resolve positionally, so `(a, b)` and `(b, a)` count as two distinct keys. Declare such edges from a consistent side until canonical ordering lands.
-
-!!! note "Direction is decided per edge, on every read path"
-    `fetch_edges` is one hop from a known vertex; `Connection.graph_neighbors` walks several. Both follow an undirected edge both ways whatever direction was requested, and the native Cypher override applies the same rule as the backend-neutral default: relations that disagree on direction cannot share one variable-length pattern, so such a walk is issued hop by hop. A schema-aware caller also tells the backend what it needs to answer a reverse read — `edge_is_undirected`, and `native_inverse_type` for a relation whose inverse the database maintains — and gets rows back in the orientation of the edge as declared, whichever type answered.
-
-#### Matching and filtering (ingestion)
-- **`match_source`** / **`match_target`** / **`match`**: edge **actor** options for branch selection when building edges from hierarchical documents
-
-#### Advanced logical configuration
-- **`type`**: Edge type (DIRECT or INDIRECT)
-- **`by`**: Vertex name for indirect edges
-- DB-specific edge storage/type names are resolved from **`schema.db_profile`**
-  through DB-aware wrappers (`EdgeConfigDBAware`), not stored on `Edge`.
-
-#### When to use what
-
-**`relation_field`** (Example 3):
-
-- Set on the **`source` / `target` edge step** in the resource pipeline when relationship types live in a column (e.g. `company_a, company_b, relation, date`).
-
-**`relation_from_key`** (Example 4):
-
-- Set on the edge step for nested JSON where keys imply relationship types.
-
-**`properties` on the logical edge:**
-
-- Declare every relationship attribute you want in the schema (dates, scores, metadata).
-- Typed example: `properties: [{name: date, type: DATETIME}, {name: confidence_score, type: FLOAT}]`
-- String list: `properties: [date, confidence_score]`
-
-**`match_source` / `match_target`:**
-
-- Edge **actor** options when multiple branches feed the same vertex types; use to restrict which branches participate in an edge.
-
-### DataSource & DataSourceRegistry
-An `AbstractDataSource` subclass defines where data comes from and how it is retrieved. Each carries a `DataSourceType`. The `DataSourceRegistry` maps data sources to Resources by name.
-
-| `DataSourceType` | Adapter | Sources |
-|---|---|---|
-| `FILE` | `FileDataSource` | JSON, JSONL, CSV/TSV, Parquet files |
-| `SPARQL` | `RdfFileDataSource` | Turtle (`.ttl`), RDF/XML (`.rdf`), N3 (`.n3`), JSON-LD files — parsed via `rdflib` |
-| `SPARQL` | `SparqlEndpointDataSource` | Remote SPARQL endpoints (e.g. Apache Fuseki) queried via `SPARQLWrapper` |
-| `API` | `APIConnector` / `APIDataSource` | REST API endpoints via bindings + `conn_proxy`; [pagination strategies](../connectors/api_connector.md) |
-| `KAFKA` | `KafkaConnector` / `KafkaDataSource` | Finite-batch JSON topic consume via bindings + `conn_proxy`; [Kafka connector](../connectors/kafka_connector.md) |
-| `SQL` | `SQLDataSource` | SQL databases via SQLAlchemy with parameterised queries |
-| `IN_MEMORY` | `InMemoryDataSource` | Python objects (lists, DataFrames) already in memory |
-
-Data sources handle retrieval only. They bind to Resources by name via the `DataSourceRegistry`, so the same `Resource` can ingest data from multiple sources without modification.
-
-### Resource (`ResourceConfig` / `ResourceRuntime`)
-
-Ingestion resources split into two layers:
-
-- **`ResourceConfig`** — declarative contract in **`ingestion_model.resources`** (YAML/Python): pipeline steps, encoding, type casters, edge-inference flags, **`tolerate_transform_errors`**, and related options. Serialized in manifests; validated by **`IngestionModel`**.
-- **`ResourceRuntime`** — schema-bound executor built via **`build_resource_runtime`**: filtered **`VertexConfig`**, bound transforms, and **`ActorExecutor`** for document casting.
-
-The name **`Resource`** in manifests and docs usually means **`ResourceConfig`**. Data sources bind to resources by name, so the same pipeline applies whether data arrives from a file, API, Kafka topic, SQL table, or SPARQL endpoint.
-
-Resource-level controls:
-- **`infer_edges`**: Global toggle for inferred edge emission during assembly (default: `true`).
-- **`infer_edge_only`**: Allow-list of inferred edges (`source`, `target`, optional `relation`).
-- **`infer_edge_except`**: Deny-list of inferred edges (`source`, `target`, optional `relation`).
-- **`tolerate_transform_errors`** (default **`true`**): on transform failure, null declared outputs and continue the pipeline; see [Document cast errors](../ingestion/doc_errors.md).
-- `infer_edge_only` and `infer_edge_except` are mutually exclusive and validated against declared schema edges.
-- These controls apply to inferred edges only; explicit edge actors in the pipeline are still emitted.
-- **Auto-exclusion**: When a resource pipeline contains any EdgeActor for edges of type `(source, target)`, `(source, target, None)` is automatically added to `infer_edge_except` for that resource, so inferred edges do not duplicate edges produced by explicit edge actors.
-
-### Actor
-An `Actor` describes how the current level of the document should be mapped/transformed to the property graph vertices and edges. There are five actor types:
-
-- `DescendActor`: Navigates to the next level in the hierarchy. Supports:
-  - `key`: Process a specific key in a dictionary
-  - `any_key`: Process all keys in a dictionary (useful when you want to handle multiple keys dynamically)
-- `TransformActor`: Applies data transformations
-- `VertexActor`: Creates vertices from the current level. Key options:
-  - **`role`** (optional): named accumulator slot. When set the vertex is stored at `lindex.extend((role, 0))` instead of bare `lindex`, so multiple vertices of the same type in one row (e.g. `role: self`, `role: parent`, `role: child`) occupy distinct slots and can be addressed individually by a downstream edge step.
-  - **`from`** (`from_doc`): rename map `{vertex_field: doc_field}`. Only mismatched column names need listing; remaining vertex schema properties are absorbed from the doc and transform buffer automatically (passthrough). When multiple **`TransformPayload`** entries share a location, **`from_doc`** consumes only payloads whose **`named`** keys include all mapped source fields—so dressed metrics or pivot rows for other vertex types are left for their own **`vertex`** steps.
-  - **`keep_fields`**: restrict passthrough to this field subset. Use on role-vertex steps to prevent shared row columns from leaking into placeholder vertices that only carry an ID.
-- `EdgeActor`: Creates edges between vertices. Operates in three modes:
-  - **Static mode** (`from`/`to` set on both sides): vertex types declared at config time.
-  - **Dynamic / mixed mode** (at least one of `source_type_field` / `target_type_field` / `source_role` / `target_role` set): vertex types resolved at extraction time by looking up accumulator slots. `source_role` / `target_role` are ergonomic aliases for `source_type_field` / `target_type_field` — the slot lookup is identical whether the slot was populated by `vertex+role` or `vertex_router+role` (with router role inferred from `type_field` when omitted).
-  - **Multi-link mode** (`links` list set): each item in `links` emits one edge intent per row. Use when one flat row encodes multiple distinct relationship types (e.g. `isChildOf` and `isParentOf` from the same row).
-- `VertexRouterActor`: Routes documents to the correct `VertexActor` based on a type field read from the document at runtime. Vertices are stored at `lindex.extend((role, 0))`; when `role` is omitted it is inferred from `type_field`. Optional router-level **`from`** provides a default `{vertex_field: doc_field}` projection; **`vertex_from_map`** overrides per resolved vertex type. Use when the vertex type varies per row; for a fixed vertex type with role-distinct slots, use `vertex+role` instead. **`type_map`** translates raw values to vertex types and is identity where it has no entry: an unmapped value routes as-is, as the vertex type name, so a router can produce any class the schema declares (a value naming no class is skipped). A router with no `type_map` at all routes purely by that rule. The runtime and the evolution ops count on it — a resource holding a router is scoped to every class, not only the ones its steps state, and a class rename writes the old name into `type_map` so raw values keep routing. **`type_map_only: true`** closes the router: a value its table does not name is skipped, so it produces exactly the table's classes. Merge closes each side's routers this way, over that side's classes. **`lookup_only`** (`true`, or a list of classes) makes the routed rows lookups for edge endpoints that are never written.
-
-```mermaid
-flowchart TB
-    subgraph actors [Actor Types]
-        D[DescendActor]
-        T[TransformActor]
-        V["VertexActor\n(optional role)"]
-        E["EdgeActor\n(static · dynamic · multi-link)"]
-        VR["VertexRouterActor\n(type from doc)"]
-    end
-    Doc[Document] --> D
-    Doc --> T
-    Doc --> V
-    Doc --> E
-    Doc --> VR
-    V -.->|"role='r'\n→ store at lindex.(r,0)"| slot_r["acc_vertex slot (r,0)"]
-    VR -.->|"role='r' (or inferred from type_field)\n→ store at lindex.(r,0)"| slot_tf["acc_vertex slot (r,0)"]
-    E -.->|"source_role='r' or\nsource_type_field='tf'\n→ scan acc_vertex at slot"| slot_r
-    E -.->|"links: [...]"| multi["N edge intents per row"]
-```
-
-#### Accumulator slots: `vertex+role` vs `vertex_router`
-
-Both mechanisms write vertices to a named sub-slot of the current `LocationIndex`. A downstream dynamic `EdgeActor` scans `acc_vertex` for data at the same slot path.
-
-| Mechanism | When the vertex type is... | Slot name comes from... |
-|---|---|---|
-| `vertex: T, role: r` | **static** (known at schema design time) | `role` value |
-| `vertex_router: type_field: tf` (optional `role: r`) | **dynamic** (read from a doc column at runtime) | `role` (`type_field` when `role` is omitted) |
-
-The `EdgeActor` vocabulary matches:
-
-| Slot populated by | Edge config field |
+| Target | Reverse read |
 |---|---|
-| `vertex+role` | `source_role` / `target_role` |
-| `vertex_router` | `source_type_field` / `target_type_field` (or `source_role` / `target_role`) |
+| ArangoDB, PostgreSQL | the same as a forward read: both endpoints are indexed |
+| Neo4j, Memgraph, FalkorDB | little: relationships are stored in both directions |
+| NebulaGraph | little: GraFlo adds the reverse clause to the query |
+| TigerGraph | possible only on an undirected edge type or one with a native inverse; otherwise it raises `UnsupportedEdgeDirectionError` instead of returning half a neighborhood |
+| GraFlo file backend | an index GraFlo builds over the edge files it reads |
 
-Both pairs are equivalent at runtime — they name the same path segment in `acc_vertex`.
+!!! warning "Identity keys keep endpoint order"
+    On an undirected edge the `source` and `target` tokens of an identity key
+    still resolve by position, so `(a, b)` and `(b, a)` count as two keys.
+    Write such edges from a consistent side.
 
-#### Dynamic Edge Scenario Matrix
+The operations that add inverse edges to an existing manifest are on
+[manifest evolution](../schema/manifest_evolution.md#inverse-relations-in-detail);
+the [edge inverses example](../../examples/edge-inverses/index.md) (19) shows
+all three ways of storing an inverse in one manifest.
 
-| Vertex types | Relation | Config pattern |
+## Resource and its steps
+
+A resource is the recipe that turns one kind of record into vertices and
+edges. It has a name, which connectors refer to, and a `pipeline`: a list of
+steps that run on every record.
+
+```yaml
+ingestion_model:
+  resources:
+    - name: work_orders
+      pipeline:
+        - transform:
+            rename: { wo_id: id }
+        - vertex: work_order
+        - vertex: machine
+          from: { serial: machine_serial }
+        - edge:
+            from: work_order
+            to: machine
+```
+
+From the record `{wo_id: W1, machine_serial: HP-1, model: X}`, this resource
+makes the vertices `work_order {id: W1}` and `machine {serial: HP-1, model: X}`
+and an edge between them.
+
+Two rules explain most results:
+
+- **Steps run by kind.** Within one level of the pipeline, GraFlo runs
+  `descend` steps first, then transforms in the order written, then vertex
+  routers, vertex steps and edge steps. A vertex step therefore sees the
+  output of every transform at its level, wherever the transform is written.
+- **Edges between the vertices of one record are added for you.** The
+  vertices a record produces are connected by every edge the schema declares
+  between their types (`infer_edges`, on by default). The `edge` step above
+  is only needed when the relation comes from the record, when a record
+  should get only some of the relations the schema declares between two
+  types, or when the edge needs options such as `vertex_weights`.
+
+### The `vertex` step
+
+```yaml
+- vertex: machine
+  from: { serial: machine_serial }
+```
+
+- `vertex`: the vertex type to produce.
+- `from`: `{property: field}` for the properties whose field name differs.
+  Properties with the same name as a field need no entry; the step takes them
+  from the record. This is called passthrough.
+- `extraction_scope`: `full` (default) allows passthrough; `mapped_only` takes
+  only the properties named in `from`, plus those written by transforms at the
+  same level. Use `mapped_only` when one record produces several vertices of
+  the same type, because the record's other columns describe only one of
+  them: in a row about a person that also names the person's parent, the
+  parent would otherwise receive the row's `name` and `age`. See the
+  [roles and edge links example](../../examples/vertex-roles-edge-links/index.md)
+  (6).
+- `keep_fields`: restrict passthrough to the listed properties.
+- `role`: a name for this vertex when one record produces several vertices of
+  the same type (`role: parent`, `role: child`). An `edge` step refers to
+  them by `source_role` and `target_role`.
+- `lookup_only: true`: find an existing vertex for an edge endpoint, but never
+  write it. Set it on resources that only add edges and whose records carry
+  another identifier than the vertex's primary key, because writing such a
+  record would create a vertex without its key.
+
+### The `edge` step
+
+An edge step connects vertices that this resource produces. Each endpoint is
+named by its vertex type or, when a record holds several vertices of one type
+or the type varies, by a role.
+
+```yaml
+- edge:
+    from: machine
+    to: line
+    relation_field: rel_type
+    properties: [since]
+```
+
+Endpoints, one for each side:
+
+- `from` / `to`: vertex types produced by vertex steps of this resource (also
+  written `source` / `target`).
+- `source_role` / `target_role`: the `role` of a vertex step or a
+  `vertex_router` step, for records where the type or the role varies.
+- `links`: a list of `{source_role, target_role, relation}` entries, when one
+  record holds several relationships. `links` replaces the endpoint keys
+  above.
+
+The relation, one of:
+
+- `relation`: fixed.
+- `relation_field`: the record field that holds the relation; a transform may
+  compute it. `relation_map` translates raw values to relation names, and with
+  `relation_map_only: true` a value that is not in the map writes no edge
+  instead of being used as the relation name.
+- `relation_from_key: true`: the JSON key under which the record was reached
+  (see the [relation from key example](../../examples/json-relation-from-key/index.md)
+  (4)).
+
+Payload and selection:
+
+- `properties`: more edge properties, added to the schema edge. Like the ones
+  the schema declares, their values are read from the record.
+- `vertex_weights`: `[{name: <vertex type>, fields: [...]}]` copies properties
+  of an endpoint vertex onto the edge, under the name `<vertex type>@<field>`
+  (see the [filters and weights example](../../examples/vertex-filters-and-weights/index.md)
+  (5)).
+- `match_source` / `match_target` / `match`: only connect vertices reached
+  under this key of a nested record. `exclude_source` / `exclude_target` skip
+  vertices reached under it.
+- `source_match` / `target_match`: find an endpoint by a named secondary
+  identity instead of its primary identity. `on_ambiguous` says what to do
+  when several vertices match: `all`, `first`, `skip` or `error`, defaulting
+  to `ingestion_model.endpoints_on_ambiguous` (`all`). See
+  [vertex identity](../schema/vertex_identity.md).
+- `emit_inverse: true`: also write the inverse of every edge this step writes,
+  when the schema declares the inverse edge. On a step with `links`, set it on
+  each link.
+- `strict_edge_types: true`: for steps whose endpoints come from roles, skip a
+  record whose resolved `(source, target, relation)` the schema does not
+  declare. By default such an edge type is added when it is first seen; set
+  this for targets that need their edge types defined before any write.
+
+### The `transform` step
+
+A transform renames fields or computes new ones before a `vertex` or `edge`
+step reads them. `rename` maps field names; `call` runs a Python function,
+named by `module` and `foo`, on chosen fields.
+
+```yaml
+- transform:
+    rename: { wo_id: id }
+- transform:
+    call:
+      module: builtins
+      foo: int
+      input: [quantity]
+```
+
+A transform used by several resources is declared once under
+`ingestion_model.transforms` and run with `call: { use: <name> }`. Every
+option is on [transforms](../ingestion/transforms.md).
+
+### The `descend` step
+
+JSON records nest. A `descend` step runs its own pipeline on one part of the
+record: the value under `key`, or each value in turn with `any_key: true`.
+
+```yaml
+- key: sensors
+  pipeline:
+    - vertex: sensor
+```
+
+When the value is a list, the inner pipeline runs once per element. Inside,
+the steps see only that element, not the parent record, and transforms stay
+on their own level. A field of the parent that a child vertex needs has to be
+in the element itself. Vertices from different levels of one record are still
+connected: inferred edges and edge steps see every vertex the record produced.
+The [records that refer to their own kind example](../../examples/json-self-edges/index.md)
+(2) descends into a list of references.
+
+### The `vertex_router` step
+
+One table sometimes holds several kinds of things, with a column naming the
+kind. A `vertex_router` step reads that column and produces a vertex of the
+matching type.
+
+```yaml
+- vertex_router:
+    type_field: kind
+    type_map: { M: machine, L: line }
+    from: { serial: object_id }
+```
+
+- `type_field`: the field whose value chooses the vertex type. A record
+  without it produces no vertex.
+- `type_map`: raw value to vertex type. A value with no entry is used as the
+  vertex type name as it is, and a value that names no declared type is
+  skipped. A column that already holds type names therefore needs no
+  `type_map` at all.
+- `type_map_only: true`: skip values that are not in `type_map`, so the router
+  produces only the listed types.
+- `from`, `keep_fields`, `extraction_scope`: as on the vertex step, applied to
+  every routed type. `vertex_from_map: {type: {property: field}}` replaces
+  `from` for one type.
+- `role`: the name an edge step uses in `source_role` / `target_role`.
+  Defaults to the name given in `type_field`.
+- `lookup_only`: `true` for every routed type, or a list of the types to look
+  up without writing.
+
+A router without `type_map_only` can produce any vertex type the schema
+declares, so GraFlo treats its resource as producing all of them. Two
+examples show the two shapes: [a type map](../../examples/vertex-router-type-map/index.md)
+(7) and [rows that name their own types](../../examples/vertex-router-flat-rows/index.md)
+(8).
+
+### Resource options
+
+Set beside `name` and `pipeline`:
+
+| Key | Default | Effect |
 |---|---|---|
-| Both static | Static | `from: server, to: database, relation: uses` |
-| Both static | Dynamic from field | `from: server, to: database, relation_field: rt` |
-| Both static | Dynamic from key | `from: server, to: database, relation_from_key: true` |
-| Both dynamic (router) | Static | `source_role: src, target_role: tgt, relation: uses` |
-| Both dynamic (router) | Dynamic from field | `source_role: src, target_role: tgt, relation_field: rt` |
-| Both role-slot | Static | `source_role: self, target_role: parent, relation: isChildOf` |
-| Mixed (static + dynamic) | Dynamic | `from: person, target_role: tgt, relation_field: rt` |
-| Mixed (dynamic + static) | Dynamic | `source_role: src, to: institution, relation_field: rt` |
-| Multiple relations from one row | Static per link | `links: [{source_role: self, target_role: parent, relation: isChildOf}, ...]` |
+| `infer_edges` | `true` | Connect the vertices of one record by every edge the schema declares between their types. With `false`, only edge steps write edges. |
+| `infer_edge_only` / `infer_edge_except` | empty | Allow-list or deny-list of `{source, target, relation}` for inferred edges. The two are exclusive, and each entry must match a declared edge. A pair an edge step already connects is never inferred, so explicit and inferred edges do not duplicate. |
+| `drop_trivial_input_fields` | `false` | Remove top-level fields whose value is `null` or `""` before the steps run. `0` and `false` stay; nested values are not touched. |
+| `fail_fast` | `false` | Fail the record when a transform's input fields are missing. By default a `rename` maps the fields that are present and a `call` writes nothing. |
+| `tolerate_transform_errors` | `true` | When a transform raises, set its output fields to `null`, record the failure, and continue with the record. See [document cast errors](../ingestion/doc_errors.md). |
+| `types` | empty | `{field: type}` conversions applied to top-level fields before the steps. The types are `int`, `float`, `str`, `bool`, `bytes`, `list`, `dict`, `tuple` and `set`; other names are ignored. |
+| `extra_weights` | empty | Edge properties copied from endpoint vertices as stored in the database, read between the vertex and edge writes of each batch. The resource then runs serially; see [parallelism](../ingestion/parallelism.md). |
 
-`source_type_field` / `target_type_field` (or `source_role` / `target_role`) must equal the accumulator slot segment of the upstream `VertexRouterActor` — `role` (inferred from `type_field` when omitted). For a static `vertex` step, `source_role` / `target_role` must equal that step’s `role`.
+## Names in the target database
 
-#### Type Safety Controls
+Some databases refuse some names: TigerGraph rejects its reserved words, names
+with a space, `-`, `.` or other punctuation, and names that start with
+`gsql_sys_`. A name the database cannot store is a fact about that database,
+so it is recorded in `schema.db_profile`, and the names in the schema and the
+ingestion model do not change.
 
-When dynamic edge types are used, a row may encounter a `(source_type, target_type)` pair not pre-declared in the schema `edge_config`. By default (`strict_edge_types: false`) this pair is registered at runtime. For strictly-typed databases that require DDL before writes, set:
+| `db_profile` key | Stores |
+|---|---|
+| `vertex_storage_names` | the collection, label or tag name per vertex type |
+| `edge_specs[].relation_name` | the stored relation name per edge |
+| `vertex_property_names` | the stored attribute name per vertex property |
+| `edge_specs[].property_names` | the stored attribute name per edge property |
+
+Records keep the manifest's names from start to end. The writer translates
+every document to stored names at the database call and translates back what
+it reads, and the schema is created in the database under the stored names.
+With nothing renamed, both translations change nothing.
+
+You do not have to fill the profile yourself. Defining a schema, ingesting,
+migrating and the schema-aware reads fill in any stored name the profile lacks
+for the target, and names already in the profile win. Record them anyway when
+the manifest is shared or changes over time, so they stay stable and are
+visible to anyone who reads the database directly:
+
+```python
+from graflo import DBType
+from graflo.hq.sanitizer import Sanitizer
+
+manifest = Sanitizer(db_flavor=DBType.TIGERGRAPH).sanitize_manifest(manifest)
+```
+
+`sanitize_manifest` changes the manifest in place, sets `db_profile.db_flavor`
+to the target and returns the same object. `GraphEngine.infer_manifest(...)`
+runs it for the engine's target before returning, so an inferred manifest
+already has names its target accepts.
+
+Two kinds of read exist. `Connection.graph_neighbors` and `Connection.traverse`
+take and return the manifest's names, including an edge read through its
+declared inverse name. `fetch_docs`, `fetch_edges`, `fetch_all_docs` and
+`fetch_all_edges` take a stored name and return stored names as they are: they
+show the database's view, not the schema's.
+
+Beyond names, `db_profile` holds the target flavor (`db_flavor`, default
+`arango`), an optional `target_namespace`, secondary indexes (`vertex_indexes`,
+`edge_specs[].indexes`; see [backend indexes](../schema/backend_indexes.md)),
+`native_inverses`, and `default_property_values`.
+
+TigerGraph stores a value for every attribute a vertex or edge type declares,
+including one a record does not supply. `default_property_values` sets that
+value, as the `DEFAULT` clause of the attribute when the schema is created; a
+reading of `-1.0` then marks a sensor that never reported, where the type's
+own default could be mistaken for a measurement. The other targets ignore the
+key.
 
 ```yaml
-edge:
-  source_type_field: S
-  target_type_field: T
-  strict_edge_types: true   # skip rows whose resolved pair is not pre-declared
+db_profile:
+    db_flavor: tigergraph
+    default_property_values:
+        vertices:
+            sensor:
+                reading: -1.0
+        edges:
+        -   source: sensor
+            target: machine
+            relation: mounted_on
+            values:
+                since_year: 0
 ```
 
-### Location-scoped observations, transforms, and routers
+## GraphContainer
 
-Ingestion pipelines walk **nested JSON** (or list-shaped branches). At each step, actors receive:
+A `GraphContainer` is the graph held in memory before it is written: the
+vertices of one batch, grouped by vertex type, and its edges, grouped by
+`(source, target, relation)`. It does not depend on any database. Casting a
+batch produces one, the writer consumes it, and `GraphEngine.export_graph()`
+returns one for a whole graph, together with its schema, as a `GraFloOutput`.
+In JSON each edge group is keyed by a string holding the array
+`["source","target","relation"]`.
 
-- A **`LocationIndex`** — a path into the document (which list index, which object key, and so on).
-- An **observation slice** — usually a `dict` that is the current fragment of the document for that path (for example the element produced by a `DescendActor` iteration). Tabular sources are the special case where the top-level slice is one flat object per record.
+## What to read next
 
-**Transform output** is not written back onto that slice automatically. `TransformActor` appends a `TransformPayload` to `ExtractionContext.transform_buffer[location]` for the **same** `LocationIndex` it was invoked with. Later actors at that location can consume those named fields.
-
-**`VertexActor` with `role`** stores the vertex at `lindex.extend((role, 0))` using the configured `role` string as the slot segment. Extraction reads from an effective observation built from the current doc slice plus same-location transform buffer values (transform values override raw doc values on conflicts). Field greediness is controlled explicitly via `extraction_scope`: `full` (default) keeps passthrough behavior for remaining schema properties, while `mapped_only` extracts only fields explicitly mapped in `from`. In `full`, `keep_fields` restricts passthrough to a subset and helps prevent unrelated row columns from leaking into placeholder role vertices that only need an ID. A downstream edge step references the slot via `source_role` / `target_role`.
-
-`VertexRep` carries only the extracted vertex document. Row-level merged observation state used for edge relation/weight derivation lives in `ExtractionContext.obs_buffer` and is looked up by `LocationIndex` (with parent lookup for nested scopes).
-
-**`VertexRouterActor`** builds an **effective observation** by merging the current dict slice with all `TransformPayload` entries at that `LocationIndex`. Routing fields (`type_field`, optional `from` / `vertex_from_map`, optional `keep_fields`, optional `extraction_scope`) are read from this merged view — the same dict is passed to the lazily created `VertexActor` (no separate rename/slice layer). The vertex is accumulated at `lindex.extend((role, 0))`, where `role` is inferred from `type_field` when omitted. A downstream dynamic `EdgeActor` finds it by setting `source_role` / `target_role` (or `source_type_field` / `target_type_field`) to that same slot segment.
-
-**Dynamic `EdgeActor`** (slot mode) also merges the doc with the transform buffer before reading `relation_field`; this ensures that values produced by upstream transforms (e.g. canonicalized relation names) are available at edge construction time.
-
-**Multi-link `EdgeActor`** (when `links` is set) delegates to one sub-actor per link. Each sub-actor performs a full single-intent edge resolution; the results accumulate into the same `ExtractionContext`. The `links` field is mutually exclusive with all top-level source/target fields on the same step.
-
-**Scoping:** `transform_buffer` is keyed only by the exact `LocationIndex`. A transform at a parent path does **not** appear in the buffer for a child path, and vice versa. That keeps parent/child branches separate.
-
-**Descend behavior:** When `DescendActor` expands a collection, inner actors see **`sub_doc`** (one child value) per iteration — not the full parent object — unless you denormalize parent fields onto each child or structure the pipeline so the router runs at a level where the slice already contains what you need.
-
-**Future discussion (not implemented):** Opt-in inheritance of specific fields from a parent `LocationIndex` (or a parent observation stack) could simplify parent–child edges without duplicating data on every child; that would be an explicit configuration surface to avoid breaking the default isolation above.
-
-### Transform
-
-A `Transform` defines data transforms, from renaming and type-casting to
-arbitrary Python functions. The transform system is built on two layers:
-
-For a dedicated guide covering all transform use cases and configuration
-options (inline/local usage, reusable `use` references, multi-field
-strategies, and key transforms), see [Transforms](../ingestion/transforms.md).
-
-- **ProtoTransform** — the raw function wrapper. It holds `module`, `foo`
-  (function name), and `params`. Its `apply()` method invokes the function
-  without caring about where the inputs come from or how the outputs are
-  packaged.
-- **Transform** — wraps a ProtoTransform with input extraction, output
-  formatting, field mapping, and optional *dressing*.
-
-#### Output modes
-
-A Transform can produce output in three ways:
-
-1. **Direct output** (`output`) — the function returns one or more values that
-   map 1:1 to output field names:
-
-    ```yaml
-    - foo: parse_date_ibes
-      module: graflo.util.transform
-      input: [ANNDATS, ANNTIMS]
-      output: [datetime_announce]
-    ```
-
-    The function takes two arguments and returns a single string; the string
-    is placed into the `datetime_announce` field.
-
-2. **Field mapping** (`map`) — pure renaming with no function:
-
-    ```yaml
-    - map:
-        Date: t_obs
-    ```
-
-3. **Dressed output** (`dress`) — the function returns a single scalar, and
-   the result is packaged together with the input field name into a dict.
-   This is useful for pivoting wide columns into key/value rows:
-
-    ```yaml
-    - foo: round_str
-      module: graflo.util.transform
-      params:
-        ndigits: 3
-      input:
-      - Open
-      dress:
-        key: name
-        value: value
-    ```
-
-    Given a document `{Open: "6.430062..."}`, this produces
-    `{name: "Open", value: 6.43}`. The `dress` dict has two roles:
-
-    - `key` — the output field that receives the **input field name** (here `"Open"`)
-    - `value` — the output field that receives the **function result** (here `6.43`)
-
-    You can also use `dress` as a shorthand without a callable when you only
-    want to pivot one field into key/value form:
-
-    ```yaml
-    - transform:
-        call:
-          input: [vol]
-          dress:
-            key: type
-            value: value
-    ```
-
-    Given `{vol: 0.123}`, this produces `{type: "vol", value: 0.123}`.
-
-    This cleanly separates *what function to apply* (ProtoTransform) from
-    *how to present the result* (dressing).
-
-#### Key transforms
-
-Transforms can also target **document keys** (not values) using
-`transform.call.target: keys`. Key mode uses implicit per-key execution and a
-selector under `call.keys`:
-
-- `mode: all` — apply to all keys
-- `mode: include` — apply only to listed keys
-- `mode: exclude` — apply to all keys except listed keys
-
-Example: normalize all keys to snake case:
-
-```yaml
-- transform:
-    call:
-      module: graflo.util.transform
-      foo: camel_to_snake
-      target: keys
-      keys:
-        mode: all
-```
-
-Example: strip `raw_` only from selected keys:
-
-```yaml
-- transform:
-    call:
-      module: graflo.util.transform
-      foo: remove_prefix
-      params: {prefix: "raw_"}
-      target: keys
-      keys:
-        mode: include
-        names: [raw_id, raw_label]
-```
-
-#### Grouped value transforms
-
-For repeated tuple-style value calls, use explicit `input_groups` in
-`transform.call`:
-
-```yaml
-- transform:
-    call:
-      module: my_pkg.transforms
-      foo: join_name
-      input_groups:
-        - [fname_parent, lname_parent]
-        - [fname_child, lname_child]
-      output: [parent_name, child_name]
-```
-
-This executes one function call per group with deterministic output mapping.
-
-```mermaid
-flowchart LR
-    Doc["Input Document"] -->|"extract input fields"| Proto["ProtoTransform.apply()"]
-    Proto -->|"dress is set"| Dressed["{dress.key: input_key,<br/>dress.value: result}"]
-    Proto -->|"output is set"| Direct["zip(output, result)"]
-    Proto -->|"map only"| Mapped["{new_key: old_value}"]
-```
-
-#### Schema-level transforms
-
-Transforms are declared as a **list** under `ingestion_model.transforms` and
-referenced from resource steps via `transform.call.use`. This keeps ordering
-explicit and allows reuse across multiple pipelines:
-
-```yaml
-transforms:
-  - name: keep_suffix_id
-    foo: split_keep_part
-    module: graflo.util.transform
-    params: { sep: "/", keep: -1 }
-    input: [id]
-    output: [_key]
-
-resources:
-- name: works
-  apply:
-  - transform:
-      call:
-        use: keep_suffix_id      # references the transform above
-        input: [doi]             # override input for this usage
-  - vertex: work
-```
-
-Transform steps are executed in the order they appear in `apply`.
+- [Transforms](../ingestion/transforms.md): every option of the `transform`
+  step.
+- [Vertex identity](../schema/vertex_identity.md): keys, records without a
+  key, and secondary identities.
+- [Creating a manifest](../../getting_started/creating_manifest.md): the
+  `bindings` block and credentials at run time.

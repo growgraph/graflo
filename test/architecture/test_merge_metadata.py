@@ -60,9 +60,7 @@ def test_manifest_metadata_is_excluded_from_the_content_hash() -> None:
     named = _manifest(
         vertex="A",
         schema_metadata=GraphMetadata(name="s"),
-        manifest_metadata=ManifestMetadata(
-            name="estate", description="the whole estate"
-        ),
+        manifest_metadata=ManifestMetadata(name="plant", description="the whole plant"),
     )
     assert manifest_hash(unnamed) == manifest_hash(named)
 
@@ -72,30 +70,34 @@ def test_a_bindings_only_manifest_can_be_named() -> None:
     m = GraphManifest.from_config(
         {
             "bindings": {"connectors": [], "resource_connector": []},
-            "metadata": {"name": "helix-discovery", "description": "estate REST API"},
+            "metadata": {"name": "sensor-feed", "description": "plant REST API"},
         }
     )
     assert m.graph_schema is None
     assert m.metadata is not None
-    assert m.metadata.name == "helix-discovery"
-    assert m.metadata.description == "estate REST API"
+    assert m.metadata.name == "sensor-feed"
+    assert m.metadata.description == "plant REST API"
 
 
 def test_compose_folds_manifest_name_and_description() -> None:
     left = _manifest(
         vertex="A",
         schema_metadata=GraphMetadata(name="l"),
-        manifest_metadata=ManifestMetadata(name="cmdb", description="the CMDB"),
+        manifest_metadata=ManifestMetadata(
+            name="maintenance", description="the maintenance system"
+        ),
     )
     right = _manifest(
         vertex="B",
         schema_metadata=GraphMetadata(name="r"),
-        manifest_metadata=ManifestMetadata(name="discovery", description="the scanner"),
+        manifest_metadata=ManifestMetadata(
+            name="sensors", description="the sensor feed"
+        ),
     )
     merged = _compose(left, right)
     assert merged.metadata is not None
-    assert merged.metadata.name == "cmdb+discovery"
-    assert merged.metadata.description == "the CMDB\n\nthe scanner"
+    assert merged.metadata.name == "maintenance+sensors"
+    assert merged.metadata.description == "the maintenance system\n\nthe sensor feed"
 
 
 def test_compose_keeps_a_one_sided_manifest_name() -> None:
@@ -103,11 +105,11 @@ def test_compose_keeps_a_one_sided_manifest_name() -> None:
     right = _manifest(
         vertex="B",
         schema_metadata=GraphMetadata(name="r"),
-        manifest_metadata=ManifestMetadata(name="discovery"),
+        manifest_metadata=ManifestMetadata(name="sensors"),
     )
     merged = _compose(left, right)
     assert merged.metadata is not None
-    assert merged.metadata.name == "discovery"
+    assert merged.metadata.name == "sensors"
 
 
 def test_compose_yields_no_manifest_metadata_when_neither_side_has_any() -> None:
@@ -136,9 +138,9 @@ def test_compose_unions_schema_semantics() -> None:
         schema_metadata=GraphMetadata(
             name="l",
             semantics=Semantics(
-                iri="https://example.org/Estate",
+                iri="https://example.org/Plant",
                 exact_match=["https://example.org/E"],
-                synonyms=["estate"],
+                synonyms=["plant"],
             ),
         ),
     )
@@ -147,30 +149,30 @@ def test_compose_unions_schema_semantics() -> None:
         schema_metadata=GraphMetadata(
             name="r",
             semantics=Semantics(
-                iri="https://example.org/Estate",
+                iri="https://example.org/Plant",
                 exact_match=["https://example.org/E2"],
-                synonyms=["estate", "fleet"],
+                synonyms=["plant", "factory"],
             ),
         ),
     )
     semantics = _compose(left, right).require_schema().metadata.semantics
     assert semantics is not None
-    assert semantics.iri == "https://example.org/Estate"
+    assert semantics.iri == "https://example.org/Plant"
     assert semantics.exact_match == ["https://example.org/E", "https://example.org/E2"]
-    assert semantics.synonyms == ["estate", "fleet"]
+    assert semantics.synonyms == ["plant", "factory"]
 
 
 def test_disagreeing_semantic_iris_clear_rather_than_electing_the_left() -> None:
     left = _manifest(
         vertex="A",
         schema_metadata=GraphMetadata(
-            name="l", semantics=Semantics(iri="https://example.org/Estate")
+            name="l", semantics=Semantics(iri="https://example.org/Plant")
         ),
     )
     right = _manifest(
         vertex="B",
         schema_metadata=GraphMetadata(
-            name="r", semantics=Semantics(iri="https://example.org/Fleet")
+            name="r", semantics=Semantics(iri="https://example.org/Factory")
         ),
     )
     semantics = _compose(left, right).require_schema().metadata.semantics
@@ -183,12 +185,12 @@ def test_a_one_sided_semantics_block_survives_the_fold() -> None:
     right = _manifest(
         vertex="B",
         schema_metadata=GraphMetadata(
-            name="r", semantics=Semantics(iri="https://example.org/Fleet")
+            name="r", semantics=Semantics(iri="https://example.org/Factory")
         ),
     )
     semantics = _compose(left, right).require_schema().metadata.semantics
     assert semantics is not None
-    assert semantics.iri == "https://example.org/Fleet"
+    assert semantics.iri == "https://example.org/Factory"
 
 
 def test_an_agreed_naming_convention_survives_and_a_disagreement_does_not() -> None:
@@ -216,7 +218,7 @@ def test_compose_does_not_inherit_the_left_provenance() -> None:
             name="l", provenance=Provenance(content_hash="deadbeef", canon="1")
         ),
         manifest_metadata=ManifestMetadata(
-            name="cmdb",
+            name="maintenance",
             provenance=Provenance(content_hash="deadbeef", canon="1"),
         ),
     )
@@ -262,18 +264,18 @@ def test_the_op_name_replaces_the_fold_without_moving_the_hash() -> None:
     left = _manifest(
         vertex="A",
         schema_metadata=GraphMetadata(name="l"),
-        manifest_metadata=ManifestMetadata(name="cmdb"),
+        manifest_metadata=ManifestMetadata(name="maintenance"),
     )
     right = _manifest(vertex="B", schema_metadata=GraphMetadata(name="r"))
     folded = _compose(left, right)
     named = merge_manifests(
         left,
         right,
-        MergeManifestsOp(name="estate"),
+        MergeManifestsOp(name="plant"),
         bump_version=False,
         finish_init=False,
     )
-    assert named.require_schema().metadata.name == "estate"
+    assert named.require_schema().metadata.name == "plant"
     assert named.metadata is not None
-    assert named.metadata.name == "estate"
+    assert named.metadata.name == "plant"
     assert manifest_hash(named) == manifest_hash(folded)

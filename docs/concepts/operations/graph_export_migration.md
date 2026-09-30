@@ -1,234 +1,197 @@
 # Graph export and migration
 
-Since **1.8.6**, GraFlo treats existing graph databases as **sources**: introspect schema and data from Neo4j, ArangoDB or PostgreSQL (or a file backend) and load into **any** supported target — another LPG, PostgreSQL, or disk — with **`GraphEngine.migrate_graph()`**. No manifest YAML is required for graph-to-graph moves.
+You have a labeled property graph in a database and you want it somewhere
+else: in another database, on disk, or in memory as Python objects. GraFlo
+reads the graph without a [manifest](../glossary.md#manifest), recovers its
+schema, and writes it to any backend it supports. This page explains the three
+operations behind that, what the file backend is, and where the limits are.
+Two guides do the tasks:
+[move a graph from one database to another](../../guides/graph_db_migration.md)
+and [save a graph to files and load it back](../../guides/graph_export_and_replay.md).
 
-Since **1.8.7**, **`GraFloBackendConfig`** adds a chunked on-disk backend that is both a durable export format and an optional intermediate store for large or repeated migrations.
+## Three operations
 
-!!! warning "`migrate_graph()` cannot complete a move today"
+All three are methods of `GraphEngine`. Each takes the connection config of
+the database to read.
 
-    Introspection and export both work, and every step below runs — but the
-    final write raises `ValueError: Empty resource container`, for **every**
-    source/target pair. `migrate_graph()` builds an empty `IngestionModel` and
-    then asks `DBWriter` to write through it, which has no resource to resolve.
+| You want | Call | Returns |
+|---|---|---|
+| The schema of an existing graph | `infer_schema_from_graph(source)` | a `Schema` |
+| Schema and data in memory | `export_graph(source)` | a `GraFloOutput`: `graph_schema` plus `data`, a `GraphContainer` (the graph held in memory before it is written) |
+| Schema and data in another backend | `migrate_graph(source, target)` | nothing; the target holds the graph |
 
-    Until that is fixed, use the pieces directly: `GraphEngine.export_graph()`
-    and `infer_schema_from_graph()` are unaffected, and
-    `define_schema()` + `ingest()` with an authored manifest is the working
-    path to load the result.
-
-## Overview
-
-| Direction | Entry point | Source backends | Target backends |
-|---|---|---|---|
-| **Graph → graph** | `GraphEngine.migrate_graph()` | Neo4j, ArangoDB, PostgreSQL, file backend | Any supported `DBType` (LPG, PostgreSQL, file backend) |
-| Graph → file backend | `GraphEngine.migrate_graph()` | Neo4j, ArangoDB, PostgreSQL, file backend | `GraFloBackendConfig` |
-| File backend → graph | `GraphEngine.migrate_graph()` | `GraFloBackendConfig` | Any supported LPG target |
-| File backend → relational | `GraphEngine.migrate_graph()` | `GraFloBackendConfig` | PostgreSQL (vertex + junction edge tables) |
-| Tabular/RDF/API → graph | `GraphEngine.ingest()` / `define_and_ingest()` | CSV / JSON / SQL / API manifest resources | Any supported target |
-| Resources → file backend | `GraphEngine.ingest()` / `define_and_ingest()` | CSV / JSON / SQL / API manifest resources | `GraFloBackendConfig` |
-| Graph schema only | `GraphEngine.infer_schema_from_graph()` | Neo4j, ArangoDB, PostgreSQL, file backend | — (returns `Schema`) |
-| In-memory export | `GraphEngine.export_graph()` | Neo4j, ArangoDB, PostgreSQL, file backend | — (returns `GraFloOutput`) |
-
-**Manifest sources vs graph sources.** PostgreSQL, CSV, RDF, and APIs enter through a **`GraphManifest`** and actor pipelines ([Example 5](../../examples/example-5.md)). Existing graph databases enter through introspection — see the [Graph DB migration guide](../../guides/graph_db_migration.md).
-
-## Quick start — graph → graph
-
-Direct migration in one call (no file backend intermediate):
+`infer_schema_from_graph` reads the schema and adapts its names to the
+engine's `target_db_flavor`. `export_graph` reads the schema, then every
+vertex and edge, and keeps the source's names. `migrate_graph` does what `export_graph`
+does, then creates the schema on the target and writes the data. None of the
+three needs a manifest: the schema comes from the source.
 
 ```python
-from graflo import GraphEngine, DBType
-from graflo.db import Neo4jConfig, ArangoConfig, TigergraphConfig
+from graflo import DBType, GraphEngine
+from graflo.connections import ArangoConfig, Neo4jConfig
 
 engine = GraphEngine(target_db_flavor=DBType.ARANGO)
 engine.migrate_graph(
-    Neo4jConfig.from_docker_env(),  # source
-    ArangoConfig.from_docker_env(),  # target
-    recreate_schema=True,
-    sample_limit=100,
-)
-
-# Other targets — same API, different config:
-GraphEngine(target_db_flavor=DBType.TIGERGRAPH).migrate_graph(
     Neo4jConfig.from_env(),
-    TigergraphConfig.from_env(),
+    ArangoConfig.from_env(),
     recreate_schema=True,
 )
 ```
 
-The engine introspects the source once, applies target **`Sanitizer`** rules, defines DDL, and writes via **`DBWriter`**.
+## Which backends can do what
 
-## Quick start — via file backend
+Reading a schema and reading a whole graph are two different capabilities,
+and not every backend has both.
 
-Use a chunked on-disk backend for large graphs, dry-runs, or replay to multiple targets.
+| Backend | Schema can be introspected | Can be read as a graph (source of `export_graph` and `migrate_graph`) | Migration target |
+|---|---|---|---|
+| ArangoDB | yes | yes | yes |
+| Neo4j | yes | yes | yes |
+| PostgreSQL | yes | yes, in the table layout GraFlo writes | yes, as tables |
+| GraFlo file backend | yes | yes | yes |
+| TigerGraph | yes | no | yes |
+| FalkorDB | yes | no | yes |
+| Memgraph | yes | no | yes |
+| NebulaGraph | yes | no | yes |
 
-### File backend layout
+`infer_schema_from_graph` works on every row. `export_graph` and
+`migrate_graph` need a source that can be read as a graph, so a source in the
+last four rows raises `ValueError` before anything is read. To move a graph
+out of one of those, build a file backend from the data it was built from
+(see [the file backend](#the-file-backend)) and migrate from there.
 
-A GraFlo file backend directory is self-describing:
+PostgreSQL is a graph source only when its tables have the layout GraFlo
+writes to a PostgreSQL target (described [below](#what-a-migration-does)).
+To build a graph from an ordinary relational database, infer a manifest from
+it instead; see [A graph from a PostgreSQL database (09)](../../examples/infer-from-postgres/index.md).
 
-```
-artifacts/neo4j-backend/
-├── INDEX.json              # manifest: version, schema hash, chunk inventory
-├── schema.yaml             # Schema only (no data)
-├── vertices/
-│   ├── person.000.jsonl.gz
-│   └── person.001.jsonl.gz
-└── edges/
-    └── person__knows__person.000.jsonl.gz
-```
-
-- **Chunks** — gzip-compressed JSONL (one JSON document per line)
-- **Edges** — filenames use `{source}__{relation}__{target}` when names are safe; `INDEX.json` keys follow the same convention
-- **Default chunk size** — 50 000 records per file (configurable on `GraFloBackendConfig`)
-
-PostgreSQL remains a **manifest source** for 3NF schema inference and SQL ingestion ([Example 5](../../examples/example-5.md)). As a **migration target**, PostgreSQL stores the logical graph as relational tables rather than native LPG structures.
-
-```python
-from pathlib import Path
-
-from graflo import GraphEngine, DBType
-from graflo.db import Neo4jConfig, ArangoConfig, PostgresConfig
-from graflo.db.graflo_backend.config import GraFloBackendConfig
-
-neo4j = Neo4jConfig.from_env()  # or Neo4jConfig.from_docker_env()
-arango = ArangoConfig.from_env()
-postgres = PostgresConfig.from_env()
-backend = GraFloBackendConfig(output_dir=Path("artifacts/neo4j-backend"))
-
-engine = GraphEngine(target_db_flavor=DBType.ARANGO)
-
-# --- Neo4j → file backend (export to disk) ---
-engine.migrate_graph(neo4j, backend, recreate_schema=True)
-
-# --- File backend → Arango migration ---
-engine.migrate_graph(backend, arango, recreate_schema=True)
-
-# --- File backend → Postgres (relational vertex + junction edge tables) ---
-pg_engine = GraphEngine(target_db_flavor=DBType.POSTGRES)
-pg_engine.migrate_graph(backend, postgres, recreate_schema=True)
-```
-
-**Config loading.** All `*Config` classes support `from_env()`, `from_docker_env()` (reads `docker/<backend>/.env`), or direct constructor arguments.
-
-**Pre-sanitize for a future target.** Set `target_flavor_hint` on the file-backend config so `schema.yaml` is sanitized before it is written; the data files are keyed by the same stored names:
+The lists come from the connection classes, so code can ask:
 
 ```python
-backend = GraFloBackendConfig(
-    output_dir=Path("artifacts/for-arango"),
-    target_flavor_hint=DBType.ARANGO,
-)
-engine.migrate_graph(neo4j, backend, recreate_schema=True)
-```
-
-See [Example 13: GraFlo file backend](../../examples/example-13.md) for a runnable script including **`ingest()`** to disk.
-
-## Ingest resources into a file backend
-
-`GraFloBackendConfig` works as an **`ingest()`** target the same way as ArangoDB or Neo4j — only the config changes:
-
-```python
-from pathlib import Path
-
-from suthing import FileHandle
-
-from graflo import GraphEngine, GraphManifest, DBType
-from graflo.db.graflo_backend.config import GraFloBackendConfig
-from graflo.hq.caster import IngestionParams
-
-manifest = GraphManifest.from_config(FileHandle.load("manifest.yaml"))
-manifest.finish_init()
-
-backend = GraFloBackendConfig(output_dir=Path("artifacts/csv-backend"))
-engine = GraphEngine(target_db_flavor=DBType.GRAFLO_BACKEND)
-
-engine.define_and_ingest(
-    manifest=manifest,
-    target_db_config=backend,
-    ingestion_params=IngestionParams(clear_data=True),
-    recreate_schema=True,
-)
-```
-
-Inspect the result without loading everything into memory:
-
-```python
-from graflo.architecture.backend import GraFloBackendReader
-
-reader = GraFloBackendReader(Path("artifacts/csv-backend"))
-index = reader.read_index()
-print(index.vertices)  # record counts and chunk paths per vertex type
-```
-
-## GraFloBackendConfig and Connection API
-
-| Type | Role |
-|---|---|
-| **`GraFloBackendConfig`** | `DBConfig` subclass: `output_dir`, `chunk_size`, optional `target_flavor_hint` |
-| **`GraFloBackendConnection`** | `Connection` implementation registered in `ConnectionManager` |
-| **`GraFloBackendWriter`** / **`GraFloBackendReader`** | Low-level I/O primitives in `graflo.architecture.backend` |
-| **`GraFloIndex`** | Pydantic model for `INDEX.json` |
-
-**Write path (target):** `init_db` → `upsert_docs_batch` / `insert_edges_batch` → `close()` flushes `INDEX.json`.
-
-**Read path (source):** `introspect_graph_schema()` reads `schema.yaml`; `fetch_all_docs` / `fetch_all_edges` stream from gzip JSONL chunks.
-
-Use **`ConnectionManager.graph_export_flavors()`** to list backends with graph export support — includes **`DBType.GRAFLO_BACKEND`** alongside Neo4j and ArangoDB.
-
-## GraFloOutput (in-memory)
-
-**`GraFloOutput`** pairs a full **`Schema`** with a **`GraphContainer`**. **`GraphEngine.export_graph()`** still returns it for small graphs or programmatic use:
-
-```python
-from graflo.hq import GraphEngine
-from graflo.connections.onto import Neo4jConfig
-
-output = engine.export_graph(Neo4jConfig(...))
-assert output.core_schema is output.graph_schema.core_schema
-assert output.data.vertices
-```
-
-For durable, large exports prefer **`migrate_graph(source, GraFloBackendConfig(...))`** instead of holding the full graph in memory or a single YAML file.
-
-## GraphContainer edge keys in JSON
-
-In Python, edge keys are tuples `(source, target, relation)`. When serialized to JSON, each key becomes a compact JSON array string, for example `["person","department","works_in"]`.
-
-## Migrate graph → graph
-
-This is the core 1.8.6 workflow — already shown in [Quick start — graph → graph](#quick-start-graph-graph) above. **`GraphEngine.migrate_graph()`** exports from the source in one connection pass, sanitizes the schema for the target flavor (unless the target is a file backend without `target_flavor_hint`), defines DDL, and loads data:
-
-```python
-engine.migrate_graph(
-    Neo4jConfig(...),  # source
-    ArangoConfig(...),  # target
-    recreate_schema=True,
-    clear_data=False,
-    sample_limit=100,
-)
-```
-
-The engine reuses a single source connection for introspection and export, and applies target **`Sanitizer`** rules once before writing.
-
-## Migrate graph → PostgreSQL
-
-PostgreSQL targets map each vertex type to a table and each edge type to a junction table named `{source}_{target}_{relation}_edges` with `source_id`, `target_id`, optional weight columns, and a surrogate primary key for parallel edges.
-
-## Capability guard
-
-**`ConnectionManager.open_graph_connection()`** rejects backends without graph export support:
-
-```python
+from graflo.db.conn import ConnectionCapability
 from graflo.db.manager import ConnectionManager
 
 ConnectionManager.graph_export_flavors()
-# e.g. [DBType.NEO4J, DBType.ARANGO, DBType.GRAFLO_BACKEND]
+# [DBType.ARANGO, DBType.NEO4J, DBType.POSTGRES, DBType.GRAFLO_BACKEND]
+ConnectionManager.flavors_supporting(ConnectionCapability.SCHEMA_INTROSPECTION)
+# all eight
 ```
 
-TigerGraph, FalkorDB, Memgraph, and NebulaGraph remain supported **targets** for manifest-driven ingestion and **`migrate_graph()`**; native graph-source introspection/export is not yet implemented for those live databases (use a file backend as an intermediate store).
+## What a migration does
 
-## Related topics
+`migrate_graph(source, target)` runs these steps in order:
 
-- [Graph DB migration guide](../../guides/graph_db_migration.md) — task-oriented walkthrough
-- [Core components](../architecture/core_components.md) — `Schema`, `GraphContainer`, `GraphEngine`
-- [Example 5](../../examples/example-5.md) — PostgreSQL as a **source** (3NF inference)
-- [Example 13](../../examples/example-13.md) — file backend export, migration, and ingest walkthrough
-- [PostgreSQL reference](../../reference/db/postgres.md) — connection and SQL-side introspection
+1. Opens one connection to the source and reads its schema. Neo4j and
+   ArangoDB have no schema catalog, so the schema is recovered by sampling
+   `sample_limit` records per type (default 100); a property that appears in
+   none of the sampled records is missed. PostgreSQL reads its catalog and the
+   file backend reads its `schema.yaml`; neither samples.
+2. Reads every vertex and every edge into a `GraphContainer`. `data_limit`
+   caps the number of records per vertex type and per edge type; use it for a
+   trial run.
+3. Adapts the schema to the target, which comes from the target config, not
+   from the engine. A name the target cannot store, such as a reserved word,
+   gets a stored name, and the source name stays the logical one. When the
+   target is a file backend, this step runs only if the config carries a
+   `target_flavor_hint`.
+4. Creates the target namespace (the database, graph or space) unless
+   `create_namespace=False`, then the vertex and edge types.
+   `recreate_schema` (default `True`) drops existing types first;
+   `graph_target_namespace` overrides the namespace name. See
+   [Graph namespace and schema](../../guides/graph_namespace_and_schema.md).
+5. Removes existing records if `clear_data=True`, then writes vertices and
+   edges.
+
+On a PostgreSQL target each vertex type becomes a table. Each edge type
+becomes a table named `{source}_{target}_{relation}_edges` (`relates` when the
+edge has no relation) with `source_id` and `target_id` columns, one column per
+edge property, and an `id` key so that parallel edges can coexist.
+
+## The file backend
+
+The file backend is a directory that holds one graph: its schema and its data
+in compressed chunks. It appears in the backend table above like any database,
+so it can be the target of a migration or an ingest, and the source of another
+migration. It needs no database server.
+
+```text
+artifacts/plant-graph/
+├── INDEX.json                              record counts and chunk paths per type
+├── schema.yaml                             the Schema, no data
+├── vertices/
+│   └── machine.000.jsonl.gz
+└── edges/
+    └── work_order__services__machine.000.jsonl.gz
+```
+
+Chunks are gzip-compressed JSON Lines, one record per line, at most
+`chunk_size` records per file (default 50 000). An edge type is named
+`{source}__{relation}__{target}`; an edge without a relation leaves the middle
+empty (`person____department`). When a name contains characters other than
+letters, digits and underscores, `INDEX.json` uses a JSON array of the edge
+key instead and the chunk file gets an encoded name. `INDEX.json` also records
+the GraFlo version, the creation time and a hash of the schema.
+
+The config is `GraFloBackendConfig` from `graflo.connections`:
+
+```python
+from pathlib import Path
+
+from graflo.connections import GraFloBackendConfig
+
+backend = GraFloBackendConfig(
+    output_dir=Path("artifacts/plant-graph"),
+    chunk_size=50_000,
+)
+```
+
+The file backend appends. Every record that reaches it is added to the chunks;
+it does not look up and replace a record with the same identity, as a
+database does. Two consequences:
+
+- Ingesting the same data twice into one directory stores it twice. Pass
+  `IngestionParams(clear_data=True)` or `recreate_schema=True` to start from
+  an empty directory.
+- When two resources of one manifest produce the same vertex, the directory
+  holds one record per resource. A database target merges them when the
+  directory is loaded into it.
+
+To read a directory without an engine, use `GraFloBackendReader` from
+`graflo.architecture.backend`: `read_index()`, `read_schema()`,
+`iter_vertex_batches()` and `iter_edge_batches()` stream the chunks.
+
+### Writing for a known target
+
+`GraFloBackendConfig` also takes `target_flavor_hint`, a `DBType`. With it,
+step 3 of the migration runs for that flavor: `schema.yaml` records the stored
+names, and chunk files and records use them. A directory written this way
+records how the graph would be stored in that database.
+
+Such a directory cannot be read back as a source when the hint renamed
+anything: `export_graph` and `migrate_graph` look the chunks up by the logical
+names and find no records for the renamed types. Leave the hint unset on a
+directory you plan to load with `migrate_graph`; the migration adapts the
+names for its target anyway.
+
+## Limits
+
+- `export_graph` and `migrate_graph` hold the whole graph in memory between
+  reading and writing. `data_limit` bounds a trial run; there is no streaming
+  move. The file backend writes chunks as it goes, but the read side still
+  reads all records first.
+- Only ArangoDB, Neo4j, PostgreSQL and the file backend can be read as a
+  graph.
+- A sampled schema is a lower bound: it lists what the sample showed. Raise
+  `sample_limit` when types have rare properties, or check the result of
+  `infer_schema_from_graph` before you migrate.
+- The file backend appends instead of merging records, as described above.
+- `GraFloBackendConfig.from_docker_env()` raises `NotImplementedError`: a
+  file backend has no container, so give it an `output_dir`.
+- Edge keys are tuples `(source, target, relation)` in Python. In JSON output
+  a key becomes a JSON array string such as `["work_order","machine","services"]`.
+
+## What to read next
+
+- [Graph DB migration](../../guides/graph_db_migration.md): move a graph from one database to another.
+- [Graph export and replay](../../guides/graph_export_and_replay.md): save a graph to files and load it back.
+- [A graph on disk, without a database (14)](../../examples/file-backend-export/index.md): runnable scripts for both.

@@ -1,101 +1,98 @@
 # Installation
 
-## Prerequisites
+GraFlo is a Python package. This page installs it, with or without the extras
+for development, documentation and diagrams, and tells you where to get a
+database to load into.
 
-- Python 3.11+
-- A graph database (ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, or NebulaGraph) if you plan to use database features
+## What you need
 
-## Installation Methods
+- Python 3.11 or newer.
+- A graph database to load into, unless you use the file backend, which writes
+  the graph to a directory. See [Get a database](#get-a-database) below.
 
-### Using pip
+## Install the package
+
+With pip:
 
 ```bash
 pip install graflo
 ```
 
-### Using uv (recommended)
+With uv, into a project of yours:
 
 ```bash
 uv add graflo
 ```
 
-### From Source
+From a clone of the repository, which also gives you the examples and the
+database containers:
 
-1. Clone the repository:
 ```bash
 git clone https://github.com/growgraph/graflo.git
 cd graflo
+uv sync
 ```
 
-2. Install with development dependencies (pytest, ty, pre-commit):
-
-```bash
-uv sync --extra dev
-```
-
-To build the documentation locally, add the `docs` extra:
-
-```bash
-uv sync --extra dev --extra docs
-```
+The default install includes the clients for every supported database, RDF
+and SPARQL support, and the Kafka client.
 
 ## Optional extras
 
-The default package includes RDF/SPARQL support (`rdflib`, `SPARQLWrapper`) and graph database clients. Optional [project.optional-dependencies](https://docs.astral.sh/uv/concepts/projects/dependencies/#optional-dependencies) extras are **tooling only** (`dev`, `docs`, `plot`)—they do not toggle ingestion features:
+The extras add tooling only; they do not switch ingestion features on or off.
 
-| Extra | Purpose |
-|-------|---------|
-| `dev` | Development: `pytest`, `ty`, `pre-commit` |
-| `docs` | Building this site: MkDocs and plugins |
-| `plot` | `plot_manifest` / schema diagrams and the merge & merge3 conflict figures, via `pygraphviz` |
+| Extra | What it adds |
+|-------|--------------|
+| `dev` | Tests and checks: `pytest` and its plugins, `hypothesis`, `ty`, `pre-commit` |
+| `docs` | Building this site: MkDocs and its plugins |
+| `plot` | `pygraphviz`, which draws the diagrams of `graflo plot-manifest` and the `--plot` figures of `graflo merge` and `graflo merge3` |
 
-### pip
+With pip, name the extras you want:
 
 ```bash
-pip install "graflo[dev]"
-pip install "graflo[docs]"
 pip install "graflo[plot]"
-# combine as needed, e.g.:
 pip install "graflo[dev,docs,plot]"
 ```
 
-### uv
-
-From another project:
-
-```bash
-uv add graflo
-uv add "graflo[plot]"  # optional: plot_manifest
-```
-
-From a clone of this repository:
+From a clone, name every extra you want in one command, because `uv sync`
+removes the extras you leave out:
 
 ```bash
-uv sync --extra dev
-uv sync --extra plot
+uv sync --extra dev --extra docs --extra plot
 ```
 
-### `plot` extra (Graphviz)
+The `plot` extra needs the Graphviz system libraries first, for example
+`apt install graphviz graphviz-dev` on Debian and Ubuntu.
 
-Install the system Graphviz libraries first (e.g. Debian/Ubuntu: `apt install graphviz graphviz-dev`), then install `graflo[plot]`.
+## Check the installation
 
-## Verifying Installation
-
-To verify your installation, you can run:
-
-```python
-import graflo
-
-print(graflo.__version__)
+```bash
+graflo --version
 ```
 
+```text
+graflo, version 1.14.0
+```
 
-## Spinning up databases
+The version you see is the one you installed. In a clone, run it as
+`uv run graflo --version`.
 
-Instructions on how to spin up ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph, Apache Fuseki, MinIO, PostgreSQL, and Kafka as Docker containers using `docker compose` are provided here: [github.com/growgraph/graflo/docker](https://github.com/growgraph/graflo/tree/main/docker)
+## Get a database
 
-## Configuration
+GraFlo writes to ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph
+and PostgreSQL. A clone of the repository has a Docker Compose setup for each
+of them, plus Apache Fuseki and Kafka as sources to read from and MinIO as
+object storage.
+[`docker/README.md`](https://github.com/growgraph/graflo/blob/main/docker/README.md)
+explains how to start one or all of them; the examples read their connection
+settings from those containers.
 
-After installation, you may need to configure your graph database connection. See the [Quick Start Guide](quickstart.md) for details on setting up your environment.
+If you do not want to run a database yet, use the file backend: it writes the
+graph to a directory, and you can load it into a database later. The
+[file backend example (14)](../examples/file-backend-export/index.md) shows
+how.
 
-For more detailed troubleshooting, refer to the [API Reference](../reference/index.md) or open an issue on GitHub. 
+## What to read next
+
+- [Quick start](quickstart.md): two CSV files into a graph, step by step.
+- [Database connections](../guides/database_connections.md): how to point
+  GraFlo at a database of your own.

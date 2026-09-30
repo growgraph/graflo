@@ -1,0 +1,4 @@
+type,asset_id,serial_number,name
+machine,A1,HP-0042,Hydraulic press
+machine,A2,,Conveyor
+line,L1,,Assembly line 1

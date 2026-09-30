@@ -1,0 +1,22 @@
+# An n-ary boundary cluster, as a document for `graflo merge`.
+#
+# Members are named in each manifest's own vocabulary and the cluster has no
+# `into`: the canonical map (passed with --canonical-map left=canonical_map.yaml,
+# or declared here under `canonical_maps`) names the merged class Company.
+# The cluster carries a declared identity: each member keys on the key it
+# carries, one funnel branch apiece, and the members' own keys stay
+# addressable as secondary identities.
+# No field is common to all four members, so a single natural key such as
+# [company_id] would leave Shop, Org and Branch completing no key -- merge
+# refuses it rather than dropping their records.
+op: merge_manifests
+allow_merges: true
+vertex_equivalences:
+-   left: [Firm, Shop]
+    right: [Org, Branch]
+    identity:
+        members:
+            Firm: [company_id]
+            Shop: [shop_id]
+            Org: [org_id]
+            Branch: [branch_id]

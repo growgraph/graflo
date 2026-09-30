@@ -1,0 +1,4 @@
+source_type,source_id,source_name,relation,target_type,target_id,target_name
+machine,m1,Hydraulic press,installed_on,line,l1,Assembly line 1
+machine,m2,Lathe,installed_on,line,l2,Assembly line 2
+machine,m3,Spare hydraulic press,standby_for,machine,m1,Hydraulic press

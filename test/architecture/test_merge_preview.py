@@ -31,13 +31,12 @@ from graflo.architecture.evolution.preview import (
     preview_merge,
 )
 
-EXAMPLE = (
-    Path(__file__).resolve().parents[2] / "examples" / "19-union-canonical-equivalence"
-)
+#: Two manifests with overlapping vertex types, a canonical map and an op.
+FIXTURES = Path(__file__).resolve().parents[1] / "data" / "merge_union"
 
 
 def _load(name: str) -> GraphManifest:
-    manifest = GraphManifest.from_config(FileHandle.load(EXAMPLE / name))
+    manifest = GraphManifest.from_config(FileHandle.load(FIXTURES / name))
     manifest.finish_init()
     return manifest
 
@@ -57,7 +56,7 @@ def right() -> GraphManifest:
 @pytest.fixture(scope="module")
 def canonical_map() -> CanonicalMap:
     """``Firm`` is ``Company``; ``firm_id`` is ``company_id``."""
-    return CanonicalMap.model_validate(FileHandle.load(EXAMPLE / "canonical_map.yaml"))
+    return CanonicalMap.model_validate(FileHandle.load(FIXTURES / "canonical_map.yaml"))
 
 
 def _boundary(canonical_map: CanonicalMap, **updates) -> MergeManifestsOp:
@@ -557,7 +556,7 @@ def _cases(canonical_map: CanonicalMap) -> dict[str, MergeManifestsOp]:
 
 # ── what the schema union itself refuses ────────────────────────────────────
 #
-# These cannot be expressed against the example manifests: `manifest_a` and
+# These cannot be expressed against the fixture manifests: `manifest_a` and
 # `manifest_b` are untyped, natural-identity and carry no edges, so none of the
 # identity modes, types, units or edge kinds below has anywhere to live. They
 # get purpose-built pairs instead, and the invariant covers them all the same.

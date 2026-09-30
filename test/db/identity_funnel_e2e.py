@@ -23,9 +23,10 @@ from graflo.onto import DBType
 
 EXAMPLE_DIR = Path(__file__).resolve().parents[2] / "examples" / "17-identity-funnel"
 
-#: Six source rows over two resources. Alan Turing carries an email in both, so
-#: both of his rows take the ``email`` branch and upsert onto one vertex.
-EXPECTED_VERTICES = 5
+#: Eight source rows over two resources. One completes no branch and is dropped.
+#: Alan Turing carries an email in both, so both of his rows take the ``email``
+#: branch and upsert onto one vertex.
+EXPECTED_VERTICES = 6
 
 
 def ingest_funnel_example(conn_conf, flavor: DBType) -> None:

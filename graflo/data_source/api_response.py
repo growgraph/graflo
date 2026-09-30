@@ -96,8 +96,8 @@ def detect_carry_params(body: dict[str, Any] | list[Any]) -> dict[str, str]:
 
     Returns a query-param-name -> response-path map. Looks at top-level object
     keys first, then at ``0.<key>`` when the body is a non-empty list of
-    objects (e.g. BMC Discovery kind envelopes). Does not treat singular
-    ``result_id`` as a carry token.
+    objects (e.g. a list-envelope API that returns a session token). Does not
+    treat singular ``result_id`` as a carry token.
     """
     detected: dict[str, str] = {}
     for prefix, envelope in _carry_search_envelopes(body):

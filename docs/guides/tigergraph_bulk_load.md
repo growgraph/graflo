@@ -1,31 +1,69 @@
-# TigerGraph bulk load (CSV staging + LOADING JOB)
+# TigerGraph bulk load
 
-For TigerGraph targets, GraFlo can optionally bypass per-record REST++ JSON upserts and instead **append typed CSV files** during ingestion, then run a single **`CREATE LOADING JOB` / `RUN LOADING JOB`** sequence at the end of the ingest. The default REST path is unchanged when bulk load is disabled.
+By default GraFlo writes to TigerGraph record by record through its REST
+interface. For a large initial load that is slow. With bulk load switched on,
+GraFlo writes the records to CSV files during ingestion and, at the end, runs
+one TigerGraph loading job that reads them. This guide switches bulk load on,
+first with files on local disk and then with files staged in an S3 bucket.
 
-## When to use it
+## What you need
 
-- Large **batch** or **initial** loads where REST++ overhead dominates.
-- When TigerGraph can read staged files from **local disk** (same host as the loader) or from **S3** (or an S3-compatible endpoint).
+- GraFlo installed (`pip install graflo`) and a running TigerGraph. The
+  repository ships containers for TigerGraph and MinIO under `docker/`.
+- A manifest that ingests into TigerGraph without bulk load. Bulk load
+  changes how records are written, not what the manifest declares.
+- For S3 staging: a bucket on MinIO or another S3-compatible service, and
+  its credentials.
 
-## Configuration
+## Steps
 
-### Target database (`TigergraphConfig`)
+### 1. Switch bulk load on
 
-Set a nested **`bulk_load`** block on [`TigergraphConfig`](../reference/connections/onto.md) (see `TigergraphBulkLoadConfig` in code):
+Set `bulk_load` on the TigerGraph config:
 
-| Field | Role |
-|-------|------|
-| `enabled` | Turn bulk mode on. |
-| `staging_dir` | Local directory for CSV files (a session subfolder is created per run). |
-| `separator`, `include_header`, etc. | CSV layout passed through to `LOAD ... USING`. |
-| `loading_job` | `concurrency`, `batch_size`, `job_name_prefix`, `run_mode`, `drop_job_after_run`. |
-| `s3_staging_name` | Optional: name of a row in **`bindings.staging_proxy`** → resolves `conn_proxy`. |
-| `s3_conn_proxy` | Optional: use this proxy label directly (no manifest row). |
-| `s3_bucket`, `s3_key_prefix` | Destination for upload; bucket may also live on `S3GeneralizedConnConfig`. |
+```python
+from graflo.connections import TigergraphBulkLoadConfig, TigergraphConfig
 
-### Manifest (`Bindings.staging_proxy`)
+conn_conf = TigergraphConfig.from_env()
+conn_conf.bulk_load = TigergraphBulkLoadConfig(
+    enabled=True,
+    staging_dir="bulk_staging",
+)
+```
 
-**Input** connectors stay on `connectors` / `resource_connector` / `connector_connection` as today. **Staging** (S3 credentials) uses a parallel list that only carries **names**, not secrets:
+`staging_dir` is required. Each run writes its files into a new
+subdirectory of it, named after the run's session id.
+
+### 2. Ingest as usual
+
+```python
+from suthing import FileHandle
+
+from graflo import GraphEngine, GraphManifest
+from graflo.hq import IngestionParams
+
+manifest = GraphManifest.from_config(FileHandle.load("manifest.yaml"))
+manifest.finish_init()
+
+engine = GraphEngine(target_db_flavor=conn_conf.connection_type)
+engine.define_and_ingest(
+    manifest=manifest,
+    target_db_config=conn_conf,
+    ingestion_params=IngestionParams(clear_data=True),
+    recreate_schema=True,
+)
+```
+
+The first batch opens a bulk session. Every batch appends rows to one CSV file
+per vertex type and one per edge type. When all resources are done, GraFlo
+creates a loading job for the files, runs it, and drops it. With local files,
+TigerGraph must be able to read `staging_dir` at the same path, so this
+works when TigerGraph runs on the same machine or mounts that directory.
+
+### 3. Stage the files in S3 instead
+
+When TigerGraph cannot see your disk, upload the files to a bucket. Name the
+bucket connection in the manifest by label only:
 
 ```yaml
 bindings:
@@ -34,40 +72,117 @@ bindings:
       conn_proxy: minio_bulk
 ```
 
-At runtime, `conn_proxy` must be registered on [`InMemoryConnectionProvider`](../reference/connections/provider.md) as an [`S3GeneralizedConnConfig`](../reference/connections/provider.md).
+Register the credentials under the label, point the bulk config at the
+staging name, and pass the provider to the ingest:
 
-### Runtime provider
+```python
+from graflo.connections import InMemoryConnectionProvider
+from graflo.object_storage import MinioConfig, ensure_staging_bucket_for_config
 
-Call `register_generalized_config(conn_proxy="minio_bulk", config=S3GeneralizedConnConfig(...))` and pass that provider into [`GraphEngine.ingest`](../reference/hq/graph_engine.md) (or [`Caster.ingest`](../reference/hq/caster.md)). The manifest never stores AWS keys.
+minio = MinioConfig.from_docker_env()
+ensure_staging_bucket_for_config(minio)
 
-## Execution flow
+provider = InMemoryConnectionProvider()
+provider.register_generalized_config(
+    conn_proxy="minio_bulk",
+    config=minio.to_s3_generalized_conn_config(),
+)
 
-Ingestion coordinates begin/finalize through the backend-agnostic **`BulkSessionCoordinator`** (`graflo.hq.bulk_session`); each cast batch appends via **`DBWriter.write(..., bulk_session_id=...)`** when a session is active.
+conn_conf.bulk_load = TigergraphBulkLoadConfig(
+    enabled=True,
+    staging_dir="bulk_staging",
+    s3_staging_name="bulk_s3",
+    s3_bucket=minio.bucket,
+)
 
-1. **Begin** — First batch opens a bulk session (CSV writers under `staging_dir/<session_id>/`).
-2. **Append** — Each cast batch appends rows per physical vertex/edge type.
-3. **Finalize** — After all resources: optionally **upload** to S3, build GSQL with `DEFINE FILENAME` pointing at `file://` or `s3://` URLs, **`RUN LOADING JOB`**, optionally **`DROP JOB`**.
+engine.define_and_ingest(
+    manifest=manifest,
+    target_db_config=conn_conf,
+    ingestion_params=IngestionParams(clear_data=True),
+    recreate_schema=True,
+    connection_provider=provider,
+)
+```
 
-## Limitations (current release)
+`ensure_staging_bucket_for_config` creates the bucket if it is missing and
+fails early if MinIO cannot be reached. At the end of the ingest GraFlo
+uploads the files to `s3://<bucket>/graflo-bulk/<session id>/`, creates a
+TigerGraph data source with the same credentials, and runs the loading job
+against the uploaded objects.
 
-- Vertices with **`blank: true`** (blank placeholders) in the logical schema are rejected at `bulk_load_begin`.
-- Resources with **`extra_weights`** (DB lookups during ingest) cannot use bulk for that resource; use REST ingest or remove extra weights for those resources.
+If TigerGraph runs in a container and MinIO on your machine, TigerGraph needs
+a different address for MinIO than GraFlo does. Set `MINIO_LOADER_ENDPOINT`
+in the settings under `docker/minio` (or `loader_endpoint_url` on `MinioConfig`);
+see [Object storage](../concepts/operations/object_storage.md#two-endpoints).
 
-Upsert semantics differ from REST: native **LOAD** is oriented toward **append** semantics; plan idempotency and clears according to your operations model.
+## What you should see
+
+`staging_dir` holds one subdirectory per run with a CSV file per vertex type
+(`<vertex type>.csv`) and per edge type (`edge_<relation>.csv`). The files
+stay there after the run. With S3 staging the same files are in the bucket
+under the session id. TigerGraph holds the loaded vertices and edges.
+
+Count the loaded records after the first bulk load. If TigerGraph could not
+reach the files, the loading job loads nothing and the ingest still finishes
+without an error.
+
+## Options
+
+All options live on `TigergraphBulkLoadConfig`:
+
+| Option | Default | Meaning |
+|---|---|---|
+| `enabled` | `False` | Use bulk load for this target |
+| `staging_dir` | `None` | Local directory for the CSV files; required when enabled |
+| `s3_staging_name` | `None` | Name of a `bindings.staging_proxy` entry; its `conn_proxy` label finds the S3 credentials |
+| `s3_conn_proxy` | `None` | The `conn_proxy` label itself; takes precedence over `s3_staging_name` |
+| `s3_bucket` | `None` | Bucket for the upload; falls back to the bucket of the registered S3 config |
+| `s3_key_prefix` | `graflo-bulk` | Key prefix for uploaded files; the session id is appended |
+| `separator` | `,` | CSV field separator, also passed to the loading job |
+| `include_header` | `True` | Write a header row, and tell the loading job it is there |
+| `quote_char` | `"` | CSV quote character used when writing the files |
+| `line_terminator` | `\n` | CSV line terminator used when writing the files |
+| `loading_job` | see below | Options of the TigerGraph loading job |
+
+`loading_job` takes:
+
+| Option | Default | Meaning |
+|---|---|---|
+| `concurrency` | `4` | `CONCURRENCY` of `RUN LOADING JOB` |
+| `batch_size` | `50000` | `BATCH_SIZE` of `RUN LOADING JOB` |
+| `job_name_prefix` | `graflo_bulk` | The job is named `<prefix>_<session id>` |
+| `drop_job_after_run` | `True` | Drop the job, and the S3 data source, after a successful run |
+| `run_mode` | `create_and_run` | `run_only` runs an existing job instead of creating one |
+
+Leave `run_mode` at `create_and_run`. The job name contains the session id,
+which is new on every run, so a job for `run_only` to find does not exist.
 
 ## Emulating S3 in development
 
-GraFlo uses **boto3**. Any endpoint that speaks the S3 API works if you set `endpoint_url` on `S3GeneralizedConnConfig`:
+GraFlo uploads through boto3, so any service that speaks the S3 API works when
+its address is the `endpoint_url`:
 
-1. **[MinIO](https://min.io/)** (very common): run a container, create a bucket, point `endpoint_url` at `http://127.0.0.1:9000` (or your mapped port), use the MinIO root user/password as `aws_access_key_id` / `aws_secret_access_key`.
-2. **[LocalStack](https://localstack.cloud/)** — S3-compatible endpoint for local stacks.
-3. **moto** (Python tests) — `@mock_aws` from the `moto` library mocks boto3 calls in-process; useful for **unit tests**, not for TigerGraph itself (the database still needs a real `s3://` it can reach unless you test upload-only code paths).
+- MinIO, as in the container under `docker/minio` that
+  `MinioConfig.from_docker_env()` reads. TigerGraph can load from it through
+  the data source GraFlo creates.
+- LocalStack, which emulates S3 among other cloud services.
+- moto, which replaces boto3's calls inside one Python process. It can test
+  the upload, but TigerGraph cannot read from it, so no loading job can.
 
-For **end-to-end** tests against a real loader, MinIO or cloud S3 with matching VPC/network access is the usual approach.
+## Limits
 
-TigerGraph resolves `s3://` paths via a **GSQL `CREATE DATA_SOURCE`** (S3 credentials and, for MinIO, `file.reader.settings.fs.s3a.endpoint` and path-style access). GraFlo emits that statement when bulk staging uploads to S3. The endpoint in that data source must be reachable **from the TigerGraph server**; if TigerGraph runs in Docker and MinIO on the host, set `MINIO_LOADER_ENDPOINT` in `docker/minio/.env` to a URL visible inside the TG container (see `docker/README.md` MinIO section).
+- A manifest with blank vertices (`blank: true`) cannot be bulk loaded:
+  starting the session raises `ValueError`.
+- A resource with `extra_weights` cannot be bulk loaded, because those need
+  lookups in the database during ingestion: writing its first batch raises
+  `ValueError`. Use the default record-by-record path for it.
+- If the staging label has no S3 config on the connection provider, nothing
+  is uploaded and the loading job is given the local paths, without an error.
+- Batches are written one after another in a bulk session, so ingestion does
+  not overlap casting and writing as it does on the default path.
 
-## See also
+## What to read next
 
-- [Example 10: TigerGraph bulk load and S3 staging](../examples/example-10.md)
-- Implementation: `graflo/db/tigergraph/bulk_csv.py` (CSV layout), `graflo/db/tigergraph/bulk_gsql.py` (GSQL generation)
+- [Object storage](../concepts/operations/object_storage.md): how bucket credentials reach GraFlo, and the helpers.
+- [Bulk load into TigerGraph (13)](../examples/tigergraph-bulk-s3/index.md): a runnable example with MinIO.
+- [Parallelism](../concepts/ingestion/parallelism.md): what runs concurrently during ingestion, and what bulk load changes.

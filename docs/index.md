@@ -1,35 +1,80 @@
-# GraFlo — Graph Schema & Transformation Language (GSTL) <img src="https://raw.githubusercontent.com/growgraph/graflo/main/docs/assets/favicon.ico" alt="graflo logo" style="height: 32px; width:32px;"/>
+# GraFlo <img src="https://raw.githubusercontent.com/growgraph/graflo/main/docs/assets/favicon.ico" alt="graflo logo" style="height: 32px; width:32px;"/>
 
-![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg) 
-[![PyPI version](https://badge.fury.io/py/graflo.svg)](https://badge.fury.io/py/graflo)
-[![PyPI Downloads](https://static.pepy.tech/badge/graflo)](https://pepy.tech/projects/graflo)
-[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green)](https://github.com/growgraph/graflo/blob/main/LICENSE)
-[![pre-commit](https://github.com/growgraph/graflo/actions/workflows/pre-commit.yml/badge.svg)](https://github.com/growgraph/graflo/actions/workflows/pre-commit.yml)
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.15446131.svg)](https://doi.org/10.5281/zenodo.15446131)
+GraFlo is a Python library that turns records from files, SQL databases, RDF,
+REST APIs or Kafka topics into a labeled property graph. You describe the graph
+once, in a YAML file called a manifest, and GraFlo creates the schema and
+writes the vertices and edges into the graph database of your choice, or into
+a directory on disk.
 
-**GraFlo** is a manifest-driven schema and ingestion layer for **labeled property graphs (LPGs)**.
-Write a `GraphManifest` (YAML or Python) once — it defines vertices, edges, typed properties,
-identities, and DB profile — then infer, validate, migrate, and load into any supported graph engine.
+It is for engineers who build a graph from several sources and want its
+description in one reviewable file rather than spread across load scripts.
 
-## Start here
+## What you can do with it
 
-| Section | What you'll find |
-|---------|------------------|
-| [Getting Started](getting_started/installation.md) | Install, quickstart, and your first manifest |
-| [Concepts](concepts/index.md) | Architecture, schema, ingestion pipeline, connectors |
-| [Guides](guides/index.md) | Task-oriented walkthroughs (export, API wiring, identity inference, …) |
-| [Examples](examples/index.md) | Twenty runnable examples with sample data |
-| [API Reference](reference/index.md) | Auto-generated Python API docs |
+- **Describe a graph once and load data into it.** A manifest names the vertex
+  and edge types, says which properties identify a vertex, and says how each
+  kind of record becomes vertices and edges. The same manifest loads into
+  ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph, PostgreSQL or
+  the file backend, and records with the same identity become one vertex.
+  GraFlo also copies an existing graph from Neo4j, ArangoDB or PostgreSQL into
+  another database.
+- **Change the description over time, with a recorded history.** Renaming a
+  type, combining two types or changing a property type is a typed operation.
+  Operations are recorded as commits that you can replay, check and, for most
+  operations, undo. Two branches of changes to one manifest are reconciled
+  with a three-way merge, and two manifests written by different teams are
+  combined into one with a union.
+- **Check and infer descriptions.** GraFlo infers a manifest from a PostgreSQL
+  database or an OWL ontology, proposes the properties that identify a record
+  from sample data, and checks a manifest against a conformance profile, a set
+  of modeling rules such as "every vertex type declares its identity".
 
-## Highlights
+## A taste
 
-- **One manifest, many backends** — ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph, PostgreSQL, or a GraFlo file backend on disk.
-- **Graph DB migration** — Introspect and export from Neo4j, ArangoDB, PostgreSQL, or a file backend, targeting **any** supported engine. `GraphEngine.migrate_graph()` does not yet complete a move end to end — see the guide. See [Graph DB migration guide](guides/graph_db_migration.md).
-- **Explicit identities** — upsert on keys instead of blind duplication.
-- **Reusable ingestion** — actor pipelines bind to files, SQL, SPARQL/RDF, APIs, or in-memory batches.
-- **Schema as contract** — validated at `finish_init`; migrations via `migrate_schema`.
-- **Manifest as linked data** — export/restore as RDF via the [GraFlo ontology](concepts/schema/ontology.md).
+A manifest has three blocks: `schema` says what the graph looks like,
+`ingestion_model` says how records map onto it, and `bindings` says where the
+records come from. This one reads CSV files with the columns `person_id`,
+`person` and `department`:
 
-## Contributing
+```yaml
+schema:
+    metadata: {name: hr}
+    graph:
+        vertex_config:
+            vertices:
+            -   {name: person, properties: [id, name], identity: [id]}
+            -   {name: department, properties: [name], identity: [name]}
+        edge_config:
+            edges: [{source: person, target: department}]
+ingestion_model:
+    resources:
+    -   name: departments
+        pipeline:
+        -   {vertex: person, from: {id: person_id, name: person}}
+        -   {vertex: department, from: {name: department}}
+bindings:
+    connectors:
+    -   {regex: "^dep.*\\.csv$", sub_path: data, resource_name: departments}
+```
 
-We welcome contributions! See the [Contributing Guide](contributing.md) for setup and workflow.
+This loads it into ArangoDB:
+
+```python
+from graflo import GraphEngine, GraphManifest
+from graflo.connections import ArangoConfig
+
+manifest = GraphManifest.from_yaml("manifest.yaml")
+manifest.finish_init()
+engine = GraphEngine()
+engine.define_and_ingest(manifest=manifest, target_db_config=ArangoConfig.from_env())
+```
+
+## What to read next
+
+- [Installation](getting_started/installation.md): install the package and get
+  a database to load into.
+- [Quick start](getting_started/quickstart.md): two CSV files into a graph,
+  step by step.
+- [Creating a manifest](getting_started/creating_manifest.md): the three
+  blocks of a manifest, one level deeper.
+- [Examples](examples/index.md): runnable examples, one question each.

@@ -1,186 +1,136 @@
 # Runtime connector updates
 
-Each `FileConnector`, `TableConnector`, `SparqlConnector`, and **`APIConnector`** gets a deterministic **`hash`** from its defining fields (excluding `name` and `resource_name`). `Bindings` indexes connectors and resource wiring by that hash, and `connector_connection` maps each connector to a `conn_proxy` by resolved hash.
+Some runs need a [connector](../glossary.md#connector) that differs a little from the one in the [manifest](../glossary.md#manifest): an incremental load that reads only the last week of work orders, a trial run against a copy of a table, or a sensor feed read from a later start date. You can change the connector in memory after the manifest loads, without editing the manifest file. This page shows how to write such a patch, how GraFlo merges it into the connector, and in which order to patch, connect and ingest.
 
-If you change defining fields (for example narrowing a `time_filter` window (`start` / `interval` / `end`), adding `filters`, or adjusting file `regex`), the hash changes. You must **replace** the old connector in `Bindings` and **re-wire** internal maps; appending a second connector or using `add_connector` alone can leave stale hash entries.
+## Patch a connector
 
-## Time filters (`ColumnTimeFilter`)
-
-`FileConnector` and `TableConnector` share an optional nested **`time_filter`** (`ColumnTimeFilter`): a column name plus bounds. SQL is built with **`FilterExpression`** (same mechanism as **`filters`**).
-
-| Field | Meaning |
-| ----- | ------- |
-| **`column`** | Identifier of the date/time column in generated SQL. |
-| **`start`** | Optional lower bound (ISO date `YYYY-MM-DD` or ISO datetime). Combined with **`start_inclusive`** (default `true` → `>=`; `false` → `>`). |
-| **`end`** | Optional upper bound. Combined with **`end_inclusive`** (default `false` → `<`; `true` → `<=`). |
-| **`interval`** | Optional [pandas `Timedelta`](https://pandas.pydata.org/docs/reference/api/pandas.Timedelta.html) string (e.g. `"7D"`, `"2h"`). Requires **`start`**; defines half-open **`[start, start + interval)`** with `>=` and `<`. Mutually exclusive with **`end`**. |
-| **`not_equals`** | Single value for `!=`; mutually exclusive with **`start`**, **`end`**, and **`interval`**. |
-
-**Column-only hint:** `time_filter: { column: "created_at" }` (no bounds) records the default datetime column for ingestion (`IngestionParams.datetime_after` / `datetime_before`) without adding a `WHERE` clause from the connector itself.
-
-Durations must parse as a fixed **`pandas.Timedelta`** (wall-clock offset). Calendar-style strings that are not valid timedeltas (for example ambiguous month rolls) are unsupported; use explicit **`start`** / **`end`** instead.
-
-At runtime, the read-only **`date_field`** property on connectors resolves to **`time_filter.column`** when present (for code and docs that read “which column is the event time?”). Manifests and patches must use the nested **`time_filter`** object; older flat `date_*` keys are not accepted.
-
-## Pushdown filters (`TableConnector.filters`)
-
-`TableConnector` (and `SelectSpec.where` on **`view`**) accept **`FilterExpression`** trees in YAML. Filters are parsed when **Bindings** load (`parse_filter_expression`), so invalid shorthand fails at manifest validation—not on first SQL execution.
-
-Use the **same logical-operator shorthand** as `VertexConfig.filters` in the schema block:
-
-| Operator | YAML key | SQL pushdown |
-| -------- | -------- | -------------- |
-| AND | `AND:` | `… AND …` |
-| OR | `OR:` | `… OR …` |
-| NOT | `NOT:` | `NOT …` |
-| Implication | `IF_THEN:` | `(NOT antecedent OR consequent)` |
-
-Example on a connector (also valid in **`ConnectorUpdate`** patches):
-
-```yaml
-connectors:
-  - name: events_table
-    table_name: events
-    filters:
-      - OR:
-          - {field: status, cmp_operator: "==", value: [active]}
-          - {field: status, cmp_operator: "==", value: [pending]}
-      - IF_THEN:
-          - {field: kind, cmp_operator: "==", value: [quote]}
-          - {field: amount, cmp_operator: ">", value: [0]}
-```
-
-**Semantics:**
-
-- Several top-level **`filters`** list entries are **`AND`**-joined (same as multiple pushdown clauses).
-- For **OR across fields**, use **one** composite entry (`OR:` or `operator: OR` + `deps`).
-- Nested composites are parenthesized in SQL for correct precedence.
-
-Full cookbook and `view.where` notes: [Table connector views — Bindings filter cookbook](table_views.md#bindings-filter-cookbook-tableconnectorfilters).
-
-## Manifest vs patches
-
-The **GraphManifest** (and its `bindings` block) holds the normal contract only: **`connectors`**, **`resource_connector`**, optional **`connector_connection`**, optional **`staging_proxy`**. It does **not** include a `connector_updates` key—patches are **outside** the canonical manifest.
-
-You apply patches **after** the manifest is loaded (or merged from disk), from:
-
-- a separate YAML/JSON file (your own schema: list of dicts),
-- environment or CLI-derived parameters,
-- or plain Python.
-
-Then call **`Bindings.apply_connector_update`** or **`replace_connector`** before **`GraphEngine`**, **`RegistryBuilder.build`**, or any code that assumes bindings are final.
-
-!!! note "Registry and `DataSourceRegistry`"
-
-    Build the registry **after** patches are applied. Otherwise SQL/file/SPARQL sources may use stale hashes or queries.
-
-## Patch shape (`ConnectorUpdate`)
-
-`ConnectorUpdate` is the typed carrier for one patch:
-
-- **Required:** `connector` — connector **`name`** or **`hash`** (same resolution as `resource_connector.connector` and `connector_connection.connector`).
-- **Any other keys:** merged onto that connector’s current data; same **field names** as `TableConnector` / `FileConnector` / `SparqlConnector` / **`APIConnector`**, but **only for fields you change** (patch-only). Do not repeat `table_name`, `rdf_class`, `path`, etc. unless you are actually changing them.
-
-Extra keys use Pydantic `extra="allow"`, so new connector fields do not require extending `ConnectorUpdate`.
-
-### External YAML (example only)
-
-Your application can define any file layout; below is a minimal list you might load with `yaml.safe_load` and apply in a loop. This file is **not** part of `GraphManifest`.
-
-```yaml
-# connector_patches.yaml (separate from manifest)
-# Canonical: patch the nested time_filter (merged in full on the connector).
-- connector: events_table
-  time_filter:
-    column: created_at
-    start: "2021-06-01"
-    interval: "30D"
-```
-
-### Baseline manifest `bindings` (no patches)
+The [bindings](../glossary.md#bindings) of this manifest read one week of work orders from a table:
 
 ```yaml
 bindings:
   connectors:
-    - name: events_table
-      table_name: events
+    - name: work_orders
+      table_name: work_orders
       time_filter:
-        column: created_at
-        start: "2020-01-01"
-        interval: "365D"
+        column: opened_at
+        start: "2026-01-01"
+        interval: 7D
   resource_connector:
-    - resource: events
-      connector: events_table
+    - {resource: work_orders, connector: work_orders}
+  connector_connection:
+    - {connector: work_orders, conn_proxy: plant_pg}
 ```
 
-## Apply after load
+The next run reads the following week. It loads the manifest and patches the connector before anything else:
 
 ```python
-from pathlib import Path
+from suthing import FileHandle
 
-import yaml
+from graflo import GraphManifest
+from graflo.architecture.contract.bindings import ConnectorUpdate
 
-from graflo.architecture.contract.bindings import Bindings, ConnectorUpdate
-
-bindings = Bindings.model_validate(manifest_dict["bindings"])
-for row in yaml.safe_load(Path("connector_patches.yaml").read_text()):
-    bindings.apply_connector_update(ConnectorUpdate.model_validate(row))
-# Then attach bindings to your manifest object / pass to GraphEngine / build registry.
-```
-
-Or build `ConnectorUpdate` instances directly without a side file:
-
-```python
-from graflo.architecture.contract.bindings import Bindings, ConnectorUpdate
-
+manifest = GraphManifest.from_config(FileHandle.load("manifest.yaml"))
+bindings = manifest.require_bindings()
 bindings.apply_connector_update(
-    ConnectorUpdate.model_validate(
-        {
-            "connector": "events_table",
-            "time_filter": {
-                "column": "created_at",
-                "start": "2021-06-01",
-                "interval": "30D",
-            },
-        }
+    ConnectorUpdate(
+        connector="work_orders",
+        time_filter={"column": "opened_at", "start": "2026-01-08", "interval": "7D"},
     )
+)
+print(bindings.get_connectors_for_resource("work_orders")[0].build_query())
+```
+
+```text
+SELECT * FROM "public"."work_orders" WHERE "opened_at" >= '2026-01-08' AND "opened_at" < '2026-01-15'
+```
+
+`connector` names the connector to change. Every other key is a field of that connector with its new value. After the patch, the manifest object holds the new connector, and you pass it to `GraphEngine.ingest` as usual. The file on disk does not change.
+
+## What a patch can change
+
+A patch can set any field of the connector's kind. The fields most often patched:
+
+| To read | Patch |
+| --- | --- |
+| another time window of a table | `time_filter` |
+| another table or schema | `table_name`, `schema_name` |
+| a subset of the rows | `filters` |
+| other files | `regex`, `sub_path` |
+| an API with other query parameters or another path | `params`, `path` |
+| other Kafka topics | `topics`, `group_id` |
+
+The fields of each kind are described in [Table filters and views](table_views.md), [API connector](api_connector.md) and [Kafka connector](kafka_connector.md).
+
+## How a patch is merged
+
+- **Each key replaces the whole field.** A nested object, list or mapping is not merged key by key. A `time_filter` patch that gives only `start` fails, because the new `time_filter` has no `column`. A `params` patch that gives only `since` removes every other query parameter. A `filters` patch replaces the list; it does not add to it.
+- **Fields you leave out keep their values**, including the connector's `name` and the resources it feeds.
+- **The result is validated as a new connector of the same kind.** A misspelled field or an invalid value raises a `ValidationError`, and the bindings keep the old connector.
+- **A patch with no key besides `connector` changes nothing.**
+- **`connector` takes a name or a hash.** A reference that matches no connector raises a `ValueError`.
+
+## Patch before you connect
+
+GraFlo identifies each connector by a hash of its fields: all of them except `name` and `resource_name`. The bindings pair resources and [connection proxies](../glossary.md#connection-proxy) with connectors by that hash, so a patch that changes a field changes the hash. `apply_connector_update` moves those pairings from the old connector to the new one. Anything else that recorded the old hash does not follow, which gives two rules:
+
+- **Patch before you build the connection provider.** `InMemoryConnectionProvider` records the hash of each connector when you bind configs to it, with `bind_single_config_for_bindings`, `bind_from_bindings` or the helpers that read configs from environment variables. A provider built before the patch has no config for the patched connector. For a table, API or Kafka connector, GraFlo then skips the connector with a warning, and its resource reads nothing from it.
+- **Refer to connectors by name.** A hash written in `IngestionParams.connectors` or in a later patch names the old connector and stops resolving once the connector is patched.
+
+## Patches from a file
+
+Patches are not part of the manifest. The bindings have no key for them, and an unknown key such as `connector_updates` makes the manifest fail to load. To keep patches in a file, choose your own format. A YAML list of mappings with a `connector` key matches `ConnectorUpdate` directly:
+
+```yaml
+- connector: work_orders
+  time_filter: {column: opened_at, start: "2026-01-08", interval: 7D}
+  filters:
+    - {field: plant, cmp_operator: "==", value: north}
+```
+
+```python
+for row in FileHandle.load("patches.yaml"):
+    bindings.apply_connector_update(ConnectorUpdate.model_validate(row))
+```
+
+The patches apply in order, so a later patch sees the result of an earlier one.
+
+## Replace a connector
+
+When you have a complete connector rather than a few changed fields, `replace_connector` swaps it in:
+
+```python
+from graflo.architecture.contract.bindings import TableConnector
+
+bindings.replace_connector(
+    "work_orders", TableConnector(table_name="work_orders_archive")
 )
 ```
 
-## API details
+The first argument is the old connector, by name, by hash or as the connector object. The new connector takes over the old one's resources and connection proxy, and its name when it has none of its own. The same two rules apply: build the connection provider afterwards, and refer to the connector by name.
 
-### `Bindings.apply_connector_update`
+## Time windows with `time_filter`
 
-Resolves `update.connector`, merges `old.model_dump(mode="python")` with the patch, runs `old.__class__.model_validate(merged)`, then swaps the instance and reindexes. Validators (including **`hash`**) must run; a plain `model_copy(update=patch)` would **not** re-run `@model_validator` and would leave a stale `hash`.
+`time_filter` limits a table connector to a window on one date or time column. An incremental run patches it to move the window forward.
 
-### `Bindings.replace_connector`
+| Key | Meaning |
+| --- | --- |
+| `column` | The date or time column. Required. |
+| `start` | The lower bound: an ISO date (`2026-01-08`) or date and time (`2026-01-08T06:00:00`). Included unless `start_inclusive: false`. |
+| `end` | The upper bound, in the same format. Excluded unless `end_inclusive: true`. |
+| `interval` | The length of the window, from `start`, instead of `end`: `7D`, `8h`, `90min`, `1W`. |
+| `not_equals` | A value the column must differ from. It cannot be combined with `start`, `end` or `interval`. |
 
-Lower-level: `replace_connector(old, new)` where `old` is an existing connector instance or a **name/hash string**, and `new` is the fully built replacement (`TableConnector` | `FileConnector` | `SparqlConnector` | **`APIConnector`**). If `new.name` is unset and the old connector had a name, the name is copied onto `new`. Resource→connector hash lists and `conn_proxy` mappings move from the old hash to `new.hash`, then name/hash indexes are rebuilt.
+The rules:
 
-Use this when you already built `new` yourself; use `apply_connector_update` for dict-shaped patches.
+- `interval` needs `start` and cannot be combined with `end`. The window is then `start` included to `start + interval` excluded, whatever `start_inclusive` says.
+- An interval is a fixed length of time, written as a [pandas `Timedelta`](https://pandas.pydata.org/docs/reference/api/pandas.Timedelta.html) string. Months and years have no fixed length and are rejected; for a calendar month, give `start` and `end`.
+- Quote dates in YAML (`start: "2026-01-08"`). An unquoted date is read as a date object, not a string, and the manifest fails to load.
+- The conditions are added to the query's `WHERE` clause with `AND`, next to the connector's `filters`.
+- A `time_filter` with only `column` adds no condition.
+- A file connector accepts a `time_filter`, but reading files does not apply it.
 
-When patching **`time_filter`**, the merged payload replaces the entire nested object (provide a full `time_filter` dict in YAML/JSON, not single-key deltas inside it).
+## What to read next
 
-## Behaviour summary
-
-| Concern | Behaviour |
-| ------- | --------- |
-| Resource bindings (`resource_connector` / `resource_name` on connector) | Hash entries in internal resource maps are rewritten to the new hash. |
-| `connector_connection` / `conn_proxy` | Mapping follows the connector from old hash to new hash. |
-| Connector `name` | Preserved on replace when the new instance has no `name`. |
-| Empty patch | `apply_connector_update` no-ops if there are no extra keys besides `connector`. |
-| Invalid patch fields | Validation error from the concrete connector model when merging. |
-
-## Related concepts
-
-- [API connector and pagination](api_connector.md) — **`APIConnector`**, **`PaginationConfig`**, auth via **`conn_proxy`**
-- [Table connector views and `SelectSpec`](table_views.md) — advanced `TableConnector` SQL shape and [Bindings filter cookbook](table_views.md#bindings-filter-cookbook-tableconnectorfilters).
-- [Explicit `connector_connection` proxy wiring](../../examples/example-9.md) — manifest example for `conn_proxy`.
-- Bindings overview in [Concepts overview](../index.md).
-
-Implementation entry points:
-
-- `graflo.architecture.contract.bindings.ColumnTimeFilter`
-- `graflo.architecture.contract.bindings.ConnectorUpdate`
-- `graflo.architecture.contract.bindings.Bindings.apply_connector_update`
-- `graflo.architecture.contract.bindings.Bindings.replace_connector`
+- [Table filters and views](table_views.md): the `filters` and `view` fields a patch can set on a table connector.
+- [Credentials outside the manifest (11)](../../examples/connection-proxy/index.md): how a connection provider supplies the settings behind a connection proxy.
+- [API connector](api_connector.md): the fields of an API connector, such as `params` and `pagination`.
