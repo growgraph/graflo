@@ -11,10 +11,13 @@ core_schema:
             -   name: category
             -   name: updated_at
             identity:
-            -   name
+            -   product_code
+            -   org
             filters: []
             blank: false
+            assigned: false
             hash_identity_properties: []
+            secondary_identities: []
         -   name: supplier
             properties:
             -   name: supplier_code
@@ -24,13 +27,19 @@ core_schema:
             -   supplier_code
             filters: []
             blank: false
+            assigned: false
             hash_identity_properties: []
+            secondary_identities: []
         force_types: {}
         identity_from_all_properties: false
     edge_config:
         edges: []
+        inverses: []
+        symmetric: []
 db_profile:
     db_flavor: graflo_backend
     vertex_storage_names: {}
+    vertex_property_names: {}
     vertex_indexes: {}
     edge_specs: []
+    native_inverses: []

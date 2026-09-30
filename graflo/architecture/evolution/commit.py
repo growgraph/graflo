@@ -281,8 +281,8 @@ def build_commit(
 
     The ops are applied here rather than trusted, so both trees describe a
     transition that actually happened. Refuses an empty change set and one that
-    leaves the manifest unchanged -- a commit that moves nothing is a lie about
-    history, not a harmless no-op.
+    leaves the manifest unchanged: a commit records a transition, and one that
+    changes nothing would claim a change that did not happen.
 
     Args:
         base: The first parent's manifest state.

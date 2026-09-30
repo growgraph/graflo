@@ -1,137 +1,220 @@
 # Kafka connector
 
-GraFlo ingests **finite batches** of JSON object messages from Kafka topics via bindings + `conn_proxy`, the same credential-free pattern as SQL and REST API connectors.
+A Kafka [connector](../glossary.md#connector) reads JSON messages from one or more Kafka topics, such as a plant's sensor feed, and hands each message to a [resource](../glossary.md#resource) as one record. A run reads what the topic holds and then stops; it is not a consumer that runs forever. Use it to load a graph from a topic, or to top it up on a schedule. This page shows how to declare the topics, when a run stops, what a message becomes, and how to try it against a local broker.
 
-- **`KafkaConnector`** (manifest) — topics, consumer group, decode/stop options (secret-free).
-- **`KafkaConnConfig`** / **`KafkaGeneralizedConnConfig`** (runtime) — bootstrap servers and optional SASL/SSL settings, registered on a **`ConnectionProvider`**.
-- **`KafkaDataSource`** — polls until a stop condition, yields document dicts to the bound resource pipeline.
+## A first example
 
-This is **consume-only** and **batch-bounded** (not a never-ending daemon consumer). Produce/emit and Schema Registry / Avro are out of scope for this surface.
+Suppose the topic `sensor-readings` carries messages such as:
 
-## Manifest shape
+```json
+{"sensor_id": "TMP-12", "machine_serial": "SN-4471", "value": 71.3}
+```
+
+Add this `bindings` block to a [manifest](../glossary.md#manifest) that has a `readings` resource:
 
 ```yaml
 bindings:
   connectors:
-    - name: events_kafka
-      topics:
-        - graflo.events
-      group_id: graflo-ingest
-      auto_offset_reset: earliest   # or latest
-      value_encoding: json
-      idle_ms: 2000
-      # max_wait_ms: 30000
-      # include_headers: true
-      # row_annotations:
-      #   _source: kafka
-  resource_connector:
-    - resource: events
-      connector: events_kafka
+    - name: sensor_readings
+      topics: [sensor-readings]
+      group_id: graflo-readings
+      resource_name: readings
   connector_connection:
-    - connector: events_kafka
-      conn_proxy: kafka_local
+    - connector: sensor_readings
+      conn_proxy: sensor_feed
 ```
 
-`BoundSourceKind.KAFKA` selects this path in **`RegistryBuilder`**.
+- `topics` lists the topics to subscribe to.
+- `group_id` names the Kafka consumer group. The offsets that the group has committed decide where the next run starts.
+- `resource_name` sends every message to the `readings` resource.
+- `conn_proxy: sensor_feed` is a [connection proxy](../glossary.md#connection-proxy): a label that stands for the broker address and credentials, so the manifest holds neither.
 
-### Connector fields
+Set the broker address for that label:
 
-| Field | Default | Meaning |
-| ----- | ------- | ------- |
-| **`topics`** | *(required)* | Non-empty list of topic names to subscribe |
-| **`group_id`** | *(required)* | Consumer group id |
-| **`auto_offset_reset`** | `earliest` | Start when no committed offset exists (`earliest` \| `latest`) |
-| **`value_encoding`** | `json` | Payload decode mode (`json` only) |
-| **`include_headers`** | `false` | Attach decoded headers under **`_kafka_headers`** |
-| **`idle_ms`** | `2000` | Stop after this many ms with **no messages** once at least one message was seen (`0` disables) |
-| **`max_wait_ms`** | `null` | Optional wall-clock cap for one `iter_batches` run |
-| **`poll_timeout_ms`** | `500` | Per-poll timeout passed to the client |
-| **`row_annotations`** | `{}` | Constant fields merged into every decoded row (doc wins) |
+```bash
+export SENSOR_FEED_BOOTSTRAP_SERVERS=localhost:9092
+```
 
-## Runtime credentials
-
-Keep secrets out of YAML. Register bootstrap (and optional auth) on the **`conn_proxy`** label:
+Then load the manifest, register the connection from the environment, and run the ingestion:
 
 ```python
-from graflo.connections.provider import InMemoryConnectionProvider
-from graflo.hq.ingestion_parameters import IngestionParams
+from pathlib import Path
 
+from suthing import FileHandle
+
+from graflo import GraphEngine, GraphManifest
+from graflo.connections import GraFloBackendConfig, InMemoryConnectionProvider
+
+manifest = GraphManifest.from_config(FileHandle.load("manifest.yaml"))
+manifest.finish_init()
+bindings = manifest.require_bindings()
+
+# Reads SENSOR_FEED_BOOTSTRAP_SERVERS and the optional SENSOR_FEED_* variables
 provider = InMemoryConnectionProvider()
 provider.register_all_kafka_configs_from_env(bindings=bindings)
 
+target = GraFloBackendConfig(output_dir=Path("artifacts/readings"))
+engine = GraphEngine(target_db_flavor=target.connection_type)
 engine.define_and_ingest(
     manifest=manifest,
-    target_db_config=conn_conf,
+    target_db_config=target,
     connection_provider=provider,
-    ingestion_params=IngestionParams(),
+    recreate_schema=True,
 )
 ```
 
-Each `conn_proxy` maps to an uppercase env prefix (`kafka_local` → `KAFKA_LOCAL_`):
+A new consumer group has no committed offsets, so the first run reads the topic from its oldest message. The run stops two seconds after the last message arrives and writes the graph to the [file backend](../glossary.md#file-backend), a directory on disk. To write to a database, pass its config, such as a `Neo4jConfig`, as `target_db_config`. A second run with the same `group_id` reads only the messages that arrived after the first.
 
-| Variable | Required | Meaning |
-| -------- | -------- | ------- |
-| `{PREFIX}BOOTSTRAP_SERVERS` | yes | Broker list (e.g. `localhost:9092`) |
-| `{PREFIX}SECURITY_PROTOCOL` | no (default `PLAINTEXT`) | `PLAINTEXT`, `SASL_PLAINTEXT`, `SASL_SSL`, or `SSL` |
-| `{PREFIX}CLIENT_ID` | no | Client id |
-| `{PREFIX}SASL_MECHANISM` / `{PREFIX}SASL_USERNAME` / `{PREFIX}SASL_PASSWORD` | when using SASL | Auth settings |
+## Try it with a local broker
 
-Manual registration:
+A checkout of the GraFlo repository has a single-broker Kafka setup in `docker/kafka`, with a plaintext listener on `localhost:9092`. Start it on its own:
+
+```bash
+cd docker/kafka
+docker compose --env-file .env --profile graflo.kafka up -d
+```
+
+`docker/start-all.sh` starts it together with the other services in `docker/`.
+
+Create the topic:
+
+```bash
+docker exec --workdir /opt/kafka/bin/ -it graflo.kafka \
+  ./kafka-topics.sh --bootstrap-server localhost:9092 --create --topic sensor-readings
+```
+
+Put a few messages on it with the `confluent-kafka` client, which is installed with GraFlo:
 
 ```python
-from graflo.connections.sources import KafkaConnConfig, KafkaGeneralizedConnConfig
+import json
 
+from confluent_kafka import Producer
+
+producer = Producer({"bootstrap.servers": "localhost:9092"})
+for reading in [
+    {"sensor_id": "TMP-12", "machine_serial": "SN-4471", "value": 71.3},
+    {"sensor_id": "VIB-03", "machine_serial": "SN-4471", "value": 0.42},
+    {"sensor_id": "TMP-07", "machine_serial": "SN-2210", "value": 64.8},
+]:
+    producer.produce(
+        "sensor-readings", key=reading["machine_serial"], value=json.dumps(reading)
+    )
+producer.flush()
+```
+
+Run the ingestion above: it reads the three messages, waits two seconds for more, and stops.
+
+## When a run stops
+
+A run ends at the first of these events:
+
+1. `idle_ms` milliseconds pass without a new message, counted from the last message received. The default is 2000; `idle_ms: 0` turns this off.
+2. The run has lasted `max_wait_ms` milliseconds. It is unset by default.
+3. `IngestionParams.max_items` records have been read. You pass `IngestionParams` to `define_and_ingest` as `ingestion_params`.
+
+The idle clock starts only with the first message, so that a run does not end while the broker is assigning partitions to the consumer group. As a consequence, a run on a topic with no new messages never ends on its own. Set `max_wait_ms` whenever the topic may be empty, and whenever you set `idle_ms: 0`.
+
+## What a message becomes
+
+Each message value must be a JSON object encoded in UTF-8. A message whose value is an array, a single value, invalid JSON or empty is skipped with a warning in the log.
+
+The record holds the fields of the JSON object plus these fields:
+
+| Field | Value |
+|---|---|
+| `_kafka_topic` | Topic of the message |
+| `_kafka_partition` | Partition of the message |
+| `_kafka_offset` | Offset of the message in its partition |
+| `_kafka_key` | Message key as text, or `null` when the message has no key |
+| `_kafka_headers` | Message headers as `{name: text}`; present only with `include_headers: true` |
+
+The message from the first example, sent with the key `SN-4471`, becomes:
+
+```json
+{
+  "_kafka_topic": "sensor-readings",
+  "_kafka_partition": 0,
+  "_kafka_offset": 42,
+  "_kafka_key": "SN-4471",
+  "sensor_id": "TMP-12",
+  "machine_serial": "SN-4471",
+  "value": 71.3
+}
+```
+
+`row_annotations` adds constant fields to every record, for example to mark which feed a record came from. When names collide, the message's own fields win over the `_kafka_*` fields, and those win over `row_annotations`.
+
+## Offsets and consumer groups
+
+GraFlo commits the offsets of the consumer group itself; automatic commits are off. It commits after each batch of records it reads, so the next run with the same `group_id` starts after the last committed batch.
+
+A group with no committed offsets starts where `auto_offset_reset` says: `earliest` reads the topic from its oldest message, and `latest` reads only messages that arrive after the consumer joins. To read a topic again from the start, run with a new `group_id`.
+
+GraFlo commits a batch as soon as it asks for the next one, and it reads ahead of writing (see `batch_prefetch` in [Parallelism](../ingestion/parallelism.md)). A batch can therefore be committed before it is written to the database. If a run fails part way, messages whose offsets were committed can be missing from the graph; rerun with a new `group_id` to read them again.
+
+## Connector fields
+
+| Field | Default | Meaning |
+|---|---|---|
+| `topics` | required | Topics to subscribe to; at least one non-empty name |
+| `group_id` | required | Kafka consumer group |
+| `auto_offset_reset` | `earliest` | Where a group with no committed offset starts: `earliest` or `latest` |
+| `idle_ms` | `2000` | Stop after this many milliseconds without a message, counted from the last message; `0` turns it off |
+| `max_wait_ms` | `null` | Stop this many milliseconds after the run started |
+| `row_annotations` | `{}` | Constant fields added to every record; the message's own fields win |
+| `include_headers` | `false` | Add the message headers under `_kafka_headers` |
+| `poll_timeout_ms` | `500` | How long each poll of the broker waits for a message |
+| `value_encoding` | `json` | How message values are decoded; `json` is the only value |
+
+## Broker address and credentials
+
+At run time a [connection provider](../glossary.md#connection-provider) maps each `conn_proxy` label to a `KafkaConnConfig`. `register_all_kafka_configs_from_env` finds every label that a Kafka connector uses, reads the variables for each label, and binds each connector to its label. The variable prefix is the label in upper case, with `-` replaced by `_`, followed by `_`: the label `sensor_feed` reads `SENSOR_FEED_*`.
+
+| Variable | Required | Meaning |
+|---|---|---|
+| `{PREFIX}BOOTSTRAP_SERVERS` | yes | Brokers to connect to, as a comma-separated list of `host:port` |
+| `{PREFIX}SECURITY_PROTOCOL` | no, default `PLAINTEXT` | `PLAINTEXT`, `SSL`, `SASL_PLAINTEXT` or `SASL_SSL` |
+| `{PREFIX}SASL_MECHANISM` | with SASL | For example `PLAIN` or `SCRAM-SHA-512` |
+| `{PREFIX}SASL_USERNAME`, `{PREFIX}SASL_PASSWORD` | with SASL | User name and password |
+| `{PREFIX}CLIENT_ID` | no | Client id that the broker sees |
+
+A missing `{PREFIX}BOOTSTRAP_SERVERS`, or a `SECURITY_PROTOCOL` other than these four, raises a `ValueError` that names the variable. As with API connectors, `env_prefix_map` maps a label to a different prefix, and `register_kafka_config_from_env(conn_proxy=...)` registers a single label and needs a `bind_from_bindings` call after it.
+
+To register the connection in Python, for example with a password from a secret store:
+
+```python
+from graflo.connections import (
+    InMemoryConnectionProvider,
+    KafkaConnConfig,
+    KafkaGeneralizedConnConfig,
+)
+
+provider = InMemoryConnectionProvider()
 provider.register_generalized_config(
-    conn_proxy="kafka_local",
+    conn_proxy="sensor_feed",
     config=KafkaGeneralizedConnConfig(
-        config=KafkaConnConfig(bootstrap_servers="localhost:9092"),
+        config=KafkaConnConfig(
+            bootstrap_servers="kafka.plant.example:9093",
+            security_protocol="SASL_SSL",
+            sasl_mechanism="SCRAM-SHA-512",
+            sasl_username="graflo",
+            sasl_password="your-password",
+        )
     ),
 )
 provider.bind_from_bindings(bindings=bindings)
 ```
 
-## Message → document shape
+## Limits
 
-Only JSON **objects** become rows. Arrays, scalars, and invalid UTF-8/JSON are skipped with a warning.
+- Messages must be JSON objects. There is no Avro and no schema registry support.
+- The connector only reads. GraFlo does not write to Kafka.
+- `KafkaConnConfig` has no fields for certificate files or a custom certificate authority.
+- An error reported by the broker while polling raises an exception and ends the ingestion.
+- A connector whose label has no registered configuration is skipped with a warning in the log; the other connectors run as usual.
 
-Each yielded document merges:
+## What to read next
 
-1. Optional **`row_annotations`** (defaults; payload keys win)
-2. Kafka metadata: **`_kafka_topic`**, **`_kafka_partition`**, **`_kafka_offset`**, **`_kafka_key`**
-3. Optional **`_kafka_headers`** when **`include_headers: true`**
-4. Decoded JSON object fields
-
-Offsets are committed after each yielded batch (**at-least-once**).
-
-## Stop conditions
-
-One consume run ends when any of the following holds:
-
-1. **`iter_batches(..., limit=N)`** reached (total records across batches)
-2. **`max_wait_ms`** elapsed since the run started
-3. **`idle_ms`** elapsed with no new messages **after** at least one message was received (avoids exiting during group assignment before backlog is readable)
-
-## Local broker and live tests
-
-`docker/kafka` runs Apache Kafka ([`apache/kafka:4.3.1`](https://hub.docker.com/r/apache/kafka)) in KRaft single-broker mode. Bootstrap: **`localhost:9092`**. Included in `docker/start-all.sh` / `stop-all.sh` / `cleanup-all.sh`.
-
-```bash
-cd docker
-./start-all.sh   # or: cd kafka && docker compose --env-file .env up -d
-```
-
-Live integration tests are marked `kafka` and skipped unless opted in:
-
-```bash
-uv run pytest test -m kafka --run-kafka
-```
-
-`confluent-kafka` is a default package dependency (lazy import surfaces a clear error if the native library is missing).
-
-## Related
-
-- [API connector and pagination](api_connector.md) — same `conn_proxy` pattern for REST
-- [Data source reference — Kafka](../../reference/data_source/index.md#kafka-data-sources)
-- [Runtime connector updates](runtime_updates.md)
-
-Implementation: `graflo.architecture.contract.bindings.KafkaConnector`, `graflo.data_source.kafka.KafkaDataSource`, `graflo.connections.sources.KafkaConnConfig`, `graflo.connections.provider`.
+- [Credentials outside the manifest (example 11)](../../examples/connection-proxy/index.md): the connection proxy pattern with a database source.
+- [API connector](api_connector.md): read records from a REST endpoint, with the same labels and providers.
+- [Parallelism](../ingestion/parallelism.md): how batches are read ahead, cast and written.

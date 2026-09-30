@@ -1,0 +1,21 @@
+# How to combine manifest_maintenance.yaml (left) and manifest_sensors.yaml (right).
+op: merge_manifests
+
+# 1. The map of names: what each side's words become in the combined manifest.
+canonical_maps:
+    left: {vertices: {Asset: Machine}}
+    right: {properties: {Device: {serial: serial_number}}}
+
+# 2. These two types are one, and this is how records from both sides find
+#    each other: a normalized serial number first, else each record's own key.
+vertex_equivalences:
+-   left: Asset
+    right: Device
+    identity:
+    -   name: match_key
+        sources:
+            assets: {input: [serial_number]}
+            devices: {input: [serial]}
+    -   local_key:
+            assets: {field: asset_id, tag: maintenance}
+            devices: {field: device_id, tag: sensors}

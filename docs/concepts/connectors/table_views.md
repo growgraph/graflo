@@ -1,349 +1,306 @@
-# Table connector views and `SelectSpec`
+# Table filters and views
 
-`TableConnector` normally describes a **base table** plus optional declarative
-`JoinClause` rows, `FilterExpression` **`filters`**, optional nested **`time_filter`**
-(**`ColumnTimeFilter`**: column + ISO bounds and/or a pandas **`interval`** string
-for SQL `WHERE` on a datetime column — see [Runtime connector updates](runtime_updates.md)),
-and `select_columns`. For richer SQL
-(polymorphic relation rows joined to lookup tables, asymmetric joins, or a
-fully custom `SELECT` list), set **`view`** to a **`SelectSpec`**.
+A [connector](../glossary.md#connector) that reads a PostgreSQL table hands every row of the table to its [resource](../glossary.md#resource). Often you want fewer rows, or rows that carry columns from other tables: only the open work orders, or links between pieces of equipment that say what kind of equipment sits at each end. This page shows how to declare that on the table connector, so that the database filters and joins the rows before GraFlo reads them.
 
-`SelectSpec` is a structured, YAML-friendly alternative to embedding a raw SQL
-string in the manifest. `TableConnector.build_query()` either:
+## A first example
 
-- uses **`view`** when present (delegates to `SelectSpec.build_sql()`), or
-- builds SQL from `table_name` + `joins` + filters (the default path).
-
-Implementation references:
-
-- `graflo.architecture.contract.bindings.TableConnector` (`view`, `build_query`)
-- `graflo.filter.select.SelectSpec` (`kind="type_lookup"` | `kind="select"`)
-- `graflo.filter.parse_filter_expression` (YAML shorthand and discriminated forms)
-
-## Bindings filter cookbook (`TableConnector.filters`)
-
-SQL table connectors can push filters into the generated `SELECT` **before** rows reach
-the ingestion pipeline. **Bindings** accept the **same simplified logical-operator YAML**
-used on vertex `filters` in the schema—no need for verbose `operator` + `deps` unless
-you prefer that style.
-
-Pushdown filters are validated when **Bindings** load (fail fast). Each list entry is
-parsed with `parse_filter_expression`, same as `VertexConfig.filters` and graph DB
-helpers.
-
-### Logical operators (summary)
-
-| Key | Arity | SQL |
-| --- | ----- | --- |
-| `AND` | 2+ deps | `a AND b AND …` |
-| `OR` | 2+ deps | `a OR b OR …` |
-| `NOT` | 1 dep | `NOT …` |
-| `IF_THEN` | exactly 2 deps | `(NOT antecedent OR consequent)` |
-
-`IF_THEN` is for row predicates in SQL. For in-memory document checks during vertex
-write, use `ExpressionFlavor.PYTHON` on the schema vertex `filters` block instead.
-
-### YAML forms (all supported on `filters`)
-
-**Logical shorthand** (operator as key)—**recommended in Bindings**:
+A plant's maintenance database has a `work_orders` table. This connector reads only the open work orders:
 
 ```yaml
-connectors:
-  - name: events_pg
-    table_name: events
-    filters:
+bindings:
+  connectors:
+    - name: open_work_orders
+      table_name: work_orders
+      filters:
+        - {field: status, cmp_operator: "==", value: open}
+  resource_connector:
+    - {resource: work_orders, connector: open_work_orders}
+```
+
+GraFlo turns the connector into one SQL query and reads the result in batches:
+
+```sql
+SELECT * FROM "public"."work_orders" WHERE "status" = 'open'
+```
+
+The schema in the query is the connector's `schema_name`, else the schema of the connection settings, else `public`. To check the query a connector runs, build the connector in Python and call `build_query()`:
+
+```python
+from graflo.architecture.contract.bindings import TableConnector
+
+connector = TableConnector(
+    name="open_work_orders",
+    table_name="work_orders",
+    filters=[{"field": "status", "cmp_operator": "==", "value": "open"}],
+)
+print(connector.build_query())
+```
+
+## Filter rows with `filters` { #bindings-filter-cookbook-tableconnectorfilters }
+
+Each entry of `filters` is one condition. A condition on one column has three keys:
+
+- `field`: the column.
+- `cmp_operator`: one of `==`, `!=`, `>`, `>=`, `<`, `<=`, `IS_NULL`, `IS_NOT_NULL`.
+- `value`: what the column is compared with. Strings are quoted in the SQL, numbers are not. `IS_NULL` and `IS_NOT_NULL` take no value.
+
+The entries are joined with `AND`. To combine conditions in another way, write the logical operator as a key with a list of conditions under it:
+
+| Key | Conditions under it | SQL |
+| --- | --- | --- |
+| `AND` | two or more | `a AND b` |
+| `OR` | two or more | `a OR b` |
+| `NOT` | one | `NOT a` |
+| `IF_THEN` | two: a premise and what must hold when it is true | `(NOT (a) OR (b))` |
+
+These filters keep the work orders that are open or in progress at the north plant, and among repair orders only those that record labor:
+
+```yaml
+filters:
+  - AND:
       - OR:
-          - {field: status, cmp_operator: "==", value: [active]}
-          - {field: status, cmp_operator: "==", value: [pending]}
+          - {field: status, cmp_operator: "==", value: open}
+          - {field: status, cmp_operator: "==", value: in_progress}
+      - {field: plant, cmp_operator: "==", value: north}
+  - IF_THEN:
+      - {field: order_type, cmp_operator: "==", value: repair}
+      - {field: labor_hours, cmp_operator: ">", value: 0}
 ```
 
-**Discriminated composite** (`operator` + `deps`):
-
-```yaml
-    filters:
-      - operator: AND
-        deps:
-          - {field: region, cmp_operator: "==", value: [eu]}
-          - {field: score, cmp_operator: ">", value: [0]}
+```sql
+SELECT * FROM "public"."work_orders"
+WHERE ("status" = 'open' OR "status" = 'in_progress') AND "plant" = 'north'
+  AND (NOT ("order_type" = 'repair') OR ("labor_hours" > 0))
 ```
 
-**`NOT` and `IF_THEN` shorthand:**
+A condition nested under another is wrapped in parentheses, so the SQL keeps the structure of the YAML.
 
-```yaml
-    filters:
-      - NOT:
-          - {field: deleted_at, cmp_operator: IS_NULL}
-      - IF_THEN:
-          - {field: event_type, cmp_operator: "==", value: [trade]}
-          - {field: notional, cmp_operator: ">", value: [0]}
-```
+!!! warning "Keep `OR` inside `AND`"
+    GraFlo joins the top-level conditions of a query with `AND` and does not put parentheses around them. The top-level conditions are the `filters` entries, the window of a `time_filter`, and the conditions a view adds. An `OR` entry next to any of them changes meaning: `a OR b AND c` reads as `a OR (b AND c)`. Nest the `OR` in one `AND:` entry with the other conditions, as above, or make it the connector's only condition.
 
-**Leaf shorthand** (no `kind`):
+The syntax is the same as that of a vertex type's `filters` in the schema. The long form, `operator: AND` with the conditions under `deps:`, is accepted too. Each entry is parsed when the manifest loads, so an unknown `cmp_operator` is reported then, not when the query runs.
 
-```yaml
-    filters:
-      - {field: class_name, cmp_operator: IS_NOT_NULL}
-```
+For a date or time window, use `time_filter`, described in [Runtime connector updates](runtime_updates.md#time-windows-with-time_filter).
 
-**`view.where`** (on `SelectSpec`) uses the same keys:
+## Join other tables with `joins`
 
-```yaml
-    view:
-      kind: select
-      where:
-        OR:
-          - {field: a, cmp_operator: "==", value: [1]}
-          - {field: b, cmp_operator: "==", value: [2]}
-```
-
-### Semantics
-
-| Topic | Behavior |
-| ----- | -------- |
-| **Multiple `filters` entries** | Combined with **`AND`** (same as several pushdown clauses). |
-| **OR across clauses** | Use **one** composite filter (`OR:` or `operator: OR`). |
-| **`IF_THEN` in SQL** | Rendered as `(NOT antecedent OR consequent)`; not the literal token `IF_THEN`. |
-| **Nested AND/OR** | Composite operands are parenthesized in SQL for correct precedence. |
-| **`view.where`** | Same shorthand as above (`SelectSpec` uses the same parser). |
-
-Copy patterns from vertex `filters` in the schema block; they now parse identically on
-table connectors.
-
-## When to use `view` vs plain `joins`
-
-| Approach | Best for |
-| -------- | -------- |
-| **`joins` only** | One or more `JoinClause` rows; base table column `ON` join keys; optional `alias` when the same physical table appears twice. |
-| **`view` with `kind="type_lookup"`** | A **fact** table (e.g. relations) plus **lookup** table(s) for endpoint types: emits `source_id`, `source_type`, `target_id`, `target_type`, and optional `relation` with a fixed pattern. Supports **per-side** lookup tables/columns via `source_table`, `target_table`, `source_identity`, `target_identity`, `source_type_column`, `target_type_column`. |
-| **`view` with `kind="select"`** | Full control: optional `from` (defaults to `table_name`), `joins`, explicit `select` (``all_base``, structured `base` / `from_join`, simple column names, or legacy `expr`/`alias`), optional `base_alias` (default `base`), `where` as `FilterExpression`. Use when `type_lookup` is not expressive enough. |
-| **Database VIEW** | Same logical outcome as `select`, but SQL owned by the DBA; `TableConnector` points at the view name as `table_name` and omits `view` / `joins`. |
-
-## Interaction with edge auto-join
-
-`enrich_edge_connector_with_joins` (HQ `RegistryBuilder`) adds `JoinClause` rows
-for resources whose pipeline uses **`EdgeActor`** steps
-with `match_source` / `match_target`. It runs only when the connector has
-**no** `view` and **no** pre-existing `joins`.
-
-For polymorphic edges, prefer **`type_lookup`** (or `select`) on `TableConnector.view`
-so each row already carries `source_type` / `target_type` (and `relation`) for
-the `vertex_router` + dynamic `edge` pipeline—see [Example 7 – Polymorphic objects and relations](../../examples/example-7.md).
-
-## `kind="type_lookup"` (shorthand)
-
-Declare the lookup table, identity column, type discriminator, FK columns on
-the base (relation) table, and optional relation column:
+A work order names the asset it concerns by `asset_id`. The asset's kind and name are in the `equipment` table. A `joins` entry brings them into each row:
 
 ```yaml
 connectors:
-  - name: relations_enriched
-    table_name: relations
-    schema_name: public
+  - name: machine_work_orders
+    table_name: work_orders
+    joins:
+      - table: equipment
+        alias: asset
+        on_self: asset_id
+        on_other: id
+        select_fields: [kind, name]
+    filters:
+      - {field: status, cmp_operator: "==", value: open}
+      - {field: asset.kind, cmp_operator: "==", value: Machine}
+```
+
+```sql
+SELECT base.*, asset."kind" AS "asset__kind", asset."name" AS "asset__name"
+FROM "public"."work_orders" base
+LEFT JOIN "public"."equipment" asset ON base."asset_id" = asset."id"
+WHERE base."status" = 'open' AND asset."kind" = 'Machine'
+```
+
+The keys of a join:
+
+- `table`: the table to join.
+- `on_self`: the column of the connector's own table.
+- `on_other`: the column of the joined table that `on_self` must equal.
+- `alias`: the name of the joined table in the query. You need it when you join the same table twice.
+- `select_fields`: the columns to take from the joined table. Each arrives as `<alias>__<column>`. Without it, every column of the joined table is selected.
+- `join_type`: `LEFT` by default.
+- `schema_name`: by default the connector's schema.
+
+With joins, the connector's own table is called `base` in the query; `base_alias` changes that name. A field without a dot in `filters` refers to `base`; write `asset.kind` for a column of a joined table. `select_columns` replaces the whole column list with the SQL expressions you give.
+
+## Look up the kind of each end with `view: type_lookup`
+
+A `view` replaces the connector's query with one you describe. Its `type_lookup` kind is made for a table of relations whose rows do not say what kind of thing each end is.
+
+The `equipment` table holds machines, production lines and sensors side by side, with a `kind` column that says which is which:
+
+| id | kind | name |
+| --- | --- | --- |
+| 1 | Machine | Press 1 |
+| 2 | Machine | Lathe 2 |
+| 10 | ProductionLine | Line A |
+| 20 | Sensor | Vibration sensor 20 |
+
+The `equipment_links` table records how they are related, by id only:
+
+| source_id | target_id | relation |
+| --- | --- | --- |
+| 1 | 10 | part_of |
+| 2 | 10 | part_of |
+| 20 | 1 | monitors |
+| 99 | 1 | monitors |
+
+To make an edge out of a link, the resource needs the kind of both ends, and that is in the other table. `kind: type_lookup` describes this query:
+
+```yaml
+connectors:
+  - name: equipment_links
+    table_name: equipment_links
     view:
       kind: type_lookup
-      table: objects
+      table: equipment
       identity: id
-      type_column: type
+      type_column: kind
       source: source_id
       target: target_id
       relation: relation
 ```
 
-Expanded SQL selects (conceptually; base row alias defaults to `base`):
+`table` is the lookup table, `identity` its key column and `type_column` the column that holds the kind. `source` and `target` are the columns of the links table that refer to the lookup table, and `relation` is an optional column to pass through. The query joins the lookup table once for each end:
 
-- `base.source_id AS source_id`, `s.<type_column> AS source_type`
-- `base.target_id AS target_id`, `t.<type_column> AS target_type`
-- `base.relation AS relation` when `relation` is set
+```sql
+SELECT base."source_id" AS source_id, s."kind" AS source_type,
+       base."target_id" AS target_id, t."kind" AS target_type,
+       base."relation" AS relation
+FROM "public"."equipment_links" base
+LEFT JOIN "public"."equipment" s ON base."source_id" = s."id"
+LEFT JOIN "public"."equipment" t ON base."target_id" = t."id"
+WHERE s."id" IS NOT NULL AND t."id" IS NOT NULL
+```
 
-Pair this with two `vertex_router` steps and a dynamic `edge` step whose field names match those aliases, for example:
+It returns these rows:
+
+| source_id | source_type | target_id | target_type | relation |
+| --- | --- | --- | --- | --- |
+| 1 | Machine | 10 | ProductionLine | part_of |
+| 2 | Machine | 10 | ProductionLine | part_of |
+| 20 | Sensor | 1 | Machine | monitors |
+
+The link from 99 is left out: a row whose end is missing from the lookup table does not reach the resource.
+
+The output columns always have these names: `source_id`, `source_type`, `target_id`, `target_type`, and `relation` when you set it. The resource reads them with two [vertex routers](../glossary.md#vertex-router) and an [edge step](../glossary.md#edge-step):
 
 ```yaml
 ingestion_model:
   resources:
-    - name: relations
+    - name: equipment_links
       pipeline:
         - vertex_router:
             type_field: source_type
             role: source
-            from:
-              id: source_id
-            type_map:
-              Car: car
-              Person: person
+            from: {id: source_id}
+            type_map: {Machine: machine, ProductionLine: production_line, Sensor: sensor}
         - vertex_router:
             type_field: target_type
             role: target
-            from:
-              id: target_id
-            type_map:
-              Car: car
-              Person: person
+            from: {id: target_id}
+            type_map: {Machine: machine, ProductionLine: production_line, Sensor: sensor}
         - edge:
             source_role: source
             target_role: target
             relation_field: relation
 ```
 
-## `kind="select"` (full declarative query)
+Each router reads the vertex type from a `*_type` column, maps the table's words to vertex types with `type_map`, takes the vertex's `id` from the matching `*_id` column, and names its node with a [role](../glossary.md#role). The edge step links the two roles and takes the relation of each edge from the `relation` column. On the rows above it writes two `part_of` edges from a machine to a production line and one `monitors` edge from a sensor to a machine. The example of [one table that holds many kinds of things (07)](../../examples/vertex-router-type-map/index.md) builds the same kind of pipeline over CSV files.
 
-Use the same building blocks as `TableConnector.joins` (`JoinClause`), plus an
-explicit `select` list and optional `where`.
+When the two ends are described in different tables, set the keys for each side: `source_table`, `source_identity` and `source_type_column` for the source, `target_table`, `target_identity` and `target_type_column` for the target. A key you leave out falls back to `table`, `identity` or `type_column`. The lookup tables are called `s` and `t` in the query, so `base_alias` cannot take either name.
 
-### Base table name
+When GraFlo writes the bindings for a whole PostgreSQL database with `GraphEngine.create_bindings`, the `type_lookup_overrides` argument maps the name of an edge table to these same keys.
 
-You do **not** need to repeat the base table: omit `from` when it is the same as
-the connector’s `table_name`. `SelectSpec.build_sql()` uses `table_name` as the
-`FROM` target in that case. Set `from` only when the queried object differs
-(e.g. a synonym or a view name that is not `table_name`).
+## Write the whole query with `view: select`
 
-### Base row alias (`base_alias`)
-
-`SelectSpec.base_alias` and `TableConnector.base_alias` default to **`base`**: that
-is the SQL identifier used for the base table row whenever joins are generated
-(`FROM "schema"."table" base ...`). Override only if you need a different name or
-to avoid a clash with a join alias. `where` clauses that use qualified fields
-should use this name (e.g. `base.tenant_id`).
-
-### Ergonomic `select` items
-
-Each `select` entry can be:
-
-- **`all_base`** — all columns from the base row: expands to `base.*` when joins
-  are present (using your `base_alias`), or plain `*` when there are no joins.
-  This is the default single entry when `select` is omitted; prefer it over raw
-  `*` when joining so you do not accidentally select every column from every
-  joined table.
-- A **simple identifier string** (letters, digits, underscore): a column on the
-  **base** row. When `joins` are present, it is emitted as `base."column"` (no
-  need to type the alias in YAML).
-- `*` or any string that is **not** a simple identifier (expressions, quoted SQL,
-  `base.*`, etc.) is passed through unchanged.
-- A dict **`{ base: <col>, as: <output> }`** — base-table column with an optional
-  output alias (`alias` is accepted as well as `as`).
-- A dict **`{ from_join: <join_alias>, column: <col>, as: <output> }`** — column
-  from a joined table; `from_join` must match the `alias` (or table name) of a
-  `joins` entry.
-- Legacy dict **`{ expr: "...", alias: ... }`** for arbitrary SQL expressions.
-
-Example (two joins to the same lookup table, no duplicated `from`, no manual
-base alias in `select`):
+`type_lookup` has a fixed shape. When it does not fit, for example when one end always has the same type or you need other columns, `kind: select` describes the query piece by piece. This view reads the open work orders with the kind of their asset and the name of their production line, both looked up in `equipment`:
 
 ```yaml
 connectors:
-  - name: relations_enriched
-    table_name: relations
-    schema_name: public
+  - name: work_order_assets
+    table_name: work_orders
     view:
       kind: select
       select:
-        - { base: source_id, as: source_id }
-        - { from_join: s, column: kind, as: source_type }
-        - { base: target_id, as: target_id }
-        - { from_join: t, column: kind, as: target_type }
+        - {base: id, as: work_order_id}
+        - asset_id
+        - {from_join: asset, column: kind, as: asset_type}
+        - {from_join: line, column: name, as: line_name}
       joins:
-        - table: object_dim
-          alias: s
-          on_self: source_id
-          on_other: id
-          join_type: LEFT
-        - table: object_dim
-          alias: t
-          on_self: target_id
-          on_other: id
-          join_type: LEFT
-      where:
-        kind: leaf
-        field: base.tenant_id
-        cmp_operator: "=="
-        value: ["acme"]
+        - {table: equipment, alias: asset, on_self: asset_id, on_other: id}
+        - {table: equipment, alias: line, on_self: line_id, on_other: id}
+      where: {field: base.status, cmp_operator: "==", value: open}
 ```
 
-`where` still uses SQL flavor and may reference `base` / join aliases where needed.
-
-### Legacy `expr` style
-
-You can still spell projections as free-form SQL:
-
-```yaml
-select:
-  - expr: "s.kind"
-    alias: source_type
+```sql
+SELECT base."id" AS work_order_id, base."asset_id",
+       asset."kind" AS asset_type, line."name" AS line_name
+FROM "public"."work_orders" base
+LEFT JOIN "public"."equipment" asset ON base."asset_id" = asset."id"
+LEFT JOIN "public"."equipment" line ON base."line_id" = line."id"
+WHERE base."status" = 'open'
 ```
 
-### Composing two `SelectSpec`-shaped fragments
+The keys of a `select` view:
 
-`TableConnector` supports **one** `view` per connector (one SQL query). To reuse
-logic in two places you can:
+- `select`: the output columns, in order. Each entry is one of:
+    - a column name such as `asset_id`: that column of the connector's own table;
+    - `{base: <column>, as: <name>}`: the same, renamed;
+    - `{from_join: <alias>, column: <column>, as: <name>}`: a column of a joined table, named by its `alias`;
+    - `all_base`: every column of the connector's own table;
+    - `{expr: <SQL>, as: <name>}`, or any other string: an SQL expression, copied into the query as written.
 
-1. **`SelectSpec.concat_select_parts(head, *tail)`** (Python): merges
-   `kind="select"` specs by concatenating `joins` and `select`. The **head** may
-   set `from` and `where`; each **tail** must omit `from` and `where` so the base
-   table and filters stay on the head. At build time, `from` still defaults to
-   `TableConnector.table_name` when omitted.
+    Without `select`, the view selects `all_base`. The `as` key is optional; `alias` is accepted in its place.
 
-2. **YAML anchors** (no code): define a reusable join block and reference it
-   twice, or split `joins` / `select` across anchors the same way you would
-   duplicate list entries.
+- `joins`: joins with the keys described in [Join other tables with `joins`](#join-other-tables-with-joins).
+- `where`: one condition, in the syntax of `filters`. It is parsed when the query is built. When the view has joins, qualify each column with `base.` or a join alias.
+- `from`: the table to read. By default it is the connector's `table_name`.
+- `base_alias`: the name of the connector's own table in the query, `base` by default.
 
-Sketch (Python):
+The connector's `filters` and `time_filter` also apply to a view: GraFlo adds them to the view's `WHERE` as conditions on the base table. That works on a `type_lookup` view and on a `select` view with joins. On a `select` view without joins, write the conditions in `where`.
+
+If you can create a view in the database, you can point `table_name` at it instead. GraFlo reads a database view like a table.
+
+## Assemble a view in Python with `SelectSpec.concat_select_parts`
+
+When several connectors need the same lookup, for example every table that refers to an asset needs the asset's kind, you can build each lookup once in Python and combine the parts. `SelectSpec.concat_select_parts` appends the `joins` and `select` lists of its arguments to each other, in order. This code builds the same query as the YAML above:
 
 ```python
-from graflo.filter.select import SelectSpec
+from graflo.architecture.contract.bindings import TableConnector
+from graflo.filter import JoinClause, SelectSpec
 
-ci_lookup = SelectSpec(
-    kind="select",
+asset_lookup = SelectSpec(
     joins=[
-        {
-            "table": "all_classes",
-            "alias": "ci_types",
-            "on_self": "ci_id",
-            "on_other": "sys_id",
-        }
+        JoinClause(table="equipment", alias="asset", on_self="asset_id", on_other="id")
     ],
-    select=[
-        {"from_join": "ci_types", "column": "type_name", "as": "ci_type"},
-    ],
+    select=["asset_id", {"from_join": "asset", "column": "kind", "as": "asset_type"}],
 )
-app_lookup = SelectSpec(
-    kind="select",
+line_lookup = SelectSpec(
     joins=[
-        {
-            "table": "all_classes",
-            "alias": "app_types",
-            "on_self": "app_id",
-            "on_other": "sys_id",
-        }
+        JoinClause(table="equipment", alias="line", on_self="line_id", on_other="id")
     ],
-    select=[
-        {"base": "app_id"},
-        {"from_join": "app_types", "column": "type_name", "as": "app_type"},
-    ],
+    select=[{"from_join": "line", "column": "name", "as": "line_name"}],
 )
-view = SelectSpec.concat_select_parts(
-    SelectSpec(
-        kind="select",
-        select=[{"base": "ci_id"}],
-    ),
-    ci_lookup,
-    app_lookup,
+open_work_orders = SelectSpec(
+    select=[{"base": "id", "as": "work_order_id"}],
+    where={"field": "base.status", "cmp_operator": "==", "value": "open"},
 )
-# TableConnector(..., table_name="incidents", view=view)
+
+view = SelectSpec.concat_select_parts(open_work_orders, asset_lookup, line_lookup)
+connector = TableConnector(
+    name="work_order_assets", table_name="work_orders", view=view
+)
+print(connector.build_query())
 ```
 
-The exact YAML shape for `where` follows `FilterExpression` conventions used
-elsewhere (see [Transforms](../ingestion/transforms.md) and filter docs).
+Only the first part may set `where` and `from`; the others raise a `ValueError` if they do, so that the base table and the row conditions are declared once. A part without `select` contributes `all_base`, so give every part its own `select`.
 
-## Summary
+## Automatic joins for edge tables
 
-- **`TableConnector.view`** + **`SelectSpec`** keeps multi-table SQL **declarative**
-  and aligned with `build_query()` / SQL data sources.
-- **`type_lookup`** is the user-friendly path for **polymorphic relations +
-  type lookup**, producing rows ready for a `vertex_router` + dynamic `edge` pipeline.
-- **`kind="select"`** covers **asymmetric** or **non-standard** join/select logic
-  without giving up structured config; **`from`** defaults to **`table_name`**;
-  **`all_base`**, **`base` / `from_join`**, and default **`base_alias`** reduce noise
-  versus raw `expr` and ad-hoc SQL aliases.
-- **`SelectSpec.concat_select_parts`** merges join/select fragments when you want
-  multiple **`SelectSpec`**-shaped pieces composed in code.
-- Edge **`EdgeActor`** auto-join in HQ is orthogonal; set `view` or explicit
-  `joins` if you need full control over the SQL for that resource.
+A table connector with neither `view` nor `joins` can get joins that GraFlo adds when ingestion starts. This happens for an edge step of the connector's resource that names both vertex types with `from` and `to` and sets both `match_source` and `match_target`. GraFlo reads those two keys as columns of the connector's table. For each end it finds the table connector of the resource named after the vertex type and joins that table on the vertex type's first identity property, as `s` for the source and `t` for the target. Rows whose ends are not found are left out.
+
+Declaring `view` or `joins` turns this off, and the query is then exactly the one you declared. An edge step that takes its ends from roles gets no automatic join; use `type_lookup` for it.
+
+## What to read next
+
+- [Runtime connector updates](runtime_updates.md): change a connector's filters or time window for one run, without editing the manifest.
+- [One table that holds many kinds of things (07)](../../examples/vertex-router-type-map/index.md): the router pipeline, step by step.
+- [A graph from a PostgreSQL database (09)](../../examples/infer-from-postgres/index.md): let GraFlo write the table connectors for a whole database.

@@ -1,72 +1,80 @@
-# Version control for world models
+# Version control
 
-A schema is a world model, and manifests are its provenance. This page covers
-what GraFlo records about a manifest's history: how a manifest gets a content
-address, how change sets become commits, and how two lines of change are
-reconciled.
+A manifest changes over time, often in more than one hand. This page shows how
+GraFlo records that history: how a manifest gets a content address, how change
+sets become commits, how you go back to an earlier version, and how two lines
+of change to the same manifest are reconciled. After reading it you can keep a
+manifest's history in a commit store and replay, verify and merge it from the
+shell or from Python.
 
-The model is a **git log, not an Alembic script**. Alembic's core abstraction is
-a reversible `upgrade()` / `downgrade()` pair, and GraFlo cannot honour that:
-`merge_vertices` discards which source each property came from,
-`change_field_types` discards the previous type, `sanitize` overwrites the
-profile names it replaces, and `project_manifest` drops material outright. A `downgrade` that quietly produces a
-*different* manifest is worse than none. So history moves forward, and going
-back means replaying from the base.
+Two operations here combine manifests, and they are different. A three-way
+merge reconciles two branches of one manifest's history (`merge_three_way`,
+`graflo merge3`, the [version control example (22)](../../examples/version-control/index.md));
+a union combines two unrelated manifests (`merge_manifests`, `graflo merge`, the
+[manifest union example (20)](../../examples/manifest-union/index.md)), and is
+described on [Merging manifests](merging_manifests.md).
 
-Nothing here touches a database. A history is a fact about the **contract**; see
-[Migration and practices](../operations/migration_and_practices.md) for the
-database-facing plane.
+History moves forward, like a git log, not like a migration script with an
+`upgrade()` and a `downgrade()` for every step. A reversible pair per step is
+not possible here: `merge_vertices` discards which source each property came
+from, `change_field_types` discards the previous type, `sanitize` overwrites the
+storage names it replaces, and `project_manifest` drops material outright. A
+`downgrade` that produces a different manifest from the one you started with is
+worse than none. So going back means replaying from an earlier version.
+
+Nothing here touches a database. A history records changes to the manifest; see
+[Schema migration](../operations/migration_and_practices.md) for changes to a
+database.
 
 ## Content addressing
 
-Two manifests that describe the same world model must hash equal.
+Two manifests that describe the same graph hash equal:
 
 ```python
 from graflo.architecture.evolution import manifest_hash
 
-manifest_hash(a) == manifest_hash(b)  # same model, however each was reached
+manifest_hash(a) == manifest_hash(b)  # same graph, however each was reached
 ```
 
-`to_minimal_canonical_dict()` already normalizes defaults, `None`, aliases and
-key order. What it does not normalize is **list order** — and most lists in the
-contract are declaration order over a set, so two identical schemas authored in
-different order, or one authored and one replayed, hashed differently.
-`canonical_payload` adds exactly that normalization.
+The hash covers the schema, the ingestion model and the bindings. It leaves out
+the manifest's name, version and provenance. `to_minimal_canonical_dict()`
+already ignores defaults, `None` values, aliases and key order. What it keeps is
+list order, and most lists in a manifest are sets written in some order, so two
+identical schemas authored in different orders, or one authored and one
+replayed, would hash differently. `canonical_payload` adds that normalization.
 
 ### Sorted or preserved
 
-Which lists may be sorted is a per-field decision, recorded in `LIST_ORDER`
-(`architecture/evolution/canonicalize.py`) as a total classification of every
-sequence field reachable from `GraphManifest`.
+Which lists may be sorted is decided per field, in `LIST_ORDER`, which
+classifies every list field reachable from `GraphManifest`.
 
-**The two mistakes are not symmetric.** Marking an order-significant list
-`SORTED` makes two *different* models hash equal, and nothing downstream can
-detect it. Marking an order-insignificant one `PRESERVED` is a missed dedup —
-visible and harmless. So doubt resolves to `PRESERVED`, and every `SORTED` entry
-carries the reason order does not matter there.
+The two possible mistakes are not equally bad. Sorting a list whose order
+matters makes two different manifests hash equal, and nothing downstream can
+detect it. Preserving the order of a list whose order does not matter only
+misses a match, which is visible and harmless. So a doubtful field is
+preserved, and every sorted field states why its order does not matter.
 
 | Sorted | Preserved |
 |---|---|
 | vertices, edges, properties, secondary identities | resource pipelines (an ordered program) |
-| resource and transform registries, bindings entries | `Vertex.identity` — a backend addresses an endpoint through the *first* identity field |
-| index sets, edge specs | compound-index columns |
-| semantic `exact_match` / `synonyms` | identity funnel branches (first firing branch wins) |
-| selector and membership sets | transform argument tuples, join and projection order, filter operands |
+| resource and transform registries, bindings entries | `Vertex.identity`: a database addresses an endpoint through the first key field |
+| index sets, edge specs | the columns of a compound index |
+| semantic `exact_match` / `synonyms` | identity funnel branches (the first branch that fires wins) |
+| selector and membership sets | transform arguments, join and projection order, filter operands |
 
-Sorting is by each element's canonical JSON rendering rather than a per-field
-key: total over heterogeneous unions, no tie-break rule, and no way for the
-result to depend on input order. Nothing reads that order — it is hash-side
-only, and authored YAML keeps its declaration order.
+Sorting uses each element's canonical JSON rendering rather than a key per
+field, so it works for mixed element types, needs no tie-break rule, and cannot
+depend on the input order. Only the hash sees the sorted order; authored YAML
+keeps its own order.
 
-Reaching an unclassified sequence raises `UnclassifiedListField` rather than
-guessing, and `CANON_VERSION` is mixed into the hashed bytes so a future change
-to these rules produces different hashes by construction instead of silently
-reinterpreting old ones.
+A list field that is not classified raises `UnclassifiedListField` rather than
+being guessed. `CANON_VERSION` is part of the hashed bytes, so a change to these
+rules produces different hashes instead of reading old hashes under new rules.
 
 ## Provenance
 
-The content address and lineage travel *with* the artifact, so a shipped
-manifest is self-describing outside any registry.
+The content address and lineage can travel with the manifest, so a shipped file
+describes itself:
 
 ```yaml
 metadata:
@@ -78,23 +86,22 @@ metadata:
         merge_recipe: "…"
 ```
 
-**Provenance is never part of the content hash.** That exclusion is the
-definition, not an optimization: content identity must be *path independent*, so
-two routes reaching the same world model agree that they did. A hash covering
-the parents would make identity depend on history, and dedup could never fire.
-The role of a hash-that-covers-ancestry is played by the commit id, exactly as
-in git.
+Provenance is never part of the content hash. Content identity must not depend
+on the path taken, so that two routes to the same manifest agree that they
+arrived at the same place. A hash over the parents would make identity depend
+on history, and equal manifests could never be recognized as equal. The commit
+id is the hash that covers ancestry, as in git.
 
-Stamping is explicit — `stamp_provenance(...)` at a commit point, never
-something `apply_evolution` does. Applying the same ops twice must not produce
-two artifacts that disagree about their own lineage.
+Stamping is explicit: `stamp_provenance(...)` or `graflo stamp` at a commit
+point, never a side effect of `apply_evolution`. Applying the same ops twice
+must not produce two files that disagree about their own lineage.
 
 ## Commits
 
 ```python
-from graflo.architecture.evolution import build_commit, History, checkout
+from graflo.architecture.evolution import History, build_commit, checkout
 
-first = build_commit(base, ops, label="add email")
+first = build_commit(base, ops, label="add commissioning date")
 second = build_commit(after_first, more_ops, parents=[first.id], label="rekey")
 history = History(commits=[first, second])
 
@@ -102,24 +109,22 @@ restored = checkout(base, history)  # replays, verifying every tree
 as_of_first = checkout(base, history, first.id)
 ```
 
-A `Commit` carries its ops, its **parents** (empty for a root, one for an edit,
-two or more for a merge or merge3) and the content hash before and after it.
-`build_commit` applies the ops rather than trusting them, so both trees describe
-a transition that actually happened, and it refuses a change set that leaves the
-manifest unchanged — a commit that moves nothing is a lie about history.
+A `Commit` carries its ops, its parents (none for a root, one for an edit, two
+or more for a merge) and the content hash before and after it. `build_commit`
+applies the ops rather than trusting them, so both hashes describe a change
+that actually happened, and it refuses a change set that leaves the manifest
+unchanged, since such a commit would record nothing.
 
-Commit ids are content-derived from the ops **and** the parent order, so
-regenerating the same change set yields the same id rather than a duplicate
-under a new name.
+A commit id is derived from the ops and the order of the parents, so recording
+the same change set again yields the same id rather than a duplicate under a new
+name. `graflo rehash` recomputes every id when an op's serialization changes.
 
-### Forks are recorded facts
+### Forks are recorded
 
-Two commits may share a parent. `History` validates what is genuinely broken —
-duplicate ids, a parent that does not exist, a cycle, a first-parent edge whose
-trees do not line up — and represents everything else, including multiple heads.
-
-Two people evolving the same version is a thing that happens. A history that
-refuses to represent it is not a record of what happened.
+Two commits may share a parent. `History` rejects what is broken (a duplicate
+id, a parent that does not exist, a cycle, a first-parent edge whose hashes do
+not line up) and records everything else, including several heads. Two people
+changing the same version is normal, so the history records both branches:
 
 ```python
 history.heads()  # more than one means it has forked
@@ -127,46 +132,45 @@ history.linearize()  # raises when there is no single path
 history.topological()  # always available, deterministic on ties
 ```
 
-### Merge commits are materialized
+### Merge commits store a diff from the first parent
 
-A merge commit's `ops` are the diff from its **first parent** to the merged
-result — not an interleaving of both sides. That single decision keeps
-everything else simple: first-parent replay and hash verification work
-identically for edit and merge commits, so nothing downstream needs a special
-case. The declarative record of *how* the merge was resolved rides alongside as
-a recipe.
+A merge commit's `ops` are the diff from its first parent to the merged result,
+not an interleaving of both sides. So replay and hash verification work the
+same way for edit and merge commits, and nothing downstream needs a special
+case. The record of how the merge was resolved is stored beside it as a recipe.
 
 ### Undoing
 
 History is append-only, so undoing a change moves forward:
-`build_revert_commit` records a new commit applying the inverses. Inversion is
-exact or it fails — an op with no total inverse, or one whose inverse needs data
-the current manifest no longer holds, raises rather than producing a manifest
-that merely resembles the earlier state. When the base is available, checking
-out the parent commit is always exact and is the better tool.
+`build_revert_commit` (`graflo revert`) records a new commit that applies the
+inverses. Inversion is exact or it fails: an op with no inverse, or one whose
+inverse needs data the current manifest no longer holds, raises rather than
+producing a manifest that only resembles the earlier one. When the base
+manifest is available, checking out the parent commit is always exact and is
+the better tool.
 
 | Reversible | Irreversible |
 |---|---|
-| add ↔ remove: vertices, edges, vertex/edge properties, indexes | `merge_vertices`, `merge_edges` |
+| add and remove: vertices, edges, vertex and edge properties, indexes | `merge_vertices`, `merge_edges` |
 | rename: vertices, relations, resources, properties; `canonicalize` that only renames | `change_field_types`, `canonicalize` that merges |
-| `set_edge_directed`, `retarget_edges`, `add_inverse_edges`, `set_native_inverses`, `set_inverse_emission`; `declare_edge_inverses` ↔ `retract_edge_inverses` | `sanitize`, `project_manifest` |
-| `replace_identity` (with `retire: keep`), secondary identities | `merge_manifests` (binary) |
+| `set_edge_directed`, `retarget_edges`, `add_inverse_edges`, `set_native_inverses`, `set_inverse_emission`; `declare_edge_inverses` and `retract_edge_inverses` | `sanitize`, `project_manifest` |
+| `replace_identity` (with `retire: keep`), secondary identities | `add_resource_transforms`, `ensure_extracted_fields`, `merge_manifests` |
 
-Reversible is a property of the op *and* the manifest it met. `invert_op` replays
-its candidate inverse and offers it only when the round trip lands back on the
-pre-state by content hash, so an inverse is exact or absent:
+Whether an op can be undone depends on the op and on the manifest it met.
+`invert_op` applies its candidate inverse and offers it only when the result
+has the content hash of the state before, so an inverse is exact or absent:
 
-- a `remove_vertices` that cascaded — over incident edges, profile entries,
-  pipeline steps — has no inverse, because re-adding the vertex restores none of
-  that. Remove the edges first, as `diff_manifests` does, and each step inverts;
-- a relation-addressed property op has no inverse when the relation's edges
-  disagreed about the field beforehand;
-- a property rename onto a name already taken folds two fields into one, and
-  renaming back cannot make them two again;
-- an op the manifest refuses has no inverse: nothing was done.
+- a `remove_vertices` that also removed edges, profile entries or pipeline steps
+  has no inverse, because adding the vertex back restores none of them. Remove
+  the edges first, as `diff_manifests` does, and each step can be undone;
+- an op on a relation's properties has no inverse when the relation's edges
+  disagreed about the property beforehand;
+- a property rename onto a name already taken folds two properties into one,
+  and renaming back cannot make them two again;
+- an op the manifest refuses has no inverse, because nothing was done.
 
-A removed property is restored as the field it was — type, description and
-grounding — not as a bare name.
+A removed property is restored as the property it was, with its type,
+description and grounding.
 
 ## Merging two branches
 
@@ -181,135 +185,143 @@ if not result.clean:
     )
 ```
 
-Merging is not diffing. Both sides descend from a common ancestor, so the
-question is never "what is different" but "what did each side *change*, and do
-those changes collide". `find_merge_base` returning `None` means the two share
-no ancestor — which is the signal that the operation wanted is **merge**, not
-merge.
+A three-way merge is not a diff. Both sides descend from a common ancestor, so
+the question is not what differs between them but what each side changed, and
+whether those changes collide. When `find_merge_base` returns `None`, the two
+share no ancestor, and the operation you want is a
+[union](merging_manifests.md), not a three-way merge.
 
 ### Slots
 
-Reconciliation happens per **slot** — the addressable location an op touches,
-such as `vertex/person/field/age`. Disjoint slots merge automatically; the same
-change on both sides merges once; different changes to one slot are a
-`MergeConflict` carrying both sides' ops *and the ancestor's state*, because
-"what did this look like before either change" is the question a resolver needs
-answered and the one a two-way diff cannot express.
+Changes are reconciled per slot: the place in the manifest an op touches, such
+as `vertex/machine/field/serial_number`. Changes to different slots merge on
+their own, the same change on both sides merges once, and different changes to
+one slot are a `MergeConflict`. A conflict carries both sides' ops and the
+ancestor's state, because what the slot looked like before either change is
+what a person resolving it needs to know, and a two-way diff cannot show it.
 
-Three things make the slot the right unit:
+Three rules make the slot the right unit:
 
-- An **order-significant sequence is one slot**. A resource pipeline is an
-  ordered program, and half-merging two edits to a program produces something
-  neither author wrote.
-- A **rename occupies both names**. Renaming `person` → `customer` while the
-  other side adds a field to `person` is a genuine collision, invisible unless
-  the rename is understood to touch the old slot too.
-- An op touching several slots is **atomic**: if any one is contested, the whole
-  op is held back. Applying half an op is not a merge.
+- **An ordered list is one slot.** A resource pipeline is an ordered program,
+  and merging half of each side's edits to it produces a program neither author
+  wrote.
+- **A rename occupies both names.** Renaming `machine` to `equipment` while the
+  other side adds a property to `machine` is a real collision, visible only if
+  the rename counts as touching the old slot too.
+- **An op touching several slots is atomic.** If any of them is contested, the
+  whole op is held back. Applying half an op is not a merge.
 
-Slots nest, so `vertex/person` contains `vertex/person/field/age`, and they are
-keyed on the **canonical** name — `order_line` and `OrderLine` occupy the same
-slot and conflict, rather than merging into two unrelated types with the data
-split between them.
+Slots nest, so `vertex/machine` contains `vertex/machine/field/serial_number`,
+and they are keyed on the canonical name: `work_order` and `WorkOrder` occupy
+the same slot and conflict, rather than merging into two unrelated types with
+the data split between them.
 
-Edges nest under their relation: `relation/knows` contains
-`relation/knows/edge/person/company`. Ops address edges two ways — by relation
+Edges nest under their relation: `relation/feeds` contains
+`relation/feeds/edge/machine/line`. Ops address edges two ways, by relation
 name (`remove_edges`, `rename_relations`, `merge_edges`) and by triple
-(`set_edge_directed`, `retarget_edges`, the index and identity ops) — and
-containment is what lets the two families see each other, so removing a
-relation on one side conflicts with flipping one of its edges on the other. A
-relation-wide property edit (`relation/knows/field`) and a per-edge edit stay
-disjoint, which is right: they merge. An edge with no relation keeps its own
-root (`edge/person/company`), since no relation-addressed op can reach it. A declared inverse sits under both of its relations
-(`relation/knows/inverse`), so renaming or removing a relation conflicts with
-declaring or retracting its inverse on the other side; a symmetric declaration
-sits under its one relation. A native inverse is a relation slot
-(`relation/knows/native_inverse`), matching TigerGraph, where the reverse type
-belongs to the relation's edge type.
+(`set_edge_directed`, `retarget_edges`, the index and identity ops), and
+nesting is what lets the two see each other: removing a relation on one side
+conflicts with flipping one of its edges on the other. A relation-wide property
+edit (`relation/feeds/field`) and a per-edge edit do not collide, and merge. An
+edge with no relation has its own root (`edge/machine/line`), since no op
+addressed by relation can reach it. A declared inverse sits under both of its
+relations (`relation/feeds/inverse`), so renaming or removing a relation
+conflicts with declaring or retracting its inverse on the other side; a
+symmetric declaration sits under its one relation. A native inverse is a slot
+of its relation (`relation/feeds/native_inverse`), as on TigerGraph, where the
+reverse type belongs to the relation's edge type.
 
 #### What an op reads
 
-A slot is what an op **writes**. That alone does not tell whether two ops are
-independent: `add_edges` writes an edge and *depends on* its endpoint vertices,
-and a `remove_vertices` on the other side — which cascades over that vertex's
-edges — writes a different slot altogether. Merged on written slots only, one
-side order drops the new edge without a word and the other does not apply. So an
-op also carries a read set (`op_reads`):
+A slot is what an op writes. That alone does not tell whether two ops are
+independent: `add_edges` writes an edge and depends on its endpoint types,
+while a `remove_vertices` on the other side, which also removes that type's
+edges, writes a different slot. Merged on written slots only, one order of the
+sides would drop the new edge without a word and the other would fail to
+apply. So an op also has a read set (`op_reads`):
 
 | Op | Reads |
 |---|---|
-| `add_edges`, `retarget_edges`, and every op addressed by edge triple | the endpoint vertices (old and new, for a retarget) |
-| ops addressed by relation — edge properties, `remove_edges`, `rename_relations`, `merge_edges`, the inverse ops | the vertices that relation connects **in the base**; the op names only the relation |
+| `add_edges`, `retarget_edges`, and every op addressed by edge triple | the endpoint types (old and new, for a retarget) |
+| ops addressed by relation: edge properties, `remove_edges`, `rename_relations`, `merge_edges`, the inverse ops | the types that relation connects in the base; the op names only the relation |
 | `replace_identity`, `add_secondary_identities` | the fields they key on, and those fields' types |
 | `add_vertex_indexes`; edge index and identity ops | the fields they index or key on |
 
-A read is disturbed by a write **at or above** it, never beneath: an edge onto
-`company` conflicts with removing or renaming `company`, and merges with a new
-field on it. Two ops reading the same thing are independent — two edges onto
-one vertex. An op both sides made is agreement, not a dependency. The conflict
-is reported at the written slot with both ops attached, and resolves like any
-other. `ops_independent(a, b, base)` is the test the merge and the law suite
-share.
+A read is disturbed by a write at or above it, never below: an edge onto `line`
+conflicts with removing or renaming `line`, and merges with a new property on
+it. Two ops reading the same thing are independent, like two edges onto one
+type. An op both sides made is agreement, not a dependency. The conflict is
+reported at the written slot with both ops attached, and is resolved like any
+other. `ops_independent(a, b, base)` is the test the merge and its tests share.
 
-A change **no operation expresses** — one of a relation's edges gaining a
-property its siblings lack, an edited pipeline — cannot be merged at all: the
-merge is assembled from each side's ops, so the result would silently lack it.
-`merge_three_way` raises `MergeError` naming the residue rather than return a
-clean result that is incomplete.
+A change that no op expresses, such as one of a relation's edges gaining a
+property its siblings lack, or an edited pipeline, cannot be merged at all: the
+merge is built from each side's ops, so the result would lack it.
+`merge_three_way` raises `MergeError` naming what is left over rather than
+return a result that looks clean and is incomplete.
 
 ### Determinism
 
 The same inputs produce the same merged manifest, the same conflicts in the same
-order, and the same content hash. Resolutions take the **place** of the ops they
-replace rather than being appended, because op order is a precondition:
-`diff_manifests` emits an identity change before the secondary-identity add that
-depends on it.
+order, and the same content hash. A resolution takes the place of the ops it
+replaces rather than being appended, because op order is a precondition:
+`diff_manifests` emits an identity change before the secondary-identity
+addition that depends on it.
 
-### Merge is not merge3
+### Union and three-way merge
 
-| | merge3 (three-way) | merge (the model operation) |
+| | Three-way merge | Union |
 |---|---|---|
-| Inputs | two descendants of a common ancestor | unrelated lineages |
-| Names | expected to agree; disagreement is a **conflict** | expected to disagree; a **declared equivalence** reconciles them |
-| Reached by | `merge_three_way` | `merge_manifests` |
-| Side order | significant by construction — the commit's ops are the diff from its **first** parent | significant in six slots only; see below |
+| Inputs | two descendants of a common ancestor | two unrelated manifests |
+| Names | expected to agree; a disagreement is a conflict | expected to differ; declared equivalences reconcile them |
+| Function and command | `merge_three_way`, `graflo merge3` | `merge_manifests`, `graflo merge` |
+| Order of the sides | significant: the commit's ops are the diff from the first parent | significant in six fields only; see below |
 
-Both produce multi-parent commits, and both are called a merge in prose — which is why the stored `kind`, the CLI verb and the preview class spell the three-way `merge3`. "merge" names a third thing again inside a schema (combining the definitions one name has on both sides). See [Words for combining things](manifest_evolution.md#words-for-combining-things) for the rule on reading a bare `merge`.
+Both produce commits with several parents. The stored commit `kind` and the
+CLI verb spell the three-way merge `merge3` so that the two stay apart.
 
-#### What merge does and does not depend on side order
+#### What depends on the order of the sides
 
-Merging `B` onto `A` and `A` onto `B` produce the **same content hash** for everything the outer union assembles. Every container the union concatenates — vertices, edges, resources, transforms, connectors, semantic anchors, indexes — is classified `SORTED` in the canonical form, so the order the two sides were walked in is normalized away before anything is hashed. Metadata is excluded from the hash entirely, so the folded name (`a+b`), the joined description and the left side's `version` do not move the content address either.
+A union of B onto A and of A onto B has the same content hash for everything
+the union assembles. Every list it concatenates (vertices, edges, resources,
+transforms, connectors, grounding, indexes) is sorted in the canonical form, so
+the order in which the two sides were walked disappears before anything is
+hashed. Metadata is not hashed at all, so the combined name (`a+b`), the joined
+description and the version do not change the content address either.
 
-Six slots *are* order-dependent, and all six are reached through the same call: the merge of two declarations of one name (`merge_vertex_models([left, right], name)`). They are the fields the canonical form marks `PRESERVED`, because their order carries meaning that sorting would destroy:
+Six fields do depend on the order, all set when the two definitions of one type
+are combined. They are the fields the canonical form preserves, because their
+order carries meaning:
 
-- `Vertex.identity` — the composite key's column order
-- `Vertex.hash_identity_properties` — feeds the identity digest
-- `Vertex.filters`
-- `IdentityFunnel.branches` — branch order *is* the key's fallback order
-- auto-assigned `SecondaryIdentity` names (`secondary_0`, `secondary_1`) — positional
-- `Vertex` / `Edge` / `Field.description` — joined in side order
+- `Vertex.identity`: the column order of a composite key;
+- `Vertex.hash_identity_properties`: the input to the identity digest;
+- `Vertex.filters`;
+- `IdentityFunnel.branches`: branch order is the key's fallback order;
+- secondary identities named automatically (`secondary_0`, `secondary_1`), by
+  position;
+- `Vertex`, `Edge` and `Field` descriptions, joined in side order.
 
-So merge is commutative in the world model and not in those six. Where a value is a *claim* rather than an ordering, merge refuses instead of electing a side: two declared `db_flavor`s raise, a disputed `iri` clears to `None`, conflicting `force_types`, storage names, field types and units all raise.
+Where a value is a claim rather than an order, the union refuses instead of
+choosing a side: two declared `db_flavor` values raise, a disputed `iri` is
+cleared, and conflicting storage names, field types and units raise.
 
-### Merge is recorded too
+### A union is recorded too
 
-A merge joins two lineages that share no ancestor, so both must already be in
-the store — `graflo commit --root` starts the second one rather than extending
-the first. The commit is materialized exactly as a merge commit is, as the
-verified diff from its **first** parent, so `checkout` and hash verification
-need no special case; what distinguishes it is the recipe, which records the
-whole declaration (equivalences, canonical maps, identity alignments) and no
-merge base, because there is none.
-
-This is why the bindings and profile blocks needed ops. A merge commit is a
-diff, and a diff that cannot express what changed is refused rather than
-recorded — so before `set_bindings` existed, merging an overlay that carried
-bindings could not be recorded at all.
+A union joins two lines of history that share no ancestor, so both inputs must
+already be commits in the store: `graflo commit --root` starts the second line
+rather than extending the first. The commit stores the diff from its first
+parent, like any merge commit, so `checkout` and hash verification need no
+special case. Its recipe records the whole declaration (equivalences with their
+identities, canonical maps) and no merge base, because there is none. A recipe
+whose declaration the op model no longer loads is refused as a `CommitError`
+that says so. Because
+the commit is a diff, every block the union changes needs an op; `set_bindings`
+and `set_db_profile` cover the bindings and the database profile.
 
 ## Tracked merges
 
-A `MergeRecipe` records how a merge was resolved, content-addressed with its
-resolutions hashed in slot order.
+A `MergeRecipe` records how a three-way merge was resolved. It is
+content-addressed, with its resolutions hashed in slot order:
 
 ```python
 from graflo.architecture.evolution import build_recipe, re_merge
@@ -318,71 +330,82 @@ recipe = build_recipe(ancestor, left, right, resolutions=resolutions)
 merged, result = re_merge(recipe, ancestor, advanced_left, right)
 ```
 
-When the left side advances, `re_merge` replays the recorded decisions and
-surfaces only genuinely new conflicts. That is what keeps an overlay
-maintainable rather than a fork someone re-litigates every release.
+When the left side moves on, `re_merge` replays the recorded decisions and
+reports only conflicts that are new. You keep an overlay on top of a manifest
+that changes, and decide each conflict once.
 
-A recorded resolution whose slot no longer conflicts is **reported as unused,
-never force-applied** — re-applying a stale decision to a slot nobody contested
-is how a re-merge quietly reverts someone's work.
+A recorded resolution whose slot no longer conflicts is reported as unused and
+never applied: applying an old decision to a slot nobody contests any more
+would undo someone's later change without anyone noticing.
 
 ## CLI
 
 ```bash
-graflo commit --from-manifest base.yaml --to-manifest target.yaml -m "add order"
+graflo commit --from-manifest base.yaml --to-manifest target.yaml -m "add work orders"
 graflo log --graph
 graflo verify --base base.yaml --against target.yaml
 graflo checkout <commit> --base base.yaml --output-path out.yaml
-graflo merge <left> <right> --base base.yaml --take left
+graflo merge3 <left> <right> --base base.yaml --take left
 graflo revert <commit> --base base.yaml
 graflo stamp manifest.yaml --commit <commit>
-graflo merge A.yaml B.yaml -o AB.yaml -m "join"   # a two-parent merge commit
+graflo merge A.yaml B.yaml -o AB.yaml -m "join"   # a union, recorded as a two-parent commit
 ```
 
-Commits live under `.graflo/commits` by default, one YAML per commit. The store
-rebuilds the DAG from the recorded parent ids, not from the filenames.
+`graflo commit` derives the ops from two manifests with `diff_manifests` and
+refuses to store a change set that does not reproduce the target; `--hints`
+names renames the differ cannot infer. `graflo merge3` stops at conflicts
+unless `--take left` or `--take right` settles them; `--plot` draws where the
+two branches met. Commits live under `.graflo/commits` by default, one YAML
+file per commit (`--store` changes it). The store rebuilds the graph of commits
+from the recorded parent ids, not from the file names.
 
-Distinct from `graflo migrate-schema`, which plans and executes changes against
-a *database*. These verbs record and replay changes to the manifest.
+These commands record and replay changes to a manifest. `graflo migrate-schema`
+is different: it plans and applies changes to a database.
 
-## Not in scope
+## Rules and limits
 
-Applying a commit history to a **live database**. `migrate` remains the
-DB-facing plane, and extending it beyond additive DDL is tracked separately.
-Commits describe the contract.
-
-## See also
-
-- [Manifest evolution](manifest_evolution.md) — the op vocabulary a commit records
-- [Example 20](../../examples/example-20.md) — fork, conflict, resolve, merge, end to end
-- [Example 19](../../examples/example-19.md) — merging unrelated manifests instead
+- A commit history changes manifests only. Applying it to a live database is
+  not part of version control; `graflo migrate-schema` plans database changes
+  and applies additive ones.
+- A change no op expresses, such as an edited pipeline step, cannot be recorded
+  from a diff or merged three ways; both refuse and name it.
 
 ## Further reading
 
-The mechanisms on this page have prior art; the differences are stated here so a reader knows
-what to compare against.
+The mechanisms on this page have prior art; the differences are stated so you
+know what to compare against.
 
-- Curino, Moon, Zaniolo — *Graceful Database Schema Evolution: the PRISM Workbench*, PVLDB 1(1),
-  2008. Schema-modification operators with per-operator inverses for relational schemas. GraFlo's
-  inverses are instead computed against the pre-state manifest and may be refused when that state
+- Curino, Moon, Zaniolo: *Graceful Database Schema Evolution: the PRISM
+  Workbench*, PVLDB 1(1), 2008. Schema-modification operators with an inverse
+  per operator, for relational schemas. GraFlo's inverses are computed against
+  the manifest before the change instead, and are refused when that manifest
   does not determine them.
-- Diskin, Xiong, Czarnecki — *From State- to Delta-Based Bidirectional Model Transformations*,
-  JOT 2011 / MODELS 2011. The delta-lens view in which an inverse needs the delta, not just the
-  end state — the shape of `invert_ops`.
-- Bernstein, Melnik — *Model Management 2.0*, SIGMOD 2007; Melnik, Rahm, Bernstein — *Rondo*,
-  SIGMOD 2003. Match, Compose, Diff and Merge as generic operators over models. GraFlo
-  borrows both the operators and their spelling: there **Merge** takes two models plus
-  correspondences and **Compose** composes two mappings, which is how this page uses the two
-  words. GraFlo spelled them the other way round until they were swapped; the mapping is in
-  [Words for combining things](manifest_evolution.md#these-names-match-the-literature).
-- Pottinger, Bernstein — *Merging Models Based on Given Correspondences*, VLDB 2003, and
-  *Associativity and Commutativity in Generic Merge*, LNCS 5600, 2009. Their **Merge** — two
-  models plus correspondences — is the operator this page calls **merge**, and those papers
-  are where its commutativity is studied. GraFlo's merge is commutative in the union and not
-  in six preserved slots (above). Three-way merge is symmetric in its two sides — the same
-  conflicts, or the same content hash — and a clean result is each side's change applied on
-  top of the other; both are checked over generated inputs on the structural ops.
-  Associativity across three branches is not claimed.
-- Edwards, Petricek — *Baseline: Operation-Based Evolution and Versioning of Data*, 2025;
-  Deshpande — *Living Databases*, 2026. Contemporary operation-based versioning of data, where the
-  operations are the diff — the same design position, applied to instances rather than contracts.
+- Diskin, Xiong, Czarnecki: *From State- to Delta-Based Bidirectional Model
+  Transformations*, JOT 2011 / MODELS 2011. The delta-lens view, in which an
+  inverse needs the delta and not only the end state; the shape of
+  `invert_ops`.
+- Bernstein, Melnik: *Model Management 2.0*, SIGMOD 2007; Melnik, Rahm,
+  Bernstein: *Rondo*, SIGMOD 2003. Match, Compose, Diff and Merge as generic
+  operators over models. There Merge takes two models plus correspondences,
+  which is what `merge_manifests` does, and Compose composes two mappings, which
+  is what `compose_canonical_maps` does.
+- Pottinger, Bernstein: *Merging Models Based on Given Correspondences*, VLDB
+  2003, and *Associativity and Commutativity in Generic Merge*, LNCS 5600, 2009.
+  Their Merge is the operator this page calls a union, and those papers study
+  its commutativity. GraFlo's union is commutative except in the six preserved
+  fields above. The three-way merge is symmetric in its two sides (the same
+  conflicts, or the same content hash), and a clean result is each side's
+  change applied on top of the other; both properties are checked over
+  generated inputs for the structural ops. Associativity across three branches
+  is not claimed.
+- Edwards, Petricek: *Baseline: Operation-Based Evolution and Versioning of
+  Data*, 2025; Deshpande: *Living Databases*, 2026. Operation-based versioning of
+  data, where the operations are the diff: the same design, applied to data
+  rather than to manifests.
+
+## What to read next
+
+- [Version control example (22)](../../examples/version-control/index.md): a
+  fork, a conflict, a resolution and a merge, end to end.
+- [Manifest evolution](manifest_evolution.md): the ops a commit records.
+- [Merging manifests](merging_manifests.md): combining two unrelated manifests.

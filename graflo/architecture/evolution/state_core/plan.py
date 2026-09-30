@@ -1,4 +1,4 @@
-"""Planning the operations that lift a manifest into a twin-ready shape.
+"""Planning the operations that lift a manifest into one that tracks state and measurements.
 
 A pure planner: it emits :data:`~graflo.architecture.evolution.ops.ManifestOp`
 values and applies nothing. ``apply_evolution`` applies them, ``invert_ops``
@@ -71,7 +71,7 @@ def plan_lift(
     *,
     authored: dict[str, Any] | None = None,
 ) -> list[ManifestOp]:
-    """The ops that lift *manifest* into a twin-ready schema.
+    """The ops that lift *manifest* into one that tracks state and measurements.
 
     Args:
         manifest: the manifest to lift, already ``finish_init()``-ed.

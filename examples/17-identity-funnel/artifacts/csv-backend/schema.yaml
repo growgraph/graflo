@@ -31,20 +31,12 @@ core_schema:
                 -   id: email
                     fields:
                     -   email
-                    when_all_present:
-                    -   email
                 -   id: phone
                     fields:
                     -   phone
                     -   country
-                    when_all_present:
-                    -   phone
-                    -   country
                 -   id: weak
                     fields:
-                    -   name
-                    -   dob
-                    when_all_present:
                     -   name
                     -   dob
             secondary_identities: []
@@ -52,8 +44,12 @@ core_schema:
         identity_from_all_properties: true
     edge_config:
         edges: []
+        inverses: []
+        symmetric: []
 db_profile:
     db_flavor: graflo_backend
     vertex_storage_names: {}
+    vertex_property_names: {}
     vertex_indexes: {}
     edge_specs: []
+    native_inverses: []

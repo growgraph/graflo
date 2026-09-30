@@ -1,0 +1,52 @@
+schema:
+    metadata:
+        name: plant_layout
+    graph:
+        vertex_config:
+            vertices:
+            -   name: machine
+                properties:
+                -   id
+                -   name
+                identity:
+                -   id
+            -   name: line
+                properties:
+                -   id
+                -   name
+                identity:
+                -   id
+        edge_config:
+            edges:
+            -   source: machine
+                target: line
+                relation: installed_on
+            -   source: machine
+                target: machine
+                relation: standby_for
+    db_profile: {}
+ingestion_model:
+    resources:
+    -   name: relations
+        pipeline:
+        -   vertex_router:
+                type_field: source_type
+                role: source
+                from:
+                    id: source_id
+                    name: source_name
+        -   vertex_router:
+                type_field: target_type
+                role: target
+                from:
+                    id: target_id
+                    name: target_name
+        -   edge:
+                source_role: source
+                target_role: target
+                relation_field: relation
+bindings:
+    connectors:
+    -   regex: "^relations\\.csv$"
+        sub_path: data
+        resource_name: relations

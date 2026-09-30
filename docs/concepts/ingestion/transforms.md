@@ -1,103 +1,129 @@
 # Transforms
 
-`Transform` is the core normalization mechanism in GraFlo ingestion pipelines. It handles value conversion, field renaming, reshaping, and key normalization before `vertex` and `edge` actors consume data.
+Records rarely arrive in the shape of the vertices you want: a column has
+another name, a number is a string, a date needs a time zone, one wide row
+holds several measurements. A transform step fixes that before the
+[vertex and edge steps](../glossary.md#step) read the record. This page shows
+every form of the step, how to share one transform between resources, and the
+functions GraFlo ships.
 
-This page documents the transform DSL as implemented in:
+## The smallest transform
 
-- `graflo.architecture.contract.declarations.transform.Transform`
-- `graflo.architecture.pipeline.runtime.actor.transform.TransformActor`
-- `graflo.architecture.contract.ingestion.steps.models.TransformCallConfig`
-
-## Mental model
-
-Two layers work together:
-
-- `ProtoTransform`: function wrapper (`module`, `foo`, `params`) with invocation logic.
-- `Transform`: adds input selection, output mapping, dressing, key targeting, and execution strategy.
-
-**Sequential `transform` steps (same `LocationIndex`):** each `transform` actor receives a working document that is the current row slice **merged with** all prior transform payloads at that index—the same construction as `merge_observation_with_transform_buffer`. Later steps can therefore depend on field names or values established by earlier steps (for example, a key normalizer followed by a value transform whose `input` uses the new key). Each step still appends its own payload to the transform buffer. **`vertex` and `edge` actors** continue to receive the **raw** slice and merge the **full** buffer in their own `__call__` path, so buffer contributions are not applied twice to them.
-
-## Where transforms can be defined
-
-### 1) Inline (local) transform in a resource
-
-Use this when logic is specific to one place in one pipeline.
+A sensor feed calls the serial number `sn`, and the `machine` vertex calls it
+`serial`. A `rename` transform fixes that:
 
 ```yaml
 resources:
-  - name: papers
-    apply:
+  - name: readings
+    pipeline:
       - transform:
-          call:
-            module: builtins
-            foo: int
-            input: citations
-            output: citations_count
-      - vertex: paper
+          rename: { sn: serial }
+      - vertex: machine
 ```
 
-### 2) Reusable transform in `ingestion_model.transforms`
-
-Use this when the same transform should be referenced from multiple resources or steps.
-
-```yaml
-ingestion_model:
-  transforms:
-    - name: keep_suffix_id
-      module: graflo.util.transform
-      foo: split_keep_part
-      input: id
-      output: _key
-      params: {sep: "/", keep: -1}
-```
-
-Then reference it from a transform step:
-
-```yaml
-resources:
-  - name: works
-    apply:
-      - transform:
-          call:
-            use: keep_suffix_id
-      - vertex: work
-```
-
-### Local override of reusable transform
-
-A `call.use` step can override `input`, `output`, `params`, and/or `dress` while reusing `module` + `foo` from the vocabulary entry. Put shared `dress` and `params` on the named transform when several steps only differ by `input`:
-
-```yaml
-# ingestion_model.transforms
-- name: round_metric
-  module: graflo.util.transform
-  foo: round_str
-  params: {ndigits: 3}
-  dress: {key: name, value: value}
-
-# resource apply
-- transform:
-    call: {use: round_metric, input: [Open]}
-- transform:
-    call: {use: round_metric, input: [Close]}
-```
-
-Rename-style override (same idea, different fields):
+Every transform step holds exactly one of two keys: `rename`, a map of old
+field names to new ones, or `call`, a Python function to run on chosen fields.
 
 ```yaml
 - transform:
     call:
-      use: keep_suffix_id
-      input: doi
-      output: work_id
-      params: {sep: "/", keep: [-2, -1]}
+      module: builtins
+      foo: int
+      input: [reading]
+      output: [reading_int]
 ```
 
-## Transform forms
+- `module`: the Python module that holds the function. It must be importable
+  where the ingest runs.
+- `foo`: the name of the function in `module`, such as `int` or
+  `split_keep_part`; the key is literally `foo`. It is a plain name, not a
+  dotted path.
+- `input`: the fields whose values are passed to the function, in order, as
+  positional arguments. One name may be written without the list.
+- `output`: the fields that receive the result. A single value goes into the
+  field; a tuple or list is spread over the fields, one item each, so a list
+  is never stored whole in one field. When `output` is omitted, the result
+  goes back into the `input` fields.
+- `params`: keyword arguments passed on every call.
 
-### A) Rename-only transform (`transform.rename`)
+## What a transform sees and writes
 
-Pure field mapping with no function call.
+A transform does not change the record. It adds its output next to the
+record, and later steps read the record and those outputs as one view: an
+output wins over a record field of the same name. Three rules follow.
+
+- **Transforms run before vertex and edge steps.** Within one level of a
+  pipeline, GraFlo runs `descend` steps first, then the transforms in the
+  order written, then vertex routers, vertex steps and edge steps. A vertex or
+  edge step therefore sees every transform of its level, wherever you write
+  it. Write the transforms first anyway, so the file reads in the order it
+  runs.
+- **Transforms chain.** Each transform sees the outputs of the transforms
+  before it, so a transform that renames keys can be followed by one that
+  converts the value under a new key.
+- **Transforms stay at their level.** A transform at the top of the pipeline
+  is not visible inside a `descend` step, and a transform inside a `descend`
+  is not visible outside it. When a `descend` reaches a bare value instead of
+  a mapping, such as a string in a list, a `call` receives that value as its
+  only argument, and `output` names the field it becomes (see
+  [records that refer to their own kind](../../examples/json-self-edges/index.md)
+  (2)).
+
+An edge step reads `relation_field` from the same view, so a transform can
+compute the relation name before the edge is built.
+
+## Reusable transforms
+
+A transform that several resources use, or one resource uses several times,
+is declared once under `ingestion_model.transforms` with a `name`, and a step
+runs it with `use`. This one keeps the last part of a URL and writes it back
+to `id`:
+
+```yaml
+ingestion_model:
+  transforms:
+    - name: short_id
+      module: graflo.util.transform
+      foo: split_keep_part
+      params: { sep: "/", keep: -1 }
+      input: [id]
+      output: [id]
+  resources:
+    - name: works
+      pipeline:
+        - transform:
+            call: { use: short_id }
+        - vertex: work
+```
+
+A named transform takes the keys of `call` except `use` and `strategy`, plus
+its `name`. A step that uses it may set any key of `call` except `module` and
+`foo`; each key it sets replaces the named transform's value as a whole, so
+`params` on the step replace the named `params` rather than add to them. Put
+the shared parts on the named transform and vary the rest per step:
+
+```yaml
+ingestion_model:
+  transforms:
+    - name: round_metric
+      module: graflo.util.transform
+      foo: round_str
+      params: { ndigits: 3 }
+      dress: { key: name, value: value }
+  resources:
+    - name: prices
+      pipeline:
+        - transform:
+            call: { use: round_metric, input: [Open] }
+        - transform:
+            call: { use: round_metric, input: [Close] }
+```
+
+## Reference
+
+The forms below are ordered from most used to least used.
+
+### `rename`
 
 ```yaml
 - transform:
@@ -106,121 +132,12 @@ Pure field mapping with no function call.
       Open: open_price
 ```
 
-Equivalent behavior to a map-based transform (`map`).
+A field mapping with no function. Later steps see each field under its new
+name only. A source field missing from the record is skipped, and the others
+are renamed. With `fail_fast: true` on the resource, every source field must
+be present, or the record fails.
 
-### B) Function-call transform (`transform.call`)
-
-Function-backed transform using `module` + `foo`, or a reusable `use` reference.
-
-```yaml
-- transform:
-    call:
-      module: builtins
-      foo: round
-      input: confidence
-      output: confidence_rounded
-      params:
-        ndigits: 3
-```
-
-## Output behavior
-
-### Direct output mapping
-
-- `input` selects fields from the current document.
-- function result is assigned to `output`.
-- if `output` is omitted and `input` exists, output defaults to input field names.
-
-### Dress output (`dress`)
-
-Use `dress` when a single-input transform should emit a `{key, value}` style payload.
-
-```yaml
-- transform:
-    call:
-      module: graflo.util.transform
-      foo: round_str
-      input: Open
-      params: {ndigits: 3}
-      dress:
-        key: name
-        value: value
-```
-
-For input field `Open`, this emits:
-
-```yaml
-name: Open
-value: 17.9
-```
-
-`dress` rules:
-
-- requires a function transform (`module` + `foo` or `use` that resolves to one)
-- requires exactly one input field
-- sets output field names to `(dress.key, dress.value)`
-
-## Conditional steps (`when`)
-
-A transform step may carry a **guard**: the step runs only when one field of the
-observation holds one of the listed values, compared exactly — the same test a
-`vertex_router` applies to its `type_map` keys.
-
-```yaml
-- transform:
-    when: {field: kind, in: [shop]}
-    call:
-      module: graflo.util.transform
-      foo: affix_gated_key
-      input: [secondary_key]
-      output: [match_key]
-      params: {prefix: def_}
-```
-
-The one behavior that matters: **a step whose guard fails writes nothing** — no
-output field, no `None`. That is different from a function that *returns*
-`None`, and the difference is visible behind a router. A `vertex_router` merges
-the transform buffer into one observation dict, so a later step writing `None`
-overwrites an earlier step's real value. Two guarded steps writing the same
-output field cannot do that: on any one document at most one of them runs, and
-the other leaves the field alone. A missing `field` fails the guard.
-
-This is the primitive a discriminated stream needs when different kinds of
-document derive the same field differently — for instance one derivation per
-class a router collapses onto a merged class, which is how identity
-alignment lowers member-keyed sources (see manifest evolution). Reach for it
-when *which document this is* decides the derivation; when the deciding fact
-lives in the value itself, a function that declines with `None` is enough.
-
-## Multi-field transforms
-
-### Grouped calls (`input_groups` / `output_groups`)
-
-Use **groups** when the same function should run multiple times on different argument tuples (not the same as `strategy: each`, which runs once per *single* input field from a flat `input` list).
-
-- Each inner group is a list of field names whose values are read from the document and passed as `*args` to the function for that call.
-- The function is invoked **once per group**, in order.
-- **`output`**: list of field names, one per group, when each call returns a single value.
-- **`output_groups`**: list of field-name lists, parallel to `input_groups`, when each call returns multiple values (e.g. a tuple mapped to several outputs).
-- **Omitting outputs**: only valid when every group has exactly **one** input field; results are written back to those same keys (passthrough). If any group has more than one field, you must set `output` or `output_groups`.
-
-YAML accepts a **shorthand** for unary groups: a group can be a single string, and `input_groups` can be a list of strings (one field per group):
-
-```yaml
-- transform:
-    call:
-      module: builtins
-      foo: int
-      input_groups:
-        - age_parent
-        - age_child
-```
-
-Grouped mode is incompatible with `dress` and with `strategy: each` or `strategy: all`. Omit `strategy` or use `single` (default).
-
-### Strategy: `single` (default)
-
-Call function once with all selected input values (flat `input`, no groups).
+### `call` with `input` and `output`
 
 ```yaml
 - transform:
@@ -228,56 +145,73 @@ Call function once with all selected input values (flat `input`, no groups).
       module: graflo.util.transform
       foo: parse_date_ibes
       input: [ANNDATS, ANNTIMS]
-      output: datetime_announce
+      output: [datetime_announce]
 ```
 
-### Explicit grouped calls (nested field lists)
+The function is called once with all input values (`strategy: single`, the
+default). When an input field is missing from the record, the step writes
+nothing; with `fail_fast: true` on the resource the record fails instead.
 
-When the same function should run repeatedly on explicit argument tuples, use
-nested lists in `input_groups` (see [Grouped calls](#grouped-calls-input_groups-output_groups) above).
+### `dress`
+
+A `dress` turns one field into a key and a value: the field's name goes into
+`dress.key`, the function's result into `dress.value`. A wide row of
+measurements becomes one small record per measurement, which a vertex step can
+turn into one vertex each.
 
 ```yaml
 - transform:
     call:
-      module: my_pkg.transforms
-      foo: join_name
-      input_groups:
-        - [fname_parent, lname_parent]
-        - [fname_child, lname_child]
-      output: [parent_name, child_name]
+      module: graflo.util.transform
+      foo: round_str
+      input: [Open]
+      params: { ndigits: 3 }
+      dress: { key: name, value: value }
 ```
 
-`input_groups` can also use grouped outputs:
+Given `{Open: "6.430062"}`, this writes `{name: "Open", value: 6.43}`. Without
+a function, `dress` copies the value as it is:
 
 ```yaml
 - transform:
     call:
-      module: my_pkg.transforms
-      foo: split_name
-      input_groups:
-        - [parent_name]
-        - [child_name]
-      output_groups:
-        - [parent_fname, parent_lname]
-        - [child_fname, child_lname]
+      input: [vol]
+      dress: { key: type, value: value }
 ```
 
-Grouped passthrough is supported when outputs are omitted and each group maps
-back to its own keys (for example unary casts):
+Given `{vol: 0.123}`, this writes `{type: "vol", value: 0.123}`. A `dress`
+takes exactly one input field, and its output fields are `dress.key` and
+`dress.value`. The [filters and weights example](../../examples/vertex-filters-and-weights/index.md)
+(5) builds one vertex per measurement this way.
+
+### `when`
+
+A guard runs the step only when one field of the record holds one of the
+listed values. The listed values are strings (quote numbers in YAML), and a
+record value matches only when it is equal to one of them: the number `1`
+does not match `"1"`.
 
 ```yaml
 - transform:
+    when: { field: kind, in: [sensor] }
     call:
-      module: builtins
-      foo: int
-      input_groups:
-        - [age_parent]
-        - [age_child]
+      module: graflo.util.transform
+      foo: remove_prefix
+      input: [device_tag]
+      output: [serial]
+      params: { prefix: "SN-" }
 ```
 
-### Strategy: `each`
+A row whose `kind` is `sensor` gets `serial` without the `SN-` prefix. Any
+other row gets no `serial` field at all, not a `null`. That difference matters
+when several steps may write the same field: two guarded steps never collide,
+because on any one record at most one of them runs, whereas a function that
+returns `null` would overwrite a value an earlier step wrote. Use a guard when
+the kind of record decides how a field is derived; when the value itself
+decides, a function that returns `null` is enough. A record without the
+`field` fails the guard. `when` applies to `rename` and to `call`.
 
-Call function independently for each selected input field.
+### `strategy: each`
 
 ```yaml
 - transform:
@@ -285,30 +219,60 @@ Call function independently for each selected input field.
       module: builtins
       foo: int
       input: [x, y]
-      output: [x, y]
       strategy: each
 ```
 
-### Strategy: `all`
+The function is called once per input field, with that field's value alone:
+the same conversion over several columns. `output`, when given, has one name
+per input field.
 
-Pass the whole document as one argument to the transform function.
+### `input_groups` and `output_groups`
+
+A grouped call runs the same function once per group of fields:
 
 ```yaml
 - transform:
     call:
-      module: builtins
-      foo: dict
-      strategy: all
+      module: operator
+      foo: add
+      input_groups:
+        - [first_shift, second_shift]
+        - [first_idle, second_idle]
+      output: [run_hours, idle_hours]
 ```
 
-`strategy: all` rules:
+- Each group is a list of fields passed as positional arguments to one call.
+  The calls run in order.
+- `output` names one field per group, when each call returns one value.
+- `output_groups` is a list of field lists, one per group, when each call
+  returns several values.
+- With neither, each result goes back into its group's own fields. A group of
+  one field may be written as a bare string, so `input_groups: [a, b]` runs
+  the function on `a` and on `b` and writes each result back.
 
-- do not provide `input`
-- incompatible with `dress`
+Use groups for one function over different sets of arguments, and
+`strategy: each` for one function over single fields.
 
-## Key transforms (`target: keys`)
+### `strategy: all`
 
-Transforms can operate on document keys instead of values:
+```yaml
+- transform:
+    call:
+      module: graflo.util.transform
+      foo: coalesce_fields
+      strategy: all
+      params: { fields: [serial, serial_no] }
+      output: [serial_number]
+```
+
+The whole record is passed to the function as one argument. Here the first
+non-empty of `serial` and `serial_no` becomes `serial_number`. `input`,
+`input_groups` and `dress` are not allowed.
+
+### `target: keys`
+
+A key transform renames the fields themselves by running a function on each
+field name:
 
 ```yaml
 - transform:
@@ -316,132 +280,77 @@ Transforms can operate on document keys instead of values:
       module: graflo.util.transform
       foo: camel_to_snake
       target: keys
-      keys:
-        mode: all
+      keys: { mode: all }
 ```
 
-### Key selection
-
-`call.keys.mode` supports:
-
-- `all`: apply to every key
-- `include`: apply only to `keys.names`
-- `exclude`: apply to all keys except `keys.names`
-
-Example with include:
+`keys.mode` selects the fields: `all`, `include` (only `keys.names`) or
+`exclude` (all but `keys.names`):
 
 ```yaml
 - transform:
     call:
       module: graflo.util.transform
       foo: remove_prefix
-      params: {prefix: "raw_"}
+      params: { prefix: "raw_" }
       target: keys
-      keys:
-        mode: include
-        names: [raw_id, raw_label]
+      keys: { mode: include, names: [raw_serial, raw_model] }
 ```
 
-`target: keys` rules:
+The function is called once per selected field name and must return a
+string. Two fields that end up with the same name fail the step. `input`,
+`output`, `input_groups`, `output_groups`, `dress` and `strategy` are not
+allowed. A named transform may carry `target: keys` and `keys`, so that
+resources only write `use`: a step with `use` takes the target of the named
+transform unless it sets its own, while a step without `use` works on values
+unless it says `target: keys`.
 
-- requires a function transform
-- does not allow `input`, `output`, or `dress`
-- does not allow `input_groups` or `output_groups`
-- does not allow explicit `strategy` (key mode is implicit per-key execution)
-- transformed keys must remain unique (collisions raise an error)
+## Functions shipped with GraFlo
 
-## Config reference (transform DSL)
+`graflo.util.transform` holds functions for common cases. Any other function
+works the same way: name its module and its name.
 
-### `transform.rename`
+| Function | Does |
+|---|---|
+| `split_keep_part(s, sep="/", keep=-1)` | split on `sep` and keep one part, or several parts joined by `sep` (`keep: [-2, -1]`) |
+| `remove_prefix(s, prefix)`, `remove_suffix(s, suffix)` | strip a prefix or suffix when present |
+| `camel_to_snake(s)`, `snake_to_camel(s, upper_first=False)` | convert naming styles; usual with `target: keys` |
+| `round_str(x, ndigits=...)` | read a number from a string and round it |
+| `try_int(x)` | convert to `int`, and keep the value when that fails |
+| `parse_date_yahoo(date0)`, `parse_date_ibes(date0, time0)` | turn two vendor date formats into ISO 8601 strings |
+| `normalized_key(value, strip_prefix=None, casefold=True, strip_chars=None)` | trim, strip a prefix and casefold a key, so two sources spell it alike |
+| `affix_gated_key(value, prefix="", suffix="", casefold=True, strip_chars=None)` | strip a marker prefix and suffix, or return `null` when the value lacks either |
+| `tagged_key(value, tag, sep=":")` | prefix a key with a tag, so keys from different sources cannot collide |
+| `coalesce_fields(doc, fields)` | the first non-empty value among `fields`; use with `strategy: all` |
 
-- Type: `dict[str, str]`
-- Meaning: `{source_field: target_field}`
+## Rules
 
-### `transform.when`
+GraFlo checks these when the manifest is loaded or initialized
+(`GraphManifest.finish_init()`, which every ingest runs), before any record is
+read.
 
-- `field: str` - observation field the guard reads (raw document key)
-- `in: list[str]` - values of `field` that let the step run; exact match, at least one
-- Applies to both `transform.rename` and `transform.call`; a failed guard writes nothing.
+- A step holds exactly one of `rename` and `call`.
+- A `call` names `use`, or both `module` and `foo`, or `dress` with `input`.
+- `module` must import and `foo` must exist in it.
+- `input` and `input_groups` are exclusive. `output_groups` requires
+  `input_groups` and the same number of groups. With `input_groups`, `output`
+  has one name per group, and `output` and `output_groups` are exclusive.
+- `dress` requires exactly one input field and works on values only; it is
+  refused with `input_groups` and with `strategy: all`.
+- `strategy` applies only to a function, and `input_groups` allows only
+  `strategy: single`.
+- `when.in` lists at least one value.
+- Every named transform has a `name`, and names are unique. A `use` that names
+  no transform is refused when an ingest starts.
 
-### `transform.call`
+A transform that raises while a record is cast does not stop the record by
+default: its output fields are set to `null` and the failure is recorded. See
+[document cast errors](doc_errors.md).
 
-- `use: str | null` - named transform from `ingestion_model.transforms`
-- `module: str | null` - python module path for inline function
-- `foo: str | null` - function name in module
-- `params: dict` - keyword args passed to function
-- `input: str | list[str] | null` - input fields (not used for key mode)
-- `output: str | list[str] | null` - output fields (not used for key mode)
-- `input_groups: list[list[str]] | null` — grouped calls (values mode only); each entry is a group. YAML may use a **list of strings** as shorthand for unary groups (one field name per group).
-- `output_groups: list[list[str]] | null` - grouped outputs aligned to `input_groups`
-- `strategy: single | each | all | null` - function execution mode (with `input_groups`, omit or use `single` only; `each` / `all` are rejected)
-- `target: values | keys | null` - operate on values or keys. With `use`, omit to inherit defaults from the matching `ingestion_model.transforms` entry; inline calls (no `use`) default to `values` when omitted.
-- `keys`:
-  - `mode: all | include | exclude`
-  - `names: list[str]`
-- `dress`:
-  - `key: str`
-  - `value: str`
+## What to read next
 
-### `Transform` (Python API only)
-
-Named transforms in `ingestion_model.transforms` are `ProtoTransform` entries (`module`, `foo`, `params`, flat/grouped `input` / `output`, `dress`, and optional `target` / `keys` for key-mode defaults). A `transform.call` with `use` inherits those defaults; set `call.target` or `call.keys` to override. Inline `transform.call` steps supply execution options (`target`, `keys`, `strategy`) and may override IO; `TransformActor` assembles a runtime `Transform`, which adds:
-
-- `passthrough_group_output: bool` (default `true`) — when `input_groups` is used and neither `output` nor `output_groups` is set, allow writing unary group results back onto the input keys. Not exposed on manifest `transform.call` today; omit outputs in YAML only for unary groups.
-
-When the effective target is `keys` (from the call or the named proto), `call.input` / `call.output` / `call.input_groups` / `call.output_groups` / `call.dress` are rejected at merge time so invalid combinations are not silently ignored.
-
-## Validation and compatibility rules
-
-- A transform step must define exactly one of:
-  - `transform.rename`
-  - `transform.call`
-- `call.use` cannot be combined with `call.module` or `call.foo`.
-- If `call.use` is absent, both `call.module` and `call.foo` are required.
-- `map`/rename and function mode are mutually exclusive.
-- Use either `call.input` or `call.input_groups`, not both.
-- With `call.input_groups`, do not set `call.strategy` to `each` or `all`.
-- For grouped calls, use either `call.output` (one output per input group) or
-  `call.output_groups` (full per-group output tuples), not both.
-- `call.output_groups` must have the same number of groups as `call.input_groups`.
-- Passthrough (no `output` / `output_groups`) requires every group to contain exactly one input field.
-- `when.in` must list at least one value; a guarded step that does not run writes nothing, so several guarded steps may share one output field.
-- Legacy `switch` is not supported.
-- List-style `dress` is not supported (`dress` must be a dict with `key` and `value`).
-
-## Practical patterns
-
-- Keep keys stable early:
-  - run one `target: keys` transform near pipeline start.
-- Use reusable named transforms for:
-  - ID normalization
-  - date/time parsing
-  - repeated casting logic
-  - shared `target: keys` + `keys` selection so resources only reference `use:` without repeating key-mode config
-- Use local overrides when:
-  - same function, different input/output fields per resource
-- Use `strategy: each` with a flat `input` list for repeated unary casting (for example, multiple numeric columns). For the same callable over **different argument tuples**, use `input_groups` instead.
-- Use `dress` to pivot wide metrics into tidy key/value records before routing into vertices/edges.
-
-## Related docs
-
-- [Concepts Overview](../index.md)
-- [Creating a Manifest](../../getting_started/creating_manifest.md)
-- [Architecture Transform API](../../reference/architecture/contract/ingestion/transform.md)
-- [Transform Actor API](../../reference/architecture/pipeline/runtime/actor/transform.md)
-
-## Notes on contract renaming
-
-Transform helper functions can also be reused for contract-level renaming when calling
-`GraphManifest.rename_entities(...)` or `Schema.rename_entities(...)` (for example,
-`camel_to_snake`, `remove_prefix`, `remove_suffix`).
-
-```python
-from graflo.architecture.contract import GraphManifest
-from graflo.util.transform import camel_to_snake
-
-manifest = GraphManifest.from_dict(payload)
-renamed = manifest.rename_entities(
-    vertices=camel_to_snake,
-    edges=lambda relation: f"edge_{camel_to_snake(relation)}",
-)
-```
+- [Core components](../architecture/core_components.md#resource-and-its-steps):
+  the other steps of a resource.
+- [Document cast errors](doc_errors.md): what happens when a transform raises
+  while a record is cast.
+- [Filter rows and attach measurements](../../examples/vertex-filters-and-weights/index.md)
+  (5): `dress` and reusable transforms in a complete manifest.

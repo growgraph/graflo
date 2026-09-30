@@ -355,8 +355,8 @@ def test_merging_two_branches_reconciles_them(workspace) -> None:
     assert FileCommitStore(workspace["store"]).load().heads()[0].is_multi_parent
 
 
-def test_merging_unrelated_lineages_points_at_compose(workspace) -> None:
-    """The signal that the operation wanted is merge, not merge."""
+def test_merging_unrelated_lineages_points_at_union(workspace) -> None:
+    """The signal that the operation wanted is a union, not a three-way merge."""
     from graflo.architecture.contract.manifest import GraphManifest
     from graflo.architecture.evolution.commit import build_commit
     from graflo.architecture.evolution.history import FileCommitStore, History

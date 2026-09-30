@@ -1,0 +1,51 @@
+schema:
+    metadata:
+        name: family
+    graph:
+        vertex_config:
+            vertices:
+            -   name: person
+                properties:
+                -   id
+                -   name
+                -   age
+                identity:
+                -   id
+        edge_config:
+            edges:
+            -   source: person
+                target: person
+                relation: child_of
+            -   source: person
+                target: person
+                relation: parent_of
+    db_profile: {}
+ingestion_model:
+    resources:
+    -   name: family
+        pipeline:
+        -   vertex: person
+            role: self
+        -   vertex: person
+            role: parent
+            from:
+                id: parent_id
+            extraction_scope: mapped_only
+        -   vertex: person
+            role: child
+            from:
+                id: child_id
+            extraction_scope: mapped_only
+        -   edge:
+                links:
+                -   source_role: self
+                    target_role: parent
+                    relation: child_of
+                -   source_role: self
+                    target_role: child
+                    relation: parent_of
+bindings:
+    connectors:
+    -   regex: "^family\\.csv$"
+        sub_path: data
+        resource_name: family

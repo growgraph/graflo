@@ -16,7 +16,9 @@ from click.testing import CliRunner
 
 from graflo.cli.main import graflo
 
-EXAMPLE = pathlib.Path(__file__).resolve().parents[2] / "examples" / "22-state-core"
+EXAMPLE = (
+    pathlib.Path(__file__).resolve().parents[2] / "examples" / "23-state-core-lift"
+)
 MANIFEST_IN = EXAMPLE / "manifest_in.yaml"
 SPEC = EXAMPLE / "lift.yaml"
 
@@ -87,7 +89,7 @@ def test_a_refused_lift_exits_one_naming_the_missing_declaration(
 ) -> None:
     spec = tmp_path / "spec.yaml"
     spec.write_text(
-        yaml.safe_dump({"stateful": {"ConfigurationItem": ["ci_id"]}}),
+        yaml.safe_dump({"stateful": {"Machine": ["machine_id"]}}),
         encoding="utf-8",
     )
     result = _run(str(MANIFEST_IN), "--spec", str(spec), "--dry-run")
@@ -107,3 +109,28 @@ def test_no_check_suppresses_the_report(tmp_path: pathlib.Path) -> None:
     assert result.exit_code == 0, result.output
     assert "overall:" not in result.output
     assert "planned" in result.output
+
+
+def test_the_shipped_example_lifts_to_its_shipped_artifacts(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The checked-in ops and manifest are what the command produces today."""
+    out, ops_path = tmp_path / "lifted.yaml", tmp_path / "ops.yaml"
+    result = _run(
+        str(MANIFEST_IN),
+        "--spec",
+        str(SPEC),
+        "--emit-ops",
+        str(ops_path),
+        "-o",
+        str(out),
+    )
+    assert result.exit_code == 0, result.output
+
+    shipped = EXAMPLE / "artifacts"
+    assert yaml.safe_load(ops_path.read_text()) == yaml.safe_load(
+        (shipped / "ops.yaml").read_text()
+    )
+    assert yaml.safe_load(out.read_text()) == yaml.safe_load(
+        (shipped / "manifest_lifted.yaml").read_text()
+    )

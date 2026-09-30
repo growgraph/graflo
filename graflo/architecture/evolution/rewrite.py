@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from copy import deepcopy
 from typing import Any
 
@@ -124,6 +124,52 @@ def rewrite_vertex_weight_names(
             weight["name"] = vertex_name(weight["name"])
 
 
+_MATCH_KEYS = ("source_match", "target_match")
+
+
+def _renamed_selector(selector: Any, vertex_name: Callable[[str], str]) -> Any:
+    """A per-class endpoint selector with its classes renamed.
+
+    Classes merged into one keep a single entry when they selected the same
+    identity. Selecting different ones leaves the merged class with no single
+    way to be matched, which is refused rather than settled by dict order.
+    """
+    if not isinstance(selector, dict):
+        return selector
+    out: dict[str, Any] = {}
+    for vertex, plain in selector.items():
+        new = vertex_name(vertex) if isinstance(vertex, str) else vertex
+        if new in out and out[new] != plain:
+            raise ValueError(
+                f"merging {vertex!r} into {new!r} leaves an edge endpoint with two "
+                f"selectors for it ({out[new]!r} and {plain!r}); give the step one "
+                "selector for the merged class first"
+            )
+        out[new] = plain
+    return out
+
+
+def rename_endpoint_selector_classes(
+    payload: dict[str, Any], vertex_name: Callable[[str], str]
+) -> None:
+    """Rename the classes of *payload*'s per-class ``source_match`` / ``target_match``."""
+    for key in _MATCH_KEYS:
+        if isinstance(payload.get(key), dict):
+            payload[key] = _renamed_selector(payload[key], vertex_name)
+
+
+def renamed_lookup_classes(value: Any, vertex_name: Callable[[str], str]) -> Any:
+    """A router's ``lookup_only`` list with its classes renamed (merges deduplicated)."""
+    if not isinstance(value, list):
+        return value
+    out: list[Any] = []
+    for name in value:
+        new = vertex_name(name) if isinstance(name, str) else name
+        if new not in out:
+            out.append(new)
+    return out
+
+
 def _rewrite_entity_names_in_edge_step(
     payload: dict[str, Any],
     *,
@@ -136,6 +182,7 @@ def _rewrite_entity_names_in_edge_step(
             payload[key] = vertex_name(value)
 
     rewrite_vertex_weight_names(payload, vertex_name)
+    rename_endpoint_selector_classes(payload, vertex_name)
 
     relation = payload.get("relation")
     if isinstance(relation, str):
@@ -208,12 +255,17 @@ def rewrite_entity_names_in_pipeline(
                 raw: vertex_name(mapped) if isinstance(mapped, str) else mapped
                 for raw, mapped in router_payload["type_map"].items()
             }
-        if vertices:
+        # A closed router's raw values are fixed by its table.
+        if vertices and not router_payload.get("type_map_only"):
             materialized = materialize_router_renames(
                 router_payload.get("type_map"), vertices
             )
             if materialized is not None:
                 router_payload["type_map"] = materialized
+        if isinstance(router_payload.get("lookup_only"), list):
+            router_payload["lookup_only"] = renamed_lookup_classes(
+                router_payload["lookup_only"], vertex_name
+            )
     elif isinstance(step.get("type_map"), dict):
         step["type_map"] = {
             raw: vertex_name(mapped) if isinstance(mapped, str) else mapped
@@ -318,57 +370,137 @@ def _endpoint_vertex(payload: dict[str, Any], *keys: str) -> str | None:
     return None
 
 
+#: A role a ``vertex_router`` fills: it can hold a row of any class.
+_ANY_CLASS: frozenset[str] = frozenset({"*"})
+
+
+def _role_classes(
+    pipeline: Any, out: dict[str, frozenset[str]] | None = None
+) -> dict[str, frozenset[str]]:
+    """What each accumulator role in *pipeline* can hold, at any level.
+
+    A ``vertex`` step with a ``role`` holds its class; an open router's role
+    (its ``role``, else its ``type_field``) holds any class, :data:`_ANY_CLASS`,
+    and a closed one's (``type_map_only``) the classes its table names.
+    """
+    roles: dict[str, frozenset[str]] = {} if out is None else out
+    if isinstance(pipeline, list):
+        for item in pipeline:
+            _role_classes(item, roles)
+        return roles
+    if not isinstance(pipeline, dict):
+        return roles
+    step = normalize_actor_step(dict(pipeline))
+    step_type = step.get("type")
+    if step_type == "vertex" and isinstance(step.get("role"), str):
+        role = step["role"]
+        if roles.get(role) != _ANY_CLASS:
+            roles[role] = roles.get(role, frozenset()) | {step.get("vertex")}
+    elif step_type == "vertex_router":
+        role = step.get("role") or step.get("type_field")
+        if isinstance(role, str):
+            if not step.get("type_map_only"):
+                roles[role] = _ANY_CLASS
+            elif roles.get(role) != _ANY_CLASS:
+                roles[role] = roles.get(role, frozenset()) | _table_classes(step)
+    elif step_type == "descend":
+        _role_classes(step.get("pipeline"), roles)
+    return roles
+
+
+def _table_classes(router: dict[str, Any]) -> frozenset[str]:
+    """The classes a router's ``type_map`` routes to."""
+    type_map = router.get("type_map")
+    if not isinstance(type_map, dict):
+        return frozenset()
+    return frozenset(v for v in type_map.values() if isinstance(v, str))
+
+
 def _pin_endpoint_selectors_in_edge_payload(
-    payload: dict[str, Any], selectors: dict[str, str]
+    payload: dict[str, Any],
+    selectors: dict[str, str],
+    roles: dict[str, frozenset[str]],
 ) -> None:
     """Point primary-identity endpoints at a named secondary identity, in place.
 
     Only endpoints currently resolving via the primary identity are touched: a step
     that already names a secondary identity is expressing an explicit intent that an
-    identity replacement must not override.
+    identity replacement must not override. An endpoint a role fills gets a
+    per-class entry for each pinned class the role can hold, so the other classes
+    routed there keep matching on their own primary identity.
     """
-    for endpoint_keys, match_key in (
-        (("source", "from"), "source_match"),
-        (("target", "to"), "target_match"),
+    for endpoint_keys, role_keys, match_key in (
+        (("source", "from"), ("source_role", "source_type_field"), "source_match"),
+        (("target", "to"), ("target_role", "target_type_field"), "target_match"),
     ):
+        current = payload.get(match_key)
         vertex_name = _endpoint_vertex(payload, *endpoint_keys)
-        if vertex_name is None:
-            continue
-        selector = selectors.get(vertex_name)
-        if selector is None:
-            continue
-        if payload.get(match_key) in _PRIMARY_SELECTORS:
-            payload[match_key] = selector
+        if vertex_name is not None:
+            pinned = (
+                {vertex_name: selectors[vertex_name]}
+                if vertex_name in selectors
+                else {}
+            )
+            if pinned and current in _PRIMARY_SELECTORS:
+                payload[match_key] = pinned[vertex_name]
+                continue
+        else:
+            role = next(
+                (payload[k] for k in role_keys if isinstance(payload.get(k), str)),
+                None,
+            )
+            held = roles.get(role) if role is not None else None
+            if held is None:
+                continue
+            pinned = {
+                vertex: selector
+                for vertex, selector in selectors.items()
+                if held == _ANY_CLASS or vertex in held
+            }
+            if pinned and current in _PRIMARY_SELECTORS:
+                payload[match_key] = pinned
+                continue
+        if pinned and isinstance(current, dict):
+            payload[match_key] = {
+                **current,
+                **{
+                    vertex: selector
+                    for vertex, selector in pinned.items()
+                    if current.get(vertex) in _PRIMARY_SELECTORS
+                },
+            }
 
     links = payload.get("links")
     if isinstance(links, list):
         for link in links:
             if isinstance(link, dict):
-                _pin_endpoint_selectors_in_edge_payload(link, selectors)
+                _pin_endpoint_selectors_in_edge_payload(link, selectors, roles)
 
 
-def _pin_endpoint_selectors_in_step(step: Any, selectors: dict[str, str]) -> None:
+def _pin_endpoint_selectors_in_step(
+    step: Any, selectors: dict[str, str], roles: dict[str, frozenset[str]]
+) -> None:
     if isinstance(step, list):
         for item in step:
-            _pin_endpoint_selectors_in_step(item, selectors)
+            _pin_endpoint_selectors_in_step(item, selectors, roles)
         return
     if not isinstance(step, dict):
         return
 
     for payload in edge_payloads(step):
-        _pin_endpoint_selectors_in_edge_payload(payload, selectors)
+        _pin_endpoint_selectors_in_edge_payload(payload, selectors, roles)
 
     descend_payload = step.get("descend")
     if isinstance(descend_payload, dict):
         for key in ("apply", "pipeline"):
             nested = descend_payload.get(key)
             if nested is not None:
-                _pin_endpoint_selectors_in_step(nested, selectors)
+                _pin_endpoint_selectors_in_step(nested, selectors, roles)
 
     for key in ("apply", "pipeline"):
         nested = step.get(key)
         if isinstance(nested, list):
-            _pin_endpoint_selectors_in_step(nested, selectors)
+            _pin_endpoint_selectors_in_step(nested, selectors, roles)
 
 
 def rewrite_endpoint_selectors_in_pipeline(
@@ -378,13 +510,114 @@ def rewrite_endpoint_selectors_in_pipeline(
 
     ``selectors`` maps a vertex name to the secondary identity name its endpoints
     should select. Used by ``ReplaceIdentityOp`` with ``endpoints: pin_to_retired`` so
-    edge steps keep matching on the identity that was just retired.
+    edge steps keep matching on the identity that was just retired, and by merge
+    for a resource that references a re-keyed member. An endpoint a router role
+    fills is pinned per class (``{Class: selector}``).
     """
     out = deepcopy(pipeline)
     if not selectors:
         return out
-    _pin_endpoint_selectors_in_step(out, selectors)
+    _pin_endpoint_selectors_in_step(out, selectors, _role_classes(out))
     return out
+
+
+def close_routers_in_pipeline(
+    pipeline: list[dict[str, Any]], vocabulary: Collection[str]
+) -> list[dict[str, Any]]:
+    """*pipeline* with every open router closed over *vocabulary*.
+
+    An open router passes a value missing from its ``type_map`` through as the
+    class name. Closing it lists each class of *vocabulary* the table does not
+    already key -- as itself -- and sets ``type_map_only``, so it routes
+    exactly what it routed when *vocabulary* was the whole schema. Entries
+    already there, authored or written by a rename, are kept. Steps keep their
+    authored spelling, at every level.
+    """
+    out = deepcopy(pipeline)
+    _close_routers(out, sorted(vocabulary))
+    return out
+
+
+def _close_routers(step: Any, vocabulary: list[str]) -> None:
+    if isinstance(step, list):
+        for item in step:
+            _close_routers(item, vocabulary)
+        return
+    if not isinstance(step, dict):
+        return
+    normalized = normalize_actor_step(dict(step))
+    if normalized.get("type") == "vertex_router" and not normalized.get(
+        "type_map_only"
+    ):
+        # The table lives under ``vertex_router`` in the shorthand and at the
+        # top level in the flat spelling.
+        nested = step.get("vertex_router")
+        payload = nested if isinstance(nested, dict) else step
+        table = dict(payload.get("type_map") or {})
+        for name in vocabulary:
+            table.setdefault(name, name)
+        payload["type_map"] = table
+        payload["type_map_only"] = True
+
+    descend_payload = step.get("descend")
+    if isinstance(descend_payload, dict):
+        for key in ("apply", "pipeline"):
+            _close_routers(descend_payload.get(key), vocabulary)
+    for key in ("apply", "pipeline"):
+        if isinstance(step.get(key), list):
+            _close_routers(step[key], vocabulary)
+
+
+def mark_lookup_only_in_pipeline(
+    pipeline: list[dict[str, Any]], vertex: str
+) -> list[dict[str, Any]]:
+    """*pipeline* with every production of *vertex* turned into a lookup.
+
+    A ``vertex`` step for it gains ``lookup_only: true``. An open
+    ``vertex_router`` routes an unmapped value as the class name, so it can
+    produce *vertex*, and a closed one (``type_map_only``) can when its table
+    routes to it: such a router gains *vertex* in its ``lookup_only`` list,
+    and the other classes it routes to are still written. Steps keep their
+    authored spelling, at every level.
+    """
+    out = deepcopy(pipeline)
+    _mark_lookup_only(out, vertex)
+    return out
+
+
+def _mark_lookup_only(step: Any, vertex: str) -> None:
+    if isinstance(step, list):
+        for item in step:
+            _mark_lookup_only(item, vertex)
+        return
+    if not isinstance(step, dict):
+        return
+    normalized = normalize_actor_step(dict(step))
+    step_type = normalized.get("type")
+    if step_type == "vertex" and normalized.get("vertex") == vertex:
+        step["lookup_only"] = True
+    elif step_type == "vertex_router":
+        # The table lives under ``vertex_router`` in the shorthand and at the
+        # top level in the flat spelling.
+        nested = step.get("vertex_router")
+        payload = nested if isinstance(nested, dict) else step
+        current = payload.get("lookup_only")
+        routes_to_vertex = not normalized.get(
+            "type_map_only"
+        ) or vertex in _table_classes(normalized)
+        if routes_to_vertex and isinstance(current, list):
+            if vertex not in current:
+                payload["lookup_only"] = [*current, vertex]
+        elif routes_to_vertex and current is not True:
+            payload["lookup_only"] = [vertex]
+
+    descend_payload = step.get("descend")
+    if isinstance(descend_payload, dict):
+        for key in ("apply", "pipeline"):
+            _mark_lookup_only(descend_payload.get(key), vertex)
+    for key in ("apply", "pipeline"):
+        if isinstance(step.get(key), list):
+            _mark_lookup_only(step[key], vertex)
 
 
 def _collect_endpoint_selectors_in_edge_payload(
@@ -394,6 +627,14 @@ def _collect_endpoint_selectors_in_edge_payload(
         (("source", "from"), "source_match"),
         (("target", "to"), "target_match"),
     ):
+        per_class = payload.get(match_key)
+        if isinstance(per_class, dict):
+            out.extend(
+                (vertex, plain)
+                for vertex, plain in per_class.items()
+                if plain not in _PRIMARY_SELECTORS and isinstance(plain, (str, list))
+            )
+            continue
         vertex_name = _endpoint_vertex(payload, *endpoint_keys)
         if vertex_name is None:
             continue
@@ -465,6 +706,16 @@ def _retarget_edge_payload(
         new_source, new_target = new_endpoints
         payload["source" if "source" in payload else "from"] = new_source
         payload["target" if "target" in payload else "to"] = new_target
+        for key, old, new in (
+            ("source_match", source, new_source),
+            ("target_match", target, new_target),
+        ):
+            payload_selector = payload.get(key)
+            if isinstance(payload_selector, dict) and old != new:
+                payload[key] = _renamed_selector(
+                    payload_selector,
+                    lambda name, o=old, n=new: n if name == o else name,
+                )
 
     links = payload.get("links")
     if isinstance(links, list):
@@ -564,12 +815,13 @@ def materialize_router_renames(
 ) -> dict[str, Any] | None:
     """*type_map* with an entry for every class *mapping* renames away.
 
-    A router routes an unmapped discriminator value as the class name, so
-    before the rename a raw ``old`` reached ``old`` with no table entry; after
-    it only an entry can send it to ``new``, or the value names a class that
-    no longer exists and the record is skipped at runtime without a word.
+    An open router routes an unmapped discriminator value as the class name,
+    so before the rename a raw ``old`` reached ``old`` with no table entry;
+    after it only an entry can send it to ``new``, or the value names a class
+    that no longer exists and the record is skipped at runtime without a word.
     Keys the table already has were rewritten in place. ``None`` when there is
-    no table and nothing to add.
+    no table and nothing to add. A closed router (``type_map_only``) takes no
+    entries: only its table's values ever routed.
     """
     present = type_map or {}
     added = {
@@ -601,12 +853,18 @@ def rewrite_vertex_names_in_step(
             out["type_map"] = {
                 k: _map_name(str(v), mapping) or v for k, v in tm.items()
             }
-        materialized = materialize_router_renames(out.get("type_map"), mapping)
-        if materialized is not None:
-            out["type_map"] = materialized
+        if not out.get("type_map_only"):
+            # A closed router's raw values are fixed by its table.
+            materialized = materialize_router_renames(out.get("type_map"), mapping)
+            if materialized is not None:
+                out["type_map"] = materialized
         vfm = out.get("vertex_from_map")
         if isinstance(vfm, dict):
             out["vertex_from_map"] = _merge_vertex_from_map(vfm, mapping)
+        if isinstance(out.get("lookup_only"), list):
+            out["lookup_only"] = renamed_lookup_classes(
+                out["lookup_only"], lambda name: mapping.get(name, name)
+            )
 
     elif t == "edge":
         for key in ("source", "from"):
@@ -620,6 +878,7 @@ def rewrite_vertex_names_in_step(
                 if isinstance(val, str) and val in mapping:
                     out[key] = mapping[val]
         rewrite_vertex_weight_names(out, lambda name: mapping.get(name, name))
+        rename_endpoint_selector_classes(out, lambda name: mapping.get(name, name))
 
     elif t == "descend":
         pl = out.get("pipeline")
@@ -675,6 +934,7 @@ def rewrite_vertex_names_in_value(obj: Any, mapping: dict[str, str]) -> Any:
             if isinstance(tgt, str) and tgt in mapping:
                 out["target"] = mapping[tgt]
             rewrite_vertex_weight_names(out, lambda name: mapping.get(name, name))
+            rename_endpoint_selector_classes(out, lambda name: mapping.get(name, name))
             return out
         if "vertex" in obj and isinstance(obj["vertex"], str) and t is None:
             out = deepcopy(obj)
@@ -1231,8 +1491,11 @@ def rewrite_remove_vertices_in_pipeline(
     ``vertex_from_map`` entries for it and keeps routing the rest: a raw
     discriminator value naming a class the schema no longer declares is
     skipped at ingestion, which *is* the removal, so a pass-through router
-    needs no edit at all. A ``descend`` stays while anything survives under
-    it; transforms are left as authored. Untouched steps keep their authored
+    needs no edit at all; a closed router (``type_map_only``) stops routing
+    the values that led to it. The class also leaves a router's ``lookup_only``
+    list and the per-class selectors of the edge steps that survive. A
+    ``descend`` stays while anything survives under it; transforms are left
+    as authored. Untouched steps keep their authored
     spelling; a trimmed router is edited in place, and a ``descend`` that lost
     a step comes back normalized.
     """
@@ -1252,10 +1515,23 @@ def rewrite_remove_vertices_in_pipeline(
             return None if normalized.get("vertex") in removed else deepcopy(step)
         if step_type == "edge":
             endpoints = (normalized.get(k) for k in ("source", "from", "target", "to"))
-            return None if any(e in removed for e in endpoints) else deepcopy(step)
+            if any(e in removed for e in endpoints):
+                return None
+            out = deepcopy(step)
+            for edge_payload in edge_payloads(out):
+                _drop_selector_classes(edge_payload, removed)
+            return out
         if step_type == "vertex_router":
             out = deepcopy(step)
             payload = _router_payload(out)
+            lookup = payload.get("lookup_only")
+            if isinstance(lookup, list):
+                kept_lookup = [name for name in lookup if name not in removed]
+                if kept_lookup != lookup:
+                    if kept_lookup:
+                        payload["lookup_only"] = kept_lookup
+                    else:
+                        payload.pop("lookup_only")
             type_map = payload.get("type_map")
             if isinstance(type_map, dict):
                 kept = {k: v for k, v in type_map.items() if v not in removed}
@@ -1295,6 +1571,24 @@ def rewrite_remove_vertices_in_pipeline(
         )
         if rewritten is not None
     ]
+
+
+def _drop_selector_classes(payload: dict[str, Any], removed: set[str]) -> None:
+    """Remove *removed* classes from *payload*'s per-class selectors, in place."""
+    for key in _MATCH_KEYS:
+        selector = payload.get(key)
+        if isinstance(selector, dict):
+            kept = {k: v for k, v in selector.items() if k not in removed}
+            if kept != selector:
+                if kept:
+                    payload[key] = kept
+                else:
+                    payload.pop(key)
+    links = payload.get("links")
+    if isinstance(links, list):
+        for link in links:
+            if isinstance(link, dict):
+                _drop_selector_classes(link, removed)
 
 
 def pipeline_mentions_any_vertex(steps: list[dict[str, Any]], names: set[str]) -> bool:

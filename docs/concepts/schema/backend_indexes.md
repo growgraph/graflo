@@ -1,54 +1,131 @@
-# Backend Index Behavior
+# Backend indexes
 
-This document describes how vertex and edge indexes are handled across different graph database backends. Understanding this helps ensure your schema has the right indexes for efficient lookups and MERGE operations.
+Every upsert looks up the stored vertex with the same identity, and without an
+index on the identity fields each lookup scans the whole vertex type. This page
+is for anyone who writes to a graph database with GraFlo: it says which indexes
+GraFlo creates on each backend when it defines the schema, which ones you
+declare yourself, and how Neo4j, Memgraph and FalkorDB match edges. After
+reading it you know what to put in the `db_profile` block and what to leave to
+GraFlo.
 
-In manifests, physical index and naming configuration lives under **`schema.db_profile`** (the `DatabaseProfile` model; Python module `graflo.architecture.schema.database_features`). Below, **`db_profile`** refers to that object—whether loaded from YAML or constructed in code.
+## Identity indexes and secondary indexes
 
-## Identity vs Secondary Indexes
+GraFlo distinguishes two kinds of vertex index:
 
-- **Identity index**: Required for vertex matching/upserts. Uses `Vertex.identity` (one or more fields for **natural** mode, or synthetic `id` for **hash** and **blank** modes). Each backend handles this differently. See [Vertex identity modes](vertex_identity.md).
-- **Secondary indexes**: Optional indexes for query performance. Configured in `db_profile.vertex_indexes` and `db_profile.edge_specs[*].indexes`.
-`edge_specs` entries may also set **`relation_name`** overrides in addition to **`indexes`**. TigerGraph native inverses are set per relation in `db_profile.native_inverses`, not on a spec (see [Directed, undirected, and bidirectional edges](../architecture/core_components.md#directed-undirected-and-bidirectional-edges)).
+- The **identity index** covers the fields a vertex type upserts on: its
+  natural key, or `id` for hash, funnel, blank and assigned vertices (see
+  [Vertex identity](vertex_identity.md)). GraFlo creates it on every database
+  backend. You do not declare it.
+- **Secondary indexes** speed up other lookups. You declare them in the
+  database profile of the manifest, `schema.db_profile`: per vertex type under
+  `vertex_indexes`, per edge under `edge_specs[*].indexes`.
 
+```yaml
+schema:
+    db_profile:
+        vertex_indexes:
+            machine:
+            -   fields: [plant, model]
+                unique: false
+        edge_specs:
+        -   source: work_order
+            target: machine
+            relation: targets
+            indexes:
+            -   fields: [opened_at]
+                unique: false
+```
 
-The `vertex_indexes` on **`db_profile`** are for **secondary** indexes only. Identity is handled by the backend during `define_vertex_indexes` or at collection/vertex-type creation.
+An index entry takes `fields` and, optionally, `unique` (default `true`),
+`type` (`persistent`, the default, `hash`, `skiplist` or `fulltext`, used by
+ArangoDB), `sparse`, `deduplicate` and `name`. Because `unique` defaults to
+`true`, ArangoDB and PostgreSQL build a declared index as a uniqueness
+constraint and reject duplicate values. Write `unique: false` unless that is
+what you want.
 
-### Indexes from `secondary_identities`
+An `edge_specs` entry can also set `relation_name`, the name the database
+stores the relation under. TigerGraph native inverses are set per relation in
+`db_profile.native_inverses`, not on a spec; see [Directed, undirected, and
+bidirectional edges](../architecture/core_components.md#directed-undirected-and-bidirectional-edges).
 
-Declaring [`secondary_identities`](vertex_identity.md#secondary-identities-edge-endpoint-lookup) on a vertex automatically registers one **non-unique** index per field-set into `db_profile.vertex_indexes`. This happens in `Schema.finish_init`, so it applies whether or not a DB-aware view is resolved, and it is idempotent.
+## Indexes from secondary identities
 
-The index is not merely an optimization: endpoint resolution filters on those fields, and on **NebulaGraph** a tag index is required for the property lookup to run at all.
+Every [secondary identity](../glossary.md#secondary-identity) on a vertex adds
+one non-unique index over its fields to `db_profile.vertex_indexes` when the
+schema is loaded. You do not declare it. If `vertex_indexes` already has an
+index on the same fields, GraFlo keeps yours and adds nothing.
 
-Indexes are non-unique by design. Secondary identities are *softly* unique, and a unique constraint would reject exactly the duplicate data the [ambiguity policy](vertex_identity.md#soft-uniqueness-and-ambiguity) exists to handle.
+The index is more than an optimization. Endpoint lookups filter on those
+fields, and on NebulaGraph a filtered lookup cannot run without a tag index.
 
-**TigerGraph** supports single-field attribute indexes only; a composite secondary identity logs a warning and is skipped. Resolution there uses an interpreted GSQL query and does not depend on the index.
+The index is non-unique because a secondary identity is only softly unique: a
+unique index would reject exactly the duplicate values that the
+[ambiguity policy](vertex_identity.md#when-a-lookup-matches-several-vertices)
+exists to handle. An index you declare yourself on the same fields keeps the
+`unique` setting you gave it.
 
-**NebulaGraph** requires a length on every `string` column named in a tag index, and rejects the whole statement without one. GraFlo derives that from the column type it emitted, so an *untyped* property — which becomes a Nebula `string`, as do `DATETIME` and `UUID` — is indexed correctly rather than skipped. A rejected index is logged at **warning**: without it, every filtered read on the tag fails with `IndexNotFound`, and the cause is several layers from the symptom.
+TigerGraph accepts indexes on a single field only. A composite secondary
+identity logs a warning and gets no index there; the lookup does not depend on
+it, because GraFlo finds TigerGraph endpoints with an interpreted GSQL query.
 
-## Backend Summary
+NebulaGraph refuses a tag index on a string column unless the index gives a
+length. GraFlo gives every string column in a tag index a length of 256. That
+includes untyped properties and `DATETIME` and `UUID` properties, which
+NebulaGraph stores as strings. When NebulaGraph rejects an index anyway, GraFlo
+logs a warning, because every filtered read on that tag then fails with
+`IndexNotFound`.
 
-| Backend | Identity index | How |
-|---------|----------------|-----|
-| **Neo4j** | Explicit | `define_vertex_indexes` prepends identity index when schema is provided. No implicit primary index. |
-| **Memgraph** | Explicit | Same as Neo4j. `upsert_docs_batch` also auto-creates on `match_keys` at runtime. |
-| **FalkorDB** | Explicit | Same as Neo4j. |
-| **Nebula** | Explicit | `define_vertex_indexes` always creates identity index first (required for LOOKUP/MATCH). |
-| **ArangoDB** | At collection creation | `create_collection` receives `vertex_config.index(u)` and adds it. `_key` is auto-indexed and skipped. |
-| **TigerGraph** | Implicit | Primary keys are auto-indexed at vertex type creation. Secondary indexes are single-field only. |
-| **PostgreSQL** | At table creation | Vertex table `PRIMARY KEY`. `define_vertex_indexes` issues `CREATE INDEX` for `vertex_indexes`. |
+## Per backend
 
-## Implications
+| Backend | Identity index | Declared vertex indexes | Declared edge indexes |
+|---|---|---|---|
+| Neo4j | One index over the identity fields, created with the other indexes. An index, not a uniqueness constraint | `CREATE INDEX` over the fields; `unique` is not applied | A relationship index, or a uniqueness constraint when `unique: true` |
+| Memgraph | One single-property index per identity field, created with the other indexes and again on the match fields when vertices are written | One single-property index per field | One `CREATE INDEX ON :<relation>(<field>)` per field |
+| FalkorDB | One index per identity field, created with the other indexes | One index per field | One relationship index per field |
+| NebulaGraph | A tag index over the identity fields, always created, because `LOOKUP` and filtered `MATCH` need it | A tag index | An edge index |
+| ArangoDB | A unique persistent index over the identity fields, created with the collection; none when the identity is `_key`, which ArangoDB indexes itself | As declared, with `unique` and `type` applied | As declared, on each edge collection |
+| TigerGraph | The primary key (`PRIMARY_ID`, or `PRIMARY KEY` for a composite identity), which TigerGraph indexes itself | Single-field indexes only; a multi-field index is skipped with a warning | Not supported; skipped with a log message |
+| PostgreSQL | The vertex table's `PRIMARY KEY` | `CREATE INDEX`, or `CREATE UNIQUE INDEX` when `unique: true` | Not created. Every edge table gets an index on `target_id`, and a unique index over `source_id`, `target_id` and the edge's properties when it has properties |
+| GraFlo file backend | None | None | None |
 
-- **Neo4j, Memgraph, FalkorDB**: If you omit `db_profile.vertex_indexes` for a vertex, the identity index is still created automatically when `define_vertex_indexes` runs with a schema. You only need `vertex_indexes` for **additional** (secondary) indexes.
-- **ArangoDB, TigerGraph**: Identity is covered at collection/vertex-type creation. `define_vertex_indexes` adds only secondary indexes from `vertex_indexes`.
-- **Nebula**: Identity index is always created in `define_vertex_indexes`; `vertex_indexes` adds secondary indexes.
+On ArangoDB, TigerGraph and PostgreSQL the identity is covered when the
+collection, vertex type or table is created. On Neo4j, Memgraph, FalkorDB and
+NebulaGraph, GraFlo creates the identity index together with the declared
+indexes when it defines the schema.
 
-## Schema Required
+## Defining indexes without a schema
 
-When `schema` is `None` in `define_vertex_indexes`, identity indexes cannot be ensured for Neo4j, Memgraph, FalkorDB, and Nebula. A warning is logged. Always pass the schema when calling `define_vertex_indexes` or `define_indexes` during `init_db`.
+The low-level `define_vertex_indexes` call takes the schema as an optional
+argument, and only the schema says which fields form each identity. Called
+without it, Neo4j, Memgraph and FalkorDB get no identity index and GraFlo logs
+a warning; NebulaGraph gets one anyway, and PostgreSQL gets no secondary
+indexes. `GraphEngine.define_schema` and `define_and_ingest` always pass the
+schema. Pass it yourself when you call `define_vertex_indexes` or
+`define_indexes` directly.
 
 ## Edge upserts and `MERGE` (Neo4j, Memgraph, FalkorDB)
 
-Vertex upserts use node keys from `Vertex` identity. For edges, endpoints are matched on those vertex keys; the relationship itself is merged using a **relationship property map** so parallel edges remain distinct.
+On the Cypher backends an edge is written with `MERGE`. Its endpoints are
+matched on their vertex identities. The relationship itself is merged on a map
+of relationship properties, so that two edges between the same endpoints with
+different property values stay two edges.
 
-GraFlo chooses property names for that map from the edge’s logical identity policy: the **first** entry in `Edge.identities` (excluding `source` / `target` tokens; including a `relation` token as the relationship’s `relation` property when applicable). If `identities` is empty or does not name any relationship fields, **all** declared edge **`properties`** names are used instead. Compile-time edge **indexes** from `identities` (via **`db_profile` / `EdgeConfigDBAware`**) remain separate from this writer-time `MERGE` key selection; both should agree with your intended uniqueness for a given edge definition.
+GraFlo takes the property names for that map from the first entry of the
+edge's `identities`, leaving out the `source` and `target` tokens and turning a
+`relation` token into the relationship's `relation` property. If `identities`
+is empty or names no relationship property, it uses all the edge's declared
+`properties`. If the edge declares neither, it merges on the endpoints and the
+relation alone: one edge per pair of endpoints, whose properties the last
+record overwrites.
+
+An edge's `identities` also feed edge indexes, which are defined with the
+schema. The `MERGE` key is chosen separately, when the graph is written. Keep
+both in line with the uniqueness you intend for the edge.
+
+## What to read next
+
+- [Vertex identity](vertex_identity.md): what the identity fields are for each
+  identity mode.
+- [Directed, undirected, and bidirectional
+  edges](../architecture/core_components.md#directed-undirected-and-bidirectional-edges):
+  how edge direction and inverses are stored on each backend.

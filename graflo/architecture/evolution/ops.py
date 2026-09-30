@@ -4,9 +4,9 @@ Two field names recur across the models and mean two different things:
 ``into`` is *where existing names collapse* — the target of a merge, a
 rename, or an equivalence (``MergeVerticesOp``, ``MergeEdgesOp``,
 ``VertexEquivalence``, ``RelationEquivalence``, ``PropertyEquivalence``);
-``name`` is *what a new thing is called* — an attribute an alignment derives
-(``AlignmentAttribute``, ``LocalKeySpec``). A model never uses one for the
-other.
+``name`` is *what a new thing is called* — an attribute an identity branch
+derives (``DerivedBranch``, ``LocalKeyBranch``). A model never uses one for
+the other.
 """
 
 from __future__ import annotations
@@ -20,12 +20,13 @@ from pydantic import Field as PydanticField
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.contract.bindings.core import Bindings
 from graflo.architecture.contract.ingestion.resource import ResourceConfig
+from graflo.architecture.contract.ingestion.steps.models import TransformGuardConfig
 from graflo.architecture.contract.ingestion.steps.ref import EdgeStepRef
 from graflo.architecture.contract.ingestion.transform import ProtoTransform
 from graflo.architecture.graph_types import EdgeDirection, Index
 from graflo.architecture.schema.database_features import DatabaseProfile
 from graflo.architecture.schema.edge import Edge, normalize_inverse_table
-from graflo.architecture.schema.identity_funnel import IdentityFunnel
+from graflo.architecture.schema.identity_funnel import IdentityBranch, IdentityFunnel
 from graflo.architecture.schema.semantics import FieldSemantics, Semantics
 from graflo.architecture.schema.vertex import (
     Field,
@@ -591,7 +592,7 @@ class ReplaceIdentityOp(ConfigBaseModel):
     referenced the old one must be repointed or retired.
 
     Not covered: ``blank`` vertices cannot retire by demotion (they cannot declare
-    secondary identities at all), and a no-op replacement does not bump the version.
+    secondary identities at all).
     """
 
     op: Literal["replace_identity"] = "replace_identity"
@@ -1911,145 +1912,25 @@ class DerivationSpec(ConfigBaseModel):
         description="Module holding the derivation function.",
     )
     foo: str = PydanticField(
-        default="gated_normalized_key",
-        description="Function name; called as ``foo(*values, **params)``.",
+        default="normalized_key",
+        description=(
+            "Function name; called as ``foo(*values, **params)``. The default "
+            "trims and casefolds one value."
+        ),
     )
     params: dict[str, Any] = PydanticField(
         default_factory=dict,
-        description="Keyword parameters for the function (gate prefix, ...).",
+        description="Keyword parameters for the function.",
     )
-
-
-class SharedDerivation(ConfigBaseModel):
-    """One derivation shared by several members, varying only in parameters.
-
-    The compact spelling of the member-keyed form for the common case: the
-    call is the same for every member and only a parameter changes — a marker
-    prefix per class — or nothing does. ``members`` is a list of member
-    classes, or a dict from member to the parameters that differ; each
-    member's derivation is ``spec`` with those parameters laid over
-    ``spec.params``. Anything else that differs between members — the input
-    columns, the function — is a different derivation: spell it with the
-    explicit ``{member: spec}`` dict.
-
-    Expands to that dict; the lowering never sees this model.
-    """
-
-    spec: DerivationSpec = PydanticField(
-        ...,
-        description="The derivation every member shares.",
-    )
-    members: list[str] | dict[str, dict[str, Any]] = PydanticField(
-        ...,
+    when: TransformGuardConfig | None = PydanticField(
+        default=None,
         description=(
-            "Member classes sharing ``spec``: a list when nothing varies, or "
-            "``{member: {param: value}}`` naming what does."
+            "Run the step only for documents whose RAW field holds one of the "
+            "listed values (``{field, in}``). A merge derives this guard from "
+            "how the resource produces the class; one set here replaces it. "
+            "Not allowed on a spec keyed by member: the member decides."
         ),
     )
-
-    @model_validator(mode="after")
-    def _validate_members(self) -> SharedDerivation:
-        if not self.members:
-            raise ValueError("SharedDerivation: members must name at least one class")
-        if isinstance(self.members, list) and len(set(self.members)) != len(
-            self.members
-        ):
-            raise ValueError("SharedDerivation: members lists a class twice")
-        return self
-
-    def expand(self) -> dict[str, DerivationSpec]:
-        """The explicit ``{member: spec}`` dict this stands for."""
-        if isinstance(self.members, list):
-            return {member: self.spec for member in self.members}
-        return {
-            member: self.spec.model_copy(
-                update={"params": {**self.spec.params, **overrides}}
-            )
-            for member, overrides in self.members.items()
-        }
-
-
-class AlignmentAttribute(ConfigBaseModel):
-    """One aligned canonical attribute; list position = funnel priority.
-
-    Each entry lowers to one
-    :class:`~graflo.architecture.schema.identity_funnel.IdentityBranch` over
-    ``name``, so the list order *is* the funnel order. ``name`` is what the
-    derived attribute is called — nothing collapses onto it, which is why it is
-    not ``into``; ``into`` is accepted as a legacy alias.
-
-    ``sources`` is keyed by resource because derivation inputs are that
-    resource's raw column names. An entry takes one of three shapes:
-
-    * a single :class:`DerivationSpec` — the resource produces one member of
-      the cluster, or all its members share the key column;
-    * a **list** of specs — the resource produces several members, each with
-      its **own key column**, and at most one spec yields a value for any
-      document (the others read an empty column). Lowers to scratch fields
-      plus a ``coalesce_fields`` step;
-    * a **dict keyed by member class** — the resource produces several members
-      and which one a document *is* must decide the derivation (the members
-      share a column, or each carries its own marker). The lowering asks the
-      side manifest how the resource produces each member and guards the step
-      accordingly (``when`` on the router's discriminator, or nothing for a
-      plain ``vertex`` step). A member is keyed by its own name on its
-      side or, through ``merge_manifests``, by its canonical name;
-    * a :class:`SharedDerivation` — the same dict, spelled once: one call
-      shared by the listed members, with only the parameters that differ.
-
-    Behind a ``vertex_router`` the first two shapes are guarded as well: the
-    lowering reads which discriminator values route onto the class and puts
-    them in ``when``, so the steps run for no other class's documents.
-    """
-
-    name: str = PydanticField(
-        ...,
-        validation_alias=AliasChoices("name", "into"),
-        description=(
-            "Canonical attribute name on the class; funnel branch id. ``into`` "
-            "is accepted as a legacy alias."
-        ),
-    )
-    sources: dict[
-        str,
-        DerivationSpec
-        | SharedDerivation
-        | list[DerivationSpec]
-        | dict[str, DerivationSpec],
-    ] = PydanticField(
-        ...,
-        min_length=1,
-        description=(
-            "Per-resource derivation: ``{resource: spec}``; ``{resource: "
-            "[spec, ...]}`` when the members the resource produces carry "
-            "different key columns; ``{resource: {member_class: spec}}`` when "
-            "the member a document is must decide the derivation, or a "
-            "``SharedDerivation`` spelling that dict once."
-        ),
-    )
-
-    def _by_member(self, resource: str) -> dict[str, DerivationSpec] | None:
-        spec = self.sources.get(resource)
-        if isinstance(spec, SharedDerivation):
-            return spec.expand()
-        return spec if isinstance(spec, dict) else None
-
-    def specs_for(self, resource: str) -> list[DerivationSpec]:
-        """Derivations *resource* contributes to this attribute, in order."""
-        spec = self.sources.get(resource)
-        if spec is None:
-            return []
-        if isinstance(spec, DerivationSpec):
-            return [spec]
-        if isinstance(spec, list):
-            return list(spec)
-        by_member = spec.expand() if isinstance(spec, SharedDerivation) else spec
-        return list(by_member.values())
-
-    def members_for(self, resource: str) -> list[str] | None:
-        """Member classes keying *resource*'s specs, or ``None`` if unkeyed."""
-        by_member = self._by_member(resource)
-        return list(by_member) if by_member is not None else None
 
 
 class LocalKeySource(ConfigBaseModel):
@@ -2077,165 +1958,224 @@ class LocalKeySource(ConfigBaseModel):
             "unique across every source of the class."
         ),
     )
+    when: TransformGuardConfig | None = PydanticField(
+        default=None,
+        description=(
+            "Same as :attr:`DerivationSpec.when`: an explicit guard replacing "
+            "the one the merge derives. Not allowed on a source keyed by member."
+        ),
+    )
 
     @field_validator("tag", mode="before")
     @classmethod
     def _none_is_the_empty_tag(cls, value: Any) -> Any:
         return "" if value is None else value
 
-    gate: str | None = PydanticField(
-        default=None,
-        description=(
-            "Optional RAW doc field deciding whether this source applies — the "
-            "router's discriminator when one resource contributes several "
-            "local keys. Omit when ``field`` is empty for the other branches, "
-            "which already selects."
-        ),
+
+def _refuse_member_keyed_guards(
+    kind: str, sources: Mapping[str, Any], label: str
+) -> None:
+    """A spec keyed by member may not carry ``when``: the member decides."""
+    for resource, entry in sources.items():
+        if not isinstance(entry, dict):
+            continue
+        if not entry:
+            raise ValueError(
+                f"{kind} {label!r}: resource {resource!r} keys its sources by "
+                "member but names none"
+            )
+        guarded = sorted(m for m, spec in entry.items() if spec.when is not None)
+        if guarded:
+            raise ValueError(
+                f"{kind} {label!r}: member-keyed sources for resource "
+                f"{resource!r} set `when` on {guarded}; the member already "
+                "decides, and the guard is derived from how the resource "
+                "produces it"
+            )
+
+
+class DerivedBranch(ConfigBaseModel):
+    """A funnel branch over an attribute each source derives from its own columns.
+
+    ``name`` is the canonical attribute the branch keys on. ``sources`` is
+    keyed by resource, because derivation inputs are that resource's raw
+    column names. An entry is either
+
+    * one :class:`DerivationSpec` — the resource derives the attribute the
+      same way for every record of the class it produces; or
+    * a dict keyed by member class — the resource produces several members
+      and which one a record *is* decides the derivation. A member is keyed by
+      its own name on its side or by its canonical one.
+
+    The merge reads how the resource produces the class on its side and guards
+    each step with ``when``: a member-keyed spec on the discriminator values
+    that route onto its member, a single spec behind a ``vertex_router`` on
+    the values that route onto the class, and nothing for a plain ``vertex``
+    step. An explicit :attr:`DerivationSpec.when` replaces the derived guard.
+    """
+
+    name: str = PydanticField(
+        ...,
+        description="Canonical attribute the branch keys on; its funnel branch id.",
     )
-    gate_prefix: str = PydanticField(
-        default="",
+    sources: dict[str, DerivationSpec | dict[str, DerivationSpec]] = PydanticField(
+        ...,
+        min_length=1,
         description=(
-            'Required prefix of the ``gate`` value; ``""`` always passes. '
-            "Meaningless without ``gate``."
+            "Per-resource derivation: ``{resource: spec}``, or ``{resource: "
+            "{member_class: spec}}`` when the member a document is must decide "
+            "the derivation."
         ),
     )
 
     @model_validator(mode="after")
-    def _validate_gate(self) -> LocalKeySource:
-        if self.gate is None and self.gate_prefix:
-            raise ValueError(
-                "LocalKeySource: gate_prefix is meaningless without a gate field"
-            )
+    def _validate_sources(self) -> DerivedBranch:
+        _refuse_member_keyed_guards("derived branch", self.sources, self.name)
         return self
 
+    def specs_for(self, resource: str) -> list[DerivationSpec]:
+        """Derivations *resource* contributes to this branch, in order."""
+        spec = self.sources.get(resource)
+        if spec is None:
+            return []
+        return [spec] if isinstance(spec, DerivationSpec) else list(spec.values())
 
-class LocalKeySpec(ConfigBaseModel):
-    """The canonical fallback identity attribute for non-aligned records.
+    def members_for(self, resource: str) -> list[str] | None:
+        """Member classes keying *resource*'s specs, or ``None`` if unkeyed."""
+        spec = self.sources.get(resource)
+        return list(spec) if isinstance(spec, dict) else None
 
-    ``sources`` takes the same three shapes as
-    :attr:`AlignmentAttribute.sources`: one source, a list (one per member,
-    each reading its own column), or a dict keyed by member class (the member
-    decides; the gate is derived from how the resource produces it, so a
-    member-keyed source must not set ``gate``).
+
+class LocalKeyBranch(ConfigBaseModel):
+    """The last funnel branch: each source's own key behind a namespace tag.
+
+    A record that completes no earlier branch keys on this one, so it is still
+    written — as its own vertex, not joined with records of another source.
+    ``local_key`` maps each resource to the column carrying its own key, or,
+    like :attr:`DerivedBranch.sources`, to one such source per member class.
     """
 
+    local_key: dict[str, LocalKeySource | dict[str, LocalKeySource]] = PydanticField(
+        ...,
+        min_length=1,
+        description=(
+            "Per-resource local-key wiring: ``{resource: source}``, or "
+            "``{resource: {member_class: source}}`` when the member decides."
+        ),
+    )
     name: str = PydanticField(
         default="local_key",
-        validation_alias=AliasChoices("name", "into"),
-        description=(
-            "Canonical fallback property name on the class. ``into`` is "
-            "accepted as a legacy alias."
-        ),
+        description="Canonical fallback property name on the class.",
     )
     sep: str = PydanticField(
         default=":",
         description="Separator between tag and key.",
     )
-    sources: dict[
-        str, LocalKeySource | list[LocalKeySource] | dict[str, LocalKeySource]
-    ] = PydanticField(
-        ...,
-        min_length=1,
-        description=(
-            "Per-resource local-key wiring: ``{resource: source}``; ``{resource: "
-            "[source, ...]}`` when the members carry different key columns; "
-            "``{resource: {member_class: source}}`` when the member decides."
-        ),
-    )
 
     @model_validator(mode="after")
-    def _validate_member_sources(self) -> LocalKeySpec:
-        for resource, entry in self.sources.items():
-            if not isinstance(entry, dict):
-                continue
-            gated = sorted(m for m, src in entry.items() if src.gate is not None)
-            if gated:
-                raise ValueError(
-                    f"LocalKeySpec: member-keyed sources for resource {resource!r} "
-                    f"set a gate on {gated}; the member already decides, and the "
-                    "gate is derived from how the resource produces it"
-                )
+    def _validate_sources(self) -> LocalKeyBranch:
+        _refuse_member_keyed_guards("local_key branch", self.local_key, self.name)
         return self
+
+    @property
+    def sources(self) -> dict[str, LocalKeySource | dict[str, LocalKeySource]]:
+        """The per-resource wiring, under the name :class:`DerivedBranch` uses."""
+        return self.local_key
 
     def sources_for(self, resource: str) -> list[LocalKeySource]:
         """Local-key sources *resource* contributes, in order."""
-        source = self.sources.get(resource)
+        source = self.local_key.get(resource)
         if source is None:
             return []
-        if isinstance(source, LocalKeySource):
-            return [source]
-        return list(source.values()) if isinstance(source, dict) else list(source)
+        return [source] if isinstance(source, LocalKeySource) else list(source.values())
 
     def members_for(self, resource: str) -> list[str] | None:
         """Member classes keying *resource*'s sources, or ``None`` if unkeyed."""
-        source = self.sources.get(resource)
+        source = self.local_key.get(resource)
         return list(source) if isinstance(source, dict) else None
 
 
-class IdentityAlignment(ConfigBaseModel):
-    """Cross-source identity alignment for one canonical class.
+#: A funnel branch over canonical properties the members already carry: one
+#: name, or a composite ``[a, b]`` whose fields must all be present.
+RawBranch = str | list[str]
 
-    ``attributes`` order is funnel priority: a record keys by the highest-priority
-    aligned attribute it carries. Two records fuse when their strongest
-    present attribute coincides — a match on a lower-priority attribute does
-    NOT fuse records when one of them also carries a higher-priority one.
+#: One entry of :attr:`VertexEquivalence.identity`.
+IdentityBranchDecl = RawBranch | DerivedBranch | LocalKeyBranch
+
+
+def branch_fields(branch: IdentityBranchDecl) -> list[str]:
+    """The canonical fields *branch* keys on."""
+    if isinstance(branch, str):
+        return [branch]
+    if isinstance(branch, list):
+        return list(branch)
+    return [branch.name]
+
+
+def branch_id(branch: IdentityBranchDecl) -> str:
+    """The funnel branch id *branch* lowers to — part of the digest payload."""
+    return "_".join(branch_fields(branch))
+
+
+def identity_branches_funnel(branches: Sequence[IdentityBranchDecl]) -> IdentityFunnel:
+    """The funnel *branches* declare, in declared order."""
+    return IdentityFunnel(
+        branches=[
+            IdentityBranch(id=branch_id(branch), fields=branch_fields(branch))
+            for branch in branches
+        ]
+    )
+
+
+def check_identity_branches(
+    branches: Sequence[IdentityBranchDecl], *, label: str
+) -> None:
+    """Refuse a branch list no funnel can be built from, naming *label*.
+
+    Non-empty; no empty composite; at most one ``local_key``, and it last --
+    every record completes it, so a branch after it never fires; unique
+    branch ids, since they take part in the digest; and no derived name that
+    a property branch keys on, which the derivation would overwrite.
     """
+    if not branches:
+        raise ValueError(
+            f"{label}: identity lists no branch; omit it to carry the members' "
+            "shared key through"
+        )
+    for branch in branches:
+        if isinstance(branch, list) and not branch:
+            raise ValueError(f"{label}: an identity branch is empty")
+    local = [i for i, b in enumerate(branches) if isinstance(b, LocalKeyBranch)]
+    if len(local) > 1:
+        raise ValueError(f"{label}: identity has more than one local_key")
+    if local and local[0] != len(branches) - 1:
+        raise ValueError(
+            f"{label}: the local_key branch must be the last one; a record keys "
+            "on its first complete branch, and every record completes the local key"
+        )
+    ids = [branch_id(branch) for branch in branches]
+    repeated = sorted({i for i in ids if ids.count(i) > 1})
+    if repeated:
+        raise ValueError(f"{label}: identity repeats the branches {repeated}")
+    raw_fields = {
+        f for b in branches if isinstance(b, str | list) for f in branch_fields(b)
+    }
+    derived = [
+        b.name for b in branches if isinstance(b, DerivedBranch | LocalKeyBranch)
+    ]
+    shadowing = sorted(set(derived) & raw_fields)
+    if shadowing:
+        raise ValueError(
+            f"{label}: derived branches {shadowing} are named like properties "
+            "another branch keys on; the derivation would overwrite them"
+        )
 
-    vertex: str = PydanticField(
-        ...,
-        description="The canonical class whose identity is being aligned.",
-    )
-    attributes: list[AlignmentAttribute] = PydanticField(
-        default_factory=list,
-        validation_alias=AliasChoices("attributes", "rows"),
-        description=(
-            "Aligned canonical attributes, in priority order. ``rows`` is "
-            "accepted as a legacy alias."
-        ),
-    )
-    local_key: LocalKeySpec | None = PydanticField(
-        default=None,
-        description=(
-            "Fallback identity for records carrying no aligned attribute. "
-            "Without it such records get no identity and are dropped."
-        ),
-    )
-    secondary_identities: dict[str, list[str]] = PydanticField(
-        default_factory=dict,
-        description=(
-            "Extra lookup-only secondary identities: ``{name: [field, ...]}``. "
-            "Inside ``merge_manifests`` every member's pre-merge key is demoted "
-            "without being listed (unless the equivalence says "
-            "``retire: keep``); list one here to name it, or to index a field "
-            "that was never a key."
-        ),
-    )
-    at: dict[str, list[int]] = PydanticField(
-        default_factory=dict,
-        description=(
-            "Per-resource pipeline level to derive at, as ``descend`` step "
-            "indices. Omitted resources resolve to the single level producing "
-            "``vertex`` (for member-keyed sources: the level producing the "
-            "member on its side); supply a path only when a resource produces "
-            "it at more than one level."
-        ),
-    )
 
-    @model_validator(mode="after")
-    def _validate_shape(self) -> IdentityAlignment:
-        if not self.attributes and self.local_key is None:
-            raise ValueError(
-                "IdentityAlignment requires at least one attribute or a local_key"
-            )
-        into_names = [attribute.name for attribute in self.attributes]
-        if self.local_key is not None:
-            into_names.append(self.local_key.name)
-        duplicates = {n for n in into_names if into_names.count(n) > 1}
-        if duplicates:
-            raise ValueError(
-                f"IdentityAlignment: duplicate target attributes {sorted(duplicates)}"
-            )
-        return self
+def _describe_branch_shapes() -> str:
+    return (
+        "a branch is a property name, a list of names, `{name, sources}`, or "
+        "`{local_key: {resource: {field, tag}}}`"
+    )
 
 
 def _member_list(value: str | list[str]) -> list[str]:
@@ -2254,8 +2194,8 @@ class PropertyEquivalence(ConfigBaseModel):
     Exact-name matches do **not** need a :class:`PropertyEquivalence`: after
     boundary rename, ``merge_vertex_models`` unions fields by spelling, so a
     property present under the same name on every member fuses for free.
-    Declare an equivalence only to rename, to pick a different ``into``, or to
-    flag ``identity=True``.
+    Declare an equivalence only to rename or to pick a different ``into``; the
+    merged key is declared on the :class:`VertexEquivalence`.
     """
 
     left: str | dict[str, str] | None = PydanticField(
@@ -2274,15 +2214,6 @@ class PropertyEquivalence(ConfigBaseModel):
         ...,
         description="Canonical property name on the merged vertex.",
     )
-    identity: bool = PydanticField(
-        default=False,
-        description=(
-            "When True and ``VertexEquivalence.identity`` is unset, ``into`` is "
-            "part of the merged key. Members that agree on a key keep it, with "
-            "``into`` added; members that disagree are re-keyed on the flagged "
-            "fields alone, which every member must carry."
-        ),
-    )
 
     @model_validator(mode="after")
     def _require_side(self) -> PropertyEquivalence:
@@ -2298,44 +2229,6 @@ class PropertyEquivalence(ConfigBaseModel):
         return self
 
 
-IdentityBranchSpec = str | list[str]
-
-
-class SideIdentity(ConfigBaseModel):
-    """Per-side/per-member shorthand for a cluster's merged identity funnel.
-
-    Each entry is one funnel branch: a single canonical attribute, or an
-    ordered composite (``list[str]``). ``left`` / ``right`` supply the default
-    branch chain for every member declared on that side; ``members`` overrides
-    it for specific member classes, keyed by the member's own or canonical
-    name. Every chain is merged into one global branch order — see
-    :func:`~graflo.architecture.evolution.merge.side_identity_to_funnel` —
-    so declaring the same relative order on every member is required; two
-    members disagreeing on the order of two branches raises.
-    """
-
-    left: list[IdentityBranchSpec] | None = PydanticField(
-        default=None,
-        description="Default ordered branch chain for every left member.",
-    )
-    right: list[IdentityBranchSpec] | None = PydanticField(
-        default=None,
-        description="Default ordered branch chain for every right member.",
-    )
-    members: dict[str, list[IdentityBranchSpec]] = PydanticField(
-        default_factory=dict,
-        description="Per-member branch chain, overriding the side default.",
-    )
-
-    @model_validator(mode="after")
-    def _validate_shape(self) -> SideIdentity:
-        if self.left is None and self.right is None and not self.members:
-            raise ValueError(
-                "SideIdentity requires at least one of left, right, or members"
-            )
-        return self
-
-
 class VertexEquivalence(ConfigBaseModel):
     """Collapse one or more left classes and one or more right classes into one.
 
@@ -2346,8 +2239,14 @@ class VertexEquivalence(ConfigBaseModel):
     requires ``MergeManifestsOp.allow_merges=True``.
 
     Properties with the same spelling on every member after alignment fuse by
-    exact name without an entry in ``properties`` — list only renames and
-    identity-flagged fields.
+    exact name without an entry in ``properties`` — list only renames.
+
+    ``identity`` is the merged key, as ordered funnel branches in canonical
+    names. A branch is a property the members carry (a name, or a composite
+    ``[a, b]``), a :class:`DerivedBranch` each source computes from its own
+    columns, or a :class:`LocalKeyBranch` (the tagged fallback, last). One
+    property branch keys the class on that natural key; anything else keys it
+    on a funnel, where a record keys on its first complete branch.
     """
 
     left: str | list[str] = PydanticField(
@@ -2368,29 +2267,82 @@ class VertexEquivalence(ConfigBaseModel):
         default_factory=list,
         description="Property alignment map applied before the vertex merge.",
     )
-    identity: list[str] | IdentityFunnel | SideIdentity | None = PydanticField(
+    identity: list[IdentityBranchDecl] | None = PydanticField(
         default=None,
         description=(
-            "Optional explicit merged identity, in canonical attribute names "
-            "(after alignment): a natural key, an explicit funnel, or a "
-            "`SideIdentity` shorthand lowered to one funnel. When unset, "
-            "identity is carried through only if every member agrees after "
-            "alignment (plus any `PropertyEquivalence.identity` flags); "
-            "disagreement with nothing declared raises `MergeIdentityError`."
+            "The merged key, as ordered funnel branches in canonical names: a "
+            "property the members carry, a composite ``[a, b]``, a derived "
+            "branch ``{name, sources}``, or ``{local_key: ...}`` (last). One "
+            "property branch is a natural key; anything else is a funnel. When "
+            "unset, identity is carried through only if every member agrees; "
+            "disagreement raises `MergeIdentityError`."
+        ),
+    )
+    derive_at: dict[str, list[int]] = PydanticField(
+        default_factory=dict,
+        description=(
+            "Per-resource pipeline level the derived and local-key branches "
+            "derive at, as ``descend`` step indices. Omitted resources resolve "
+            "to the single level producing the class (for member-keyed "
+            "sources: the level producing the member on its side); supply a "
+            "path only when a resource produces it at more than one level."
         ),
     )
     retire: Literal["demote", "keep"] = PydanticField(
         default="demote",
         description=(
-            "What becomes of each member's pre-merge key once the merged class "
-            "is re-keyed -- by `identity`, by a `PropertyEquivalence.identity` "
-            "flag over members that disagree, or by an `identity_alignments` "
-            "entry. `demote` keeps each as a lookup-only secondary identity on "
-            "`into`, and points edge steps of resources that only reference a "
-            "member at it; `keep` leaves the fields as plain properties. Unused "
-            "while the merged class keeps its members' shared key."
+            "What becomes of each member's pre-merge key once `identity` "
+            "re-keys the merged class. `demote` keeps each as a lookup-only "
+            "secondary identity on `into`, and points edge steps of resources "
+            "that only reference a member at it; `keep` leaves the fields as "
+            "plain properties. Unused while the merged class keeps its "
+            "members' shared key."
         ),
     )
+
+    @field_validator("identity", mode="before")
+    @classmethod
+    def _branch_shapes(cls, value: Any) -> Any:
+        """Name the four branch shapes instead of pydantic's union error."""
+        if not isinstance(value, list):
+            return value
+        for entry in value:
+            if isinstance(entry, str | DerivedBranch | LocalKeyBranch):
+                continue
+            if isinstance(entry, list) and all(isinstance(f, str) for f in entry):
+                continue
+            if isinstance(entry, dict) and ("sources" in entry or "local_key" in entry):
+                continue
+            raise ValueError(
+                f"VertexEquivalence: identity branch {entry!r} has no known "
+                f"shape; {_describe_branch_shapes()}"
+            )
+        return value
+
+    def raw_branches(self) -> list[tuple[str, ...]]:
+        """The property branches of ``identity``, each as its field tuple."""
+        return [
+            tuple(branch_fields(branch))
+            for branch in self.identity or []
+            if isinstance(branch, str | list)
+        ]
+
+    def derived_branches(self) -> list[DerivedBranch]:
+        """The derived branches of ``identity``, in priority order."""
+        return [b for b in self.identity or [] if isinstance(b, DerivedBranch)]
+
+    def local_key_branch(self) -> LocalKeyBranch | None:
+        """The ``local_key`` branch of ``identity``, if declared."""
+        return next(
+            (b for b in self.identity or [] if isinstance(b, LocalKeyBranch)), None
+        )
+
+    @property
+    def has_derivation(self) -> bool:
+        """Whether ``identity`` needs pipeline steps: a derived or local-key branch."""
+        return any(
+            isinstance(b, DerivedBranch | LocalKeyBranch) for b in self.identity or []
+        )
 
     @property
     def left_members(self) -> list[str]:
@@ -2453,15 +2405,23 @@ class VertexEquivalence(ConfigBaseModel):
                             f"{pe.into!r} names {side} member(s) {unknown} not "
                             f"in {side}={self.members(side)}"
                         )
-        if self.identity is not None:
-            flagged = [pe.into for pe in self.properties if pe.identity]
-            if flagged:
+        return self
+
+    @model_validator(mode="after")
+    def _validate_identity(self) -> VertexEquivalence:
+        if self.identity is None:
+            if self.derive_at:
                 raise ValueError(
-                    "VertexEquivalence: `identity` is declared on the cluster; "
-                    f"PropertyEquivalence.identity=True on {flagged} is "
-                    "redundant and conflicting — declare the merged key one "
-                    "way, not both"
+                    "VertexEquivalence: derive_at is set but no identity branch "
+                    "derives anything"
                 )
+            return self
+        check_identity_branches(self.identity, label="VertexEquivalence")
+        if self.derive_at and not self.has_derivation:
+            raise ValueError(
+                "VertexEquivalence: derive_at is set but no identity branch "
+                "derives anything"
+            )
         return self
 
 
@@ -2531,10 +2491,10 @@ class MergeManifestsOp(ConfigBaseModel):
     union (schema + resources + bindings), subject to ``name_conflict`` /
     ``resource_renames``.
 
-    ``identity_alignments`` are applied to the merged union before return
-    (canonical attributes → resource derivations → priority funnel → secondaries).
-    Each entry's ``vertex`` must be a declared cluster's merged name, and no two
-    entries may name the same class.
+    A vertex equivalence's ``identity`` with a derived or ``local_key`` branch
+    is applied to the merged union before return (canonical attributes →
+    resource derivations → priority funnel), then the members' own keys are
+    demoted to secondary identities.
 
     Equivalences name members in the manifests' own vocabulary (a member may
     also be spelled by its canonical name when ``canonical_maps`` establishes
@@ -2609,12 +2569,26 @@ class MergeManifestsOp(ConfigBaseModel):
 
         The policy unions two type *names*; ``fuse`` everywhere else in the
         contract means two *records* becoming one node
-        (``allow_observation_fusion``, identity alignment), so the value was
+        (``allow_observation_fusion``, a derived identity), so the value was
         renamed. Merge is excluded from the revision vocabulary, so no
         stored change set carries the old spelling -- only authored documents,
         which keep working.
         """
         return "union_right" if value == "fuse_right" else value
+
+    router_scope: Literal["side", "union"] = PydanticField(
+        default="side",
+        description=(
+            "What a ``vertex_router`` may route a discriminator value missing "
+            "from its ``type_map`` to, after the merge. ``side`` closes each "
+            "router over its own side's classes: merge writes every class of "
+            "that side into the table, under its merged name, and sets "
+            "``type_map_only``, so a value the side never modeled is skipped "
+            "as it was before the merge. ``union`` leaves routers open: such a "
+            "value can name any class of the merged schema, the other side's "
+            "included -- for sources that share type names and ids."
+        ),
+    )
 
     allow_merges: bool = PydanticField(
         default=False,
@@ -2652,13 +2626,6 @@ class MergeManifestsOp(ConfigBaseModel):
             "than this merge; set it here to say so for both maps at once."
         ),
     )
-    identity_alignments: list[IdentityAlignment] = PydanticField(
-        default_factory=list,
-        description=(
-            "Optional identity alignments applied after the schema/resource "
-            "union, at most one per merged class."
-        ),
-    )
     canonical_maps: dict[Literal["left", "right", "both"], CanonicalMap] = (
         PydanticField(
             default_factory=dict,
@@ -2671,28 +2638,6 @@ class MergeManifestsOp(ConfigBaseModel):
             ),
         )
     )
-
-    @model_validator(mode="after")
-    def _one_alignment_per_class(self) -> MergeManifestsOp:
-        """Refuse two alignments for one class rather than letting the later win.
-
-        Each alignment replaces the class's identity wholesale, so a second one
-        would silently discard the first's funnel and leave its attributes and
-        derivation steps behind, derived and never keyed on. Two alignments for
-        one class are one alignment with more attributes.
-        """
-        counts: dict[str, int] = {}
-        for alignment in self.identity_alignments:
-            counts[alignment.vertex] = counts.get(alignment.vertex, 0) + 1
-        repeated = sorted(vertex for vertex, n in counts.items() if n > 1)
-        if repeated:
-            raise ValueError(
-                f"merge_manifests: more than one identity alignment for {repeated}; "
-                "each replaces the class's identity, so the later would discard "
-                "the earlier -- list every attribute in one alignment, in "
-                "priority order"
-            )
-        return self
 
     @model_validator(mode="after")
     def _require_allow_merges_for_nary(self) -> MergeManifestsOp:

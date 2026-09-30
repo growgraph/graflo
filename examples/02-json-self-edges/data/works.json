@@ -1,0 +1,34 @@
+[
+    {
+        "id": "https://openalex.org/W2169528473",
+        "doi": "https://doi.org/10.1007/bf01386390",
+        "title": "A note on two problems in connexion with graphs",
+        "publication_date": "1959-12-01",
+        "type": "article",
+        "referenced_works": [
+            "https://openalex.org/W1965680834",
+            "https://openalex.org/W1968778433",
+            "https://openalex.org/W2085958541",
+            "https://openalex.org/W4285719527"
+        ]
+    },
+    {
+        "id": "https://openalex.org/W1968778433",
+        "doi": "https://doi.org/10.1145/320893.320896",
+        "title": "Formal Procedures for Connecting Terminals with a Minimum Total Wire Length",
+        "publication_date": "1957-10-01",
+        "type": "article",
+        "referenced_works": [
+            "https://openalex.org/W1965680834",
+            "https://openalex.org/W2616697817"
+        ]
+    },
+    {
+        "id": "https://openalex.org/W1965680834",
+        "doi": "https://doi.org/10.1090/s0002-9939-1956-0078686-7",
+        "title": "On the shortest spanning subtree of a graph and the traveling salesman problem",
+        "publication_date": "1956-02-01",
+        "type": "article",
+        "referenced_works": []
+    }
+]

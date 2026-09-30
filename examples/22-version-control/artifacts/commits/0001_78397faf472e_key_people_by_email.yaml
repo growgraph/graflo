@@ -1,0 +1,21 @@
+id: 78397faf472e
+parents:
+-   97382d5d748c
+ops:
+-   op: replace_identity
+    replacements:
+        person:
+            to:
+                mode: natural
+                identity:
+                -   email
+            retire: keep
+            endpoints: follow_new
+-   additions:
+        person:
+        -   email_verified
+    op: add_vertex_properties
+tree_before: b44c7b3f9b308732d42aca170f2664c5458874618563ee8d2655433320288cac
+tree: 5e5b3461641dc3d1e5f27b5a479ecf7cfe4defca6f6b1cccb08cbd9c6033d069
+label: key people by email
+created_at: '2026-01-01T00:00:00+00:00'

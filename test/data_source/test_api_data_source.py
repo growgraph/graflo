@@ -384,7 +384,7 @@ def _build_session_token_source(
     if carry_params is not None:
         request_kwargs["carry_params"] = carry_params
     connector = APIConnector(
-        name="hosts_api",
+        name="machines_api",
         path="/api/search",
         pagination=PaginationConfig(
             request=PaginationRequestConfig(**request_kwargs),
@@ -419,7 +419,7 @@ def test_api_data_source_explicit_carry_params(
     assert [row["id"] for row in rows] == [1, 2, 3]
     assert "results_id" not in request_params[0]
     assert "limit" not in request_params[0]
-    assert request_params[1]["results_id"] == ("SG9zdABuco8EWAIAB9oAAAV84w==")
+    assert request_params[1]["results_id"] == ("TWFjaABuco8EWAIAB9oAAAV84w==")
     assert "limit" not in request_params[1]
 
 
@@ -443,7 +443,7 @@ def test_api_data_source_auto_detect_carry_params(
 
     assert len(rows) == 3
     assert "results_id" not in request_params[0]
-    assert request_params[1]["results_id"] == ("SG9zdABuco8EWAIAB9oAAAV84w==")
+    assert request_params[1]["results_id"] == ("TWFjaABuco8EWAIAB9oAAAV84w==")
 
 
 def test_api_data_source_result_id_batch_metadata_not_carried(

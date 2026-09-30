@@ -1,0 +1,38 @@
+# A plain plant-floor manifest: no grounding, no units, no validity intervals,
+# no provenance. It fails five of the six checks of the `world-model` profile;
+# only the identity check passes, because each type names its key.
+metadata:
+    name: plant-plain
+    description: An ungrounded starting point, before the lift.
+schema:
+    metadata:
+        name: plant-plain
+        version: "1.0.0"
+    graph:
+        vertex_config:
+            vertices:
+            -   name: Machine
+                description: A machine on the plant floor.
+                properties:
+                -   {name: machine_id, type: STRING}
+                -   {name: label, type: STRING}
+                -   {name: status, type: STRING}
+                -   {name: operating_temp, type: FLOAT}
+                identity: [machine_id]
+
+            -   name: ProductionLine
+                description: A line that turns out one product family.
+                properties:
+                -   {name: line_id, type: STRING}
+                -   {name: label, type: STRING}
+                -   {name: operating_mode, type: STRING}
+                identity: [line_id]
+
+        edge_config:
+            edges:
+            -   source: Machine
+                target: ProductionLine
+                relation: installed_on
+            -   source: Machine
+                target: Machine
+                relation: feeds

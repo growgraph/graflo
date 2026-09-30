@@ -430,8 +430,8 @@ class FilterExpression(ConfigBaseModel):
     def _quote_sql_field(field: str) -> str:
         """Quote a SQL field name, handling dotted alias.column references.
 
-        ``sys_id``   -> ``"sys_id"``
-        ``s.sys_id`` -> ``s."sys_id"``
+        ``record_id``   -> ``"record_id"``
+        ``s.record_id`` -> ``s."record_id"``
         """
         if "." in field:
             alias, col = field.split(".", 1)

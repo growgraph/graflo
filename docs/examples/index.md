@@ -1,43 +1,86 @@
 # Examples
 
-Runnable walkthroughs with sample data under `examples/` in the repository.
+Each example answers one question with a small data set, a manifest and a
+script you can run. Find the question closest to yours, read its page, then run
+it from its directory under
+[`examples/`](https://github.com/growgraph/graflo/tree/main/examples) in a
+clone of the repository. The repository has a Docker Compose setup under
+`docker/` for every database these examples use; see
+[`docker/README.md`](https://github.com/growgraph/graflo/blob/main/docker/README.md).
 
-## By topic
+## Basic ingestion
 
-| Topic | Examples | Related docs |
-|-------|----------|--------------|
-| CSV / files | [1](example-1.md), [3](example-3.md), [8](example-8.md), [11](example-11.md), [12](example-12.md), [15](example-15.md), [16](example-16.md) | [Transforms](../concepts/ingestion/transforms.md), [Identity inference guide](../guides/identity_inference.md), [Vertex identity](../concepts/schema/vertex_identity.md) |
-| JSON / nested | [2](example-2.md), [4](example-4.md), [7](example-7.md) | [Core components](../concepts/architecture/core_components.md) |
-| PostgreSQL | [5](example-5.md) | [Capabilities](../concepts/architecture/capabilities.md) |
-| RDF / SPARQL | [6](example-6.md) | [GraFlo ontology](../concepts/schema/ontology.md) |
-| API | [14](example-14.md) | [API env wiring guide](../guides/api_env_wiring.md), [API connector](../concepts/connectors/api_connector.md) |
-| TigerGraph / S3 | [10](example-10.md) | [TigerGraph bulk load guide](../guides/tigergraph_bulk_load.md) |
-| Graph export / file backend | [13](example-13.md) | [Graph export guide](../guides/graph_export_and_replay.md) |
-| Graph DB migration (Neo4j/Arango → any target) | — | [Graph DB migration guide](../guides/graph_db_migration.md), [Quick start](../getting_started/quickstart.md#graph-export-and-migration) |
-| Evolution / versioning | [17](example-17.md), [18](example-18.md), [19](example-19.md), [20](example-20.md), [23](example-23.md) | [Version control](../concepts/schema/versioning.md), [Manifest evolution](../concepts/schema/manifest_evolution.md) |
-| Connectors / proxy wiring | [9](example-9.md) | [Runtime connector updates](../concepts/connectors/runtime_updates.md) |
+| No. | Question | Needs to run |
+|---|---|---|
+| 01 | [How do I ingest CSV files into a graph?](csv-two-resources/index.md) | ArangoDB |
+| 02 | [How do I link records that refer to records of the same kind?](json-self-edges/index.md) | ArangoDB |
+| 03 | [How do I keep several different relations between the same two things?](csv-relation-field/index.md) | ArangoDB |
+| 04 | [How do I turn nested JSON into a graph when the key names say what the relation is?](json-relation-from-key/index.md) | ArangoDB |
 
-## Full list
+## Pipeline features
 
-1. [CSV with Multiple Tabular Sources](example-1.md)
-2. [JSON with Self-Reference Vertices](example-2.md)
-3. [CSV with Edge Weights and Multiple Relations](example-3.md)
-4. [Neo4j Ingestion with Dynamic Relations from Keys](example-4.md)
-5. **[PostgreSQL Schema Inference and Ingestion](example-5.md)** — automatically infer graph schemas from normalized PostgreSQL databases (3NF) with PK/FK heuristics.
-6. **[RDF / Turtle Ingestion with Explicit Resource Mapping](example-6.md)** — infer schemas from OWL ontologies and ingest RDF via `SparqlConnector`.
-7. **[Polymorphic Objects and Relations](example-7.md)** — `vertex_router` + dynamic `edge` for type discriminators and relation maps.
-8. **[Multi-edge properties with filters and `dress` transforms](example-8.md)** — ticker-style CSV with vertex filters and metric transforms.
-9. **[Explicit `connector_connection` Proxy Wiring](example-9.md)** — resolve `conn_proxy` labels at runtime via `ConnectionProvider`.
-10. **[TigerGraph bulk load and S3 staging](example-10.md)** — CSV staging, native `LOADING JOB`, `staging_proxy`.
-11. **[Flat-row dynamic edges with `vertex_router`](example-11.md)** — one row encodes `(source, target, relation)`.
-12. **[Vertex roles and multi-intent edges](example-12.md)** — `role` slots and `links` on edge steps.
-13. **[GraFlo file backend](example-13.md)** — export, ingest to disk, replay to ArangoDB or PostgreSQL.
-14. **[API env wiring](example-14.md)** — `register_all_api_configs_from_env` for multi-proxy manifests.
-15. **[Identity inference from CSV](example-15.md)** — infer vertex identities from flat CSV, ingest to file backend.
-16. **[Secondary identities for edge-only sources](example-16.md)** — relate vertices by ISIN/LEI via `secondary_identities`, `lookup_only`, and `source_match` / `target_match`.
-17. **[Identity funnel across two sources](example-17.md)** — ordered fallback branches key each row by the strongest evidence it carries.
-18. **[Cross-resource identity discovery](example-18.md)** — propose a shared identity policy from sampled documents; apply after review.
-19. **[Union of manifests with conditional equivalence](example-19.md)** — an n-ary equivalence cluster named by a `CanonicalMap` on the merge op, merged in one step with `identity_alignments`, and fuse entities behind a gated match key.
-20. **[Version control: fork, conflict, resolve, merge](example-20.md)** — record commits over a manifest, fork it, reconcile the conflict, and replay the recorded decision after one side moves on.
-21. **[Identity alignment on a routed source](example-21.md)** — align identity across a union whose side is one `vertex_router`, without splitting it: level-targeted derivations, one gated derivation per collapsing branch, and delivery through a restrictive router.
-23. **[Edge inverses: audit, repair, realize](example-23.md)** — a manifest assembled from two sources where only one reported both readings of a fact: see how each declared pair is realized, propagate what is merely missing as reviewable ops, and leave the inverse unstored where the backend reads backwards for free.
+| No. | Question | Needs to run |
+|---|---|---|
+| 05 | [How do I turn price columns into measurements and skip invalid values?](vertex-filters-and-weights/index.md) | ArangoDB |
+| 06 | [How do I ingest a row that mentions the same kind of thing in several roles?](vertex-roles-edge-links/index.md) | ArangoDB |
+| 07 | [How do I ingest one table that holds many kinds of things?](vertex-router-type-map/index.md) | ArangoDB |
+| 08 | [How do I ingest a relations table where each row names its own types?](vertex-router-flat-rows/index.md) | ArangoDB |
+
+## Schema inference
+
+| No. | Question | Needs to run |
+|---|---|---|
+| 09 | [How do I get a graph from a PostgreSQL database without writing a schema?](infer-from-postgres/index.md) | PostgreSQL and ArangoDB |
+| 10 | [How do I turn an OWL ontology and RDF data into a property graph?](infer-from-rdf/index.md) | ArangoDB; the RDF is read from files |
+
+## Connections
+
+| No. | Question | Needs to run |
+|---|---|---|
+| 11 | [How do I keep database credentials out of the manifest?](connection-proxy/index.md) | PostgreSQL and ArangoDB |
+| 12 | [How do I configure several API sources from environment variables?](api-env-config/index.md) | Environment variables only; no API or database is contacted |
+| 13 | [How do I load a large graph into TigerGraph quickly?](tigergraph-bulk-s3/index.md) | TigerGraph and MinIO |
+
+## File backend
+
+| No. | Question | Needs to run |
+|---|---|---|
+| 14 | [How do I try GraFlo without a database, and export a graph to files?](file-backend-export/index.md) | Nothing to write the graph to disk; Neo4j to export from, ArangoDB to move the graph into |
+
+## Identity
+
+| No. | Question | Needs to run |
+|---|---|---|
+| 15 | [My data has no obvious key. How do I find out what identifies a record?](identity-inference/index.md) | Nothing; the graph is written to disk |
+| 16 | [How do I link to a record when the source only knows its alternative identifier?](secondary-identities/index.md) | Nothing; the graph is written to disk |
+| 17 | [Records arrive with different identifiers filled in. How do I still get one vertex per thing?](identity-funnel/index.md) | Nothing; the graph is written to disk |
+| 18 | [Two systems describe the same customers. How do I find the columns that match them?](cross-resource-identity/index.md) | Nothing |
+
+## Evolution
+
+[Evolving a manifest](../guides/evolving_a_manifest.md) walks through changing
+one manifest and recording the change; examples 19 and 22 go further, with
+both directions of a relation and with two histories to reconcile.
+[Merging manifests](../concepts/schema/merging_manifests.md) explains the
+union behind examples 20 and 21.
+
+| No. | Question | Needs to run |
+|---|---|---|
+| 19 | [How do I get both directions of a relation without declaring every edge twice?](edge-inverses/index.md) | Nothing |
+| 20 | [Two teams modeled the same things under different names. How do I combine their manifests?](manifest-union/index.md) | Nothing |
+| 21 | [How do I combine manifests when one source decides the type per row?](router-union-alignment/index.md) | Nothing |
+| 22 | [Two people changed the same manifest. How do I merge their changes and keep the history?](version-control/index.md) | Nothing |
+
+## Profiles
+
+| No. | Question | Needs to run |
+|---|---|---|
+| 23 | [How do I turn a plain schema into one that tracks state and measurements over time?](state-core-lift/index.md) | Nothing |
+
+## What to read next
+
+- [Quick start](../getting_started/quickstart.md): example 01, step by step.
+- [Database connections](../guides/database_connections.md): how to run an
+  example against your own database instead of a container.
+- [Creating a manifest](../getting_started/creating_manifest.md): the three
+  blocks every example's manifest is made of.

@@ -1,62 +1,61 @@
-"""
-Show which funnel branch keyed each row, without touching the backend.
+"""Show which identifier keys each customer record, and the vertex id it gets.
 
-    cd examples/17-identity-funnel
+Runs every row of ``data/crm.csv`` and ``data/billing.csv`` through
+``manifest.yaml`` in memory, as ingestion does, and prints the funnel branch
+that fired and the id the record received. No database or file is written.
+Run it from this directory:
+
     uv run python inspect_identities.py
 """
 
-from __future__ import annotations
-
+import asyncio
 import csv
 
-import click
-from _common import EXAMPLE_DIR, MANIFEST_PATH
 from suthing import FileHandle
 
 from graflo import GraphManifest
-from graflo.architecture.schema.identity_digest import compute_funnel_identity
+from graflo.hq.caster import IngestionParams
+from graflo.hq.document_caster import DocumentCaster
+
+ID_WIDTH = 12
+
+manifest = GraphManifest.from_config(FileHandle.load("manifest.yaml"))
+manifest.finish_init()
+vertices = manifest.require_schema().core_schema.vertex_config.vertices
+funnel = next(v for v in vertices if v.name == "party").identity_funnel
+assert funnel is not None
+caster = DocumentCaster(manifest.require_ingestion_model())
 
 
-def _winning_branch(doc: dict, funnel) -> str | None:
-    """Which branch fires for *doc* — the funnel returns only the digest."""
+def winning_branch(row: dict[str, str]) -> str:
+    """The first branch whose required fields are all filled in, or "-"."""
     for branch in funnel.branches:
-        values = [doc.get(field) for field in branch.required_fields]
-        if all(value not in (None, "") for value in values):
+        if all(row.get(field) for field in branch.required_fields):
             return branch.id
-    return None
+    return "-"
 
 
-@click.command()
-def main() -> None:
-    """Print the branch and synthetic id each source row resolves to."""
-    manifest = GraphManifest.from_config(FileHandle.load(MANIFEST_PATH))
-    manifest.finish_init()
-    vertex_config = manifest.graph_schema.core_schema.vertex_config
-    funnel = vertex_config._get_vertex_by_name("party").identity_funnel
-
-    click.echo(f"{'source':<9} {'branch':<7} {'id':<18} evidence")
-    for source in ("crm", "billing"):
-        path = EXAMPLE_DIR / "data" / f"{source}.csv"
-        with path.open(encoding="utf-8") as handle:
-            for row in csv.DictReader(handle):
-                branch = _winning_branch(row, funnel)
-                identity = compute_funnel_identity(row, funnel)
-                evidence = ", ".join(
-                    f"{k}={v}" for k, v in row.items() if v not in (None, "")
-                )
-                click.echo(
-                    f"{source:<9} {branch or '-':<7} "
-                    f"{(identity or '-')[:16]:<18} {evidence}"
-                )
-
-    click.echo(
-        "\nNote: Alan Turing carries an email in both sources, so both rows take "
-        "the 'email' branch and upsert onto the same vertex. The other two people "
-        "key by email in the CRM and by phone+country in billing — different "
-        "branches, hence different vertices. Resolving that is cross-resource "
-        "identity discovery, not the funnel's job."
-    )
+def cast_row(resource: str, row: dict[str, str]) -> dict | None:
+    """Cast one row as ingestion does; None when the record is dropped."""
+    result = asyncio.run(caster.cast_batch([row], resource, params=IngestionParams()))
+    records = result.graph.vertices.get("party", [])
+    return records[0] if records else None
 
 
-if __name__ == "__main__":
-    main()
+rows = records = 0
+ids: set[str] = set()
+print(f"{'source':<9}{'name':<17}{'branch':<8}vertex id")
+for resource in ("crm", "billing"):
+    with open(f"data/{resource}.csv", newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            rows += 1
+            record = cast_row(resource, row)
+            if record is None:
+                vertex_id = "none, dropped"
+            else:
+                records += 1
+                ids.add(record["id"])
+                vertex_id = record["id"][:ID_WIDTH]
+            print(f"{resource:<9}{row['name']:<17}{winning_branch(row):<8}{vertex_id}")
+
+print(f"{rows} rows -> {records} records -> {len(ids)} distinct ids")

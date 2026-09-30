@@ -1,92 +1,287 @@
 # Inferring a graph from a SQL database
 
-GraFlo can read a relational schema and propose a graph: entity tables become
-vertex types, junction tables become edges, columns become typed fields. The
-result is a draft `GraphManifest` for you to refine, not a finished model.
+You have a relational database and want its data as a graph without writing
+the schema by hand. GraFlo reads the tables and their keys and proposes a draft
+manifest: entity tables become vertex types, link tables become edges, and
+columns become typed properties. This guide takes a PostgreSQL schema, or any
+database SQLAlchemy can read, to a draft manifest, shows what to check and what
+to add, and writes the graph. The draft is only as good as the keys the
+database declares.
 
-## Any engine SQLAlchemy can reflect
+## What you need
 
-Introspection asks seven questions — tables, columns, primary keys, unique
-columns, foreign keys, row counts, sample rows — and everything downstream is
-derived from the answers. PostgreSQL answers them from `pg_catalog` directly;
-every other engine answers them through SQLAlchemy reflection.
+- GraFlo installed (`pip install graflo`). It reads PostgreSQL as it is; for
+  another engine, install that engine's SQLAlchemy dialect, such as `pymysql`
+  for MySQL, `duckdb-engine` for DuckDB or `sqlalchemy-bigquery` for BigQuery.
+- Tables that declare primary keys, and foreign keys where rows refer to each
+  other.
+- A target graph database and its connection settings; see
+  [Database connections](database_connections.md).
+
+[The PostgreSQL inference example (09)](../examples/infer-from-postgres/index.md)
+runs these steps on a sample database.
+
+## Steps
+
+### 1. Infer a manifest
+
+```python
+from graflo import DBType
+from graflo.connections import PostgresConfig
+from graflo.hq import GraphEngine
+
+# Reads POSTGRES_URI, POSTGRES_USERNAME, POSTGRES_PASSWORD, POSTGRES_DATABASE.
+pg_config = PostgresConfig.from_env()
+
+engine = GraphEngine(target_db_flavor=DBType.NEO4J)
+manifest = engine.infer_manifest(pg_config, schema_name="public")
+```
+
+`infer_manifest` reads the tables of the PostgreSQL schema `public` with their
+columns and keys, and returns a complete manifest:
+
+- a `schema` with a vertex type per entity table and an edge per link table;
+- an `ingestion_model` with one [resource](../concepts/glossary.md#resource)
+  per table;
+- `bindings` with one table connector per table, all under the connection
+  label `postgres_source`.
+
+The manifest holds no credentials. The engine keeps the PostgreSQL settings for
+the label `postgres_source`, so the same engine can read the tables in step 4.
+
+The target flavor does not change the vertex types or edges. It is recorded in
+the database profile, and for TigerGraph GraFlo also records storage names that
+avoid TigerGraph's reserved words and forbidden characters.
+
+The graph is named after the PostgreSQL schema. When the target connection
+settings name no database, that name becomes the target database or graph. To
+choose another name, set it before you write anything:
+
+```python
+manifest.require_schema().metadata.name = "plant"
+```
+
+`infer_manifest` also takes `discard_disconnected_vertices=True`, which drops
+vertex types that take part in no edge, with their resources and connectors,
+and `fuzzy_threshold` (default 0.8), how closely a column name must match a
+vertex type name when GraFlo maps a link table's key columns to its endpoints.
+
+### 2. Check the draft
+
+Save the draft and read it:
+
+```python
+from suthing import FileHandle
+
+FileHandle.dump(manifest.to_minimal_canonical_dict(), "plant-manifest.yaml")
+```
+
+GraFlo classifies each table by its keys, and a link table also by its name:
+
+| Table | Becomes |
+|---|---|
+| No primary key | Nothing. The table is skipped |
+| Primary key of two or more columns, exactly two foreign keys, or a name starting with `rel_` | An edge. The first foreign key in column order is the source, the second the target. The relation is a word of the table name that names neither endpoint (`maintained` in `machine_maintained_by_technician`). The other non-key columns become edge properties |
+| Primary key, not an edge, and at least one column that is neither a primary nor a foreign key | A vertex type. Its identity is the primary key; every column becomes a property |
+| Primary key and key columns only, not an edge | Nothing |
+
+Check the draft for these cases, which inference gets wrong by construction:
+
+- **A foreign key inside an entity table does not become an edge.** A
+  `work_order` table with a `machine_serial` column that references `machine`
+  gives a `work_order` vertex type with a `machine_serial` property, and no
+  edge between work orders and machines. Add the edge in step 3.
+- **A table with exactly two foreign keys becomes an edge**, even when it
+  describes a thing of its own. A `work_order` table that references both
+  `machine` and `technician` becomes an edge from machine to technician; its
+  own primary key is dropped and its other columns become edge properties. If
+  it should be a vertex type, move it in step 3.
+- **A link table whose endpoints cannot be found is skipped** with a warning,
+  for example a `rel_` table without foreign keys whose name matches no vertex
+  type.
+
+Inference sees only what the database declares. That is the main limit on a
+denormalized schema: in a star schema, dimension keys are columns like
+`customer_key` with no constraint saying what they reference. Warehouses often
+declare no foreign keys at all, and some SQLAlchemy dialects cannot report
+them, which GraFlo treats as none declared. GraFlo then falls back to matching
+table and column names, which finds some link tables and misses the rest, and
+it never finds a reference from an entity table. A database that declares no
+primary keys gives an empty draft, because every table is skipped. For such a
+source, add primary keys where you can, and treat the draft as a starting
+point: declare the missing vertex types and joins yourself in step 3.
+
+Column types come from a table of type names that covers the spellings of
+PostgreSQL, MySQL, SQL Server, SQLite, BigQuery and Snowflake:
+
+| SQL types | GraFlo type |
+|---|---|
+| `integer`, `bigint`, `smallint`, `serial`, `int64`, `tinyint`, ... | `INT` |
+| `real`, `double precision`, `numeric`, `decimal`, `float64`, `number`, ... | `FLOAT` |
+| `boolean`, `bit` | `BOOL` |
+| `timestamp`, `timestamptz`, `date`, `time`, `datetime2`, ... | `DATETIME` |
+| `varchar`, `text`, `json`, `jsonb`, `uuid`, `bytea`, `interval`, ... | `STRING` |
+| an array such as `integer[]` | `LIST`, with the element type as `item_type` |
+
+A type name that is not in the table becomes `STRING`, with a warning in the
+log, so one unusual column does not stop the whole inference. For the
+properties of an edge, GraFlo also reads up to five rows and refines the
+declared type from the values: a `TEXT` column of ISO dates becomes
+`DATETIME`. Values of `numeric` and `decimal` columns are read as floats, so
+they lose exact decimal precision.
+
+To add type names, subclass `SqlTypeMapper` and extend its `TYPE_MAPPING`
+dict. Exact names are matched before partial ones, and appended entries come
+last in the partial matching, so they do not change how the names already in
+the table resolve. `infer_manifest` always uses the default mapper; to use
+yours, run inference through the `SQLInferenceManager` described under
+[Other databases](#other-databases), which also accepts a `PostgresConnection`
+(`graflo.db.postgres.conn`), and replace its mapper:
+
+```python
+from graflo.db.sql.types import SqlTypeMapper
+
+
+class PlantTypeMapper(SqlTypeMapper):
+    TYPE_MAPPING = {**SqlTypeMapper.TYPE_MAPPING, "money": "FLOAT"}
+
+
+manager.inferencer.type_mapper = PlantTypeMapper()
+```
+
+### 3. Add what inference cannot see
+
+Edit the saved manifest. To add the edge from a work order to the machine its
+`machine_serial` column references, declare the edge and let the `work_order`
+resource find the machine by that column:
+
+```yaml
+schema:
+    core_schema:
+        edge_config:
+            edges:
+            -   source: work_order
+                target: machine
+                relation: concerns
+ingestion_model:
+    resources:
+    -   name: work_order
+        pipeline:
+        -   vertex: work_order
+        -   vertex: machine
+            from:
+                serial_number: machine_serial
+            lookup_only: true
+```
+
+The second step reads `machine_serial` as the machine's `serial_number`.
+`lookup_only: true` uses it to find the machine for the edge without writing a
+machine vertex from the work order row. Keep the edges and resources the draft
+already has; the snippet shows only what to add.
+
+Load the edited manifest before you continue:
+
+```python
+from graflo import GraphManifest
+
+manifest = GraphManifest.from_config(FileHandle.load("plant-manifest.yaml"))
+manifest.finish_init()
+```
+
+### 4. Write the graph
+
+```python
+from graflo.connections import Neo4jConfig
+from graflo.hq import IngestionParams
+
+engine.define_and_ingest(
+    manifest=manifest,
+    target_db_config=Neo4jConfig.from_env(),
+    ingestion_params=IngestionParams(clear_data=True),
+    recreate_schema=True,
+)
+```
+
+`define_and_ingest` creates the schema in the target database and reads every
+table through its connector. `recreate_schema=True` drops an existing graph
+schema first; without it, the call stops when the schema already exists.
+
+The engine from step 1 keeps the PostgreSQL settings. In a new session,
+give them to the ingestion yourself, for the label the bindings use:
+
+```python
+from graflo.connections import InMemoryConnectionProvider, PostgresGeneralizedConnConfig
+
+provider = InMemoryConnectionProvider()
+provider.bind_single_config_for_bindings(
+    bindings=manifest.require_bindings(),
+    conn_proxy="postgres_source",
+    config=PostgresGeneralizedConnConfig(config=PostgresConfig.from_env()),
+)
+engine = GraphEngine(target_db_flavor=DBType.NEO4J)
+engine.define_and_ingest(
+    manifest=manifest,
+    target_db_config=Neo4jConfig.from_env(),
+    connection_provider=provider,
+    recreate_schema=True,
+)
+```
+
+### Other databases
+
+Any engine SQLAlchemy can reflect goes through `SqlAlchemyMetadataProvider`,
+which asks the same questions PostgreSQL answers from its own catalog: tables,
+columns, primary keys, single-column unique constraints, foreign keys, row
+counts and sample rows.
 
 ```python
 from sqlalchemy import create_engine
 
+from graflo import DBType
 from graflo.db.sql.alchemy import SqlAlchemyMetadataProvider
 from graflo.hq.sql_inferencer import SQLInferenceManager
-from graflo.onto import DBType
 
-engine = create_engine("sqlite:///catalogue.db")
-provider = SqlAlchemyMetadataProvider(engine)
-
-manager = SQLInferenceManager(provider, target_db_flavor=DBType.ARANGO)
+sql_engine = create_engine("sqlite:///plant.db")
+provider = SqlAlchemyMetadataProvider(sql_engine)
+manager = SQLInferenceManager(provider, target_db_flavor=DBType.NEO4J)
 schema, ingestion_model = manager.infer_complete_schema()
 ```
 
-`default_schema` selects the namespace to read — a PostgreSQL schema, a MySQL
-database, a BigQuery dataset. Leave it unset for engines with a single
-namespace, such as SQLite:
+To read a namespace other than the engine's default, such as a MySQL database
+or a BigQuery dataset, pass it as `default_schema`:
 
 ```python
-provider = SqlAlchemyMetadataProvider(engine, default_schema="analytics")
+provider = SqlAlchemyMetadataProvider(sql_engine, default_schema="analytics")
 ```
 
-PostgreSQL keeps its own faster path, and a `PostgresConnection` is itself a
-valid provider:
+Leave it unset for an engine with a single namespace, such as SQLite.
 
-```python
-from graflo.db.postgres.conn import PostgresConnection
-from graflo.connections.onto import PostgresConfig
+This path returns a schema and an ingestion model, but no bindings, because
+GraFlo's table connectors read from PostgreSQL. To load the data, export the
+tables to files and bind each resource to a file connector. It also leaves
+storage names as they are; for a TigerGraph target, run
+`Sanitizer(DBType.TIGERGRAPH).sanitize_manifest(manifest)` (from
+`graflo.hq.sanitizer`) on the manifest you build from them.
 
-manager = SQLInferenceManager(PostgresConnection(PostgresConfig.from_env()))
-```
+The table classification is the same for every engine. It is tested in this
+repository against SQLite and PostgreSQL; other engines use the same code but
+are not tested here.
 
-Installing a dialect is all another engine needs — `pymysql` for MySQL,
-`duckdb-engine` for DuckDB, `sqlalchemy-bigquery` for BigQuery. GraFlo has no
-per-engine code beyond the type-name table.
+## What you should see
 
-## What inference depends on
+After step 1, the saved manifest lists a vertex type for each entity table,
+with the table's primary key as its identity, and an edge for each link table.
+Compare them with your list of tables: a table without a primary key is
+skipped without a message, while skipped link tables and unrecognized column
+types are logged as warnings. After step 4, the target database holds one
+vertex per row of each entity table and an edge per row of each link table,
+plus the edges you added.
 
-The heuristics read *shape*, so how well they work depends on how much shape the
-schema carries.
+## What to read next
 
-| Signal | Used for | When it is missing |
-|--------|----------|--------------------|
-| Primary keys | Vertex identity; a table without one is skipped | Nothing is inferred for that table |
-| Foreign keys | Edge endpoints, directly and reliably | Falls back to inferring endpoints from table and column *names* |
-| Two-column composite PK | Recognising a junction table | The table is treated as an entity |
-| Column types | Field types | Unknown spellings become `STRING` |
-| Sample rows | Refining a declared type | The declared type is used as-is |
-
-**This degrades on denormalised schemas, and the degradation is real.** A star
-schema is not 3NF: its dimension keys are columns like `customer_key` with no
-constraint saying what they reference. Warehouses make this worse — BigQuery's
-foreign keys are unenforced and frequently not declared at all, and a dialect
-that reflects no constraints reports none rather than failing. When that
-happens, edges are recovered from naming conventions or not at all.
-
-If your source is shaped that way, treat inference as a starting point and
-declare the joins yourself rather than expecting them to be found.
-
-## Types
-
-One table maps every dialect's spelling of the same concepts — `integer`,
-`INTEGER`, `INT64` and `tinyint` all mean `INT`. An unrecognised type becomes
-`STRING` with a warning rather than raising, because inference produces a draft
-for a modeller to correct, and refusing a whole database over one exotic column
-would be the wrong trade. This is deliberately the opposite of the write-side
-policy in `graflo.db.field_type_support`, which does raise: there, a wrong type
-silently corrupts data.
-
-To add spellings for a dialect, subclass `SqlTypeMapper` and extend
-`TYPE_MAPPING`; exact matches are tried before any substring fallback, so
-additions cannot change how an existing name resolves.
-
-## Verified coverage
-
-The classification logic is dialect-neutral and is exercised against **SQLite**
-(in-process) and **PostgreSQL** (live), with an equivalence suite asserting that
-both providers return the same graph for the same PostgreSQL database. Other
-engines use the same code path, but no test in this repository connects to one.
+- [Vertex identity](../concepts/schema/vertex_identity.md): how the inferred
+  identities decide which rows become the same vertex.
+- [Creating a manifest](../getting_started/creating_manifest.md): the manifest
+  blocks you edit in step 3.
+- [Database connections](database_connections.md): connection settings for the
+  source and the target.

@@ -1,0 +1,6 @@
+# The equivalence alone: nothing says what the combined type is called.
+op: merge_manifests
+
+vertex_equivalences:
+-   left: Asset
+    right: Device

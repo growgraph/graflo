@@ -1,0 +1,61 @@
+schema:
+    metadata:
+        name: prices
+    graph:
+        vertex_config:
+            vertices:
+            -   name: ticker
+                properties: [symbol]
+                identity: [symbol]
+            -   name: metric
+                properties: [name, value]
+                identity: [name, value]
+                filters:
+                -   field: value
+                    foo: __gt__
+                    value: 0
+        edge_config:
+            edges:
+            -   source: ticker
+                target: metric
+                properties: [date]
+    db_profile: {}
+ingestion_model:
+    transforms:
+    -   name: round_metric
+        module: graflo.util.transform
+        foo: round_str
+        params: {ndigits: 3}
+        dress: {key: name, value: value}
+    -   name: int_metric
+        module: builtins
+        foo: int
+        dress: {key: name, value: value}
+    resources:
+    -   name: prices
+        pipeline:
+        -   transform:
+                call: {use: round_metric, input: [Open]}
+        -   transform:
+                call: {use: round_metric, input: [Close]}
+        -   transform:
+                call: {use: int_metric, input: [Volume]}
+        -   transform:
+                call:
+                    module: graflo.util.transform
+                    foo: parse_date_yahoo
+                    input: [Date]
+                    output: [date]
+        -   vertex: ticker
+        -   vertex: metric
+        -   edge:
+                from: ticker
+                to: metric
+                vertex_weights:
+                -   name: metric
+                    fields: [name]
+bindings:
+    connectors:
+    -   regex: "^prices\\.csv$"
+        sub_path: data
+        resource_name: prices

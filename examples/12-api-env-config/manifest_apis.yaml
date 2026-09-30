@@ -1,0 +1,15 @@
+# Only the bindings block: where records come from. Each API is named by a
+# label (conn_proxy); its address and token come from the environment.
+bindings:
+    connectors:
+    -   name: work_orders_api
+        path: /api/work-orders
+        resource_name: work_orders
+    -   name: readings_api
+        path: /api/readings
+        resource_name: readings
+    connector_connection:
+    -   connector: work_orders_api
+        conn_proxy: maintenance_api
+    -   connector: readings_api
+        conn_proxy: sensor_feed

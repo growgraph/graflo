@@ -19,8 +19,8 @@ def commented(postgres_conn):
         "DROP TABLE IF EXISTS gf_commented",
         "CREATE TABLE gf_commented (id INTEGER PRIMARY KEY, serial TEXT, plain TEXT)",
         "INSERT INTO gf_commented VALUES (1, 'S-1', 'x')",
-        "COMMENT ON TABLE gf_commented IS 'Servers as the CMDB records them'",
-        "COMMENT ON COLUMN gf_commented.serial IS 'Hardware serial; shared with discovery'",
+        "COMMENT ON TABLE gf_commented IS 'Machines as the maintenance system records them'",
+        "COMMENT ON COLUMN gf_commented.serial IS 'Nameplate serial; shared with the sensor feed'",
     ]
     try:
         with postgres_conn.conn.cursor() as cursor:
@@ -41,13 +41,15 @@ def test_comments_reach_the_sample_and_profile(commented, conn_conf) -> None:
     )
     sample = source.get("gf_commented")
     assert sample is not None
-    assert sample.description == "Servers as the CMDB records them"
+    assert sample.description == "Machines as the maintenance system records them"
     assert sample.field_descriptions == {
-        "serial": "Hardware serial; shared with discovery"
+        "serial": "Nameplate serial; shared with the sensor feed"
     }
 
     profile = profile_sample(sample)
     by_path = {field.path: field for field in profile.fields}
-    assert by_path["serial"].description == "Hardware serial; shared with discovery"
+    assert (
+        by_path["serial"].description == "Nameplate serial; shared with the sensor feed"
+    )
     assert by_path["plain"].description is None
-    assert profile.description == "Servers as the CMDB records them"
+    assert profile.description == "Machines as the maintenance system records them"

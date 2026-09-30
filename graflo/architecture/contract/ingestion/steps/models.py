@@ -9,7 +9,10 @@ from pydantic import TypeAdapter, model_validator
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.contract.ingestion.transform import DressConfig
-from graflo.architecture.graph_types.edge_derivation import EdgeDerivation
+from graflo.architecture.graph_types.edge_derivation import (
+    EdgeDerivation,
+    EndpointSelector,
+)
 from graflo.architecture.schema.vertex import VertexName
 from graflo.onto import EndpointAmbiguityPolicy
 
@@ -388,18 +391,25 @@ class EdgeEndpointMatchOptionsConfig(ConfigBaseModel):
     which is what every edge step has always done. Selecting a secondary
     identity instead lets an edge-only source reference endpoints by a business
     key. The choice is per endpoint, so source and target may differ.
+
+    An endpoint filled by a ``vertex_router`` role takes rows of several
+    classes, which need not share a secondary identity. The per-class form,
+    ``{Class: selector}``, names one per class; a class it does not name is
+    matched on its primary identity.
     """
 
-    source_match: str | list[str] | None = PydanticField(
+    source_match: EndpointSelector | None = PydanticField(
         default=None,
         description=(
             "Which identity to match the source endpoint on: omitted or 'identity' "
             "for the primary identity (default), a declared secondary identity name, "
             "an explicit field list equal to a declared secondary identity, or "
-            "'secondary' when the vertex declares exactly one."
+            "'secondary' when the vertex declares exactly one. For an endpoint of "
+            "several classes, a mapping {class: selector}; unnamed classes match "
+            "on their primary identity."
         ),
     )
-    target_match: str | list[str] | None = PydanticField(
+    target_match: EndpointSelector | None = PydanticField(
         default=None,
         description="Same as source_match, for the target endpoint.",
     )
@@ -411,6 +421,16 @@ class EdgeEndpointMatchOptionsConfig(ConfigBaseModel):
             "Has no effect on endpoints matched by primary identity."
         ),
     )
+
+    @model_validator(mode="after")
+    def _per_class_selectors_name_a_class(self) -> EdgeEndpointMatchOptionsConfig:
+        for name in ("source_match", "target_match"):
+            if getattr(self, name) == {}:
+                raise ValueError(
+                    f"{name}: a per-class selector must name at least one class; "
+                    "omit it to match on the primary identity"
+                )
+        return self
 
 
 class EdgeLinkConfig(EdgeEndpointMatchOptionsConfig):
@@ -875,6 +895,31 @@ class VertexRouterActorConfig(VertexExtractionOptionsConfig):
         default=None,
         description="Per-vertex-type field projection.",
     )
+    type_map_only: bool = PydanticField(
+        default=False,
+        description=(
+            "When True, a discriminator value absent from type_map is skipped. By "
+            "default it passes through as the class name, so the router can reach "
+            "any class the schema declares -- including, after a merge, the other "
+            "side's classes. Merge closes each side's routers this way, over the "
+            "side's own classes."
+        ),
+    )
+    lookup_only: bool | list[VertexName] = PydanticField(
+        default=False,
+        description=(
+            "Routed documents used to locate existing vertices for edge endpoints "
+            "but never written -- the router counterpart of a vertex step's "
+            "lookup_only. True covers every class the router sends a row to; a "
+            "list covers only those classes, and the rest are written as usual."
+        ),
+    )
+
+    def looks_up(self, vertex: VertexName) -> bool:
+        """Whether rows routed to *vertex* are only looked up, never written."""
+        if isinstance(self.lookup_only, list):
+            return vertex in self.lookup_only
+        return self.lookup_only
 
     @model_validator(mode="before")
     @classmethod

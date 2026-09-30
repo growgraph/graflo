@@ -142,7 +142,7 @@ def _prune_ingestion_for_removed_vertices(
     """
     from graflo.architecture.contract.ingestion.resource import (
         Resource,
-        pipeline_has_vertex_router,
+        pipeline_has_open_router,
     )
 
     def _names_removed(spec: Any) -> bool:
@@ -154,7 +154,7 @@ def _prune_ingestion_for_removed_vertices(
         pipeline = rewrite_remove_vertices_in_pipeline(resource.pipeline, removed)
         if not (
             pipeline_mentions_any_vertex(pipeline, surviving)
-            or pipeline_has_vertex_router(pipeline)
+            or pipeline_has_open_router(pipeline)
         ):
             continue
         payload = resource.to_dict(skip_defaults=False)

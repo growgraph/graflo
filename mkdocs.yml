@@ -29,6 +29,7 @@ plugins:
 -   gen-files:
         scripts:
         -   docs/_build/gen_pages.py
+        -   docs/_build/gen_examples.py
 -   literate-nav
 -   table-reader: []
 -   mkdocstrings:
@@ -42,18 +43,23 @@ plugins:
                     docstring_style: google
                     show_category_heading: true
                     show_if_no_docstring: true
+validation:
+    omitted_files: warn
+    absolute_links: warn
+    unrecognized_links: warn
+    anchors: warn
 nav:
 -   Home: index.md
--   Getting Started:
+-   Getting started:
     -   Installation: getting_started/installation.md
-    -   Quick Start: getting_started/quickstart.md
-    -   Creating a Manifest: getting_started/creating_manifest.md
+    -   Quick start: getting_started/quickstart.md
+    -   Creating a manifest: getting_started/creating_manifest.md
 -   Concepts:
     -   Overview: concepts/index.md
+    -   Glossary: concepts/glossary.md
     -   Architecture:
         -   Diagrams: concepts/architecture/diagrams.md
         -   Core components: concepts/architecture/core_components.md
-        -   Capabilities: concepts/architecture/capabilities.md
     -   Schema and manifest:
         -   Sampling and profiling: concepts/schema/sampling_and_profiling.md
         -   Vertex identity: concepts/schema/vertex_identity.md
@@ -61,6 +67,7 @@ nav:
         -   Cards: concepts/schema/cards.md
         -   Backend indexes: concepts/schema/backend_indexes.md
         -   Manifest evolution: concepts/schema/manifest_evolution.md
+        -   Merging manifests: concepts/schema/merging_manifests.md
         -   Version control: concepts/schema/versioning.md
         -   Live schema drift: concepts/schema/live_drift.md
         -   Conformance profiles: concepts/schema/world_model_profile.md
@@ -70,51 +77,63 @@ nav:
         -   Parallelism: concepts/ingestion/parallelism.md
         -   Document cast errors: concepts/ingestion/doc_errors.md
     -   Connectors:
-        -   Table views and SelectSpec: concepts/connectors/table_views.md
+        -   Table filters and views: concepts/connectors/table_views.md
         -   API connector: concepts/connectors/api_connector.md
         -   Kafka connector: concepts/connectors/kafka_connector.md
         -   Runtime connector updates: concepts/connectors/runtime_updates.md
     -   Operations:
         -   Graph export and migration: concepts/operations/graph_export_migration.md
         -   Object storage: concepts/operations/object_storage.md
-        -   Migration and practices: concepts/operations/migration_and_practices.md
+        -   Schema migration: concepts/operations/migration_and_practices.md
 -   Guides:
     -   Guides index: guides/index.md
+    -   Database connections: guides/database_connections.md
     -   Importing and layering: guides/importing.md
     -   Graph DB migration: guides/graph_db_migration.md
     -   Graph namespace and schema: guides/graph_namespace_and_schema.md
     -   Graph export and replay: guides/graph_export_and_replay.md
     -   API env wiring: guides/api_env_wiring.md
-    -   Identity inference: guides/identity_inference.md
+    -   Finding a key for your data: guides/identity_inference.md
+    -   Evolving a manifest: guides/evolving_a_manifest.md
     -   TigerGraph bulk load: guides/tigergraph_bulk_load.md
-    -   SQL schema inference: guides/sql_schema_inference.md
+    -   Inferring a graph from SQL: guides/sql_schema_inference.md
     -   Adding a database backend: guides/adding_a_backend.md
 -   Examples:
-    -   Examples Index: examples/index.md
-    -   1 - Ingest Multiple Tabular Sources (CSV, ArangoDB): examples/example-1.md
-    -   2 - JSON with Edges between the same Vertex Type (ArangoDB): examples/example-2.md
-    -   3 - CSV with Edge Weights and Multiple Relations (Neo4j): examples/example-3.md
-    -   4 - Dynamic Relations from Keys (Neo4j): examples/example-4.md
-    -   5 - Ingesting Data from PostgreSQL Tables: examples/example-5.md
-    -   6 - RDF / Turtle Ingestion with Explicit Resource Mapping: examples/example-6.md
-    -   7 - Polymorphic Objects and Relations (vertex_router + dynamic edge): examples/example-7.md
-    -   8 - Multi-Edge Weights with Filters and dress Transform: examples/example-8.md
-    -   9 - Explicit connector_connection Proxy Wiring: examples/example-9.md
-    -   10 - TigerGraph bulk load and S3 staging: examples/example-10.md
-    -   11 - Flat-row dynamic edges with vertex_router: examples/example-11.md
-    -   12 - Vertex Roles and Multi-intent Edges: examples/example-12.md
-    -   13 - Graph Export and Migration: examples/example-13.md
-    -   14 - API env wiring: examples/example-14.md
-    -   15 - Identity inference from CSV: examples/example-15.md
-    -   16 - Secondary identities for edge-only sources: examples/example-16.md
-    -   17 - Identity funnel across two sources: examples/example-17.md
-    -   18 - Cross-resource identity discovery: examples/example-18.md
-    -   19 - Union of manifests with conditional equivalence: examples/example-19.md
-    -   "20 - Version control: fork, conflict, resolve, merge": examples/example-20.md
-    -   21 - Identity alignment on a routed source: examples/example-21.md
-    -   "22 - state-core: lifting a manifest": examples/example-22.md
-    -   "23 - Edge inverses: audit, repair, realize": examples/example-23.md
+    -   Examples index: examples/index.md
+    -   Basic ingestion:
+        -   01 - CSV files into a graph: examples/csv-two-resources/index.md
+        -   02 - Records that refer to their own kind: examples/json-self-edges/index.md
+        -   03 - Several relations between the same two things: examples/csv-relation-field/index.md
+        -   04 - Nested JSON with relations in the keys: examples/json-relation-from-key/index.md
+    -   Pipeline features:
+        -   05 - Price columns as measurements: examples/vertex-filters-and-weights/index.md
+        -   06 - One kind of thing in several roles: examples/vertex-roles-edge-links/index.md
+        -   07 - One table that holds many kinds of things: examples/vertex-router-type-map/index.md
+        -   08 - Rows that name their own types: examples/vertex-router-flat-rows/index.md
+    -   Schema inference:
+        -   09 - A graph from a PostgreSQL database: examples/infer-from-postgres/index.md
+        -   10 - A graph from an ontology and RDF data: examples/infer-from-rdf/index.md
+    -   Connections:
+        -   11 - Credentials outside the manifest: examples/connection-proxy/index.md
+        -   12 - API sources from environment variables: examples/api-env-config/index.md
+        -   13 - Bulk load into TigerGraph: examples/tigergraph-bulk-s3/index.md
+    -   File backend:
+        -   14 - A graph on disk, without a database: examples/file-backend-export/index.md
+    -   Identity:
+        -   15 - Find what identifies a record: examples/identity-inference/index.md
+        -   16 - Link by an alternative identifier: examples/secondary-identities/index.md
+        -   17 - One vertex per thing across sources: examples/identity-funnel/index.md
+        -   18 - Find matching columns across systems: examples/cross-resource-identity/index.md
+    -   Evolution:
+        -   19 - Both directions of a relation: examples/edge-inverses/index.md
+        -   20 - Combine two manifests: examples/manifest-union/index.md
+        -   21 - Combine manifests with a routed source: examples/router-union-alignment/index.md
+        -   22 - Version control for a manifest: examples/version-control/index.md
+    -   Profiles:
+        -   23 - Track state and measurements: examples/state-core-lift/index.md
 -   API Reference: reference/
+-   Internals:
+    -   Merge internals: internals/merge_internals.md
 -   Contributing: contributing.md
 markdown_extensions:
 -   pymdownx.highlight:
@@ -137,11 +156,9 @@ markdown_extensions:
 -   pymdownx.blocks.caption
 -   pymdownx.details
 -   pymdownx.tabbed
--   pymdownx.highlight
 -   pymdownx.emoji
 -   pymdownx.tasklist
 -   pymdownx.keys
--   pymdownx.snippets
 -   pymdownx.magiclink
 -   pymdownx.betterem
 -   pymdownx.caret

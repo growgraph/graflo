@@ -1,0 +1,8 @@
+id,type,name,age,email,license_plate,fuel_type,industry,founded_year
+1,Person,Alice Martin,34,alice@example.com,,,,
+2,Person,Bob Smith,45,bob@example.com,,,,
+3,Person,Clara Rossi,29,clara@example.com,,,,
+4,Vehicle,Toyota Corolla,,,AB-123-CD,Petrol,,
+5,Vehicle,Tesla Model 3,,,EV-789-ZZ,Electric,,
+6,Institution,TechNova Labs,,,,,Biotechnology,2012
+7,Institution,FinEdge Capital,,,,,Finance,2005

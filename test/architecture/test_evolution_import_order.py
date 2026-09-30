@@ -22,7 +22,7 @@ from graflo.architecture.evolution.rewrite import pipeline_mentions_any_vertex
         ),
         (
             "from graflo.architecture.evolution import "
-            "apply_add_resource_transforms, alignment_to_ops"
+            "apply_add_resource_transforms, identity_to_ops"
         ),
     ],
 )

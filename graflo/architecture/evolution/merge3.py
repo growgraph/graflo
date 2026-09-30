@@ -320,8 +320,8 @@ def op_slots(op: ManifestOp) -> set[Slot]:
     # ── whole-manifest ops ──────────────────────────────────────────────────
     elif isinstance(op, (ops.ProjectManifestOp, ops.MergeManifestsOp)):
         # These rewrite everything, so they conflict with any other change.
-        # That is the honest answer: there is no way to merge "keep only these
-        # vertices" with an unrelated edit and be sure of the result.
+        # There is no way to merge "keep only these vertices" with an
+        # unrelated edit and be sure of the result.
         slots.add(("manifest",))
 
     if not slots:
@@ -526,7 +526,7 @@ def find_merge_base(history: Any, left: str, right: str) -> str | None:
     Returns:
         The merge-base commit id, or ``None`` when the two share no ancestor --
         which means they are unrelated lineages, and the operation you want is
-        merge, not merge.
+        a union (``merge_manifests``), not a three-way merge.
     """
     left_ancestors = history.ancestors(left, include_self=True)
     right_ancestors = history.ancestors(right, include_self=True)
@@ -999,7 +999,7 @@ def build_merge_recipe(
     ``resolutions`` stays empty.
 
     What takes their place is the declaration itself. The whole op is recorded
-    -- equivalences, canonical maps, identity alignments, resource renames and
+    -- equivalences and their identities, canonical maps, resource renames and
     the name-conflict policy -- because all of it is "how these two were
     joined", and a re-merge that had only the equivalences would reconstruct a
     different manifest.

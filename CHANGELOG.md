@@ -6,6 +6,125 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.14.1]
+
+### Added
+
+- **`vertex_router` `lookup_only` and `type_map_only`.** `lookup_only` is `true` for every class the
+  router emits, or a list of classes. `type_map_only` skips a value the `type_map` does not name
+  instead of routing it as a class of that name.
+- **`source_match` / `target_match` per endpoint class.** `{Class: selector}` selects the field an
+  endpoint a router role fills matches on; classes not named match on their primary identity.
+- **`MergeManifestsOp.router_scope`** (`side` | `union`). `side` closes each side's routers over
+  that side's classes after merge; `union` leaves them open.
+- **`DerivationSpec.when` and `LocalKeySource.when`.** An explicit `{field, in}` guard on a
+  derivation, replacing the guard merge used to derive from the resource's router. Not allowed on
+  a source keyed by member.
+- **`VertexEquivalence.derive_at`.** The per-resource pipeline level at which a merged class's
+  derivations run when a resource produces the class at more than one level.
+- **Preview note `lookup_demotion`.** Emitted for each member key demoted beside a funnel whose
+  branches that member's records can complete in more than one way — the key no longer
+  deduplicates them.
+- **Docs:** a glossary, a guide to database connections, a guide to evolving a manifest, and a page
+  on merging manifests.
+
+### Changed
+
+- **Examples are renumbered into a learning path** and named after what they teach. Each opens
+  with the question it answers, and its docs page is generated from its `README.md` at build time
+  (`docs/_build/gen_examples.py`), under `examples/<slug>/` instead of `examples/example-<N>/`.
+
+  | New | Old | New | Old |
+  |---|---|---|---|
+  | `01-csv-two-resources` | 1 | `13-tigergraph-bulk-s3` | 10 |
+  | `02-json-self-edges` | 2 | `14-file-backend-export` | 13 |
+  | `03-csv-relation-field` | 3 | `15-identity-inference` | 15 |
+  | `04-json-relation-from-key` | 4 | `16-secondary-identities` | 16 |
+  | `05-vertex-filters-and-weights` | 8 | `17-identity-funnel` | 17 |
+  | `06-vertex-roles-edge-links` | 12 | `18-cross-resource-identity` | 18 |
+  | `07-vertex-router-type-map` | 7 | `19-edge-inverses` | 23 |
+  | `08-vertex-router-flat-rows` | 11 | `20-manifest-union` | 19 |
+  | `09-infer-from-postgres` | 5 | `21-router-union-alignment` | 21 |
+  | `10-infer-from-rdf` | 6 | `22-version-control` | 20 |
+  | `11-connection-proxy` | 9 | `23-state-core-lift` | 22 |
+  | `12-api-env-config` | 14 | | |
+
+- Examples 01-11 write to ArangoDB, so the basic examples need one database; 12 and 14-23 need
+  none. Example input data lives under each example's `data/`.
+- The descriptions `graflo lift` writes for derived state and observation types name the subject
+  without an article: "Mutable facts about `Machine`, ..." and "A measurement of `Machine` at a
+  time."
+- **Docs:** the quick start is one walkthrough; the manifest evolution page is split into
+  evolution, merging, and a guide; code snippets import configs from `graflo.connections`.
+
+- **The merged key is declared once, as `identity` on the `VertexEquivalence`: ordered funnel
+  branches.** A branch is a property the members carry (`serial_number`, or a composite
+  `[plant, tag]`), a derived branch `{name, sources}` each resource computes from its own columns,
+  or `{local_key: {...}}`, always last. One property branch is a natural key; any other list is a
+  funnel. This replaces `identity_alignments`, `SideIdentity`, an `IdentityFunnel` on the
+  equivalence, and `PropertyEquivalence(identity=True)`, which declared the same key four ways and
+  let a declared `identity` be silently overwritten by an alignment.
+
+  ```yaml
+  vertex_equivalences:
+  -   left: Asset
+      right: Device
+      identity:
+      -   name: match_key
+          sources: {assets: {input: [serial_number]}, devices: {input: [serial]}}
+      -   local_key:
+              assets: {field: asset_id, tag: maintenance}
+              devices: {field: device_id, tag: sensors}
+  ```
+
+  - **`identity: [a, b]` now means two branches**, one key per member; a composite natural key is
+    `[[a, b]]`. The lowering is `identity_to_ops(IdentityPlan(...))` and `validate_identity`, in
+    place of `alignment_to_ops` and `validate_alignment`.
+- **`DerivationSpec.foo` defaults to `normalized_key`.** One input instead of `gated_normalized_key`
+  (a gate and a value), so `{input: [serial]}` needs no `foo`.
+- **A merge commit whose recorded declaration no longer loads raises `CommitError`**, naming the
+  cause, not a raw validation error.
+- **Merge turns a branch-incomplete upsert resource into a reference.** A resource that upserts a
+  merged class but can fill none of its branches becomes a lookup on the member's demoted key with
+  pinned edges, a warning, and a `reference_conversion` preview note that those records are no
+  longer written. A resource whose members carry a property branch keeps upserting. It was refused,
+  and still is when no member key was demoted (`retire: keep`). Called directly, `validate_identity`
+  refuses all such resources in one error.
+- **The cast logs dropped documents.** Vertex and edge records dropped for want of an identity value
+  are logged.
+- **Merge closes each side's routers over that side's classes** when `router_scope` is `side`:
+  renamed classes keep their `{old: new}` entries, the rest are listed as themselves, and
+  `type_map_only` is set. A value naming only the other side's class is skipped, as before the
+  merge, where it used to write that class.
+
+### Fixed
+
+- **Edge steps from a router role or data relation ignored endpoint selectors** and lost their edges
+  at cast time (`source_match` / `target_match`).
+- **The derived-attribute collision check compares names with the members' own keys**, so a member's
+  own key no longer slips past it.
+- **The warning for a member with no member-keyed derivation** covers missed members a pass-through
+  router produces.
+- **A merged class keyed on a funnel is refused when a member declares a property `id`, the funnel's
+  own key** (`identity collision`): those records kept their `id` and bypassed the funnel.
+- **A funnel branch no member declares is refused** (`identity coverage`); it could never fire.
+- **An `IdentityPlan` built directly checks its branches as an equivalence does:** a `local_key`
+  ahead of another branch, which would shadow it, is refused.
+
+### Removed
+
+- **`identity_alignments` and related merge types.** `MergeManifestsOp.identity_alignments`,
+  `IdentityAlignment`, `AlignmentAttribute`, `AlignmentRow`, `LocalKeySpec`, `SideIdentity`,
+  `side_identity_to_funnel`, and `PropertyEquivalence.identity` — declare the key as `identity`
+  on the `VertexEquivalence`. Secondary identities are no longer named on the declaration: each
+  member's own key is demoted as `by_<fields>`; add others with `add_secondary_identities`. An
+  identity for a class no equivalence declares is `replace_identity` plus
+  `add_resource_transforms`, not a merge declaration.
+- **`SharedDerivation` and the list form of `sources`.** Scratch fields plus `coalesce_fields` —
+  key the sources by member instead.
+- **`LocalKeySource.gate` / `gate_prefix` and `graflo.util.transform.gated_tagged_key`.** Use
+  `when`.
+
 ## [1.14.0]
 
 ### Added
@@ -349,7 +468,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `db_profile.target_namespace` (validated against the flavor and refused with
   a suggested spelling, never rewritten), then `metadata.name` projected onto
   the flavor's identifier rules. Only what the flavor rejects is rewritten
-  (`cmdb+discovery` → `cmdb_discovery`, `cmdb-discovery` on Neo4j), the
+  (`maintenance+sensors` → `maintenance_sensors`, `maintenance-sensors` on Neo4j), the
   projection is idempotent, and over-long names keep a stable hash suffix. The
   derived name is not stored on the profile, so renaming a schema still does
   not move its content hash.
@@ -365,7 +484,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   path could supply them. The new helper fills a stored config's missing
   credentials from `{PREFIX}USERNAME` / `{PREFIX}PASSWORD` (database and SPARQL
   sources) and `{PREFIX}TOKEN` (REST API sources), where the prefix is derived
-  from the `conn_proxy` label (`helix_discovery` → `HELIX_DISCOVERY_`). A stored
+  from the `conn_proxy` label (`sensor_feed` → `SENSOR_FEED_`). A stored
   value always wins over the environment.
 
 - **Declared edge inverses: `edge_config.inverses` and `edge_config.symmetric`.**
@@ -850,7 +969,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`canonical_slug`** (`graflo.architecture.schema.naming`) — `canonical_key` as one string, with the fallback for wordless names in one place rather than open-coded at each of the seven call sites.
 
-- **Example 20 — version control** (`examples/20-version-control/`): record commits over a manifest, fork it, hit a real identity conflict, resolve it, record the merge commit, and replay the recorded decision after one branch advances. Database-free. Documented in the new "Version control" concepts page.
+- **Example 20 — version control** (`examples/22-version-control/`): record commits over a manifest, fork it, hit a real identity conflict, resolve it, record the merge commit, and replay the recorded decision after one branch advances. Database-free. Documented in the new "Version control" concepts page.
 
 - **The `docs` extra no longer carries `ruff`.** A linter declared as a documentation dependency, unpinned, and a second uncoordinated source of truth for the version beside `.pre-commit-config.yaml`'s `rev`. The pinned `ruff-pre-commit` hook owns it now, matching `graflo-server`, `schewea` and `decigent`, which declare it nowhere.
 
@@ -898,7 +1017,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The committed `docs/reference/` tree**, 216 of its 219 files. Every module page under `reference/` is generated at build time by `docs/_build/gen_pages.py`, which opens each path in `"w"` mode — so `mkdocs-gen-files` replaces the committed file in the MkDocs `Files` collection before anything renders. The committed copies were never read, which is why their staleness produced no symptom: 22 of them named modules deleted in the 1.10.0 reorg, and roughly 45 live modules (`hashing`, `compose`, `autogenerate`, `canonical`, `codec`, `alignment`, `naming`, `semantics`, `projection`, `traversal`, …) had no page on disk at all while rendering perfectly in the built site. A tree that can rot arbitrarily far without a symptom is not documentation; it is an invitation to hand-write stubs that do nothing.
 
-  The 20 `(moved)` / `(removed)` redirect notes from the 1.10.0 reorg went with them. Six live docs linked into those notes — `guides/tigergraph_bulk_load.md`, `examples/example-10.md`, `concepts/operations/object_storage.md` and `reference/index.md` — landing a reader on "this module was deleted, go here" instead of the API page they clicked for; those now point at the current modules directly. The full old→new path table remains in [Importing and layering](docs/guides/importing.md).
+  The 20 `(moved)` / `(removed)` redirect notes from the 1.10.0 reorg went with them. Six live docs linked into those notes — `guides/tigergraph_bulk_load.md`, `examples/tigergraph-bulk-s3/index.md`, `concepts/operations/object_storage.md` and `reference/index.md` — landing a reader on "this module was deleted, go here" instead of the API page they clicked for; those now point at the current modules directly. The full old→new path table remains in [Importing and layering](docs/guides/importing.md).
 
   Kept: `reference/index.md` and the `data_source/` and `rdf/` section overviews. The generator's own docstring and `reference/index.md` now say that module pages are generated and that a hand-written stub at a generated path is inert.
 
@@ -956,7 +1075,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`gated_normalized_key` and `tagged_key`** (`graflo.util.transform`) — the two derivation fundamentals behind conditional equivalence. `gated_normalized_key` normalizes and gates in one call: the normalized value when the gate field starts with a prefix, `None` otherwise; `None` is an empty value to identity digests, so a funnel branch listing the output field is skipped, and an empty prefix makes the gate always pass so both sides of an equivalence share one normal form. `tagged_key` namespaces a side-local key (`"f2"` → `"a:f2"`), keeping a class-level fallback identity side-agnostic while making cross-resource collisions impossible.
 
-- **Example 19 — union of manifests with conditional equivalence** (`examples/19-union-canonical-equivalence/`): pure source manifests, canonicalized with `canonical_map_to_ops`, validated, composed, then aligned via `alignment_to_ops` — records passing the gate fuse across sources, records failing it keep a namespaced local key and stay separate. Includes a `--stale-demo` run showing the validator failing loudly. Documented in the "Canonical maps" and "Identity alignment" sections of the manifest-evolution concepts page.
+- **Example 19 — union of manifests with conditional equivalence** (`examples/20-manifest-union/`): pure source manifests, canonicalized with `canonical_map_to_ops`, validated, composed, then aligned via `alignment_to_ops` — records passing the gate fuse across sources, records failing it keep a namespaced local key and stay separate. Includes a `--stale-demo` run showing the validator failing loudly. Documented in the "Canonical maps" and "Identity alignment" sections of the manifest-evolution concepts page.
 
 ### Fixed
 
@@ -1301,7 +1420,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 - **`Connection.resolve_vertices`** — locate vertices by an arbitrary field-set, preserving match multiplicity. Generic implementation over `fetch_docs` + `FilterExpression` covers every backend; TigerGraph overrides it with a batched interpreted GSQL query, since REST++ filters are conjunction-only and cannot express a disjunction.
 - Secondary identities automatically register a **non-unique** vertex index per field-set (`Schema.finish_init`), which endpoint resolution relies on and NebulaGraph requires outright.
 - PostgreSQL: `define_vertex_indexes` now creates secondary indexes (previously a no-op), and `apply_target_schema` defines indexes. Memgraph likewise defines indexes during schema apply.
-- **Example 16** (`examples/16-secondary-identities/`) — runnable ISIN/LEI edge-only ingest against the GraFlo file backend; docs under `docs/examples/example-16.md`.
+- **Example 16** (`examples/16-secondary-identities/`) — runnable ISIN/LEI edge-only ingest against the GraFlo file backend; docs under `docs/examples/secondary-identities/index.md`.
 
 ### Fixed
 
@@ -1342,7 +1461,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 
 ### Added
 
-- **`PaginationRequestConfig.carry_params`** — map query param names to response dot paths so opaque session tokens (e.g. BMC Discovery ``results_id``) are echoed on subsequent pages. When unset, known tokens (`results_id`, `scroll_id`, `pit_id`, `search_id`) are auto-detected from the first response (including list envelopes at ``0.<key>``).
+- **`PaginationRequestConfig.carry_params`** — map query param names to response dot paths so opaque session tokens (e.g. a search API's ``results_id``) are echoed on subsequent pages. When unset, known tokens (`results_id`, `scroll_id`, `pit_id`, `search_id`) are auto-detected from the first response (including list envelopes at ``0.<key>``).
 - **`PaginationRequestConfig.limit_param`** may be ``None`` to omit the page-size query parameter.
 
 ### Changed
@@ -1382,7 +1501,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 - **`Vertex.identity_mode`** — derived runtime mode: `natural`, `hash`, or `blank`. Unary and composite natural keys share the `natural` mode (same upsert path).
 - **`VertexConfig.hash_identity_vertices`**, **`VertexConfig.vertices_by_identity_mode()`** — derived vertex lists for introspection and `db_writer` branching.
 - **`db_writer._assign_hash_identity_ids`** — hash-mode pre-write hook before vertex upserts.
-- **[Example 15](docs/examples/example-15.md)** — CSV identity inference → manifest → GraFlo file backend ingest (`examples/15-identity-inference/`).
+- **[Example 15](docs/examples/identity-inference/index.md)** — CSV identity inference → manifest → GraFlo file backend ingest (`examples/15-identity-inference/`).
 
 ### Documentation
 
@@ -1412,14 +1531,14 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 - **On-disk layout** — `schema.yaml`, `INDEX.json`, and gzip JSONL chunks under `vertices/` and `edges/` (`graflo.architecture.backend`: **`GraFloIndex`**, **`GraFloLayout`**, **`GraFloBackendWriter`**, **`GraFloBackendReader`**).
 - **`target_flavor_hint`** on `GraFloBackendConfig` — optional pre-sanitization of exported `schema.yaml` for a known downstream `DBType`.
 - **API env wiring** — **`InMemoryConnectionProvider.register_api_config_from_env`** and **`register_all_api_configs_from_env`** load **`RestApiConnConfig`** from environment variables using proxy-scoped prefixes (`user_service` → `USER_SERVICE_BASE_URL`, …). **`RestApiConnConfig.from_env`** supports all **`ApiAuth`** types via **`AUTH_TYPE`**.
-- **[Example 14](docs/examples/example-14.md)** — multi-proxy API env wiring walkthrough (`examples/14-api-env-wiring/`).
+- **[Example 14](docs/examples/api-env-config/index.md)** — multi-proxy API env wiring walkthrough (`examples/12-api-env-config/`).
 - **`GraphEngine._resolve_target_schema()`** — skips sanitization when migrating to a file backend unless `target_flavor_hint` is set.
 
 ### Changed
 
-- **[Example 13](docs/examples/example-13.md)** — reworked around file backend: `export-backend`, `ingest-backend`, and replay via `--from-backend`; bundled CSV manifest for ingest-to-disk demo.
+- **[Example 13](docs/examples/file-backend-export/index.md)** — reworked around file backend: `export-backend`, `ingest-backend`, and replay via `--from-backend`; bundled CSV manifest for ingest-to-disk demo.
 - **Documentation** — [Graph export and migration](docs/concepts/operations/graph_export_migration.md), README, quickstart, and docs index updated for file-backend workflows (1.8.7).
-- **API env wiring docs** — [API connector and pagination](docs/concepts/connectors/api_connector.md), quickstart, data-source reference, and [Example 14](docs/examples/example-14.md) document **`register_all_api_configs_from_env`** and proxy-scoped env prefixes.
+- **API env wiring docs** — [API connector and pagination](docs/concepts/connectors/api_connector.md), quickstart, data-source reference, and [Example 14](docs/examples/api-env-config/index.md) document **`register_all_api_configs_from_env`** and proxy-scoped env prefixes.
 - **Ingestion scope docs** — `IngestionParams.connectors` documented in README, quickstart, [features and practices](docs/concepts/operations/migration_and_practices.md), architecture diagrams, and data-source reference.
 
 ## [1.8.6]
@@ -1439,7 +1558,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 ### Documentation
 
 - **[Graph export and migration](docs/concepts/operations/graph_export_migration.md)** — quick-start sketch, `GraFloOutput`, graph-source introspection, `export_graph` / `migrate_graph`, and PostgreSQL as a relational graph target.
-- **[Example 13](docs/examples/example-13.md)** — step-by-step walkthrough and `examples/13-graph-export-migration/export_migrate.py` CLI.
+- **[Example 13](docs/examples/file-backend-export/index.md)** — step-by-step walkthrough and `examples/14-file-backend-export/export_migrate.py` CLI.
 - **README**, **quickstart**, and **docs index** — PostgreSQL target, bi-directional graph workflows, and links to the new pages.
 
 ## [1.8.5]
@@ -1591,7 +1710,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 - **[Runtime connector updates](docs/concepts/connectors/runtime_updates.md)** — `time_filter` / **`ColumnTimeFilter`** (YAML + Python), patch examples, and registry timing.
 - **[Concepts overview](docs/concepts/index.md)** — bindings bullet and focused-topic link for runtime patches and SQL time filters.
 - **[Table connector views](docs/concepts/connectors/table_views.md)** — cross-link to time filters vs `view` / `joins`.
-- **[Example 5 – PostgreSQL](docs/examples/example-5.md)** — `datetime_columns` now documented as setting **`time_filter.column`** on connectors; ingestion date-range comment aligned.
+- **[Example 5 – PostgreSQL](docs/examples/infer-from-postgres/index.md)** — `datetime_columns` now documented as setting **`time_filter.column`** on connectors; ingestion date-range comment aligned.
 - **`creating_manifest.md`** — `connectors` may include optional **`time_filter`** on file/table connectors.
 
 
@@ -1825,7 +1944,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 
 ### Documentation
 
-- **`docs/examples/example-12.md`**: new example — *Vertex Roles and Multi-intent Edges*.
+- **`docs/examples/vertex-roles-edge-links/index.md`**: new example — *Vertex Roles and Multi-intent Edges*.
   CSV `person,parent,child,name,age`; one `person` vertex type; two `person→person` edge types
   (`is_child_of`, `is_parent_of`); three `vertex+role` steps + one `edge: links` step.
   Covers `role`, `keep_fields`, `from` direction, passthrough behaviour, and `links`.
@@ -1836,7 +1955,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 
 ### Examples
 
-- **`examples/12-vertex-roles-multi-edge/`**: `family_edges.csv`, `manifest.yaml`, `ingest.py`
+- **`examples/06-vertex-roles-edge-links/`**: `family_edges.csv`, `manifest.yaml`, `ingest.py`
   demonstrating the vertex-role + multi-link pattern end-to-end.
 
 ---
@@ -1875,7 +1994,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 
 ### Documentation
 
-- **`docs/examples/example-7.md`**: rewritten to describe the `vertex_router` +
+- **`docs/examples/vertex-router-type-map/index.md`**: rewritten to describe the `vertex_router` +
   dynamic `edge` pattern; flat-row variant section retained as a cross-reference to
   Example 11.
 - **`docs/concepts/index.md`**: actor class diagram and scenario matrix updated;
@@ -2016,7 +2135,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 
 ### Documentation
 
-- **Examples / docs**: `examples/9-connector-connection-proxy` and manifest guides updated for explicit connector names in `connector_connection`. Concepts and README clarify 1→n bindings and proxy wiring.
+- **Examples / docs**: `examples/11-connection-proxy` and manifest guides updated for explicit connector names in `connector_connection`. Concepts and README clarify 1→n bindings and proxy wiring.
 - **`Resource.drop_trivial_input_fields`**: described in [Concepts](docs/concepts/index.md) (DataSources vs Resources) and [Documentation home — Resource](docs/index.md#resource).
 
 ## [1.7.7] - 2026-03-27

@@ -1,542 +1,167 @@
-# Quick Start Guide
+# Quick start
 
-This guide will help you get started with graflo by showing you how to transform data into a graph structure.
+You have two CSV files. One lists people, the other says which department each
+person works in. On this page you write a manifest that describes the graph
+you want, run one script, and get one vertex per person, one per department
+and an edge from each person to their department. It follows the first example
+shipped with the repository.
 
-## Basic Concepts
+## What you need
 
-- graflo uses `Caster` class to cast data into a property graph representation and eventually graph database. 
-- Class `Schema` encodes the logical graph representation (vertices, edges, identities, DB profile).
-- Class `IngestionModel` defines resources/transforms and how records are mapped into graph entities.
-- `Resource` class defines how data is transformed into a graph (semantic mapping).
-- `DataSource` defines where data comes from (files, APIs, SQL databases, in-memory objects).
-- `Bindings` manages the mapping of resources to their physical data sources (files or PostgreSQL tables). 
-- `DataSourceRegistry` maps DataSources to Resources (many DataSources can map to the same Resource).
-- Database backend configurations use Pydantic `BaseSettings` with environment variable support. Use `ArangoConfig`, `Neo4jConfig`, `TigergraphConfig`, `FalkordbConfig`, `MemgraphConfig`, `NebulaConfig`, or `PostgresConfig` directly, or load from docker `.env` files using `from_docker_env()`. All configs inherit from `DBConfig` and support unified `database`/`schema_name` structure with `effective_database` and `effective_schema` properties for database-agnostic access. If `effective_schema` is not set, `GraphEngine.define_schema()` automatically uses `schema.metadata.name` as fallback.
+- A clone of the repository with the package installed:
 
-## Basic Example
+    ```bash
+    git clone https://github.com/growgraph/graflo.git
+    cd graflo
+    uv sync
+    ```
 
-Here's a simple example of transforming CSV files of two types, `people` and `department` into a graph:
+- A running ArangoDB. The repository ships a container for it; how to start it
+  is described in
+  [`docker/README.md`](https://github.com/growgraph/graflo/blob/main/docker/README.md).
+  The [file backend example (14)](../examples/file-backend-export/index.md)
+  writes a graph to disk and needs no database.
+
+## 1. Look at the data
+
+The example lives in `examples/01-csv-two-resources`. Its `data/` directory
+holds `people.csv` and `departments.csv`:
+
+```csv
+id,name,age
+1,John Hancock,27
+2,Mary Arpe,33
+3,Sid Mei,45
+```
+
+```csv
+person_id,person,department
+1,John Hancock,Sales
+2,Mary Arpe,R&D
+3,Sid Mei,Customer Service
+```
+
+The same three people appear in both files. In the graph each of them must be
+one vertex.
+
+## 2. Write the manifest
+
+The manifest, `manifest.yaml`, has three blocks. The `schema` block says what
+the graph looks like: two vertex types and one edge. `identity` names the
+properties that make a vertex unique, so two rows with the same `id` become one
+`person`.
+
+```yaml
+schema:
+    metadata:
+        name: hr
+    graph:
+        vertex_config:
+            vertices:
+            -   name: person
+                properties: [id, name, age]
+                identity: [id]
+            -   name: department
+                properties: [name]
+                identity: [name]
+        edge_config:
+            edges:
+            -   source: person
+                target: department
+    db_profile: {}
+```
+
+The `ingestion_model` block says how a row becomes vertices. It holds one
+resource per kind of file, and a resource is a list of steps that run on every
+row. `from` maps a column to a property where their names differ. The
+`departments` resource yields a person and a department from each row, and the
+schema declares an edge between them, so GraFlo adds the edge.
+
+```yaml
+ingestion_model:
+    resources:
+    -   name: people
+        pipeline:
+        -   vertex: person
+    -   name: departments
+        pipeline:
+        -   vertex: person
+            from: {id: person_id, name: person}
+        -   vertex: department
+            from: {name: department}
+```
+
+The `bindings` block says where the rows come from: one connector per file
+name pattern, each naming the resource that reads its files. `sub_path` is
+relative to the directory the script runs in.
+
+```yaml
+bindings:
+    connectors:
+    -   regex: "^people.*\\.csv$"
+        sub_path: data
+        resource_name: people
+    -   regex: "^dep.*\\.csv$"
+        sub_path: data
+        resource_name: departments
+```
+
+## 3. Run it
+
+```bash
+cd examples/01-csv-two-resources
+uv run python ingest.py
+```
+
+`ingest.py` loads the manifest, reads the connection settings of the ArangoDB
+container, creates the schema in the database and loads the files:
 
 ```python
-import pathlib
 from suthing import FileHandle
-from graflo import Bindings, Caster, GraphManifest
-from graflo.architecture.contract.bindings import FileConnector
-from graflo.connections.onto import ArangoConfig
+
+from graflo import GraphManifest
+from graflo.connections import ArangoConfig
+from graflo.hq import GraphEngine
+from graflo.hq.caster import IngestionParams
 
 manifest = GraphManifest.from_config(FileHandle.load("manifest.yaml"))
 manifest.finish_init()
-schema = manifest.require_schema()
-ingestion_model = manifest.require_ingestion_model()
 
-caster = Caster(schema=schema, ingestion_model=ingestion_model)
-
-# Option 1: Load config from docker/arango/.env (recommended)
+# Connection settings of the ArangoDB container started from docker/arango.
 conn_conf = ArangoConfig.from_docker_env()
 
-# Option 2: Load from environment variables
-# Set environment variables:
-#   export ARANGO_URI=http://localhost:8529
-#   export ARANGO_USERNAME=root
-#   export ARANGO_PASSWORD=123
-#   export ARANGO_DATABASE=mygraph
-conn_conf = ArangoConfig.from_env()
-
-# Option 3: Load with custom prefix (for multiple configs)
-# Set environment variables:
-#   export USER_ARANGO_URI=http://user-db:8529
-#   export USER_ARANGO_USERNAME=user
-#   export USER_ARANGO_PASSWORD=pass
-#   export USER_ARANGO_DATABASE=usergraph
-user_conn_conf = ArangoConfig.from_env(prefix="USER")
-
-# Option 4: Create config directly
-# conn_conf = ArangoConfig(
-#     uri="http://localhost:8535",
-#     username="root",
-#     password="123",
-#     database="mygraph",  # For ArangoDB, 'database' maps to schema/graph
-# )
-
-# Create bindings with file connectors
-# FileConnector includes the path (sub_path) where files are located
-bindings = Bindings()
-people_connector = FileConnector(regex="^people.*\.csv$", sub_path=pathlib.Path("."))
-bindings.add_connector(
-    people_connector,
-)
-bindings.bind_resource("people", people_connector)
-departments_connector = FileConnector(regex="^dep.*\.csv$", sub_path=pathlib.Path("."))
-bindings.add_connector(
-    departments_connector,
-)
-bindings.bind_resource("departments", departments_connector)
-
-# Or initialize from explicit connector bindings
-bindings = Bindings(
-    connectors=[
-        FileConnector(
-            name="people_files",
-            regex="^people.*\\.csv$",
-            sub_path=pathlib.Path("."),
-        ),
-        FileConnector(
-            name="departments_files",
-            regex="^dep.*\\.csv$",
-            sub_path=pathlib.Path("."),
-        ),
-    ],
-    resource_connector=[
-        {"resource": "people", "connector": "people_files"},
-        {"resource": "departments", "connector": "departments_files"},
-    ],
-)
-
-from graflo.hq.caster import IngestionParams
-from graflo.hq import GraphEngine
-
-# Option 1: Use GraphEngine for schema definition and ingestion (recommended)
-engine = GraphEngine()
-ingestion_params = IngestionParams(
-    clear_data=False,
-    # resources=["users"],  # Optional: ingest only listed resources
-    # connectors=["users_files"],  # Optional: ingest only listed connectors (name or hash)
-    # vertices=["User"],  # Optional: cast only listed vertex types
-)
-
-# Attach bindings to the manifest before orchestration.
-ingest_manifest = manifest.model_copy(update={"bindings": bindings})
-ingest_manifest.finish_init()
-
-engine.define_and_ingest(
-    manifest=ingest_manifest,
-    target_db_config=conn_conf,  # Target database config
-    ingestion_params=ingestion_params,
-    recreate_schema=False,  # Set to True to drop and redefine schema (script halts if schema exists)
-)
-
-# Option 2: Use Caster directly (schema must be defined separately)
-# engine = GraphEngine()
-# engine.define_schema(manifest=manifest, target_db_config=conn_conf, recreate_schema=False)
-#
-# caster = Caster(schema=schema, ingestion_model=ingestion_model)
-# caster.ingest(
-#     target_db_config=conn_conf,
-#     bindings=bindings,
-#     ingestion_params=ingestion_params,
-# )
-```
-
-Here `schema` defines the logical graph, while `ingestion_model` defines resources/transforms and `bindings` maps resources to physical data sources. See [Creating a Manifest](creating_manifest.md) and [Concepts — Schema](../concepts/architecture/core_components.md#schema) for details.
-
-`Bindings` maps resource names (from `IngestionModel`) to one or more physical data sources (the same resource may list several connectors):
-- **FileConnector**: For file-based resources with `regex` for matching filenames and `sub_path` for the directory to search
-- **TableConnector**: For PostgreSQL table resources (table/schema/view metadata on the connector; connection URLs and secrets are **not** stored in the manifest when using **`connector_connection`** — see below)
-- **SparqlConnector**: RDF class / SPARQL endpoint wiring (same proxy pattern as SQL when needed)
-
-For SQL and SPARQL sources, add **`connector_connection`**: a list of `{"connector": "<connector name or hash>", "conn_proxy": "<label>"}`. At runtime, register each `conn_proxy` on an `InMemoryConnectionProvider` (or your own `ConnectionProvider`) with `GeneralizedConnConfig`. `GraphEngine` / `ResourceMapper` call `bind_connector_to_conn_proxy` when building bindings from Postgres or RDF workflows so HQ and the manifest stay aligned.
-
-### Single-DB quick path (one proxy label)
-
-When all SQL connectors use the same `conn_proxy`, you can wire the runtime config in one call:
-
-```python
-from graflo.connections.provider import (
-    InMemoryConnectionProvider,
-    PostgresGeneralizedConnConfig,
-)
-
-provider = InMemoryConnectionProvider()
-provider.bind_single_config_for_bindings(
-    bindings=bindings,
-    conn_proxy="postgres_source",
-    config=PostgresGeneralizedConnConfig(config=postgres_conf),
-)
-
+engine = GraphEngine(target_db_flavor=conn_conf.connection_type)
 engine.define_and_ingest(
     manifest=manifest,
     target_db_config=conn_conf,
-    connection_provider=provider,
+    ingestion_params=IngestionParams(clear_data=True),
+    recreate_schema=True,
 )
 ```
 
-The `ingest()` method takes:
-- `target_db_config`: Target graph database configuration (where to write the graph)
-- `bindings`: Source data connectors (where to read data from - files or database tables)
-
-## 🚀 Using PostgreSQL Tables as Data Sources
-
-**Automatically infer graph schemas from normalized PostgreSQL databases (3NF)** - No manual schema definition needed! 
-
-**Requirements**: Works best with normalized databases (3NF) that have proper primary keys (PK) and foreign keys (FK) decorated. graflo uses intelligent heuristics to automatically detect vertex-like and edge-like tables, infer relationships from foreign keys, and map PostgreSQL types to graph types.
-
-You can ingest data directly from PostgreSQL tables. First, infer the schema from your PostgreSQL database:
-
-```python
-from graflo.hq import GraphEngine
-from graflo.connections.onto import PostgresConfig
-
-# Connect to PostgreSQL
-pg_config = PostgresConfig.from_docker_env()  # Or from_env(), or create directly
-
-# Create GraphEngine and infer a full manifest from PostgreSQL
-# (automatically detects vertices/edges/resources and also infers bindings)
-# Connection is automatically managed inside infer_manifest()
-engine = GraphEngine()
-manifest = engine.infer_manifest(pg_config, schema_name="public")
-
-# Inferred bindings are available on the manifest by default
-bindings = manifest.require_bindings()
-
-# You can still create or override bindings manually when needed
-from graflo.architecture.contract.bindings import Bindings, TableConnector
-
-bindings = Bindings()
-users_connector = TableConnector(table_name="users", schema_name="public")
-bindings.add_connector(
-    users_connector,
-)
-bindings.bind_resource("users", users_connector)
-products_connector = TableConnector(table_name="products", schema_name="public")
-bindings.add_connector(
-    products_connector,
-)
-bindings.bind_resource("products", products_connector)
-
-# Ingest
-from graflo.connections.onto import ArangoConfig
-from graflo.hq import GraphEngine
-
-arango_config = ArangoConfig.from_docker_env()  # Target graph database
-
-# Use GraphEngine for schema definition and ingestion
-engine = GraphEngine()
-ingestion_params = IngestionParams(
-    clear_data=False,
-    # resources=["users"],  # Optional: ingest only listed resources
-    # connectors=["users_files"],  # Optional: ingest only listed connectors (name or hash)
-    # vertices=["User"],  # Optional: cast only listed vertex types
-    # Optional: restrict to a date range with datetime_after, datetime_before, datetime_column
-    # (use with create_bindings(..., datetime_columns={...}) for per-table columns)
-)
-
-ingest_manifest = manifest.model_copy(update={"bindings": bindings})
-ingest_manifest.finish_init()
-
-engine.define_and_ingest(
-    manifest=ingest_manifest,
-    target_db_config=arango_config,  # Target graph database
-    ingestion_params=ingestion_params,
-    recreate_schema=False,  # Set to True to drop and redefine schema (script halts if schema exists)
-)
-```
-
-## Graph export and migration
-
-Use an existing **Neo4j** or **ArangoDB** database as a source — no manifest YAML required. Export to a **GraFlo file backend** on disk, replay into another database, or **ingest** manifest resources directly to disk.
-
-```python
-from pathlib import Path
-
-from graflo import GraphEngine, DBType
-from graflo.db import Neo4jConfig, ArangoConfig, PostgresConfig
-from graflo.db.graflo_backend.config import GraFloBackendConfig
-
-engine = GraphEngine(target_db_flavor=DBType.ARANGO)
-
-neo4j = Neo4jConfig.from_docker_env()
-arango = ArangoConfig.from_docker_env()
-postgres = PostgresConfig.from_docker_env()
-backend = GraFloBackendConfig(output_dir=Path("artifacts/neo4j-backend"))
-
-# Neo4j → chunked file backend
-engine.migrate_graph(neo4j, backend, recreate_schema=True)
-
-# File backend → Arango migration
-engine.migrate_graph(backend, arango, recreate_schema=True)
-
-# File backend → Postgres (relational vertex + edge tables)
-pg_engine = GraphEngine(target_db_flavor=DBType.POSTGRES)
-pg_engine.migrate_graph(backend, postgres, recreate_schema=True)
-```
-
-Full walkthrough (including **`ingest()`** to a file backend): [Example 13](../examples/example-13.md) · [Graph export and migration](../concepts/operations/graph_export_migration.md)
-
-## Using API Data Sources
-
-REST API ingestion uses bindings + `conn_proxy`, like SQL and SPARQL. The manifest declares the endpoint **`path`** and optional **`pagination`**; runtime code registers **`base_url`** and credentials.
-
-**Pagination strategies** (on **`APIConnector.pagination`**):
-
-| Strategy | Default query params | Typical API style |
-| -------- | -------------------- | ----------------- |
-| **`offset`** | `offset`, `limit` | `?offset=0&limit=100` |
-| **`page`** | `page`, `per_page` | `?page=1&per_page=25` |
-| **`cursor`** | `cursor` | opaque next-token in response JSON |
-
-All parameter names, response paths (`records_path`, `next_offset_path`, `has_more_path`, …), and loop behaviour are documented in **[API connector and pagination](../concepts/connectors/api_connector.md)**.
-
-```yaml
-# manifest.yaml (bindings excerpt)
-bindings:
-  connectors:
-    - name: users_api
-      path: /api/users
-      pagination:
-        request:
-          strategy: offset
-          offset_param: offset
-          limit_param: limit
-          page_size: 100
-        response:
-          records_path: data
-          has_more_path: has_more
-  resource_connector:
-    - resource: users
-      connector: users_api
-  connector_connection:
-    - connector: users_api
-      conn_proxy: api_source
-```
-
-```python
-from graflo.hq import GraphEngine
-from graflo.hq.caster import IngestionParams
-from graflo.connections.provider import InMemoryConnectionProvider
-
-manifest = GraphManifest.from_config(FileHandle.load("manifest.yaml"))
-manifest.finish_init()
-bindings = manifest.require_bindings()
-
-# Reads API_SOURCE_BASE_URL, API_SOURCE_AUTH_TYPE, API_SOURCE_TOKEN, etc.
-provider = InMemoryConnectionProvider()
-provider.register_all_api_configs_from_env(bindings=bindings)
-
-engine = GraphEngine()
-engine.define_and_ingest(
-    manifest=manifest,
-    target_db_config=conn_conf,
-    connection_provider=provider,
-    ingestion_params=IngestionParams(),
-)
-```
-
-Set env vars before running (with `conn_proxy: api_source`):
-
-```bash
-export API_SOURCE_BASE_URL=https://api.example.com
-export API_SOURCE_AUTH_TYPE=bearer
-export API_SOURCE_TOKEN=your-token
-```
-
-For manual credential registration or multi-proxy `env_prefix_map` overrides, see
-**[API connector and pagination](../concepts/connectors/api_connector.md)** and
-**[Example 14 — API env wiring](../examples/example-14.md)**.
-
-## Using Kafka Data Sources
-
-Kafka topic ingestion uses bindings + `conn_proxy`, like SQL and API. The manifest declares **`topics`** and **`group_id`**; runtime code registers bootstrap servers (and optional SASL/SSL).
-
-Consume is **finite-batch**: polling stops on idle, max wait, or record `limit` — not a never-ending daemon. Full field reference: **[Kafka connector](../concepts/connectors/kafka_connector.md)**.
-
-```yaml
-# manifest.yaml (bindings excerpt)
-bindings:
-  connectors:
-    - name: events_kafka
-      topics: [graflo.events]
-      group_id: graflo-ingest
-      auto_offset_reset: earliest
-      idle_ms: 2000
-  resource_connector:
-    - resource: events
-      connector: events_kafka
-  connector_connection:
-    - connector: events_kafka
-      conn_proxy: kafka_local
-```
-
-```python
-provider = InMemoryConnectionProvider()
-provider.register_all_kafka_configs_from_env(bindings=bindings)
-```
-
-```bash
-export KAFKA_LOCAL_BOOTSTRAP_SERVERS=localhost:9092
-```
-
-Local broker: `docker/kafka` (also via `docker/start-all.sh`), bootstrap `localhost:9092`. Live tests: `uv run pytest test -m kafka --run-kafka`.
-
-## Using Configuration Files
-
-
-File and SQL data sources can still be defined in a sidecar config for the CLI. **API and Kafka sources must use manifest bindings** (`APIConnector` / `KafkaConnector`) with a `ConnectionProvider`; `--data-source-config-path` rejects `source_type: api` and does not build Kafka consumers.
-
-```yaml
-# data_sources.yaml
-data_sources:
-  - source_type: file
-    resource_name: products
-    path: data/products.json
-```
-
-Then use it with the CLI:
-
-```bash
-uv run ingest \
-    --db-config-path config/db.yaml \
-    --schema-path config/manifest.yaml \
-    --data-source-config-path data_sources.yaml
-```
-
-## Document cast errors and `--doc-error-sink`
-
-If some source documents fail while casting a resource (bad shape, transform error, etc.), you can keep ingesting the rest with **`--on-doc-error skip`** (the default) and record each failure as gzip-compressed JSON lines:
-
-```bash
-uv run ingest \
-    --db-config-path config/db.yaml \
-    --schema-path config/manifest.yaml \
-    --source-path data/ \
-    --on-doc-error skip \
-    --doc-error-sink ./artifacts/doc_cast_failures.jsonl.gz
-```
-
-Inspect the file with **`zcat ./artifacts/doc_cast_failures.jsonl.gz | head`**. The same option exists on **`IngestionParams.doc_error_sink_path`** when you drive **`Caster`** or **`GraphEngine`** from Python. Full behavior (budget limits, document preview bounds, logging when no path is set) is described under [Document cast errors and doc error sink](../concepts/ingestion/doc_errors.md).
-
-## Database Configuration Options
-
-graflo supports multiple ways to configure database connections:
-
-### Environment Variables
-
-You can configure database connections using environment variables. Each database type has its own prefix:
-
-**ArangoDB:**
-```bash
-export ARANGO_URI=http://localhost:8529
-export ARANGO_USERNAME=root
-export ARANGO_PASSWORD=123
-export ARANGO_DATABASE=mygraph
-```
-
-**Neo4j:**
-```bash
-export NEO4J_URI=bolt://localhost:7687
-export NEO4J_USERNAME=neo4j
-export NEO4J_PASSWORD=password
-export NEO4J_DATABASE=mydb
-```
-
-**TigerGraph:**
-```bash
-export TIGERGRAPH_URI=http://localhost:9000
-export TIGERGRAPH_USERNAME=tigergraph
-export TIGERGRAPH_PASSWORD=tigergraph
-export TIGERGRAPH_SCHEMA_NAME=mygraph
-```
-
-**FalkorDB:**
-```bash
-export FALKORDB_URI=redis://localhost:6379
-export FALKORDB_PASSWORD=
-export FALKORDB_DATABASE=mygraph
-```
-
-**Memgraph:**
-```bash
-export MEMGRAPH_URI=bolt://localhost:7687
-export MEMGRAPH_USERNAME=
-export MEMGRAPH_PASSWORD=
-export MEMGRAPH_DATABASE=memgraph
-```
-
-**NebulaGraph:**
-```bash
-export NEBULA_URI=nebula://localhost:9669
-export NEBULA_USERNAME=root
-export NEBULA_PASSWORD=nebula
-export NEBULA_SCHEMA_NAME=mygraph
-export NEBULA_VERSION=3  # "3" for v3.x (nGQL) or "5" for v5.x (GQL)
-```
-
-**PostgreSQL:**
-```bash
-export POSTGRES_URI=postgresql://localhost:5432
-export POSTGRES_USERNAME=postgres
-export POSTGRES_PASSWORD=password
-export POSTGRES_DATABASE=mydb
-export POSTGRES_SCHEMA_NAME=public
-```
-
-Then load the config:
-
-```python
-from graflo.connections.onto import (
-    ArangoConfig,
-    Neo4jConfig,
-    TigergraphConfig,
-    FalkordbConfig,
-    MemgraphConfig,
-    NebulaConfig,
-    PostgresConfig,
-)
-
-# Load from default environment variables
-arango_conf = ArangoConfig.from_env()
-neo4j_conf = Neo4jConfig.from_env()
-tg_conf = TigergraphConfig.from_env()
-falkordb_conf = FalkordbConfig.from_env()
-memgraph_conf = MemgraphConfig.from_env()
-nebula_conf = NebulaConfig.from_env()
-pg_conf = PostgresConfig.from_env()
-```
-
-### Multiple Configurations with Prefixes
-
-For multiple database configurations, use prefixes:
-
-```bash
-# User database
-export USER_ARANGO_URI=http://user-db:8529
-export USER_ARANGO_USERNAME=user
-export USER_ARANGO_PASSWORD=pass
-export USER_ARANGO_DATABASE=usergraph
-
-# Knowledge graph database
-export KG_ARANGO_URI=http://kg-db:8529
-export KG_ARANGO_USERNAME=kg
-export KG_ARANGO_PASSWORD=secret
-export KG_ARANGO_DATABASE=knowledgegraph
-```
-
-```python
-user_conf = ArangoConfig.from_env(prefix="USER")
-kg_conf = ArangoConfig.from_env(prefix="KG")
-```
-
-### Docker Environment Files
-
-Load from docker `.env` files:
-```python
-conn_conf = ArangoConfig.from_docker_env()
-```
-
-### Direct Configuration
-
-Create config objects directly:
-```python
-conn_conf = ArangoConfig(
-    uri="http://localhost:8529",
-    username="root",
-    password="123",
-    database="mygraph",
-)
-```
-
-## Next Steps
-
-- Explore the [API Reference](../reference/index.md) for detailed documentation
-- Check out more [Examples](../examples/index.md) for advanced use cases
-- Learn main [concepts](../concepts/index.md), such as `Schema` and its constituents
-- Read about [Data Sources](../reference/data_source/index.md) for API and SQL integration 
+`finish_init()` connects the resources to the schema. `recreate_schema=True`
+and `clear_data=True` drop what an earlier run wrote, so you can run the script
+again.
+
+## What you should see
+
+Open the ArangoDB web interface; its address is in `docker/README.md`. When the
+connection settings name no database, GraFlo names it after `metadata.name`,
+here `hr`.
+
+| | Count | Why |
+|---|---|---|
+| `person` vertices | 3 | Both files mention each person; rows with the same `id` become one vertex |
+| `department` vertices | 3 | One per distinct department name |
+| `person` to `department` edges | 3 | One per row of `departments.csv` |
+
+The manifest names no database: with `Neo4jConfig` in place of `ArangoConfig`
+in `ingest.py`, the same graph goes to the Neo4j container.
+
+## What to read next
+
+- [Creating a manifest](creating_manifest.md): each block of the manifest one
+  level deeper.
+- [Database connections](../guides/database_connections.md): how to point
+  GraFlo at your own database.
+- [Examples](../examples/index.md): the next questions, one example each.

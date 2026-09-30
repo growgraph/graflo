@@ -31,7 +31,7 @@ def _typed_manifest(
     name: str,
     vertex: str,
     db_flavor: str = "neo4j",
-    target_namespace: str = "estate",
+    target_namespace: str = "plant",
     version: str = "2.3.0",
 ) -> GraphManifest:
     """A manifest with a schema whose physical profile is *not* the default."""
@@ -113,7 +113,7 @@ def test_schemaless_left_keeps_the_right_physical_profile_verbatim() -> None:
         name="core",
         vertex="Asset",
         db_flavor="neo4j",
-        target_namespace="estate",
+        target_namespace="plant",
         version="2.3.0",
     )
 
@@ -122,7 +122,7 @@ def test_schemaless_left_keeps_the_right_physical_profile_verbatim() -> None:
     assert out.graph_schema is not None
     profile = out.graph_schema.db_profile
     assert profile.db_flavor == DBType.NEO4J
-    assert profile.target_namespace == "estate"
+    assert profile.target_namespace == "plant"
     assert list(profile.vertex_indexes) == ["Asset"]
     assert out.graph_schema.metadata.name == "core"
     assert out.graph_schema.metadata.version == "2.3.0"
@@ -165,7 +165,7 @@ def test_equivalence_naming_a_vertex_on_the_schemaless_side_still_raises() -> No
             right,
             MergeManifestsOp(
                 vertex_equivalences=[
-                    VertexEquivalence(left="Asset", right="Device", into="Asset")
+                    VertexEquivalence(left="Asset", right="Machine", into="Asset")
                 ]
             ),
             bump_version=False,

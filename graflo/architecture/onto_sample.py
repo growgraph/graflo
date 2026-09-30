@@ -1,8 +1,8 @@
 """Resource sampling contract — pure-JSON samples and their derived profiles.
 
 Samples are the raw material every schema inferencer consumes, whether it reasons
-algorithmically (:mod:`graflo.db.identity_inference`) or with a language model
-(ScheWea). Two ideas, deliberately kept apart:
+algorithmically (:mod:`graflo.db.identity_inference`) or with a language
+model. Two ideas, deliberately kept apart:
 
 * **Sampling** pulls documents from a connector. :class:`ResourceSample` holds
   them **verbatim as JSON** — tabular sources yield flat ``list[dict]`` rows,

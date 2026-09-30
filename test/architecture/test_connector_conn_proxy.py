@@ -467,20 +467,20 @@ def test_register_all_api_configs_from_env_skips_non_api_connectors(
 
 
 def test_proxy_env_prefix_uppercases_and_normalises_dashes() -> None:
-    assert proxy_env_prefix("helix-discovery") == "HELIX_DISCOVERY_"
+    assert proxy_env_prefix("sensor-feed") == "SENSOR_FEED_"
 
 
 def test_resolve_secrets_from_env_fills_api_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("HELIX_DISCOVERY_TOKEN", "t0ken")
+    monkeypatch.setenv("SENSOR_FEED_TOKEN", "t0ken")
     stored = ApiGeneralizedConnConfig(
         config=RestApiConnConfig(
             base_url="http://localhost:8811", auth=ApiAuth(auth_type="bearer")
         )
     )
 
-    resolved = resolve_secrets_from_env(stored, "helix_discovery")
+    resolved = resolve_secrets_from_env(stored, "sensor_feed")
 
     assert isinstance(resolved, ApiGeneralizedConnConfig)
     assert resolved.config.auth is not None
@@ -507,18 +507,18 @@ def test_resolve_secrets_from_env_fills_postgres_credentials(
 ) -> None:
     monkeypatch.delenv("POSTGRES_USERNAME", raising=False)
     monkeypatch.delenv("POSTGRES_PASSWORD", raising=False)
-    monkeypatch.setenv("SERVICENOW_CMDB_USERNAME", "cmdb")
-    monkeypatch.setenv("SERVICENOW_CMDB_PASSWORD", "secret")
+    monkeypatch.setenv("MAINTENANCE_DB_USERNAME", "maintenance")
+    monkeypatch.setenv("MAINTENANCE_DB_PASSWORD", "secret")
     stored = PostgresGeneralizedConnConfig(
-        config=PostgresConfig(uri="postgresql://localhost:55432", database="sn")
+        config=PostgresConfig(uri="postgresql://localhost:55432", database="mx")
     )
 
-    resolved = resolve_secrets_from_env(stored, "servicenow_cmdb")
+    resolved = resolve_secrets_from_env(stored, "maintenance_db")
 
     assert isinstance(resolved, PostgresGeneralizedConnConfig)
-    assert resolved.config.username == "cmdb"
+    assert resolved.config.username == "maintenance"
     assert resolved.config.password == "secret"
-    assert resolved.config.database == "sn"
+    assert resolved.config.database == "mx"
 
 
 def test_resolve_secrets_from_env_keeps_stored_values(

@@ -15,8 +15,8 @@ are literal-ranged and say the same thing truthfully. OWL-Time stays in
 ``exact_match`` at the concept level, where it is about the *type*.
 
 **Units are UCUM tokens, carried per row.** An abstract observation type serves
-temperature and pressure alike, so it cannot name one unit in its contract
-without lying; ``result_unit`` is grounded in ``qudt:ucumCode`` and travels with
+temperature and pressure alike, so no single unit in its schema would be
+correct; ``result_unit`` is grounded in ``qudt:ucumCode`` and travels with
 the measurement. UCUM has no currency, so currency falls back to ISO-4217 alpha
 codes (``USD``, ``EUR``).
 """
@@ -75,12 +75,12 @@ RESULT_TIME = "result_time"
 
 
 def state_type_name(vertex: str) -> str:
-    """``Device`` -> ``DeviceState``."""
+    """``Machine`` -> ``MachineState``."""
     return f"{vertex}{STATE_SUFFIX}"
 
 
 def observation_type_name(vertex: str) -> str:
-    """``Device`` -> ``DeviceObservation``."""
+    """``Machine`` -> ``MachineObservation``."""
     return f"{vertex}{OBSERVATION_SUFFIX}"
 
 
@@ -113,7 +113,7 @@ def state_vertex(subject: str, key_fields: list[Field], moved: list[Field]) -> V
     return Vertex(
         name=state_type_name(subject),
         description=(
-            f"Mutable facts about a {subject}, each holding over one interval. "
+            f"Mutable facts about `{subject}`, each holding over one interval. "
             "Closing `valid_to` rather than overwriting is what makes history "
             "queryable."
         ),
@@ -138,7 +138,7 @@ def observation_vertex(subject: str, key_fields: list[Field]) -> Vertex:
     """
     return Vertex(
         name=observation_type_name(subject),
-        description=f"A measurement of a {subject} at a time.",
+        description=f"A measurement of `{subject}` at a time.",
         semantics=Semantics(iri=SOSA_OBSERVATION, exact_match=[SOSA_OBSERVATION]),
         properties=[
             *(field.model_copy(deep=True) for field in key_fields),

@@ -1,7 +1,7 @@
 """``graflo merge`` -- the binary merge of two manifests, from the shell.
 
-This verb is ``examples/19-union-canonical-equivalence/build_union.py``
-generalised: the merge op and its canonical maps are one recipe, and merge
+This verb is ``examples/20-manifest-union/merge.yaml`` applied from the
+shell: the merge op and its canonical maps are one recipe, and merge
 applies them together -- an equivalence may name a class in the manifest's
 own vocabulary or in the canonical one, and the two declarations are checked
 for disagreement before anything is renamed.
@@ -112,9 +112,9 @@ def _fold_canonical_maps(
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
     default=None,
     help=(
-        "MergeManifestsOp document: vertex/property/relation equivalences, "
-        "canonical maps and identity alignments. Omitted merges a disjoint "
-        "union."
+        "MergeManifestsOp document: vertex/property/relation equivalences "
+        "(with the merged key as `identity`) and canonical maps. Omitted "
+        "merges a disjoint union."
     ),
 )
 @click.option(
@@ -319,7 +319,7 @@ def merge(
         # (it equals the default), while `skip_defaults=False` writes one they
         # did not. Both would answer the two declaration assertions with
         # confident nonsense. `check_manifest` degrades them to a warning that
-        # says exactly this, which is the honest report for a merged result.
+        # says exactly this, which is the accurate report for a merged result.
         report = check_manifest(
             merged, profile=profile_name, subject=f"{left} + {right}"
         )

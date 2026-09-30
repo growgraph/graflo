@@ -118,19 +118,19 @@ def test_long_labels_sharing_a_prefix_do_not_collide(flavor: DBType) -> None:
 
 
 def test_explicit_namespace_is_validated_not_rewritten() -> None:
-    validate_namespace("estate", DBType.NEO4J)
-    with pytest.raises(InvalidNamespaceError, match="'estate-db'|valid spelling"):
-        validate_namespace("es", DBType.NEO4J)
+    validate_namespace("plant", DBType.NEO4J)
+    with pytest.raises(InvalidNamespaceError, match="'plant-db'|valid spelling"):
+        validate_namespace("pl", DBType.NEO4J)
     with pytest.raises(InvalidNamespaceError, match="a_b"):
         validate_namespace("a+b", DBType.TIGERGRAPH)
 
 
 def test_resolve_precedence_override_then_profile_then_label() -> None:
-    schema = _schema("cmdb+discovery", db_flavor="neo4j")
-    assert resolve_namespace(schema) == "cmdb-discovery"
-    assert schema.effective_namespace(DBType.ARANGO) == "cmdb_discovery"
-    schema.db_profile.target_namespace = "estate"
-    assert schema.effective_namespace() == "estate"
+    schema = _schema("maintenance+sensors", db_flavor="neo4j")
+    assert resolve_namespace(schema) == "maintenance-sensors"
+    assert schema.effective_namespace(DBType.ARANGO) == "maintenance_sensors"
+    schema.db_profile.target_namespace = "plant"
+    assert schema.effective_namespace() == "plant"
     assert schema.effective_namespace(override="other") == "other"
 
 
@@ -150,9 +150,9 @@ def test_merge_op_target_namespace_resolves_a_side_disagreement() -> None:
     with pytest.raises(ValueError, match="MergeManifestsOp.target_namespace"):
         merge_manifests(left, right, MergeManifestsOp(), bump_version=False)
     out = merge_manifests(
-        left, right, MergeManifestsOp(target_namespace="estate"), bump_version=False
+        left, right, MergeManifestsOp(target_namespace="plant"), bump_version=False
     )
-    assert out.require_schema().db_profile.target_namespace == "estate"
+    assert out.require_schema().db_profile.target_namespace == "plant"
 
 
 def test_merge_op_target_namespace_is_validated_against_the_merged_flavor() -> None:

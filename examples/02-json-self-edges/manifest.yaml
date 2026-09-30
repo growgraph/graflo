@@ -1,0 +1,47 @@
+schema:
+    metadata:
+        name: openalex
+    graph:
+        vertex_config:
+            vertices:
+            -   name: work
+                properties: [id, doi, title, publication_date]
+                identity: [id]
+        edge_config:
+            edges:
+            -   source: work
+                target: work
+                relation: cites
+    db_profile: {}
+ingestion_model:
+    resources:
+    -   name: works
+        pipeline:
+        -   transform:
+                call:
+                    use: short_id
+        -   vertex: work
+        -   key: referenced_works
+            pipeline:
+            -   transform:
+                    call:
+                        use: short_id
+            -   vertex: work
+        -   edge:
+                from: work
+                to: work
+                relation: cites
+                exclude_source: referenced_works
+                match_target: referenced_works
+    transforms:
+    -   name: short_id
+        foo: split_keep_part
+        module: graflo.util.transform
+        params: {sep: /, keep: -1}
+        input: [id]
+        output: [id]
+bindings:
+    connectors:
+    -   regex: "^works\\.json$"
+        sub_path: data
+        resource_name: works

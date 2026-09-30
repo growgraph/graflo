@@ -14,7 +14,6 @@ from graflo.architecture.evolution import (
     MergeNameConflictError,
     PropertyEquivalence,
     RelationEquivalence,
-    SideIdentity,
     VertexEquivalence,
     apply_evolution,
     merge_manifests,
@@ -212,7 +211,7 @@ def test_boundary_client_customer_with_explicit_identity() -> None:
     }
 
 
-def test_property_identity_flags_derive_identity() -> None:
+def test_a_composite_property_branch_is_one_natural_key() -> None:
     left = _left_client_manifest()
     right = _right_customer_manifest()
     op = MergeManifestsOp(
@@ -222,16 +221,12 @@ def test_property_identity_flags_derive_identity() -> None:
                 right="Customer",
                 into="Person",
                 properties=[
-                    PropertyEquivalence(
-                        left="email",
-                        right="email_addr",
-                        into="email",
-                        identity=True,
-                    ),
+                    PropertyEquivalence(left="email", right="email_addr", into="email"),
                     PropertyEquivalence(
                         left="client_id", right="customer_id", into="id"
                     ),
                 ],
+                identity=[["id", "email"]],
             )
         ],
     )
@@ -241,9 +236,9 @@ def test_property_identity_flags_derive_identity() -> None:
         for v in out.graph_schema.core_schema.vertex_config.vertices  # type: ignore[union-attr]
         if v.name == "Person"
     )
-    # Merged identity union (client_id→id, customer_id→id) plus flagged email.
-    assert "email" in person.identity
-    assert "id" in person.identity
+    # One composite branch: a natural key over both fields, not a funnel.
+    assert person.identity == ["id", "email"]
+    assert person.identity_funnel is None
 
 
 def test_incompatible_property_types_raise() -> None:
@@ -701,13 +696,12 @@ def test_disagreeing_into_on_shared_node_raises() -> None:
         )
 
 
-def test_identity_alignments_apply_inside_compose() -> None:
+def test_a_derived_identity_applies_inside_compose() -> None:
     from graflo.architecture.evolution import (
-        AlignmentAttribute,
         DerivationSpec,
-        IdentityAlignment,
+        DerivedBranch,
+        LocalKeyBranch,
         LocalKeySource,
-        LocalKeySpec,
     )
 
     left = _manifest(
@@ -740,36 +734,30 @@ def test_identity_alignments_apply_inside_compose() -> None:
         edges=[],
         resources=[{"name": "r_b", "apply": [{"vertex": "Org"}]}],
     )
-    alignment = IdentityAlignment(
-        vertex="Company",
-        attributes=[
-            AlignmentAttribute(
-                name="match_key",
-                sources={
-                    "r_a": DerivationSpec(input=["shared_raw"], foo="normalized_key"),
-                    "r_b": DerivationSpec(input=["shared_raw"], foo="normalized_key"),
-                },
-            )
-        ],
-        local_key=LocalKeySpec(
+    identity = [
+        DerivedBranch(
+            name="match_key",
             sources={
+                "r_a": DerivationSpec(input=["shared_raw"]),
+                "r_b": DerivationSpec(input=["shared_raw"]),
+            },
+        ),
+        LocalKeyBranch(
+            local_key={
                 "r_a": LocalKeySource(field="company_id", tag="a"),
                 "r_b": LocalKeySource(field="org_id", tag="b"),
             }
         ),
-        secondary_identities={
-            "by_company_id": ["company_id"],
-            "by_org_id": ["org_id"],
-        },
-    )
+    ]
     merged = merge_manifests(
         left,
         right,
         MergeManifestsOp(
             vertex_equivalences=[
-                VertexEquivalence(left="Company", right="Org", into="Company")
+                VertexEquivalence(
+                    left="Company", right="Org", into="Company", identity=identity
+                )
             ],
-            identity_alignments=[alignment],
         ),
         bump_version=False,
     )
@@ -777,6 +765,7 @@ def test_identity_alignments_apply_inside_compose() -> None:
     vc = merged.graph_schema.core_schema.vertex_config
     assert {"match_key", "local_key"} <= set(vc.property_names("Company"))
     assert vc.identity_fields("Company") == ["id"]
+    # Each member's own key, demoted beside the funnel.
     assert {s.name for s in vc.secondary_identities("Company")} == {
         "by_company_id",
         "by_org_id",
@@ -849,14 +838,7 @@ def test_nary_cluster_composes_schema_and_ingestion() -> None:
                 into="Company",
                 # Each member keys on the key it carries: no field is common to
                 # all four, so a single natural key would drop three of them.
-                identity=SideIdentity(
-                    members={
-                        "Company": ["company_id"],
-                        "Shop": ["shop_id"],
-                        "Org": ["org_id"],
-                        "Branch": ["branch_id"],
-                    }
-                ),
+                identity=["company_id", "shop_id", "org_id", "branch_id"],
             )
         ],
         allow_merges=True,
@@ -1076,7 +1058,7 @@ def test_undeclared_identity_disagreement_raises() -> None:
         merge_manifests(left, right, op, bump_version=False)
 
 
-def test_side_identity_shorthand_lowers_to_one_funnel() -> None:
+def test_property_branches_lower_to_one_funnel_in_declared_order() -> None:
     left = _manifest(
         name="l",
         vertices=[
@@ -1107,10 +1089,7 @@ def test_side_identity_shorthand_lowers_to_one_funnel() -> None:
                 left="Company",
                 right="Org",
                 into="Company",
-                identity=SideIdentity(
-                    left=[["tax_id"], ["company_id"]],
-                    right=[["tax_id"], ["org_id"]],
-                ),
+                identity=["tax_id", "company_id", "org_id"],
             )
         ]
     )
@@ -1133,14 +1112,15 @@ def test_side_identity_shorthand_lowers_to_one_funnel() -> None:
     }
 
 
-def test_side_identity_order_inversion_raises() -> None:
+def test_a_property_branch_no_member_declares_is_refused() -> None:
+    """A branch no record can complete is a typo, not a fallback."""
     left = _manifest(
         name="l",
         vertices=[
             Vertex(
                 name="Company",
-                properties=[Field(name="a"), Field(name="b")],
-                identity=["a"],
+                properties=[Field(name="company_id")],
+                identity=["company_id"],
             )
         ],
         edges=[],
@@ -1149,11 +1129,7 @@ def test_side_identity_order_inversion_raises() -> None:
     right = _manifest(
         name="r",
         vertices=[
-            Vertex(
-                name="Org",
-                properties=[Field(name="a"), Field(name="b")],
-                identity=["b"],
-            )
+            Vertex(name="Org", properties=[Field(name="org_id")], identity=["org_id"])
         ],
         edges=[],
         resources=[{"name": "r_r", "apply": [{"vertex": "Org"}]}],
@@ -1164,12 +1140,13 @@ def test_side_identity_order_inversion_raises() -> None:
                 left="Company",
                 right="Org",
                 into="Company",
-                identity=SideIdentity(left=[["a"], ["b"]], right=[["b"], ["a"]]),
+                identity=["tax_id", "company_id", "org_id"],
             )
         ]
     )
-    with pytest.raises(MergeIdentityError, match="inconsistent"):
+    with pytest.raises(MergeIdentityError, match="no member declares") as info:
         merge_manifests(left, right, op, bump_version=False)
+    assert info.value.check == "identity coverage"
 
 
 def test_occupied_into_raises_through_compose() -> None:
@@ -1310,15 +1287,13 @@ def test_a_merge_chain_through_an_occupied_into_composes() -> None:
                 left=["X", "X2"],
                 right="Y",
                 into="Z",
-                identity=SideIdentity(
-                    members={"X": ["x_id"], "X2": ["x2_id"]}, right=["y_id"]
-                ),
+                identity=["x_id", "x2_id", "y_id"],
             ),
             VertexEquivalence(
                 left="Z",
                 right="W",
                 into="Q",
-                identity=SideIdentity(left=["z_id"], right=["w_id"]),
+                identity=["z_id", "w_id"],
             ),
         ],
         allow_merges=True,
@@ -1373,9 +1348,7 @@ def test_role_separated_members_compose_without_the_fusion_flag() -> None:
                 left=["X", "X2"],
                 right="Y",
                 into="Z",
-                identity=SideIdentity(
-                    members={"X": ["x_id"], "X2": ["x2_id"]}, right=["y_id"]
-                ),
+                identity=["x_id", "x2_id", "y_id"],
             )
         ],
         allow_merges=True,

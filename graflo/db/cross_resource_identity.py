@@ -658,7 +658,7 @@ class CrossResourceIdentityInferencer:
     ) -> CrossResourceIdentityProposal:
         """No shared key: propose per-resource branches, or a flat hash.
 
-        A funnel is the honest answer when each resource keys itself well but no
+        A funnel is the right proposal when each resource keys itself well but no
         single field-set spans them: each branch records how *that* source
         identifies the entity, in descending order of evidence strength.
         """

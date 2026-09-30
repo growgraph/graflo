@@ -1,13 +1,13 @@
-"""
-Propose a shared vertex identity for two customer sources that name their
-columns differently.
+"""Two systems describe the same customers. How do I find the columns that match them?
 
-No live graph database and no LLM — this is deterministic inference over sampled
-documents:
+Reads the two generated CSV exports in ``data/``, compares their columns by
+name and by values, and prints the identity GraFlo proposes for a ``party``
+vertex that both describe, with the evidence behind it. With ``--apply`` it
+also prints a ``party`` vertex patched with the proposal. Nothing is written.
+Run it from this directory:
 
-    cd examples/18-cross-resource-identity
     uv run python discover.py
-    uv run python discover.py --apply          # patch a vertex and print the YAML
+    uv run python discover.py --apply
 """
 
 from __future__ import annotations
@@ -17,11 +17,11 @@ import json
 from pathlib import Path
 
 import click
+import yaml
 
 from graflo.architecture.onto_sample import ResourceSample, SourceSample
 from graflo.architecture.schema.vertex import Vertex
 from graflo.db.cross_resource_identity import (
-    CrossResourceIdentityConfig,
     apply_proposal_to_vertex,
     infer_from_source_sample,
 )
@@ -29,7 +29,8 @@ from graflo.db.cross_resource_identity import (
 DATA_DIR = Path(__file__).resolve().parent / "data"
 
 
-def _load(name: str) -> list[dict]:
+def read_rows(name: str) -> list[dict]:
+    """Read one CSV file of the example as a list of rows."""
     with (DATA_DIR / name).open(encoding="utf-8") as handle:
         return list(csv.DictReader(handle))
 
@@ -47,18 +48,14 @@ def main(apply_: bool) -> None:
         source_name="customer-stack",
         description="CRM and billing exports describing the same customers",
         samples=[
-            ResourceSample(resource_name="crm", docs=_load("crm_customers.csv")),
-            ResourceSample(resource_name="billing", docs=_load("billing_accounts.csv")),
+            ResourceSample(resource_name="crm", docs=read_rows("crm_customers.csv")),
+            ResourceSample(
+                resource_name="billing", docs=read_rows("billing_accounts.csv")
+            ),
         ],
     )
 
-    proposal = infer_from_source_sample(
-        source,
-        vertex_name="party",
-        # The fixtures carry 150 rows per resource; the shipped default of 100
-        # is a production floor, not a demo one.
-        config=CrossResourceIdentityConfig(min_sample_size=50),
-    )
+    proposal = infer_from_source_sample(source, vertex_name="party")
 
     click.echo(f"strategy    : {proposal.strategy}")
     click.echo(f"identity    : {proposal.identity}")
@@ -95,7 +92,7 @@ def main(apply_: bool) -> None:
         vertex = Vertex(name="party", properties=["full_name", "invoice_total"])
         patched = apply_proposal_to_vertex(vertex, proposal)
         click.echo("\nPatched vertex:\n")
-        click.echo(patched.to_yaml_str())
+        click.echo(yaml.safe_dump(patched.to_minimal_canonical_dict(), sort_keys=False))
 
     click.echo(
         "\nThis is a proposal, not a decision. Nothing was written; review the "

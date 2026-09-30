@@ -125,39 +125,39 @@ def test_vra_config_infers_role_from_type_field() -> None:
 
 def test_vra_stores_at_type_field_slot_lindex() -> None:
     """VertexRouterActor stores at inferred role slot when role is unset."""
-    vc = _vc("server", "database")
+    vc = _vc("machine", "line")
     cfg = VertexRouterActorConfig(type_field="vtype")
     vra = VertexRouterActor(cfg)
     vra.finish_init(_init(vc))
 
     ctx = ExtractionContext()
     base = _lindex(0)
-    vra(ctx, base, doc={"vtype": "server", "id": "s1"})
+    vra(ctx, base, doc={"vtype": "machine", "id": "m1"})
 
     slot_lindex = base.extend(("vtype", 0))
-    assert slot_lindex in ctx.acc_vertex["server"]
-    assert ctx.acc_vertex["server"][slot_lindex][0].vertex["id"] == "s1"
+    assert slot_lindex in ctx.acc_vertex["machine"]
+    assert ctx.acc_vertex["machine"][slot_lindex][0].vertex["id"] == "m1"
 
 
 def test_vra_stores_at_role_slot_when_role_set() -> None:
     """VertexRouterActor uses role as the accumulator slot segment when role is set."""
-    vc = _vc("server", "database")
+    vc = _vc("machine", "line")
     cfg = VertexRouterActorConfig(type_field="vtype", role="src")
     vra = VertexRouterActor(cfg)
     vra.finish_init(_init(vc))
 
     ctx = ExtractionContext()
     base = _lindex(0)
-    vra(ctx, base, doc={"vtype": "server", "id": "s1"})
+    vra(ctx, base, doc={"vtype": "machine", "id": "m1"})
 
     slot_lindex = base.extend(("src", 0))
-    assert slot_lindex in ctx.acc_vertex["server"]
-    assert ctx.acc_vertex["server"][slot_lindex][0].vertex["id"] == "s1"
+    assert slot_lindex in ctx.acc_vertex["machine"]
+    assert ctx.acc_vertex["machine"][slot_lindex][0].vertex["id"] == "m1"
 
 
 def test_vra_from_doc_used_when_vertex_from_map_missing_type() -> None:
     """Router-level from_doc applies when resolved type has no vertex_from_map entry."""
-    vc = _vc("server")
+    vc = _vc("machine")
     cfg = VertexRouterActorConfig.model_validate(
         {"type_field": "vtype", "from": {"id": "row_id"}}
     )
@@ -166,21 +166,21 @@ def test_vra_from_doc_used_when_vertex_from_map_missing_type() -> None:
 
     ctx = ExtractionContext()
     base = _lindex(0)
-    vra(ctx, base, doc={"vtype": "server", "row_id": "r9"})
+    vra(ctx, base, doc={"vtype": "machine", "row_id": "r9"})
 
     slot_lindex = base.extend(("vtype", 0))
-    assert ctx.acc_vertex["server"][slot_lindex][0].vertex["id"] == "r9"
+    assert ctx.acc_vertex["machine"][slot_lindex][0].vertex["id"] == "r9"
 
 
 def test_vra_vertex_from_map_overrides_from_doc() -> None:
     """Per-type vertex_from_map replaces router from_doc for that type."""
-    vc = _vc("server", "database")
+    vc = _vc("machine", "line")
     cfg = VertexRouterActorConfig.model_validate(
         {
             "type_field": "vtype",
             "from": {"id": "fallback_id"},
-            "vertex_from_map": {"server": {"id": "sid"}},
-            "type_map": {"s": "server", "d": "database"},
+            "vertex_from_map": {"machine": {"id": "mid"}},
+            "type_map": {"m": "machine", "l": "line"},
         }
     )
     vra = VertexRouterActor(cfg)
@@ -191,20 +191,20 @@ def test_vra_vertex_from_map_overrides_from_doc() -> None:
     vra(
         ctx,
         base,
-        doc={"vtype": "s", "sid": "one", "fallback_id": "ignored_for_server"},
+        doc={"vtype": "m", "mid": "one", "fallback_id": "ignored_for_machine"},
     )
     slot = base.extend(("vtype", 0))
-    assert ctx.acc_vertex["server"][slot][0].vertex["id"] == "one"
+    assert ctx.acc_vertex["machine"][slot][0].vertex["id"] == "one"
 
     ctx2 = ExtractionContext()
-    vra(ctx2, base, doc={"vtype": "d", "fallback_id": "two"})
+    vra(ctx2, base, doc={"vtype": "l", "fallback_id": "two"})
     slot2 = base.extend(("vtype", 0))
-    assert ctx2.acc_vertex["database"][slot2][0].vertex["id"] == "two"
+    assert ctx2.acc_vertex["line"][slot2][0].vertex["id"] == "two"
 
 
 def test_two_vras_with_different_type_fields_use_separate_slots() -> None:
     """Two VRAs with different inferred roles accumulate into separate slots."""
-    vc = _vc("server", "database")
+    vc = _vc("machine", "line")
     vra_src = VertexRouterActor(VertexRouterActorConfig(type_field="source_type"))
     vra_tgt = VertexRouterActor(VertexRouterActorConfig(type_field="target_type"))
     init = _init(vc)
@@ -213,14 +213,14 @@ def test_two_vras_with_different_type_fields_use_separate_slots() -> None:
 
     ctx = ExtractionContext()
     base = _lindex(0)
-    row = {"source_type": "server", "target_type": "database", "id": "1"}
+    row = {"source_type": "machine", "target_type": "line", "id": "1"}
     ctx = vra_src(ctx, base, doc=row)
     ctx = vra_tgt(ctx, base, doc=row)
 
     src_slot = base.extend(("source_type", 0))
     tgt_slot = base.extend(("target_type", 0))
-    assert src_slot in ctx.acc_vertex["server"]
-    assert tgt_slot in ctx.acc_vertex["database"]
+    assert src_slot in ctx.acc_vertex["machine"]
+    assert tgt_slot in ctx.acc_vertex["line"]
 
 
 # ---------------------------------------------------------------------------
@@ -230,8 +230,8 @@ def test_two_vras_with_different_type_fields_use_separate_slots() -> None:
 
 def test_static_types_static_relation() -> None:
     """Static EdgeActor records an edge intent with the pre-built schema Edge."""
-    vc = _vc("server", "database")
-    ea = _make_static_ea("server", "database", relation="connects")
+    vc = _vc("machine", "line")
+    ea = _make_static_ea("machine", "line", relation="installed_on")
     ea.finish_init(_init(vc))
 
     ctx = ExtractionContext()
@@ -240,16 +240,16 @@ def test_static_types_static_relation() -> None:
 
     assert len(ctx.edge_intents) == 1
     intent = ctx.edge_intents[0]
-    assert intent.edge.source == "server"
-    assert intent.edge.target == "database"
-    assert intent.edge.relation == "connects"
+    assert intent.edge.source == "machine"
+    assert intent.edge.target == "line"
+    assert intent.edge.relation == "installed_on"
     assert intent.location == loc
 
 
 def test_static_types_dynamic_relation_field() -> None:
     """Static EdgeActor passes relation_field through derivation for assembly-time lookup."""
-    vc = _vc("server", "database")
-    ea = _make_static_ea("server", "database", relation_field="rel_col")
+    vc = _vc("machine", "line")
+    ea = _make_static_ea("machine", "line", relation_field="rel_col")
     ea.finish_init(_init(vc))
 
     ctx = ExtractionContext()
@@ -268,21 +268,21 @@ def test_static_types_dynamic_relation_field() -> None:
 
 def test_dynamic_both_types_static_relation() -> None:
     """Dynamic EdgeActor resolves types from VRA slots; static relation."""
-    vc = _vc("server", "database")
+    vc = _vc("machine", "line")
     ea = _make_dynamic_ea("S", "T", relation="uses")
     ea.finish_init(_init(vc))
 
     ctx = ExtractionContext()
     base = _lindex(0)
-    _populate_slot(ctx, base, "S", "server", {"id": "s1"})
-    _populate_slot(ctx, base, "T", "database", {"id": "d1"})
+    _populate_slot(ctx, base, "S", "machine", {"id": "m1"})
+    _populate_slot(ctx, base, "T", "line", {"id": "l1"})
 
     ea(ctx, base, doc={})
 
     assert len(ctx.edge_intents) == 1
     intent = ctx.edge_intents[0]
-    assert intent.edge.source == "server"
-    assert intent.edge.target == "database"
+    assert intent.edge.source == "machine"
+    assert intent.edge.target == "line"
     assert intent.edge.relation == "uses"
     assert intent.derivation is not None
     assert intent.derivation.match_source == "S"
@@ -291,31 +291,31 @@ def test_dynamic_both_types_static_relation() -> None:
 
 def test_dynamic_both_types_dynamic_relation() -> None:
     """Dynamic EdgeActor reads relation from merged doc (relation_field)."""
-    vc = _vc("server", "database")
+    vc = _vc("machine", "line")
     ea = _make_dynamic_ea("S", "T", relation_field="rel")
     ea.finish_init(_init(vc))
 
     ctx = ExtractionContext()
     base = _lindex(0)
-    _populate_slot(ctx, base, "S", "server", {"id": "s1"})
-    _populate_slot(ctx, base, "T", "database", {"id": "d1"})
+    _populate_slot(ctx, base, "S", "machine", {"id": "m1"})
+    _populate_slot(ctx, base, "T", "line", {"id": "l1"})
 
-    ea(ctx, base, doc={"rel": "runs_on"})
+    ea(ctx, base, doc={"rel": "installed_on"})
 
     assert len(ctx.edge_intents) == 1
-    assert ctx.edge_intents[0].edge.relation == "runs_on"
+    assert ctx.edge_intents[0].edge.relation == "installed_on"
 
 
 def test_dynamic_relation_from_transform_buffer() -> None:
     """Dynamic EdgeActor reads relation_field from transform buffer (not just raw doc)."""
-    vc = _vc("server", "database")
+    vc = _vc("machine", "line")
     ea = _make_dynamic_ea("S", "T", relation_field="rel")
     ea.finish_init(_init(vc))
 
     ctx = ExtractionContext()
     base = _lindex(0)
-    _populate_slot(ctx, base, "S", "server", {"id": "s1"})
-    _populate_slot(ctx, base, "T", "database", {"id": "d1"})
+    _populate_slot(ctx, base, "S", "machine", {"id": "m1"})
+    _populate_slot(ctx, base, "T", "line", {"id": "l1"})
 
     ctx.transform_buffer[base].append(TransformPayload(named={"rel": "from_buffer"}))
     ea(ctx, base, doc={"rel": "from_doc"})  # buffer overrides doc
@@ -325,7 +325,7 @@ def test_dynamic_relation_from_transform_buffer() -> None:
 
 def test_dynamic_with_relation_map() -> None:
     """Dynamic EdgeActor applies relation_map to normalise raw relation values."""
-    vc = _vc("server", "database")
+    vc = _vc("machine", "line")
     ea = _make_dynamic_ea(
         "S", "T", relation_field="rt", relation_map={"raw_rel": "canonical"}
     )
@@ -333,8 +333,8 @@ def test_dynamic_with_relation_map() -> None:
 
     ctx = ExtractionContext()
     base = _lindex(0)
-    _populate_slot(ctx, base, "S", "server", {"id": "s1"})
-    _populate_slot(ctx, base, "T", "database", {"id": "d1"})
+    _populate_slot(ctx, base, "S", "machine", {"id": "m1"})
+    _populate_slot(ctx, base, "T", "line", {"id": "l1"})
 
     ea(ctx, base, doc={"rt": "raw_rel"})
 
@@ -349,7 +349,7 @@ def test_relation_map_only_drops_unmapped_raw_values(
     relation_map_only: bool, expected: list[str]
 ) -> None:
     """By default an unmapped raw value passes through as the relation name."""
-    vc = _vc("server", "database")
+    vc = _vc("machine", "line")
     ea = _make_dynamic_ea(
         "S",
         "T",
@@ -361,8 +361,8 @@ def test_relation_map_only_drops_unmapped_raw_values(
 
     ctx = ExtractionContext()
     base = _lindex(0)
-    _populate_slot(ctx, base, "S", "server", {"id": "s1"})
-    _populate_slot(ctx, base, "T", "database", {"id": "d1"})
+    _populate_slot(ctx, base, "S", "machine", {"id": "m1"})
+    _populate_slot(ctx, base, "T", "line", {"id": "l1"})
 
     ea(ctx, base, doc={"rt": "raw_rel"})
     ea(ctx, base, doc={"rt": "unmapped"})
@@ -377,13 +377,13 @@ def test_relation_map_only_requires_a_relation_map() -> None:
 
 def test_dynamic_skips_when_slot_empty() -> None:
     """Dynamic EdgeActor skips when a required slot has no vertex data."""
-    vc = _vc("server", "database")
+    vc = _vc("machine", "line")
     ea = _make_dynamic_ea("S", "T")
     ea.finish_init(_init(vc))
 
     ctx = ExtractionContext()
     base = _lindex(0)
-    _populate_slot(ctx, base, "S", "server", {"id": "s1"})
+    _populate_slot(ctx, base, "S", "machine", {"id": "m1"})
     # T slot is deliberately empty
 
     ea(ctx, base, doc={})
@@ -392,14 +392,14 @@ def test_dynamic_skips_when_slot_empty() -> None:
 
 def test_dynamic_skips_unknown_vertex_type() -> None:
     """Dynamic EdgeActor skips if the resolved type is not in vertex_set."""
-    vc = _vc("server")  # "database" not in vertex_set
+    vc = _vc("machine")  # "line" not in vertex_set
     ea = _make_dynamic_ea("S", "T")
     ea.finish_init(_init(vc))
 
     ctx = ExtractionContext()
     base = _lindex(0)
-    _populate_slot(ctx, base, "S", "server", {"id": "s1"})
-    _populate_slot(ctx, base, "T", "database", {"id": "d1"})  # not in vc
+    _populate_slot(ctx, base, "S", "machine", {"id": "m1"})
+    _populate_slot(ctx, base, "T", "line", {"id": "l1"})  # not in vc
 
     ea(ctx, base, doc={})
     assert len(ctx.edge_intents) == 0
@@ -444,15 +444,15 @@ def test_vertex_b_is_source_and_target_in_different_edges() -> None:
 
 def test_strict_edge_types_skips_unknown() -> None:
     """With strict_edge_types=True, undeclared (source_type, target_type) is skipped."""
-    vc = _vc("server", "database")
+    vc = _vc("machine", "line")
     ec = EdgeConfig()  # No edges pre-declared
     ea = _make_dynamic_ea("S", "T", strict_edge_types=True)
     ea.finish_init(_init(vc, ec))
 
     ctx = ExtractionContext()
     base = _lindex(0)
-    _populate_slot(ctx, base, "S", "server", {"id": "s1"})
-    _populate_slot(ctx, base, "T", "database", {"id": "d1"})
+    _populate_slot(ctx, base, "S", "machine", {"id": "m1"})
+    _populate_slot(ctx, base, "T", "line", {"id": "l1"})
 
     ea(ctx, base, doc={})
     assert len(ctx.edge_intents) == 0
@@ -460,8 +460,8 @@ def test_strict_edge_types_skips_unknown() -> None:
 
 def test_strict_edge_types_allows_known() -> None:
     """With strict_edge_types=True, a pre-declared edge pair passes through."""
-    vc = _vc("server", "database")
-    pre_edge = Edge(source="server", target="database")
+    vc = _vc("machine", "line")
+    pre_edge = Edge(source="machine", target="line")
     pre_edge.finish_init(vertex_config=vc)
     ec = EdgeConfig(edges=[pre_edge])
 
@@ -470,12 +470,12 @@ def test_strict_edge_types_allows_known() -> None:
 
     ctx = ExtractionContext()
     base = _lindex(0)
-    _populate_slot(ctx, base, "S", "server", {"id": "s1"})
-    _populate_slot(ctx, base, "T", "database", {"id": "d1"})
+    _populate_slot(ctx, base, "S", "machine", {"id": "m1"})
+    _populate_slot(ctx, base, "T", "line", {"id": "l1"})
 
     ea(ctx, base, doc={})
     assert len(ctx.edge_intents) == 1
-    assert ctx.edge_intents[0].edge.source == "server"
+    assert ctx.edge_intents[0].edge.source == "machine"
 
 
 # ---------------------------------------------------------------------------
@@ -485,12 +485,12 @@ def test_strict_edge_types_allows_known() -> None:
 
 def test_edge_config_requires_source() -> None:
     with pytest.raises(Exception, match="source"):
-        EdgeActorConfig.model_validate({"type": "edge", "to": "database"})
+        EdgeActorConfig.model_validate({"type": "edge", "to": "line"})
 
 
 def test_edge_config_requires_target() -> None:
     with pytest.raises(Exception, match="target"):
-        EdgeActorConfig.model_validate({"type": "edge", "from": "server"})
+        EdgeActorConfig.model_validate({"type": "edge", "from": "machine"})
 
 
 def test_edge_config_from_and_source_type_field_exclusive() -> None:
@@ -498,9 +498,9 @@ def test_edge_config_from_and_source_type_field_exclusive() -> None:
         EdgeActorConfig.model_validate(
             {
                 "type": "edge",
-                "from": "server",
+                "from": "machine",
                 "source_type_field": "S",
-                "to": "database",
+                "to": "line",
             }
         )
 
@@ -511,12 +511,12 @@ def test_edge_config_mixed_mode_source_type_field_static_target_is_valid() -> No
         {
             "type": "edge",
             "source_type_field": "S",
-            "to": "database",
+            "to": "line",
         }
     )
     assert cfg.source_role == "S"
     assert cfg.source_type_field is None
-    assert cfg.target == "database"
+    assert cfg.target == "line"
 
 
 def test_edge_config_mixed_mode_static_source_target_type_field_is_valid() -> None:
@@ -524,10 +524,10 @@ def test_edge_config_mixed_mode_static_source_target_type_field_is_valid() -> No
     cfg = EdgeActorConfig.model_validate(
         {
             "type": "edge",
-            "from": "server",
+            "from": "machine",
             "target_type_field": "T",
         }
     )
-    assert cfg.source == "server"
+    assert cfg.source == "machine"
     assert cfg.target_role == "T"
     assert cfg.target_type_field is None

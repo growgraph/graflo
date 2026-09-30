@@ -1,78 +1,149 @@
 # Graph export and replay
 
-Export a live graph to a chunked GraFlo file backend on disk, then replay into another database — or ingest manifest resources directly to disk.
+You want a copy of a graph on disk: to keep it, to move it between machines,
+or to load it into several databases from one export. GraFlo writes a graph to
+a directory of compressed chunks called a file backend, and reads that
+directory back as if it were a database. This guide saves a graph to files,
+looks at what was written, and loads it back. No database is needed until the
+last step.
 
-## Prerequisites
+To move a graph straight from one database to another, read
+[Graph DB migration](graph_db_migration.md). For the layout of the directory
+and the limits of export, read
+[Graph export and migration](../concepts/operations/graph_export_migration.md).
 
-- Python 3.11+
-- Optional graph source: Neo4j, ArangoDB or PostgreSQL (for export)
-- Optional connection configs via environment variables or `docker/<backend>/.env`
+## What you need
 
-## When to use this
+- GraFlo installed (`pip install graflo`).
+- A graph to export: Neo4j, ArangoDB, PostgreSQL holding a graph that GraFlo
+  wrote, or another file backend. If you have source files and a manifest
+  instead, go to [step 4](#4-build-the-files-from-source-data-instead).
+- A directory to write to.
 
-- Dry-run ingestion without a live target database
-- Large-graph exports that should not stay in memory
-- Replay the same export into multiple targets (ArangoDB, Neo4j, PostgreSQL)
+## Steps
 
-## Step 1 — Export a graph to disk
+### 1. Save the graph to disk
+
+A file backend is a target like any other, so saving is a migration whose
+target is a `GraFloBackendConfig`:
 
 ```python
 from pathlib import Path
 
 from graflo import DBType, GraphEngine
-from graflo.db import Neo4jConfig
-from graflo.db.graflo_backend.config import GraFloBackendConfig
+from graflo.connections import GraFloBackendConfig, Neo4jConfig
 
-neo4j = Neo4jConfig.from_env()
-backend = GraFloBackendConfig(output_dir=Path("artifacts/neo4j-backend"))
-
-engine = GraphEngine(target_db_flavor=DBType.ARANGO)
-engine.migrate_graph(neo4j, backend, recreate_schema=True)
+backend = GraFloBackendConfig(output_dir=Path("artifacts/plant-graph"))
+engine = GraphEngine(target_db_flavor=DBType.GRAFLO_BACKEND)
+engine.migrate_graph(Neo4jConfig.from_env(), backend, recreate_schema=True)
 ```
 
-This writes `schema.yaml`, `INDEX.json`, and chunked gzip JSONL under `vertices/` and `edges/`.
+This reads the schema and every record from Neo4j and writes `schema.yaml`,
+`INDEX.json` and the chunk files under `vertices/` and `edges/`.
 
-## Step 2 — Replay to a target
+`export_graph` is a different call for a different task: it returns the
+schema and the data as Python objects and writes nothing.
 
 ```python
-from graflo.db import ArangoConfig, PostgresConfig
-
-arango = ArangoConfig.from_env()
-engine.migrate_graph(backend, arango, recreate_schema=True)
-
-# Or replay into PostgreSQL relational graph tables:
-pg_engine = GraphEngine(target_db_flavor=DBType.POSTGRES)
-pg_engine.migrate_graph(backend, PostgresConfig.from_env(), recreate_schema=True)
+output = engine.export_graph(Neo4jConfig.from_env())
+output.graph_schema  # Schema
+output.data  # GraphContainer: vertices and edges in memory
 ```
 
-## Step 3 — Ingest manifest resources to disk
+Use it when you want to inspect or transform the graph in code. Use
+`migrate_graph` with a file-backend target when you want files.
 
-Use `GraFloBackendConfig` as the `ingest()` target the same way as any other backend — only the config changes:
+### 2. Look at what was written
 
 ```python
+from graflo.architecture.backend import GraFloBackendReader
+
+reader = GraFloBackendReader(Path("artifacts/plant-graph"))
+index = reader.read_index()
+for name, entry in index.vertices.items():
+    print(name, entry.record_count, entry.chunks)
+for name, entry in index.edges.items():
+    print(name, entry.record_count, entry.chunks)
+```
+
+This prints each vertex type and edge type with its record count and chunk
+files. `read_schema()` returns the `Schema`. `iter_vertex_batches(name)` and
+`iter_edge_batches((source, target, relation))` stream records in batches
+without loading the whole graph. A vertex record is a JSON object; an edge
+record is a list of three objects: the source vertex's identity, the target
+vertex's identity, and the edge properties.
+
+### 3. Load it back into a database
+
+The file backend is also a source, so loading is another migration:
+
+```python
+from graflo.connections import ArangoConfig, PostgresConfig
+
+GraphEngine(target_db_flavor=DBType.ARANGO).migrate_graph(
+    backend, ArangoConfig.from_env(), recreate_schema=True
+)
+GraphEngine(target_db_flavor=DBType.POSTGRES).migrate_graph(
+    backend, PostgresConfig.from_env(), recreate_schema=True
+)
+```
+
+The same export can be loaded into as many targets as you like. Each load
+reads `schema.yaml` and the chunks, adapts the names to the target and
+writes.
+
+### 4. Build the files from source data instead
+
+If the graph does not exist yet, ingest the manifest into the file backend
+the way you would into a database. Only the target config differs:
+
+```python
+from suthing import FileHandle
+
+from graflo import GraphManifest
+from graflo.hq import IngestionParams
+
+manifest = GraphManifest.from_config(FileHandle.load("manifest.yaml"))
+manifest.finish_init()
+
 engine.define_and_ingest(
     manifest=manifest,
-    target_db_config=GraFloBackendConfig(output_dir=Path("artifacts/csv-backend")),
-    connection_provider=provider,
+    target_db_config=GraFloBackendConfig(output_dir=Path("artifacts/plant-graph")),
+    ingestion_params=IngestionParams(clear_data=True),
+    recreate_schema=True,
 )
 ```
 
-## Pre-sanitize for a future target
+Use this to test a manifest without a database, and to get a graph out of a
+source that GraFlo cannot read as a graph: build the files from the original
+data, then load them where you want them.
 
-Set `target_flavor_hint` so `schema.yaml` is sanitized for the intended backend before it is written. Names the intended backend cannot store are replaced by stored names in `schema.yaml`, and the data files are keyed by the same names, so the export replays as-is:
+## What you should see
 
-```python
-backend = GraFloBackendConfig(
-    output_dir=Path("artifacts/for-arango"),
-    target_flavor_hint=DBType.ARANGO,
-)
+After step 1 or step 4 the directory looks like this:
+
+```text
+artifacts/plant-graph/
+├── INDEX.json
+├── schema.yaml
+├── vertices/
+│   └── machine.000.jsonl.gz
+└── edges/
+    └── work_order__services__machine.000.jsonl.gz
 ```
 
-## Full runnable example
+`INDEX.json` lists every type with its record count and chunk paths. After
+step 3 the target database holds the same types and records.
 
-See [Example 13](../examples/example-13.md) and `examples/13-graph-export-migration/`.
+The file backend appends records rather than merging them. After step 4, a
+vertex that two resources both produce is stored once per resource, so a
+record count can be higher than the number of distinct vertices; the
+database merges the copies in step 3. For the same reason, `engine.ingest()`
+into a directory that already holds data adds a second copy of every record
+unless `IngestionParams(clear_data=True)` is set.
 
-## Related documentation
+## What to read next
 
-- [Graph export and migration](../concepts/operations/graph_export_migration.md) — API reference and layout details
-- [Core components](../concepts/architecture/core_components.md) — `GraphEngine`, `GraFloOutput`, `GraphContainer`
+- [Graph export and migration](../concepts/operations/graph_export_migration.md): directory layout, chunk naming, limits.
+- [Graph DB migration](graph_db_migration.md): the direct database-to-database move.
+- [A graph on disk, without a database (14)](../examples/file-backend-export/index.md): the same steps as runnable scripts.

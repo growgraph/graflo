@@ -397,8 +397,8 @@ def infer_edge_vertices_from_table_name(
 
     Uses fuzzy matching to identify vertex names in table name fragments and key names.
     Handles patterns like:
-    - rel_cluster_containment_host -> cluster, host, containment
-    - rel_cluster_containment_cluster_2 -> cluster, cluster, containment (self-reference)
+    - rel_plant_containment_machine -> plant, machine, containment
+    - rel_plant_containment_plant_2 -> plant, plant, containment (self-reference)
     - user_follows_user -> user, user, follows (self-reference)
     - product_category_mapping -> product, category, mapping
 

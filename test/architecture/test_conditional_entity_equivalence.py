@@ -1,37 +1,45 @@
 """End-to-end: union of two manifests with conditional entity equivalence.
 
 The full recipe merged from fundamental ops — canonicalize the left
-manifest, validate the merge op against the canonical map, merge, then
-apply an identity alignment: canonical attribute declarations, per-resource
-derivation transforms, a priority funnel over canonical attributes only, and
-per-side secondary identities. The class definition stays side-agnostic;
-records that pass a derivation gate fuse with the right-hand entities (same
-synthetic id), records that fail it keep a namespaced local key.
+manifest, then merge with a derived identity declared on the equivalence:
+ordered funnel branches over canonical attributes each source derives from
+its own columns, ending in a namespaced local key. Merge lowers them into
+per-resource derivation transforms and a priority funnel, and demotes each
+member's own key to a lookup-only secondary. The class definition stays
+side-agnostic; records that pass a derivation gate fuse with the right-hand
+entities (same synthetic id), records that fail it keep a namespaced local key.
 """
 
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 
 import pytest
 
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.evolution import (
-    AlignmentAttribute,
-    AlignmentConflictError,
+    AddResourceTransformsOp,
+    AddVertexPropertiesOp,
     CanonicalMap,
     DerivationSpec,
-    IdentityAlignment,
+    DerivedBranch,
+    IdentityBranchDecl,
+    LocalKeyBranch,
     LocalKeySource,
-    LocalKeySpec,
     MergeManifestsOp,
-    SideIdentity,
+    ReplaceIdentityOp,
     VertexEquivalence,
-    alignment_to_ops,
     apply_evolution,
     canonical_map_to_ops,
     merge_manifests,
 )
+from graflo.architecture.evolution.alignment import (
+    AlignmentConflictError,
+    IdentityPlan,
+    identity_to_ops,
+)
+from graflo.architecture.evolution.preview import preview_merge
 from graflo.hq.document_caster import DocumentCaster
 from graflo.hq.ingestion_parameters import IngestionParams
 
@@ -102,47 +110,45 @@ _CANONICAL = CanonicalMap(
     properties={"Firm": {"firm_id": "company_id"}},
 )
 
-_ALIGNMENT = IdentityAlignment(
-    vertex="Company",
-    attributes=[
-        AlignmentAttribute(
-            name="match_key",
-            sources={
-                "r_a": DerivationSpec(
-                    input=["secondary_key", "shared_raw"],
-                    params={"prefix": "abc_", "strip_prefix": "ABC-"},
-                ),
-                "r_b": DerivationSpec(
-                    input=["org_id", "shared_raw"],
-                    params={"prefix": "", "strip_prefix": "ABC-"},
-                ),
-            },
-        )
-    ],
-    local_key=LocalKeySpec(
-        sources={
-            # RAW doc field: renamed documents still carry firm_id.
-            "r_a": LocalKeySource(field="firm_id", tag="a"),
-            "r_b": LocalKeySource(field="org_id", tag="b"),
-        }
-    ),
-    secondary_identities={
-        "by_company_id": ["company_id"],
-        "by_org_id": ["org_id"],
-    },
+_LOCAL_KEY = LocalKeyBranch(
+    local_key={
+        # RAW doc field: renamed documents still carry firm_id.
+        "r_a": LocalKeySource(field="firm_id", tag="a"),
+        "r_b": LocalKeySource(field="org_id", tag="b"),
+    }
 )
+
+_IDENTITY: list[IdentityBranchDecl] = [
+    DerivedBranch(
+        name="match_key",
+        sources={
+            # Two inputs (gate, value): the gated function, named explicitly.
+            "r_a": DerivationSpec(
+                input=["secondary_key", "shared_raw"],
+                foo="gated_normalized_key",
+                params={"prefix": "abc_", "strip_prefix": "ABC-"},
+            ),
+            "r_b": DerivationSpec(
+                input=["org_id", "shared_raw"],
+                foo="gated_normalized_key",
+                params={"prefix": "", "strip_prefix": "ABC-"},
+            ),
+        },
+    ),
+    _LOCAL_KEY,
+]
 
 
 def _compose_union() -> GraphManifest:
-    """A merged union *without* the identity alignment applied yet.
+    """A merged union *without* the derived identity applied yet.
 
     Declares a throwaway identity on the cluster -- each member keyed on its
     own key: `Company` and `Org` disagree on their raw identity field, and
     nothing here promises to resolve it (callers that want the resolved
-    identity use :func:`_build_union` instead, which folds the alignment into
-    the same merge op), so an explicit placeholder is what this unaligned
-    union needs in order to merge at all. It must be one every member carries,
-    or merge refuses it.
+    identity use :func:`_build_union` instead, which declares the derived
+    branches on the same equivalence), so an explicit placeholder is what this
+    underived union needs in order to merge at all. Each branch must be one
+    some member carries, or merge refuses it.
     """
     canonical_a = apply_evolution(_manifest_a(), canonical_map_to_ops(_CANONICAL))
     right = _manifest_b()
@@ -152,7 +158,7 @@ def _compose_union() -> GraphManifest:
                 left="Company",
                 right="Org",
                 into="Company",
-                identity=SideIdentity(left=["company_id"], right=["org_id"]),
+                identity=["company_id", "org_id"],
             )
         ]
     )
@@ -161,17 +167,23 @@ def _compose_union() -> GraphManifest:
     )
 
 
-def _build_union(alignment: IdentityAlignment = _ALIGNMENT) -> GraphManifest:
-    canonical_a = apply_evolution(_manifest_a(), canonical_map_to_ops(_CANONICAL))
-    right = _manifest_b()
-    op = MergeManifestsOp(
+def _merge_op(identity: list[IdentityBranchDecl] = _IDENTITY) -> MergeManifestsOp:
+    return MergeManifestsOp(
         vertex_equivalences=[
-            VertexEquivalence(left="Company", right="Org", into="Company")
+            VertexEquivalence(
+                left="Company", right="Org", into="Company", identity=list(identity)
+            )
         ],
-        identity_alignments=[alignment],
     )
+
+
+def _build_union(identity: list[IdentityBranchDecl] = _IDENTITY) -> GraphManifest:
+    canonical_a = apply_evolution(_manifest_a(), canonical_map_to_ops(_CANONICAL))
     return merge_manifests(
-        canonical_a, right, op, canonical_maps=[("left", _CANONICAL)]
+        canonical_a,
+        _manifest_b(),
+        _merge_op(identity),
+        canonical_maps=[("left", _CANONICAL)],
     )
 
 
@@ -198,17 +210,28 @@ class TestComposedSchema:
         ]
         funnel_fields = {f for b in vertex.identity_funnel.branches for f in b.fields}
         assert funnel_fields == {"match_key", "local_key"}
-        # The retired side keys survive as lookup-only secondary identities.
+        # The retired side keys survive as lookup-only secondary identities,
+        # named automatically after their fields.
         assert {s.name for s in vc.secondary_identities("Company")} == {
             "by_company_id",
             "by_org_id",
         }
 
-    def test_alignment_validates_against_the_union(self) -> None:
-        """The composer runs validate_alignment when handed the manifest."""
+    def test_identity_validates_against_the_union(self) -> None:
+        """The lowering runs validate_identity when handed the manifest."""
         union = _compose_union()
-        ops = alignment_to_ops(_ALIGNMENT, manifest=union, canonical_maps=[_CANONICAL])
-        assert len(ops) == 4
+        ops = identity_to_ops(
+            IdentityPlan(vertex="Company", branches=tuple(_IDENTITY)),
+            manifest=union,
+            canonical_maps=[_CANONICAL],
+        )
+        # No router restricts extraction, so no EnsureExtractedFieldsOp; and
+        # secondaries are merge's to demote, not the lowering's.
+        assert [type(op) for op in ops] == [
+            AddVertexPropertiesOp,
+            AddResourceTransformsOp,
+            ReplaceIdentityOp,
+        ]
 
 
 class TestConditionalFusion:
@@ -255,29 +278,18 @@ class TestPrefixMarkerAdmission:
     same name normalize alike and fuse.
     """
 
-    def _marker_alignment(self) -> IdentityAlignment:
+    def _marker_identity(self) -> list[IdentityBranchDecl]:
         spec = DerivationSpec(
             input=["shared_raw"], foo="affix_gated_key", params={"prefix": "ABC-"}
         )
-        return IdentityAlignment(
-            vertex="Company",
-            attributes=[
-                AlignmentAttribute(
-                    name="match_key",
-                    # Literally the same call on both sides: one normal form.
-                    sources={"r_a": spec, "r_b": spec},
-                )
-            ],
-            local_key=LocalKeySpec(
-                sources={
-                    "r_a": LocalKeySource(field="firm_id", tag="a"),
-                    "r_b": LocalKeySource(field="org_id", tag="b"),
-                }
-            ),
-        )
+        return [
+            # Literally the same call on both sides: one normal form.
+            DerivedBranch(name="match_key", sources={"r_a": spec, "r_b": spec}),
+            _LOCAL_KEY,
+        ]
 
     def test_marked_values_fuse_across_sources(self) -> None:
-        union = _build_union(self._marker_alignment())
+        union = _build_union(self._marker_identity())
 
         a = _cast(union, "r_a", [{"firm_id": "f1", "shared_raw": "ABC-Alpha"}])
         b = _cast(union, "r_b", [{"org_id": "o1", "shared_raw": "ABC-ALPHA"}])
@@ -288,7 +300,7 @@ class TestPrefixMarkerAdmission:
 
     def test_an_unmarked_value_falls_through_instead_of_fusing(self) -> None:
         """Same business name, no marker: not admitted, and not dropped."""
-        union = _build_union(self._marker_alignment())
+        union = _build_union(self._marker_identity())
 
         a = _cast(union, "r_a", [{"firm_id": "f2", "shared_raw": "Alpha"}])
         b = _cast(union, "r_b", [{"org_id": "o1", "shared_raw": "ABC-ALPHA"}])
@@ -299,47 +311,45 @@ class TestPrefixMarkerAdmission:
 
 
 class TestPriorityFunnel:
-    """Two aligned attributes: priority semantics, including the known trap."""
+    """Two derived branches: priority semantics, including the known trap."""
 
-    def _two_attribute_alignment(self) -> IdentityAlignment:
-        return IdentityAlignment(
-            vertex="Company",
-            attributes=[
-                AlignmentAttribute(
-                    name="c1",
-                    sources={
-                        "r_a": DerivationSpec(
-                            input=["secondary_key", "shared_raw"],
-                            params={"prefix": "abc_", "strip_prefix": "ABC-"},
-                        ),
-                        "r_b": DerivationSpec(
-                            input=["org_id", "shared_raw"],
-                            params={"prefix": "", "strip_prefix": "ABC-"},
-                        ),
-                    },
-                ),
-                AlignmentAttribute(
-                    name="c2",
-                    sources={
-                        "r_a": DerivationSpec(
-                            input=["firm_id", "tax_no"], params={"prefix": ""}
-                        ),
-                        "r_b": DerivationSpec(
-                            input=["org_id", "tax_no"], params={"prefix": ""}
-                        ),
-                    },
-                ),
-            ],
-            local_key=LocalKeySpec(
+    def _two_branch_identity(self) -> list[IdentityBranchDecl]:
+        return [
+            DerivedBranch(
+                name="c1",
                 sources={
-                    "r_a": LocalKeySource(field="firm_id", tag="a"),
-                    "r_b": LocalKeySource(field="org_id", tag="b"),
-                }
+                    "r_a": DerivationSpec(
+                        input=["secondary_key", "shared_raw"],
+                        foo="gated_normalized_key",
+                        params={"prefix": "abc_", "strip_prefix": "ABC-"},
+                    ),
+                    "r_b": DerivationSpec(
+                        input=["org_id", "shared_raw"],
+                        foo="gated_normalized_key",
+                        params={"prefix": "", "strip_prefix": "ABC-"},
+                    ),
+                },
             ),
-        )
+            DerivedBranch(
+                name="c2",
+                sources={
+                    "r_a": DerivationSpec(
+                        input=["firm_id", "tax_no"],
+                        foo="gated_normalized_key",
+                        params={"prefix": ""},
+                    ),
+                    "r_b": DerivationSpec(
+                        input=["org_id", "tax_no"],
+                        foo="gated_normalized_key",
+                        params={"prefix": ""},
+                    ),
+                },
+            ),
+            _LOCAL_KEY,
+        ]
 
     def test_same_top_priority_attribute_fuses(self) -> None:
-        union = _build_union(self._two_attribute_alignment())
+        union = _build_union(self._two_branch_identity())
         a = _cast(
             union,
             "r_a",
@@ -366,8 +376,13 @@ class TestPriorityFunnel:
         by its strongest present attribute (c1) while Y keys by c2 — no
         fusion. Equivalence holds by ONE attribute only when that attribute
         is the strongest evidence both records carry.
+
+        Merge's preview reports this hazard as a ``lookup_demotion`` note: a
+        member whose records can complete two or more branches no longer has
+        its own key deduplicating them (see
+        :meth:`test_preview_notes_the_demoted_key_no_longer_deduplicates`).
         """
-        union = _build_union(self._two_attribute_alignment())
+        union = _build_union(self._two_branch_identity())
         x = _cast(
             union,
             "r_a",
@@ -395,22 +410,42 @@ class TestPriorityFunnel:
         assert x[0]["c2"] == y[0]["c2"]
         assert x[0]["id"] != y[0]["id"]  # no fusion: X keyed by c1, Y by c2
 
+    def test_preview_notes_the_demoted_key_no_longer_deduplicates(self) -> None:
+        """A derived branch plus local_key: each member's records reach two
+        branches, so its demoted own key is flagged as no longer unique."""
+        canonical_a = apply_evolution(_manifest_a(), canonical_map_to_ops(_CANONICAL))
+
+        preview = preview_merge(
+            canonical_a,
+            _manifest_b(),
+            _merge_op(),
+            canonical_maps=[("left", _CANONICAL)],
+        )
+
+        assert not preview.refused
+        notes = [f for f in preview.findings if f.kind == "lookup_demotion"]
+        assert {f.severity for f in notes} == {"note"}
+        messages = " ".join(f.message for f in notes)
+        assert "'by_company_id'" in messages
+        assert "'by_org_id'" in messages
+        assert not preview.blocking
+
 
 class TestOrderingRationale:
-    def test_alignment_cannot_apply_before_compose(self) -> None:
-        """The alignment references both sides' resources — only the union
-        carries them, so applying it to one side fails loudly."""
+    def test_identity_cannot_lower_before_compose(self) -> None:
+        """The derived branches reference both sides' resources — only the
+        union carries them, so lowering against one side fails loudly."""
         canonical_a = apply_evolution(_manifest_a(), canonical_map_to_ops(_CANONICAL))
-        with pytest.raises(ValueError, match="unknown resources"):
-            apply_evolution(
-                canonical_a,
-                alignment_to_ops(_ALIGNMENT, manifest=canonical_a),
+        with pytest.raises(AlignmentConflictError, match="unknown resources"):
+            identity_to_ops(
+                IdentityPlan(vertex="Company", branches=tuple(_IDENTITY)),
+                manifest=canonical_a,
             )
 
 
 # --------------------------------------------------------------------------- #
 # A routed source: one vertex_router, nested, two branches collapsing onto the
-# aligned class. This is the shape that silently dropped every routed record
+# merged class. This is the shape that silently dropped every routed record
 # before derivations became level-aware — the manifest looked right while the
 # emitted graph had no identities at all.
 # --------------------------------------------------------------------------- #
@@ -420,46 +455,43 @@ _ROUTED_CANONICAL = CanonicalMap(
     properties={"Firm": {"firm_id": "company_id"}},
 )
 
-_ROUTED_ALIGNMENT = IdentityAlignment(
-    vertex="Company",
-    attributes=[
-        AlignmentAttribute(
-            name="match_key",
-            sources={
-                # Each branch of the view carries the shared key in its own
-                # column; the other is empty, which is what selects.
-                "r_view": [
-                    DerivationSpec(
-                        input=["secondary_key", "firm_ref"],
-                        params={"prefix": "abc_", "strip_prefix": "ABC-"},
-                    ),
-                    DerivationSpec(
-                        input=["secondary_key", "shop_ref"],
-                        params={"prefix": "abc_", "strip_prefix": "ABC-"},
-                    ),
-                ],
-                "r_b": DerivationSpec(
-                    input=["org_id", "shared_raw"],
-                    params={"prefix": "", "strip_prefix": "ABC-"},
+_ROUTED_IDENTITY: list[IdentityBranchDecl] = [
+    DerivedBranch(
+        name="match_key",
+        sources={
+            # Each member of the view carries the shared key in its own
+            # column; keyed by member, the router decides which one runs. The
+            # left member is `Company` because the canonical map renamed
+            # `Firm` before the merge.
+            "r_view": {
+                "Company": DerivationSpec(
+                    input=["secondary_key", "firm_ref"],
+                    foo="gated_normalized_key",
+                    params={"prefix": "abc_", "strip_prefix": "ABC-"},
+                ),
+                "Shop": DerivationSpec(
+                    input=["secondary_key", "shop_ref"],
+                    foo="gated_normalized_key",
+                    params={"prefix": "abc_", "strip_prefix": "ABC-"},
                 ),
             },
-        )
-    ],
-    local_key=LocalKeySpec(
-        sources={
-            "r_view": [
-                LocalKeySource(
-                    field="firm_id", tag="firm", gate="kind", gate_prefix="firm"
-                ),
-                LocalKeySource(
-                    field="shop_id", tag="shop", gate="kind", gate_prefix="shop"
-                ),
-            ],
+            "r_b": DerivationSpec(
+                input=["org_id", "shared_raw"],
+                foo="gated_normalized_key",
+                params={"prefix": "", "strip_prefix": "ABC-"},
+            ),
+        },
+    ),
+    LocalKeyBranch(
+        local_key={
+            "r_view": {
+                "Company": LocalKeySource(field="firm_id", tag="firm"),
+                "Shop": LocalKeySource(field="shop_id", tag="shop"),
+            },
             "r_b": LocalKeySource(field="org_id", tag="b"),
         }
     ),
-    secondary_identities={"by_company_id": ["company_id"], "by_org_id": ["org_id"]},
-)
+]
 
 
 def _routed_manifest_a() -> GraphManifest:
@@ -529,16 +561,19 @@ def _routed_manifest_a() -> GraphManifest:
     return manifest
 
 
+def _member_equivalence(identity: list[IdentityBranchDecl]) -> VertexEquivalence:
+    return VertexEquivalence(
+        left=["Company", "Shop"], right="Org", into="Company", identity=list(identity)
+    )
+
+
 def _build_routed_union() -> GraphManifest:
     left = apply_evolution(
         _routed_manifest_a(), canonical_map_to_ops(_ROUTED_CANONICAL)
     )
     op = MergeManifestsOp(
-        vertex_equivalences=[
-            VertexEquivalence(left=["Company", "Shop"], right="Org", into="Company")
-        ],
+        vertex_equivalences=[_member_equivalence(_ROUTED_IDENTITY)],
         allow_merges=True,
-        identity_alignments=[_ROUTED_ALIGNMENT],
     )
     return merge_manifests(
         left, _manifest_b(), op, canonical_maps=[("left", _ROUTED_CANONICAL)]
@@ -635,49 +670,77 @@ def _marker(prefix: str) -> DerivationSpec:
     )
 
 
-_MEMBER_ALIGNMENT = IdentityAlignment(
-    vertex="Company",
-    attributes=[
-        AlignmentAttribute(
-            name="match_key",
-            sources={
-                # One column for every kind; the member decides which marker
-                # admits a value. The left member is `Company` because the
-                # canonical map renamed `Firm` before the merge.
-                "r_view": {"Company": _marker("abc_"), "Shop": _marker("def_")},
-                "r_b": DerivationSpec(
-                    input=["shared_raw"], foo="affix_gated_key", params={"prefix": ""}
-                ),
-            },
-        )
-    ],
-    local_key=LocalKeySpec(
-        sources={
-            "r_view": {
-                "Company": LocalKeySource(field="firm_id", tag="firm"),
-                "Shop": LocalKeySource(field="shop_id", tag="shop"),
-            },
-            "r_b": LocalKeySource(field="org_id", tag="b"),
-        }
-    ),
-    secondary_identities={"by_company_id": ["company_id"], "by_org_id": ["org_id"]},
+_MEMBER_LOCAL_KEY = LocalKeyBranch(
+    local_key={
+        "r_view": {
+            "Company": LocalKeySource(field="firm_id", tag="firm"),
+            "Shop": LocalKeySource(field="shop_id", tag="shop"),
+        },
+        "r_b": LocalKeySource(field="org_id", tag="b"),
+    }
 )
 
+_MEMBER_IDENTITY: list[IdentityBranchDecl] = [
+    DerivedBranch(
+        name="match_key",
+        sources={
+            # One column for every kind; the member decides which marker
+            # admits a value. The left member is `Company` because the
+            # canonical map renamed `Firm` before the merge.
+            "r_view": {"Company": _marker("abc_"), "Shop": _marker("def_")},
+            "r_b": DerivationSpec(
+                input=["shared_raw"], foo="affix_gated_key", params={"prefix": ""}
+            ),
+        },
+    ),
+    _MEMBER_LOCAL_KEY,
+]
 
-def _build_member_union() -> GraphManifest:
+
+def _build_member_union(
+    identity: list[IdentityBranchDecl] = _MEMBER_IDENTITY,
+) -> GraphManifest:
     left = apply_evolution(
         _routed_manifest_a(), canonical_map_to_ops(_ROUTED_CANONICAL)
     )
     op = MergeManifestsOp(
-        vertex_equivalences=[
-            VertexEquivalence(left=["Company", "Shop"], right="Org", into="Company")
-        ],
+        vertex_equivalences=[_member_equivalence(identity)],
         allow_merges=True,
-        identity_alignments=[_MEMBER_ALIGNMENT],
     )
     return merge_manifests(
         left, _manifest_b(), op, canonical_maps=[("left", _ROUTED_CANONICAL)]
     )
+
+
+def _map_branches(
+    identity: list[IdentityBranchDecl], rewrite: Callable[[dict], dict]
+) -> list[IdentityBranchDecl]:
+    """*identity* with each stepped branch's per-resource entries rewritten."""
+    out: list[IdentityBranchDecl] = []
+    for branch in identity:
+        if isinstance(branch, DerivedBranch):
+            branch = branch.model_copy(
+                update={"sources": rewrite(dict(branch.sources))}, deep=True
+            )
+        elif isinstance(branch, LocalKeyBranch):
+            branch = branch.model_copy(
+                update={"local_key": rewrite(dict(branch.local_key))}, deep=True
+            )
+        out.append(branch)
+    return out
+
+
+def _renamed_resource(
+    identity: list[IdentityBranchDecl], old: str, new: str
+) -> list[IdentityBranchDecl]:
+    """*identity* with resource *old* spelled *new* in every stepped branch."""
+
+    def rename(entries: dict) -> dict:
+        return {
+            (new if name == old else name): entry for name, entry in entries.items()
+        }
+
+    return _map_branches(identity, rename)
 
 
 _SHARED_COLUMN_VIEW = [
@@ -770,32 +833,19 @@ class TestMemberKeyedRoutedFusion:
 
     def test_an_untagged_local_key_is_the_raw_value(self) -> None:
         """``tag=None``: the author claims the values are globally unique."""
-        alignment = _MEMBER_ALIGNMENT.model_copy(
-            update={
-                "local_key": LocalKeySpec(
-                    sources={
-                        "r_view": {
-                            "Company": LocalKeySource(field="firm_id", tag=None),
-                            "Shop": LocalKeySource(field="shop_id", tag="shop"),
-                        },
-                        "r_b": LocalKeySource(field="org_id", tag="b"),
-                    }
-                )
-            }
-        )
-        left = apply_evolution(
-            _routed_manifest_a(), canonical_map_to_ops(_ROUTED_CANONICAL)
-        )
-        op = MergeManifestsOp(
-            vertex_equivalences=[
-                VertexEquivalence(left=["Company", "Shop"], right="Org", into="Company")
-            ],
-            allow_merges=True,
-            identity_alignments=[alignment],
-        )
-        union = merge_manifests(
-            left, _manifest_b(), op, canonical_maps=[("left", _ROUTED_CANONICAL)]
-        )
+        identity: list[IdentityBranchDecl] = [
+            _MEMBER_IDENTITY[0],
+            LocalKeyBranch(
+                local_key={
+                    "r_view": {
+                        "Company": LocalKeySource(field="firm_id", tag=None),
+                        "Shop": LocalKeySource(field="shop_id", tag="shop"),
+                    },
+                    "r_b": LocalKeySource(field="org_id", tag="b"),
+                }
+            ),
+        ]
+        union = _build_member_union(identity)
 
         view = _cast(union, "r_view", _SHARED_COLUMN_VIEW)
 
@@ -808,18 +858,14 @@ class TestMemberKeyedRoutedFusion:
         )
         right = _manifest_b()
         right.require_ingestion_model().resources[0].name = "r_view"
-        alignment = _MEMBER_ALIGNMENT.model_copy(deep=True)
-        for attribute in alignment.attributes:
-            attribute.sources["r_orgs"] = attribute.sources.pop("r_b")
-        assert alignment.local_key is not None
-        alignment.local_key.sources["r_orgs"] = alignment.local_key.sources.pop("r_b")
         op = MergeManifestsOp(
             vertex_equivalences=[
-                VertexEquivalence(left=["Company", "Shop"], right="Org", into="Company")
+                _member_equivalence(
+                    _renamed_resource(_MEMBER_IDENTITY, "r_b", "r_orgs")
+                )
             ],
             allow_merges=True,
             resource_renames={"r_view": "r_orgs"},
-            identity_alignments=[alignment],
         )
 
         union = merge_manifests(
@@ -832,33 +878,33 @@ class TestMemberKeyedRoutedFusion:
         assert {doc["local_key"] for doc in view} >= {"firm:f1", "shop:s1"}
 
 
-def _rekeyed(alignment: IdentityAlignment, key: str) -> IdentityAlignment:
-    """*alignment* with its ``Company`` member key spelled *key*."""
-    out = alignment.model_copy(deep=True)
-    for attribute in out.attributes:
-        entry = attribute.sources["r_view"]
+def _rekeyed(identity: list[IdentityBranchDecl], key: str) -> list[IdentityBranchDecl]:
+    """*identity* with its ``Company`` member key spelled *key*."""
+
+    def rekey(entries: dict) -> dict:
+        entry = entries["r_view"]
         assert isinstance(entry, dict)
-        attribute.sources["r_view"] = {
-            (key if member == "Company" else member): spec
-            for member, spec in entry.items()
+        return {
+            **entries,
+            "r_view": {
+                (key if member == "Company" else member): spec
+                for member, spec in entry.items()
+            },
         }
-    assert out.local_key is not None
-    local = out.local_key.sources["r_view"]
-    assert isinstance(local, dict)
-    out.local_key.sources["r_view"] = {
-        (key if member == "Company" else member): source
-        for member, source in local.items()
-    }
-    return out
+
+    return _map_branches(identity, rekey)
 
 
-def _raw_member_union(alignment: IdentityAlignment) -> GraphManifest:
+def _raw_member_union(identity: list[IdentityBranchDecl]) -> GraphManifest:
     """The member union authored against the raw left side: `Firm`, no `into`."""
     op = MergeManifestsOp(
-        vertex_equivalences=[VertexEquivalence(left=["Firm", "Shop"], right="Org")],
+        vertex_equivalences=[
+            VertexEquivalence(
+                left=["Firm", "Shop"], right="Org", identity=list(identity)
+            )
+        ],
         allow_merges=True,
         canonical_maps={"left": _ROUTED_CANONICAL},
-        identity_alignments=[alignment],
     )
     return merge_manifests(_routed_manifest_a(), _manifest_b(), op)
 
@@ -868,20 +914,28 @@ class TestMemberKeysResolveThroughTheMap:
 
     @pytest.mark.parametrize("key", ["Firm", "Company"])
     def test_a_raw_side_takes_the_own_or_the_canonical_key(self, key: str) -> None:
-        union = _raw_member_union(_rekeyed(_MEMBER_ALIGNMENT, key))
+        union = _raw_member_union(_rekeyed(_MEMBER_IDENTITY, key))
         reference = _build_member_union()
         assert _cast(union, "r_view", _SHARED_COLUMN_VIEW) == _cast(
             reference, "r_view", _SHARED_COLUMN_VIEW
         )
 
     def test_two_spellings_of_one_member_are_refused(self) -> None:
-        alignment = _rekeyed(_MEMBER_ALIGNMENT, "Firm")
-        attribute = alignment.attributes[0]
-        entry = attribute.sources["r_view"]
+        identity = _rekeyed(_MEMBER_IDENTITY, "Firm")
+        derived = identity[0]
+        assert isinstance(derived, DerivedBranch)
+        entry = derived.sources["r_view"]
         assert isinstance(entry, dict)
-        attribute.sources["r_view"] = {**entry, "Company": _marker("abc_")}
+        identity[0] = derived.model_copy(
+            update={
+                "sources": {
+                    **derived.sources,
+                    "r_view": {**entry, "Company": _marker("abc_")},
+                }
+            }
+        )
         with pytest.raises(AlignmentConflictError, match="keyed twice"):
-            _raw_member_union(alignment)
+            _raw_member_union(identity)
 
 
 def _dynamic_manifest_a() -> GraphManifest:
@@ -916,11 +970,8 @@ def _build_dynamic_member_union() -> GraphManifest:
         _dynamic_manifest_a(), canonical_map_to_ops(_ROUTED_CANONICAL)
     )
     op = MergeManifestsOp(
-        vertex_equivalences=[
-            VertexEquivalence(left=["Company", "Shop"], right="Org", into="Company")
-        ],
+        vertex_equivalences=[_member_equivalence(_MEMBER_IDENTITY)],
         allow_merges=True,
-        identity_alignments=[_MEMBER_ALIGNMENT],
     )
     return merge_manifests(
         left, _manifest_b(), op, canonical_maps=[("left", _ROUTED_CANONICAL)]
@@ -957,12 +1008,17 @@ class TestDynamicRouterFusion:
         return normalize_actor_step(dict(descend["pipeline"][0]))
 
     def test_the_renames_are_written_into_the_table(self) -> None:
-        union = _build_dynamic_member_union()
+        router = self._router(_build_dynamic_member_union())
 
-        assert self._router(union)["type_map"] == {
+        assert router["type_map"] == {
             "Firm": "Company",
             "Shop": "Company",
+            # Merge then closes the router over the left side as handed in:
+            # its other classes, as themselves.
+            "Company": "Company",
+            "Person": "Person",
         }
+        assert router["type_map_only"] is True
 
     def test_each_member_fuses_through_its_own_marker(self) -> None:
         union = _build_dynamic_member_union()

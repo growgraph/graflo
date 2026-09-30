@@ -65,11 +65,11 @@ def test_a_freshly_ingested_graph_shows_no_undeclared_property(live) -> None:
 def test_a_planted_property_is_reported(live) -> None:
     engine, config, schema = live
     with ConnectionManager(connection_config=config) as db:
-        db.execute("MATCH (n:server {key: 'S1'}) SET n.os_family = 'linux'")
+        db.execute("MATCH (n:machine {key: 'M1'}) SET n.model_series = 'h200'")
     try:
         drift = engine.diff_live_schema(config, schema)
     finally:
         with ConnectionManager(connection_config=config) as db:
-            db.execute("MATCH (n:server {key: 'S1'}) REMOVE n.os_family")
-    assert drift.undeclared_properties == {"server": ["os_family"]}
+            db.execute("MATCH (n:machine {key: 'M1'}) REMOVE n.model_series")
+    assert drift.undeclared_properties == {"machine": ["model_series"]}
     assert drift.has_drift

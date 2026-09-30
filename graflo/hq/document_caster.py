@@ -99,6 +99,10 @@ def filter_graph_container_drop_empty_identity_inplace(
     An endpoint declared by a secondary identity is judged on *that* field-set:
     it carries no primary key by construction, so checking the primary identity
     would discard exactly the edges this resolution path exists to write.
+
+    Whatever is removed is logged: a keyless document usually means a
+    resource references the vertex rather than owning it, and dropping its
+    records without a word hides exactly that.
     """
     blank = set(vertex_config.blank_vertices)
     assigned = set(vertex_config.assigned_vertices)
@@ -109,9 +113,19 @@ def filter_graph_container_drop_empty_identity_inplace(
         if vcol in skip_minted or vcol not in vertex_set:
             continue
         id_fields = vertex_config.identity_fields(vcol)
-        gc.vertices[vcol] = [
+        kept_docs = [
             d for d in docs if not _vertex_doc_has_empty_identity(d, id_fields)
         ]
+        if len(kept_docs) < len(docs):
+            logger.warning(
+                "Cast dropped %s '%s' document(s) with no value for its identity "
+                "%s. Mark the step lookup_only if the resource only references "
+                "this vertex.",
+                len(docs) - len(kept_docs),
+                vcol,
+                id_fields,
+            )
+        gc.vertices[vcol] = kept_docs
 
     for edge_id, docs in list(gc.edges.items()):
         vfrom, vto, _rel = edge_id
@@ -136,6 +150,15 @@ def filter_graph_container_drop_empty_identity_inplace(
             if not _vertex_doc_has_empty_identity(t[0], src_ids)
             and not _vertex_doc_has_empty_identity(t[1], tgt_ids)
         ]
+        if len(kept) < len(docs):
+            logger.warning(
+                "Cast dropped %s %s edge(s) whose endpoint has no value for the "
+                "fields it is matched on (%s / %s)",
+                len(docs) - len(kept),
+                edge_id,
+                src_ids,
+                tgt_ids,
+            )
         if kept:
             gc.edges[edge_id] = kept
         else:

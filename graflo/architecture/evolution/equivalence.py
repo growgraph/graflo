@@ -109,9 +109,9 @@ class ClusterSpec:
 
     ``aliases`` records, per side, every other name a member answers to —
     the canonical name it was declared by, or the one the canonical map gives
-    it — so the per-member maps (property equivalences,
-    ``SideIdentity.members``, identity-alignment member keys) may be keyed by
-    either the member's own name or its canonical one. ``declared_into`` is
+    it — so the per-member maps (property equivalences, member-keyed
+    derivation sources) may be keyed by either the member's own name or its
+    canonical one. ``declared_into`` is
     the merged name as the author spelled it, before any canonical map
     translated it; ``synthesized`` marks a cluster merge created itself for
     a same-name pair under ``name_conflict="union_right"``.

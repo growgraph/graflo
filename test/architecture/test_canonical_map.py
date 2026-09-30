@@ -16,7 +16,6 @@ from graflo.architecture.evolution import (
     MergeManifestsOp,
     PropertyEquivalence,
     RelationEquivalence,
-    SideIdentity,
     VertexEquivalence,
     apply_evolution,
     canonical_map_to_ops,
@@ -97,7 +96,7 @@ def _right_b_manifest() -> GraphManifest:
 
 #: Settles the merged identity without keying either side on a field only the
 #: other carries: each member keys on its own key, one funnel branch apiece.
-_EACH_OWN_KEY = SideIdentity(left=["company_id"], right=["org_id"])
+_EACH_OWN_KEY: list = ["company_id", "org_id"]
 
 _CANONICAL = CanonicalMap(
     vertices={"Firm": "Company"},
@@ -837,10 +836,7 @@ class TestValidateAndCompleteCanonicalMap:
                     left="Company",
                     right=["Org", "Branch"],
                     into="Company",
-                    identity=SideIdentity(
-                        left=["company_id"],
-                        members={"Org": ["org_id"], "Branch": ["branch_id"]},
-                    ),
+                    identity=["company_id", "org_id", "branch_id"],
                 )
             ],
             allow_merges=allow_merges,

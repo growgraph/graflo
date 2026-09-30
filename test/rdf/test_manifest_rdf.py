@@ -73,7 +73,7 @@ def test_ontology_file_exists_and_loads() -> None:
 
 
 def test_manifest_to_rdf_contains_core_triples() -> None:
-    manifest = _load_example_manifest("1-ingest-csv")
+    manifest = _load_example_manifest("01-csv-two-resources")
     serializer = ManifestRdfSerializer(include_ontology=False)
     graph = serializer.to_graph(manifest, BASE_URI)
 
@@ -86,7 +86,7 @@ def test_manifest_to_rdf_contains_core_triples() -> None:
 
 
 def test_round_trip_example_1_ingest_csv() -> None:
-    original = _load_example_manifest("1-ingest-csv")
+    original = _load_example_manifest("01-csv-two-resources")
     serializer = ManifestRdfSerializer(include_ontology=False)
     deserializer = ManifestRdfDeserializer()
 
@@ -97,7 +97,7 @@ def test_round_trip_example_1_ingest_csv() -> None:
 
 
 def test_round_trip_example_2_with_transforms() -> None:
-    original = _load_example_manifest("2-ingest-self-references")
+    original = _load_example_manifest("02-json-self-edges")
     serializer = ManifestRdfSerializer(include_ontology=False)
     deserializer = ManifestRdfDeserializer()
 
@@ -107,8 +107,8 @@ def test_round_trip_example_2_with_transforms() -> None:
     assert _canonical(restored) == _canonical(original)
 
 
-def test_round_trip_example_3_edge_weights() -> None:
-    original = _load_example_manifest("3-ingest-csv-edge-weights")
+def test_round_trip_example_3_relation_field() -> None:
+    original = _load_example_manifest("03-csv-relation-field")
     serializer = ManifestRdfSerializer(include_ontology=False)
     deserializer = ManifestRdfDeserializer()
 
@@ -119,7 +119,7 @@ def test_round_trip_example_3_edge_weights() -> None:
 
 
 def test_turtle_output_serializes_with_ontology() -> None:
-    manifest = _load_example_manifest("1-ingest-csv")
+    manifest = _load_example_manifest("01-csv-two-resources")
     serializer = ManifestRdfSerializer(include_ontology=True)
     ttl = serializer.to_turtle(manifest, BASE_URI)
 
@@ -130,7 +130,7 @@ def test_turtle_output_serializes_with_ontology() -> None:
 
 
 def test_json_ld_output_is_parseable() -> None:
-    manifest = _load_example_manifest("1-ingest-csv")
+    manifest = _load_example_manifest("01-csv-two-resources")
     serializer = ManifestRdfSerializer(include_ontology=False)
     payload = serializer.to_json_ld(manifest, BASE_URI)
 
@@ -141,7 +141,7 @@ def test_json_ld_output_is_parseable() -> None:
 
 
 def test_round_trip_preserves_vertex_config_policy_fields() -> None:
-    original = _load_example_manifest("1-ingest-csv")
+    original = _load_example_manifest("01-csv-two-resources")
     assert original.graph_schema is not None
     original.graph_schema.core_schema.vertex_config.force_types = {
         "Person": ["STRING", "INT"]
@@ -265,7 +265,7 @@ def test_round_trip_preserves_identity_field_order() -> None:
 
 def test_round_trip_preserves_undirected_edge() -> None:
     """`directed` is a first-class predicate, not an opaque payload key."""
-    original = _load_example_manifest("2-ingest-self-references")
+    original = _load_example_manifest("02-json-self-edges")
     assert original.graph_schema is not None
     edges = original.graph_schema.core_schema.edge_config.edges
     edges[0].directed = False
@@ -293,7 +293,7 @@ def test_undirected_edge_is_also_written_to_the_legacy_payload() -> None:
     Without the duplicate it would see no direction at all and silently treat
     the edge as directed — data loss the version bump cannot warn about.
     """
-    original = _load_example_manifest("2-ingest-self-references")
+    original = _load_example_manifest("02-json-self-edges")
     assert original.graph_schema is not None
     original.graph_schema.core_schema.edge_config.edges[0].directed = False
 
@@ -306,7 +306,7 @@ def test_undirected_edge_is_also_written_to_the_legacy_payload() -> None:
 
 def test_directed_edges_emit_no_direction_triple() -> None:
     """True is the default; keep the common case out of the graph."""
-    manifest = _load_example_manifest("2-ingest-self-references")
+    manifest = _load_example_manifest("02-json-self-edges")
     graph = ManifestRdfSerializer(include_ontology=False).to_graph(manifest, BASE_URI)
     assert not list(graph.subject_objects(ns.edgeDirected))
 
@@ -318,7 +318,7 @@ def test_directed_edges_emit_no_direction_triple() -> None:
 
 def test_legacy_edge_payload_still_carries_direction() -> None:
     """Graphs written before ``gf:edgeDirected`` existed must keep loading."""
-    manifest = _load_example_manifest("2-ingest-self-references")
+    manifest = _load_example_manifest("02-json-self-edges")
     graph = ManifestRdfSerializer(include_ontology=False).to_graph(manifest, BASE_URI)
     edge_node = next(iter(graph.subjects(RDF.type, ns.Edge)))
     graph.add((edge_node, ns.edgePayload, Literal('{"directed": false}')))
@@ -334,7 +334,7 @@ def test_legacy_edge_payload_still_carries_direction() -> None:
 
 
 def test_profile_and_transform_actor_semantic_links_are_emitted() -> None:
-    manifest = _load_example_manifest("2-ingest-self-references")
+    manifest = _load_example_manifest("02-json-self-edges")
     assert manifest.graph_schema is not None
     manifest.graph_schema.db_profile.vertex_indexes = {
         "Person": [Index(fields=["name"])]
@@ -422,7 +422,7 @@ def test_every_bound_source_kind_has_an_individual() -> None:
 
 
 def _manifest_with_one_connector_of_each_kind() -> GraphManifest:
-    path = EXAMPLES_DIR / "1-ingest-csv" / "manifest.yaml"
+    path = EXAMPLES_DIR / "01-csv-two-resources" / "manifest.yaml"
     with path.open(encoding="utf-8") as handle:
         data = yaml.safe_load(handle)
     # The example wires two file connectors to named resources; replace the whole
@@ -580,7 +580,7 @@ def test_semantics_emits_expected_triples() -> None:
 def test_schemas_without_semantics_emit_no_semantic_triples() -> None:
     """Absent blocks stay absent — the vocabulary costs nothing when unused."""
     graph = ManifestRdfSerializer(include_ontology=False).to_graph(
-        _load_example_manifest("1-ingest-csv"), BASE_URI
+        _load_example_manifest("01-csv-two-resources"), BASE_URI
     )
     assert not list(graph.subjects(ns.semanticIri, None))
     assert not list(graph.subjects(ns.unit, None))

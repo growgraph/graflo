@@ -1,0 +1,26 @@
+# The base manifest: a person keyed by an internal id. Two people will branch
+# from it and disagree about what identifies a person.
+schema:
+    metadata:
+        name: people
+        version: 1.0.0
+    graph:
+        vertex_config:
+            vertices:
+            -   name: person
+                properties:
+                -   name: id
+                    type: STRING
+                -   name: ssn
+                    type: STRING
+                -   name: email
+                    type: STRING
+                identity: [id]
+        edge_config:
+            edges: []
+ingestion_model:
+    resources:
+    -   name: people
+        pipeline:
+        -   vertex: person
+    transforms: []

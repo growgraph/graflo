@@ -65,7 +65,7 @@ def _compose(left: GraphManifest, right: GraphManifest) -> GraphManifest:
 
 class TestTheCommit:
     def test_a_compose_commit_names_both_parents(self) -> None:
-        left, right = _manifest("Server"), _manifest("Scan")
+        left, right = _manifest("Machine"), _manifest("Reading")
         merged = _compose(left, right)
         recipe = build_merge_recipe(left, right, MergeManifestsOp())
 
@@ -80,7 +80,7 @@ class TestTheCommit:
 
     def test_the_recipe_rides_along_flavoured_as_a_compose(self) -> None:
         """A re-merge reads this; merge3's own recipe would not describe it."""
-        left, right = _manifest("Server"), _manifest("Scan")
+        left, right = _manifest("Machine"), _manifest("Reading")
         op = MergeManifestsOp(name_conflict="prefix_right")
         recipe = build_merge_recipe(left, right, op)
 
@@ -103,7 +103,7 @@ class TestTheCommit:
         has to be able to say the block changed -- otherwise the flagship
         overlay merge is exactly the one with no lineage.
         """
-        left, right = _manifest("Server"), _manifest("Scan", bindings=True)
+        left, right = _manifest("Machine"), _manifest("Reading", bindings=True)
         merged = _compose(left, right)
 
         entry = build_merge_commit(
@@ -117,7 +117,7 @@ class TestTheCommit:
 
     def test_recomposing_the_same_inputs_yields_the_same_commit(self) -> None:
         """Content-derived, so a re-run is the same commit and not a duplicate."""
-        left, right = _manifest("Server"), _manifest("Scan")
+        left, right = _manifest("Machine"), _manifest("Reading")
         recipe = build_merge_recipe(left, right, MergeManifestsOp())
         parents = ["a" * 12, "b" * 12]
 
@@ -131,7 +131,7 @@ class TestTheCommit:
         assert first.id == second.id
 
     def test_one_parent_is_refused(self) -> None:
-        left, right = _manifest("Server"), _manifest("Scan")
+        left, right = _manifest("Machine"), _manifest("Reading")
         with pytest.raises(CommitError, match="at least two parents"):
             build_merge_commit(
                 left,
@@ -140,11 +140,33 @@ class TestTheCommit:
                 recipe=build_merge_recipe(left, right, MergeManifestsOp()),
             )
 
+    def test_a_recipe_in_a_retired_vocabulary_is_a_commit_error(self) -> None:
+        """A recorded declaration the op model no longer loads names the cause."""
+        left, right = _manifest("Machine"), _manifest("Reading")
+        recipe = build_merge_recipe(left, right, MergeManifestsOp())
+        stale = recipe.model_copy(
+            update={
+                "equivalences": {
+                    **recipe.equivalences,
+                    "identity_alignments": [{"vertex": "Machine"}],
+                }
+            }
+        )
+
+        with pytest.raises(CommitError, match="no longer loads"):
+            build_merge_commit(
+                left,
+                _compose(left, right),
+                parents=["a" * 12, "b" * 12],
+                recipe=stale,
+                right=right,
+            )
+
 
 class TestReplay:
     def test_the_compose_commit_replays_from_its_first_parent(self) -> None:
         """First-parent replay, with no special case for the second lineage."""
-        left, right = _manifest("Server"), _manifest("Scan", bindings=True)
+        left, right = _manifest("Machine"), _manifest("Reading", bindings=True)
         merged = _compose(left, right)
 
         left_root = build_root_commit(left, scope="left")
@@ -162,14 +184,14 @@ class TestReplay:
 
 class TestFindingAParentByContent:
     def test_a_manifest_resolves_to_the_commit_that_produced_it(self) -> None:
-        left = _manifest("Server")
+        left = _manifest("Machine")
         root = build_root_commit(left, scope="left")
         history = History(commits=[root])
 
         assert find_commit_by_tree(history, left) is root
 
     def test_a_manifest_no_commit_reached_resolves_to_nothing(self) -> None:
-        history = History(commits=[build_root_commit(_manifest("Server"), scope="l")])
+        history = History(commits=[build_root_commit(_manifest("Machine"), scope="l")])
 
         assert find_commit_by_tree(history, _manifest("Other")) is None
 
@@ -182,7 +204,7 @@ class TestStampingDoesNotMoveTheContentAddress:
         artifact no longer has, and two routes to one world model could never be
         recognised as the same.
         """
-        left, right = _manifest("Server"), _manifest("Scan")
+        left, right = _manifest("Machine"), _manifest("Reading")
         merged = _compose(left, right)
         before = manifest_hash(merged)
 

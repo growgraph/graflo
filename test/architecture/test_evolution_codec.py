@@ -397,7 +397,7 @@ class TestUnionCoverage:
     def test_every_op_is_classified_for_ingestion_reach(self) -> None:
         """A new op must be classified, so schema-only callers cannot silently no-op.
 
-        ``INGESTION_REWRITING_OPS`` drives the schema-artifact guard in graflo-server.
+        ``INGESTION_REWRITING_OPS`` lets a caller that holds only a schema refuse such ops.
         An op left out of it applies to a schema-only manifest with its ingestion half
         silently dropped, which is how a rename reaches the schema but not the
         resources that reference it.

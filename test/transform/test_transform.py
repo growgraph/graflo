@@ -13,7 +13,6 @@ from graflo.util.transform import (
     affix_gated_key,
     camel_to_snake,
     gated_normalized_key,
-    gated_tagged_key,
     normalized_key,
     parse_multi_item,
     remove_prefix,
@@ -430,7 +429,6 @@ def test_tagged_key_namespaces_and_strips():
 def test_tagged_key_empty_tag_is_the_neutral_element():
     assert tagged_key("f2", tag="") == "f2"
     assert tagged_key("f2", tag=None) == "f2"
-    assert gated_tagged_key("firm", "f2", tag=None, prefix="firm") == "f2"
 
 
 def test_tagged_key_declines_on_missing_or_blank_value():

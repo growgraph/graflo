@@ -15,7 +15,7 @@ from graflo.architecture.graph_types import GraphContainer
 
 
 class QueryResult(ConfigBaseModel):
-    """A query's answer plus the honest caveats."""
+    """A query's answer plus the caveats that qualify it."""
 
     container: GraphContainer = PydanticField(
         default_factory=GraphContainer,

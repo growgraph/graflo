@@ -288,56 +288,56 @@ def test_edge_table_with_multiple_primary_keys(postgres_conn):
     # Create a test table with composite primary key (edge-like)
     with postgres_conn.conn.cursor() as cursor:
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS cluster (
+            CREATE TABLE IF NOT EXISTS plant (
                 id SERIAL PRIMARY KEY,
                 name VARCHAR(255)
             )
         """)
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS host (
+            CREATE TABLE IF NOT EXISTS machine (
                 id SERIAL PRIMARY KEY,
                 name VARCHAR(255)
             )
         """)
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS rel_cluster_containment_host (
-                cluster_id INTEGER NOT NULL,
-                host_id INTEGER NOT NULL,
-                PRIMARY KEY (cluster_id, host_id),
-                FOREIGN KEY (cluster_id) REFERENCES cluster(id),
-                FOREIGN KEY (host_id) REFERENCES host(id)
+            CREATE TABLE IF NOT EXISTS rel_plant_containment_machine (
+                plant_id INTEGER NOT NULL,
+                machine_id INTEGER NOT NULL,
+                PRIMARY KEY (plant_id, machine_id),
+                FOREIGN KEY (plant_id) REFERENCES plant(id),
+                FOREIGN KEY (machine_id) REFERENCES machine(id)
             )
         """)
         postgres_conn.conn.commit()
 
     try:
         # Test that it's detected as edge-like
-        pk_columns = postgres_conn.get_primary_keys("rel_cluster_containment_host")
+        pk_columns = postgres_conn.get_primary_keys("rel_plant_containment_machine")
         assert len(pk_columns) >= 2
-        assert "cluster_id" in pk_columns
-        assert "host_id" in pk_columns
+        assert "plant_id" in pk_columns
+        assert "machine_id" in pk_columns
 
         # Test edge detection
         edge_tables = postgres_conn.detect_edge_tables()
         edge_table_names = {et.name for et in edge_tables}
-        assert "rel_cluster_containment_host" in edge_table_names
+        assert "rel_plant_containment_machine" in edge_table_names
 
         # Verify structure
         edge_table = next(
-            et for et in edge_tables if et.name == "rel_cluster_containment_host"
+            et for et in edge_tables if et.name == "rel_plant_containment_machine"
         )
         assert len(edge_table.primary_key) >= 2
-        assert edge_table.source_table in ["cluster", "host"]
-        assert edge_table.target_table in ["cluster", "host"]
-        assert edge_table.source_column in ["cluster_id", "host_id"]
-        assert edge_table.target_column in ["cluster_id", "host_id"]
+        assert edge_table.source_table in ["plant", "machine"]
+        assert edge_table.target_table in ["plant", "machine"]
+        assert edge_table.source_column in ["plant_id", "machine_id"]
+        assert edge_table.target_column in ["plant_id", "machine_id"]
 
     finally:
         # Cleanup
         with postgres_conn.conn.cursor() as cursor:
-            cursor.execute("DROP TABLE IF EXISTS rel_cluster_containment_host CASCADE")
-            cursor.execute("DROP TABLE IF EXISTS cluster CASCADE")
-            cursor.execute("DROP TABLE IF EXISTS host CASCADE")
+            cursor.execute("DROP TABLE IF EXISTS rel_plant_containment_machine CASCADE")
+            cursor.execute("DROP TABLE IF EXISTS plant CASCADE")
+            cursor.execute("DROP TABLE IF EXISTS machine CASCADE")
             postgres_conn.conn.commit()
 
 

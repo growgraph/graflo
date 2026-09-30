@@ -3,7 +3,7 @@
 The split is not arbitrary. A lift can see *structure* -- which edges leave
 ``directed`` unstated, which types have no grounding, where a property is a
 float with no unit -- but it cannot see *meaning*. Nothing in a schema says that
-``ConfigurationItem`` denotes a ``sosa:FeatureOfInterest``, or that ``temp_c``
+``Machine`` denotes a ``sosa:FeatureOfInterest``, or that ``temp_c``
 is degrees Celsius rather than a count, or that ``status`` is a fact that
 changes over time while ``serial_number`` is not. Those are the four things this
 spec carries, and the reason it is required rather than optional.
@@ -103,7 +103,7 @@ class LiftSpec(ConfigBaseModel):
         default="move",
         description=(
             "What happens to a property named in ``stateful``. ``move`` removes it "
-            "from the entity -- the honest lift, since a fact that changes over "
+            "from the entity, since a fact that changes over "
             "time does not belong on the thing it is about. ``keep`` leaves it as "
             "a denormalized current value beside the history."
         ),

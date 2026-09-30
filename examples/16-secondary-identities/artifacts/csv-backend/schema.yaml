@@ -53,9 +53,12 @@ core_schema:
             -   name: share
                 type: FLOAT
             type: direct
+        inverses: []
+        symmetric: []
 db_profile:
     db_flavor: graflo_backend
     vertex_storage_names: {}
+    vertex_property_names: {}
     vertex_indexes:
         instrument:
         -   fields:
@@ -74,3 +77,4 @@ db_profile:
             sparse: false
             exclude_edge_endpoints: false
     edge_specs: []
+    native_inverses: []

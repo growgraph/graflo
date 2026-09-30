@@ -32,9 +32,6 @@ schema:
                 -   {name: share, type: FLOAT}
     db_profile: {}
 ingestion_model:
-    # Soft uniqueness: when a secondary key hits several vertices, attach to every
-    # match (default). Alternatives: first | skip | error. Per-step override via
-    # on_ambiguous on the edge step.
     endpoints_on_ambiguous: all
     resources:
     -   name: instruments
@@ -43,8 +40,8 @@ ingestion_model:
     -   name: issuers
         pipeline:
         -   vertex: issuer
+    # Runs after the two resources above: its lookups read what they wrote.
     -   name: links
-        # Edge-only source: rows carry ISIN / LEI, never sid / iid.
         pipeline:
         -   vertex: instrument
             lookup_only: true

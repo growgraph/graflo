@@ -1,69 +1,133 @@
 # Parallelism
 
-How an ingest run uses your cores and your database connections, which knob to turn for which bottleneck, and when graflo deliberately runs serially.
+An ingest overlaps reading, [casting](../glossary.md#casting) and writing out
+of the box, and a few settings let it use more cores or more database
+connections. This page is for anyone whose ingest is slower than they expect.
+After reading it you know which setting helps with which bottleneck, and why
+some resources run serially whatever you set.
 
-## What runs concurrently
+## What runs at the same time
 
-An ingest run overlaps work at four independent levels, each with its own **`IngestionParams`** knob. All defaults are already parallel — a plain `engine.ingest(...)` pipelines batches and fans out writes without any configuration.
+An ingest works at four levels, each with its own setting in
+`IngestionParams`. The defaults already run in parallel: a plain
+`engine.ingest(...)` overlaps the casting and writing of batches and writes
+several vertex and edge types at once.
 
-| Knob | What runs concurrently | Default |
-|------|------------------------|---------|
-| **`max_in_flight_batches`** | Batches of one data source: casting batch N+1 overlaps writing batch N | `2` |
-| **`max_concurrent_sources`** | Data sources of one **resource** (file connectors expand to one source per file, so these are independent shards of the same stream) | `min(4, sources)` |
-| **`n_cores`** (+ **`cast_executor`**) | CPU-bound casting, spread over worker processes | `1` (in-process) |
-| **`max_concurrent_db_ops`** | Vertex collections and edge types of one batch, written to the database concurrently | `8` |
+| Setting | What runs at the same time | Default |
+|---|---|---|
+| `max_in_flight_batches` | Batches of one data source: casting batch N+1 overlaps writing batch N | `2` |
+| `max_concurrent_sources` | Data sources of one resource; a file connector gives one data source per file | `min(4, number of sources)` |
+| `n_cores` with `cast_executor` | Casting, spread over worker processes | `1` (in the main process) |
+| `max_concurrent_db_ops` | Database writes, counted over all batches in flight; a batch writes its vertex types, then its edge types | `8` |
 
-**`batch_prefetch`** (default `2`) is a different thing: it controls how far the *reader* runs ahead of processing (bounded memory, overlapped source I/O), while `max_in_flight_batches` controls how many batches are being *cast and written* at once.
+`batch_prefetch` (default `2`) is a separate setting: it says how many batches
+the reader fetches ahead of processing, which keeps source reads overlapped
+while bounding memory. `max_in_flight_batches` says how many batches are cast
+and written at once.
 
-**Resources never overlap.** They run strictly in declaration order, with a barrier in between, because a later resource may depend on database state written by an earlier one — edges over another resource's vertices, secondary-identity endpoint resolution, `extra_weights` lookups. Parallelism happens *inside* a resource, never across resources.
+Resources never overlap. They run in the order the manifest declares them,
+and each one finishes before the next starts, because a later resource may
+depend on what an earlier one wrote: edges to another resource's vertices,
+endpoints found by a secondary identity, `extra_weights` read from the
+database. Parallelism happens inside a resource.
 
 ```mermaid
 flowchart LR
-    subgraph one data source
+    subgraph source["One data source"]
         direction LR
-        R[read + prefetch] --> C1[cast batch N+1]
-        R --> W1[write batch N]
-        C1 -.overlaps.- W1
-        W1 --> V[vertices ×8] --> E[edges ×8]
+        R[read ahead] --> C[cast batch N+1]
+        R --> W[write batch N]
+        C -. overlaps .- W
+        W --> V[vertex types in parallel] --> E[edge types in parallel]
     end
 ```
 
-## Which knob to turn
+## Which setting to change
 
-1. **Start with the defaults.** Cast/write overlap and write fan-out are already on; for I/O-dominated runs there is often nothing to tune.
-2. **Many input files?** Sources of a resource already fan out four at a time; raise **`max_concurrent_sources`** if the files are small and numerous.
-3. **Heavy per-document work** (chained transforms, deep `descend` trees)? Set **`n_cores=4..8`** and leave `cast_executor="auto"` — large batches move to worker processes automatically, measured at ~2.5–3× end-to-end on transform-heavy resources. Keep `batch_size` comfortably above `n_cores × 64`, since small batches stay in-process on purpose.
-4. **Slow database?** Raise **`max_concurrent_db_ops`** — writes are I/O-bound, which is where concurrency pays most.
-5. **Debugging or reproducing an issue?** `IngestionParams(max_in_flight_batches=1, n_cores=1, max_concurrent_sources=1)` gives a fully serial, deterministic run.
+1. **Start with the defaults.** Overlap of casting and writing and parallel
+   writes are on; when most of the time goes to the database or the network,
+   there is often nothing to change.
+2. **Many input files.** The files of one resource are read four at a time.
+   Raise `max_concurrent_sources` when the files are small and numerous.
+3. **Heavy work per record** (chained transforms, deep `descend` steps). Set
+   `n_cores` to the number of cores to use and leave `cast_executor="auto"`:
+   batches then go to worker processes. A batch smaller than
+   `64 × n_cores` records stays in the main process, because sending it to
+   workers costs more than it saves, so keep `batch_size` well above that.
+   `n_cores` is capped at the number of CPUs of the machine.
+4. **Slow database.** Raise `max_concurrent_db_ops`. Writes wait on the
+   database, which is where more concurrency pays most.
+5. **Reproducing a problem.**
+   `IngestionParams(max_in_flight_batches=1, n_cores=1, max_concurrent_sources=1)`
+   gives a fully serial run in a fixed order.
 
-Only `--batch-size` and `--n-cores` are exposed on the `graflo ingest` CLI; the remaining knobs are Python-API only.
+```python
+from graflo.hq import IngestionParams
 
-## When graflo runs serially on purpose
+params = IngestionParams(
+    batch_size=20_000,
+    n_cores=8,
+    max_concurrent_db_ops=16,
+)
+engine.ingest(manifest=manifest, target_db_config=conn_conf, ingestion_params=params)
+```
 
-Some configurations make batch or document order semantically meaningful. graflo detects them and serializes that resource automatically — batches, and sources too — logging the reason at INFO. **You do not need to configure anything**; the knobs above simply have no effect for that resource.
+`cast_executor` takes `auto` (the default), `inline` (always in the main
+process), `process` (always in worker processes) or `thread`, which is kept
+for compatibility and rarely helps. The `graflo ingest` command sets
+`--batch-size` and `--n-cores`; the other settings are available from Python
+only.
+
+## When GraFlo runs serially on purpose
+
+In some configurations the order of batches changes the result. GraFlo
+detects them, processes that resource's batches and data sources one at a
+time, and logs the reason at `INFO`. You do not need to set anything; the
+settings above have no effect on that resource.
 
 | Configuration | Why order matters |
-|---------------|-------------------|
-| **`dynamic_edges`** | Casting a document may register a new edge type that changes how later documents are inferred (see below) |
-| Blank vertices (`blank: true`) in the resource | Blank-edge resolution pairs source and target docs positionally within a batch |
-| **`extra_weights`** on the resource | Weight enrichment reads the database between the vertex and edge writes of each batch |
-| Secondary-identity edge endpoints (`match_source` / `match_target`) | Endpoints are resolved against database state, so a later batch's edges must not race an earlier batch's vertex writes |
-| Native bulk load (e.g. TigerGraph) | Batches append to a single ordered bulk session |
-| GraFlo file backend target | The chunked-file backend supports one writer at a time |
+|---|---|
+| `IngestionParams(dynamic_edges=True)` | Casting a record may add an edge type that changes how later records are cast (see below) |
+| Blank vertices (`blank: true`) produced by the resource | Edges to blank vertices are matched to them by position within a batch |
+| `extra_weights` on the resource | Edge properties are read from the database between the vertex and edge writes of each batch |
+| Edge steps with `source_match` or `target_match` | Endpoints are found in the database, so a later batch's edges must not overtake an earlier batch's vertices |
+| A target with native bulk load enabled (TigerGraph) | Batches are appended to one ordered bulk load |
+| The GraFlo file backend as target | The file backend accepts one writer at a time |
 
-Within each batch, database writes (`max_concurrent_db_ops`) and batch prefetch stay concurrent even for these resources.
+Within each batch, the database writes (`max_concurrent_db_ops`) and the read
+ahead (`batch_prefetch`) stay concurrent even for these resources.
 
-## `dynamic_edges`: discovery is sequential by design
+## `dynamic_edges` discovers edges in order
 
-With **`IngestionParams(dynamic_edges=True)`**, edges the schema does not declare are discovered *from the data* while casting. That is a feedback loop: document 500 may register an edge type that changes what document 501 infers. Running documents out of order would silently change the result, so graflo keeps the whole resource sequential — `cast_executor` and `n_cores` are effectively ignored, and batches and sources process one at a time. This is automatic; there is nothing to set and nothing to work around.
+With `IngestionParams(dynamic_edges=True)`, GraFlo adds edge types that the
+schema does not declare as it finds them in the data. That is a feedback
+loop: record 500 may add an edge type that changes what record 501 produces.
+Records processed out of order would give a different graph, so GraFlo casts
+the whole resource in order, in the main process: `cast_executor` and
+`n_cores` have no effect, and batches and data sources run one at a time.
 
-If ingest throughput matters, treat `dynamic_edges` as a **discovery pass, not a production mode**:
+When throughput matters, use `dynamic_edges` to discover edges, not to load:
 
-1. Run with `dynamic_edges=True` over a representative sample (`max_items` caps the volume).
-2. Add the discovered edges to `schema.edge_config` — they are ordinary declared edges from then on.
-3. Re-ingest the full dataset with `dynamic_edges=False`, which restores every level of parallelism.
+1. Run with `dynamic_edges=True` over a representative sample; `max_items`
+   caps the number of records read from each data source.
+2. Declare the edge types that run wrote in `schema.graph.edge_config`. From
+   then on they are ordinary declared edges.
+3. Load the full data with `dynamic_edges=False`, which restores every level
+   of parallelism.
 
-!!! note "Cypher backends serialize same-collection writes internally"
-    Neo4j, Memgraph, and FalkorDB upsert via `MERGE`, which is not atomic across concurrent transactions — two writers merging the same key could both create it. graflo therefore writes each collection through one connection at a time on those backends (distinct collections still write in parallel). PostgreSQL, ArangoDB, TigerGraph, and NebulaGraph accept fully concurrent writes.
+!!! note "Neo4j, Memgraph and FalkorDB write one collection at a time"
+    These databases upsert with `MERGE`, which is not atomic across
+    concurrent transactions: two writers merging the same key could both
+    create it. GraFlo therefore writes each vertex type and each relation
+    through one connection at a time on those databases, while different
+    types still write in parallel. PostgreSQL, ArangoDB, TigerGraph and
+    NebulaGraph accept fully concurrent writes.
 
-See also: **[Document cast errors](doc_errors.md)** for the failure-handling knobs (`on_doc_error`, `max_doc_errors`), and the **[`IngestionParams` reference](../../reference/hq/ingestion_parameters.md)** for every field.
+## What to read next
+
+- [Document cast errors](doc_errors.md): the settings for records that fail
+  (`on_doc_error`, `max_doc_errors`).
+- [`IngestionParams` reference](../../reference/hq/ingestion_parameters.md):
+  every field of an ingest run.
+- [Architecture diagrams](../architecture/diagrams.md): the classes that run
+  an ingest.

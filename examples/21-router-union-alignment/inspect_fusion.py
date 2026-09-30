@@ -1,20 +1,11 @@
-"""
-Cast the routed view and the plain B-side sources through the union, and show
-which records fuse.
+"""Show where each register row and each device lands in the combined manifest.
+
+Reads the combined manifest, runs the two CSV files through it and prints, for
+every record, the vertex type it becomes, the matching key derived for it, and
+the vertex id. No database is involved.
 
     cd examples/21-router-union-alignment
     uv run python inspect_fusion.py
-
-Expected: the ``abc_``-marked ``firm`` row and B's ``org`` row digest to one
-synthetic ``id``; the ``def_``-marked ``shop`` row and B's ``branch`` row
-likewise. Two rows fall through to a side-local identity instead: the ``firm``
-row whose key is a bare ``alpha`` (no marker), and the ``shop`` row whose key
-carries the *firm* marker ``abc_alpha`` — same bytes as the fused firm's, but
-its member's derivation requires ``def_``, so the member decides, not the
-marker. Neither is dropped: falling through is how a record stays ingested
-outside the cluster. The ``person`` row still flows through the SAME router and
-is emitted as its own class; its derivations never ran, so it carries none of
-the canonical attributes.
 """
 
 from __future__ import annotations
@@ -22,67 +13,64 @@ from __future__ import annotations
 import asyncio
 import csv
 from pathlib import Path
+from typing import Any
 
-import click
-from build_union import build_union
+from suthing import FileHandle
 
+from graflo import GraphManifest
 from graflo.hq.document_caster import DocumentCaster
 from graflo.hq.ingestion_parameters import IngestionParams
 
 EXAMPLE_DIR = Path(__file__).resolve().parent
+#: Resource name, its file, and the column holding the record's own key.
+SOURCES = [
+    ("register", "register.csv", "asset_id"),
+    ("devices", "devices.csv", "device_id"),
+]
+ID_WIDTH = 12
 
 
-def _rows(name: str) -> list[dict]:
+def read_rows(name: str) -> list[dict[str, str]]:
+    """Read one CSV file of the example as a list of rows."""
     with open(EXAMPLE_DIR / "data" / name, newline="") as f:
         return list(csv.DictReader(f))
 
 
-@click.command()
+def cast(caster: DocumentCaster, resource: str, filename: str) -> Any:
+    """Run one file through one resource and return the resulting graph."""
+    rows = read_rows(filename)
+    result = asyncio.run(caster.cast_batch(rows, resource, params=IngestionParams()))
+    return result.graph
+
+
 def main() -> None:
-    union = build_union()
-    caster = DocumentCaster(union.require_ingestion_model())
-
-    # The view is one nested document: the router lives under `descend: records`.
-    payloads = {
-        "r_view": [{"records": _rows("view.csv")}],
-        "r_b": _rows("b.csv"),
-        "r_branch": _rows("branch.csv"),
-    }
-
-    emitted: list[tuple[str, dict]] = []
-    others: list[tuple[str, str, dict]] = []
-    for resource, docs in payloads.items():
-        result = asyncio.run(
-            caster.cast_batch(docs, resource, params=IngestionParams())
-        )
-        emitted.extend(
-            (resource, doc) for doc in result.graph.vertices.get("Company", [])
-        )
-        for name, docs_out in result.graph.vertices.items():
-            if name != "Company":
-                others.extend((resource, name, doc) for doc in docs_out)
-
-    click.echo(
-        f"{'resource':<10}{'local_key':<14}{'secondary_key':<15}{'match_key':<12}id"
+    """Print every vertex produced, then the machine count."""
+    manifest = GraphManifest.from_config(
+        FileHandle.load(EXAMPLE_DIR / "artifacts" / "manifest_union.yaml")
     )
-    for resource, doc in emitted:
-        click.echo(
-            f"{resource:<10}{doc.get('local_key') or '-':<14}"
-            f"{doc.get('secondary_key') or doc.get('shared_raw') or '-':<15}"
-            f"{doc.get('match_key') or '-':<12}"
-            f"{doc['id']}"
-        )
+    manifest.finish_init()
+    caster = DocumentCaster(manifest.require_ingestion_model())
 
-    ids = [doc["id"] for _, doc in emitted]
-    click.echo(
-        f"\n{len(ids)} records → {len(set(ids))} vertices "
-        f"({len(ids) - len(set(ids))} fused)"
+    machine_ids: list[str] = []
+    print(
+        f"{'resource':<10}{'own key':<9}{'vertex type':<16}{'matched on':<16}vertex id"
     )
+    for resource, filename, key in SOURCES:
+        for vertex_type, docs in cast(caster, resource, filename).vertices.items():
+            for doc in docs:
+                # The derived key a machine is matched on. A production line has
+                # none: it keeps its own identity, asset_id.
+                matched_on = doc.get("match_key") or doc.get("local_key") or "-"
+                # A machine is keyed by a digest; a production line by its asset_id.
+                vertex_id = doc.get("id", doc[key])[:ID_WIDTH]
+                print(
+                    f"{resource:<10}{doc[key]:<9}{vertex_type:<16}{matched_on:<16}"
+                    f"{vertex_id}"
+                )
+                if vertex_type == "Machine":
+                    machine_ids.append(vertex_id)
 
-    click.echo("\nSame router, classes outside the cluster:")
-    for resource, name, doc in others:
-        canonical = {k: doc.get(k) for k in ("match_key", "local_key") if k in doc}
-        click.echo(f"  {resource}: {name} {doc} canonical={canonical or 'none'}")
+    print(f"{len(machine_ids)} machine records -> {len(set(machine_ids))} vertices")
 
 
 if __name__ == "__main__":

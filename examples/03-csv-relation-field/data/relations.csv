@@ -1,0 +1,8 @@
+company_a,company_b,relation,date
+Panasonic,Tesla,invests_in,2010-11-03
+Panasonic,Tesla,supplies_to,2011-10-11
+Panasonic,Tesla,partners_with,2014-07-31
+Amazon,Whole Foods,agrees_to_acquire,2017-06-16
+Amazon,Whole Foods,acquires,2017-08-28
+Microsoft,OpenAI,invests_in,2019-07-22
+Microsoft,OpenAI,supplies_to,2019-07-22

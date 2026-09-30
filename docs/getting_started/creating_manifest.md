@@ -1,192 +1,202 @@
-# Creating a Manifest
+# Creating a manifest
 
-This guide explains how to create a GraFlo `GraphManifest`, the canonical config artifact used for ingestion and orchestration.
+A manifest is the one file that tells GraFlo what your graph looks like, how
+records become vertices and edges, and where the records come from. This page
+explains its three blocks one level deeper than the [quick start](quickstart.md),
+so that you can write a manifest for your own data. It assumes you know YAML
+and what a labeled property graph is.
 
-A full manifest combines three concerns in one file:
+## The shape of a manifest
 
-- `schema`: logical graph model (metadata, vertices, edges, DB profile)
-- `ingestion_model`: resources and transforms
-- `bindings`: mapping resources to physical data sources
-
-`GraphManifest` also supports partial payloads (for example, schema-only or
-ingestion-only files). At least one block is required.
-
-## Why manifest-first
-
-`GraphManifest` is the top-level contract passed through the runtime (`GraphEngine`, CLI ingest, plotting). Keeping all needed blocks in one document makes validation and execution deterministic.
-
-## Manifest structure
-
-A typical manifest file is named `manifest.yaml` and has this shape:
+A manifest has three blocks. Each is optional, but at least one must be
+present: a file can carry only a `schema`, or only `bindings`, and the rest
+can be supplied in Python. This is the manifest of the quick start:
 
 ```yaml
 schema:
-  metadata:
-    name: my_graph
-    version: "1.0.0"
-  graph:
-    vertex_config:
-      vertices:
-        - name: person
-          properties: [id, name, age]
-          identity: [id]
-        - name: department
-          properties: [name]
-          identity: [name]
-    edge_config:
-      edges:
-        - source: person
-          target: department
-  db_profile: {}
+    metadata:
+        name: hr
+    graph:
+        vertex_config:
+            vertices:
+            -   name: person
+                properties: [id, name, age]
+                identity: [id]
+            -   name: department
+                properties: [name]
+                identity: [name]
+        edge_config:
+            edges:
+            -   source: person
+                target: department
+    db_profile: {}
 
 ingestion_model:
-  resources:
-    - name: people
-      apply:
-        - vertex: person
-    - name: departments
-      apply:
-        - vertex: person
-          "from": {id: person_id, name: person}
-        - vertex: department
-          "from": {name: department}
-  transforms: []
+    resources:
+    -   name: people
+        pipeline:
+        -   vertex: person
+    -   name: departments
+        pipeline:
+        -   vertex: person
+            from: {id: person_id, name: person}
+        -   vertex: department
+            from: {name: department}
 
-bindings: {}
+bindings:
+    connectors:
+    -   regex: "^people.*\\.csv$"
+        sub_path: data
+        resource_name: people
+    -   regex: "^dep.*\\.csv$"
+        sub_path: data
+        resource_name: departments
 ```
 
-## Block-by-block reference
+In Python the three blocks are the attributes `graph_schema`,
+`ingestion_model` and `bindings` of `GraphManifest`; the YAML key of the first
+is `schema`.
 
-### `schema`
+## `schema`: what the graph looks like
 
-Defines the graph contract.
+The schema declares the graph and nothing about the data.
 
-- `metadata`: human-facing identity (`name`, optional `version`)
-- `graph.vertex_config`: vertex types, **`properties`**, identity keys; optional **`blank: true`** for placeholder vertices (auto **`id`** identity); optional **`hash_identity_properties`** for hash-derived synthetic ids; optional **`secondary_identities`** for edge-endpoint lookup field-sets (see [Vertex identity modes](../concepts/schema/vertex_identity.md))
-- `graph.edge_config`: source/target relationships, optional `relation`, optional **`directed`** (default `true`), edge **`properties`**, `identities`
-- `db_profile`: DB-specific physical behavior (indexes, naming, **`default_property_values`** for TigerGraph GSQL `DEFAULT` on vertex/edge attributes, backend details)
+- `metadata`: `name` and an optional `version`. The name labels the manifest
+  and, unless you choose otherwise, names the database, graph or space the
+  schema is created in. See
+  [Graph namespace and schema](../guides/graph_namespace_and_schema.md).
+- `graph`: the vertex and edge types. GraFlo also accepts the key
+  `core_schema`, which is the name of the Python attribute and the key GraFlo
+  writes when it saves a manifest; the examples use `graph`.
+    - `vertex_config.vertices`: one entry per vertex type with `name`,
+      `properties` and `identity`. `identity` lists the properties that make
+      a vertex unique; two records with the same identity values become one
+      vertex. A vertex without an `identity` is keyed by all of its
+      properties. Other ways to key a vertex, such as a hash over chosen
+      properties or an ordered list of fallback keys, are described in
+      [Vertex identity](../concepts/schema/vertex_identity.md).
+    - `edge_config.edges`: one entry per edge type with `source` and `target`
+      vertex types, an optional `relation` name, and optional `properties`.
+      Edges are directed by default; declaring the reverse reading of a
+      relation, or a relation that reads the same both ways, is described in
+      [Directed, undirected, and bidirectional edges](../concepts/architecture/core_components.md#directed-undirected-and-bidirectional-edges).
+- `db_profile`: what differs per database and does not change the logical
+  graph, such as secondary indexes and stored names. An empty `{}` is fine to
+  start with; its keys are listed under
+  [Names in the target database](../concepts/architecture/core_components.md#names-in-the-target-database).
 
-**Typed properties:** use mappings with `type` (and `item_type` for lists), not only bare name strings:
+Properties can carry a type. Write a mapping instead of a bare name:
 
 ```yaml
-- name: article
-  identity: [doi]
-  properties:
-    - { name: doi, type: STRING }
-    - { name: tags, type: LIST, item_type: STRING }   # homogeneous list only
+-   name: article
+    identity: [doi]
+    properties:
+    -   {name: doi, type: STRING}
+    -   {name: tags, type: LIST, item_type: STRING}
 ```
 
-`LIST` requires a scalar `item_type`; list fields cannot be identity keys. Full matrix and invalid cases: [Core components — field types](../concepts/architecture/core_components.md#supported-field-types).
+The types are `INT`, `UINT`, `FLOAT`, `DOUBLE`, `BOOL`, `STRING`, `DATETIME`,
+`UUID` and `LIST`. `LIST` needs a scalar `item_type`, and a list property
+cannot be part of an identity. Types are optional; TigerGraph, which needs a
+type for every attribute, gets `STRING` for a property without one.
 
-Use `schema` for **what graph exists**.
+## `ingestion_model`: how a record becomes vertices and edges
 
-### `ingestion_model`
+A resource is the recipe that turns one kind of record into vertices and
+edges. Its `pipeline` is a list of steps that run on every record, in order:
 
-Defines ingestion behavior.
+- `vertex: <name>` reads the properties of that vertex type from the record.
+  `from: {property: field}` names the record field for each property whose
+  name differs.
+- `transform` renames fields or computes new ones before a `vertex` step
+  reads them.
+- A step with a `key` and its own `pipeline` moves into the nested part of the
+  record under that key and runs its steps there.
+- `edge` connects vertices that earlier steps produced. You need it only when
+  the schema declares several edges between the same two types, or when the
+  relation comes from the record.
+- `vertex_router` picks the vertex type for each record from one of its
+  fields.
 
-- `resources`: named pipelines (`name`) with ordered actor steps (vertex steps may set **`lookup_only`**; edge steps may set **`source_match`** / **`target_match`** / **`on_ambiguous`** for secondary-identity endpoint selection — see [Example 16](../examples/example-16.md))
-- `transforms`: reusable named transforms as a **list** (each entry must define `name`) and referenced from resources via `transform.call.use`
-- Optional model-level **`endpoints_on_ambiguous`** (`all` | `first` | `skip` | `error`, default `all`): how secondary-identity lookups behave when several vertices match
-- Optional per-resource flags include:
-  - **`drop_trivial_input_fields`** (default `false`): when `true`, top-level keys whose value is `null` or `""` are removed **before** the actor pipeline runs. Only the top-level dict is filtered (nested structures are not recursed); numeric zero and boolean false are kept. Useful for sparse wide tables (CSV/SQL) without custom transforms.
-  - **`fail_fast`** (default `false`): when `true`, transform steps fail if required input keys are missing (rename: every source key must be present; call: every `input` key). When `false`, rename applies only to keys present in the row and functional transforms skip the step when inputs are missing.
-  - **`tolerate_transform_errors`** (default `true`): when `true`, a failing transform nulls its declared outputs and the pipeline continues; when `false`, transform exceptions fail the document (subject to caster **`on_doc_error`**). See [Document cast errors](../concepts/ingestion/doc_errors.md).
+When one record yields a `person` and a `department`, and the schema declares
+an edge between those types, GraFlo adds the edge without an `edge` step.
 
-**TigerGraph attribute defaults (schema / `db_profile`, not ingestion):** under `schema.db_profile`, optional **`default_property_values`** declares GSQL `DEFAULT` literals per logical vertex property and per logical edge type, for example:
+A transform that several steps share is declared once under
+`ingestion_model.transforms`, with a `name`, and used from a step as
+`transform: {call: {use: <name>}}`. Transforms are described in
+[Transforms](../concepts/ingestion/transforms.md), and every step and its
+options in [Resource and its steps](../concepts/architecture/core_components.md#resource-and-its-steps).
+Options on a resource decide how it treats imperfect records, such as empty
+fields, missing inputs and failing transforms; they are listed under
+[Resource options](../concepts/architecture/core_components.md#resource-options).
 
-```yaml
-db_profile:
-  db_flavor: tigergraph
-  default_property_values:
-    vertices:
-      Sensor:
-        reading: -1.0
-    edges:
-      - source: Person
-        target: Company
-        relation: works_at
-        values:
-          since_year: 0
-```
+## `bindings`: where the records come from
 
-This corresponds to overriding TigerGraph’s built-in defaults (e.g. `reading FLOAT DEFAULT -1.0`); see the [TigerGraph “Defining a Graph Schema”](https://docs.tigergraph.com/gsql-ref/4.2/ddl-and-loading/defining-a-graph-schema) documentation.
+A connector describes one source of records: a file name pattern, a table, an
+RDF class, an API endpoint or a Kafka topic. Each connector is matched to the
+resource that reads its records.
 
-**Edge direction (schema / `db_profile`):** logical **`directed: false`** becomes `UNDIRECTED EDGE` in GSQL — on TigerGraph, the only backend with an undirected edge type. On every other target the edge is stored directed and `directed: false` stays a modeling assertion (one advisory diagnostic is logged per undirected edge when the schema is applied); see [Directed, undirected, and bidirectional edges](../concepts/architecture/core_components.md#directed-undirected-and-bidirectional-edges) for what each backend does and what reverse traversal costs there. When two relations read one fact from both ends, declare the pair in **`edge_config.inverses`**. That alone is already useful: the inverse name is a valid relation in a read (`graph_neighbors(edge_types=["employs"])` follows the stored `employed_by` edge from its target), and nothing extra is stored — on most backends the reverse read costs nothing. Store the inverse only when the target needs it: either **materialized** — declare the inverse edge and set **`emit_inverse: true`** on the edge steps that write the forward relation, so each row writes both ([`AddInverseEdgesOp`](../concepts/schema/manifest_evolution.md#5-inverse-and-symmetric-relations) does both for you) — or, on TigerGraph only, as a **native inverse**, the forward relation listed in `db_profile.native_inverses` (GSQL `WITH REVERSE_EDGE`). Never both. A relation that reads the same both ways is declared in **`edge_config.symmetric`** and its edges are `directed: false`. See [Core components — Edge](../concepts/architecture/core_components.md#edge).
+- `connectors`: the list of connectors. GraFlo tells the kind from the keys:
+  `regex` and `sub_path` make a file connector, `table_name` a table,
+  `rdf_class` an RDF class, `path` an API endpoint, `topics` a Kafka topic. A
+  connector names its resource with `resource_name`, as in the example above.
+- `resource_connector`: the alternative to `resource_name`, a list of
+  `{resource: <resource name>, connector: <connector name>}` rows. One
+  resource may appear on several rows when its records come from several
+  places. A connector that a row refers to needs a `name`.
+- `connector_connection`: for sources that need credentials, a list of
+  `{connector: <connector name>, conn_proxy: <label>}` rows. The manifest
+  holds only the label; at run time you supply the connection settings for
+  that label, so the file never holds a password. The
+  [connection proxy example (11)](../examples/connection-proxy/index.md)
+  shows how.
 
-Use `ingestion_model` for **how source records become vertices/edges**.
+The fields of each connector kind are described in
+[Table views](../concepts/connectors/table_views.md),
+[API connector](../concepts/connectors/api_connector.md) and
+[Kafka connector](../concepts/connectors/kafka_connector.md). Changing a
+connector after the manifest is loaded, for example to narrow a table to a
+date range, is described in
+[Runtime connector updates](../concepts/connectors/runtime_updates.md).
 
-### `bindings`
-
-Defines source wiring (`Bindings`).
-
-- **`connectors`**: list of `FileConnector`, `TableConnector`, `SparqlConnector`, `APIConnector`, or `KafkaConnector` entries (paths, tables, RDF/SPARQL sources, REST API paths, or Kafka topics). For **`TableConnector`**, optional **`filters`** push down SQL `WHERE` clauses using the same **`FilterExpression`** shorthand as vertex **`filters`** in the schema (`AND`, `OR`, `NOT`, `IF_THEN` as YAML keys). Optional nested **`time_filter`** (**`ColumnTimeFilter`**) restricts rows by a date/time column. **`APIConnector`** declares the endpoint **`path`**, HTTP method, static **`params`**, and optional **`pagination`** (`offset`, `page`, or `cursor` strategy; optional **`carry_params`** / nullable **`limit_param`** — see [API connector and pagination](../concepts/connectors/api_connector.md)). **`KafkaConnector`** declares **`topics`** / **`group_id`** for finite-batch JSON consume — see [Kafka connector](../concepts/connectors/kafka_connector.md). Register runtime credentials via **`connector_connection`** → **`conn_proxy`** (manually or with **`register_all_api_configs_from_env`** / **`register_all_kafka_configs_from_env`** — see [Example 14](../examples/example-14.md)). See also [Runtime connector updates](../concepts/connectors/runtime_updates.md) and [Table connector views](../concepts/connectors/table_views.md#bindings-filter-cookbook-tableconnectorfilters).
-- **`resource_connector`**: list of `{"resource": "<ingestion resource name>", "connector": "<connector name or hash>"}` rows linking `IngestionModel.resources[*].name` to a connector. The same `resource` may appear on **multiple rows** with different `connector` values (several physical sources for one pipeline).
-- **`connector_connection`** (optional): list of `{"connector": "<connector name or hash>", "conn_proxy": "<label>"}` rows. This keeps manifests **non-secret**: only proxy *names* appear in YAML; runtime code registers each `conn_proxy` on a `ConnectionProvider` with the real `GeneralizedConnConfig` (PostgreSQL, SPARQL, **REST API**, **Kafka**, etc.).
-
-Connector references in `resource_connector` / `connector_connection` must match a connector’s declared **`name`** or canonical **`hash`**. Ingestion **resource names** are not connector references (they can map 1→*n*). Duplicate connector `name` values and conflicting `conn_proxy` mappings for the same connector hash are rejected at validation time.
-
-The block can be left empty in-file (`bindings: {}`) and supplied at runtime for env-specific deployments.
-
-Use `bindings` for **where data comes from** (and optionally **which proxy label** supplies runtime credentials for each SQL/SPARQL/**API**/Kafka connector).
-
-### Runtime proxy wiring (example)
-
-The manifest contains proxy labels only. At runtime you register the real connection config and bind manifest connectors to those proxy labels:
+When the sources are known only at run time, leave `bindings` out of the file
+and set it in Python:
 
 ```python
-from graflo.connections.provider import (
-    InMemoryConnectionProvider,
-    PostgresGeneralizedConnConfig,
-)
+from graflo import Bindings, FileConnector, GraphManifest
 
-provider = InMemoryConnectionProvider()
-provider.bind_single_config_for_bindings(
-    bindings=bindings,
-    conn_proxy="postgres_source",
-    config=PostgresGeneralizedConnConfig(config=postgres_conf),
-)
-
-engine.define_and_ingest(
-    manifest=manifest,
-    target_db_config=target_db_config,
-    connection_provider=provider,
+manifest = GraphManifest.from_yaml("manifest.yaml")
+manifest.bindings = Bindings(
+    connectors=[
+        FileConnector(
+            regex=r"^people.*\.csv$", sub_path="data", resource_name="people"
+        ),
+        FileConnector(
+            regex=r"^dep.*\.csv$", sub_path="data", resource_name="departments"
+        ),
+    ]
 )
 ```
 
-## Authoring tips
+## Load, check and run
 
-- Keep resource names unique across `ingestion_model.resources`.
-- Ensure every `vertex`/`source`/`target` referenced by resources exists in `schema.core_schema`.
-- Quote `"from"` in YAML because `from` is a reserved keyword.
-- Prefer explicit `relation` names for multi-edge models.
-- Keep `ingestion_model.transforms` ordered intentionally; transforms are applied in declaration/appearance order within pipelines.
-
-## Load and validate
+Loading the file checks each block: an edge that names an undeclared vertex
+type, two edges with the same source, target and relation, or two resources
+with the same name are rejected. `finish_init()` then connects the resources to
+the schema. It does not check that the vertex types named in steps are
+declared unless you call it as `finish_init(strict_references=True)`.
 
 ```python
-from suthing import FileHandle
-from graflo import GraphManifest
-
-manifest = GraphManifest.from_config(FileHandle.load("manifest.yaml"))
-manifest.finish_init()
-
-schema = manifest.require_schema()
-ingestion_model = manifest.require_ingestion_model()
-```
-
-`finish_init()` performs runtime wiring and consistency checks across schema and ingestion model.
-
-## Evolving a manifest
-
-To apply structured changes to an existing manifest (remove vertex types, merge types into one name, and update resources and `db_profile` in sync), use **`graflo.architecture.evolution`**. That layer operates on the manifest contract only; it does not migrate data already stored in a graph database—plan to **reingest** after deploying the new manifest. See [Manifest evolution](../concepts/schema/manifest_evolution.md) for operations, `manifest_hash`, and examples.
-
-## Minimal run path
-
-```python
-from graflo.hq import GraphEngine
+from graflo import GraphEngine, GraphManifest
+from graflo.connections import ArangoConfig
 from graflo.hq.caster import IngestionParams
 
-engine = GraphEngine()
+manifest = GraphManifest.from_yaml("manifest.yaml")
+manifest.finish_init(strict_references=True)
+
+conn_conf = ArangoConfig.from_env()
+
+engine = GraphEngine(target_db_flavor=conn_conf.connection_type)
 engine.define_and_ingest(
     manifest=manifest,
     target_db_config=conn_conf,
@@ -195,12 +205,76 @@ engine.define_and_ingest(
 )
 ```
 
-## See also
+`define_and_ingest` creates the schema in the database and then loads the
+records. With `recreate_schema=False` it raises an error when the schema
+already exists; to load more records into an existing graph, call
+`engine.ingest(manifest=manifest, target_db_config=conn_conf)` instead. With
+`clear_data=False` the data already there is kept, and a record whose identity
+matches a stored vertex updates it. Where `ArangoConfig.from_env()` gets its
+values, and the classes for the other databases, are described in
+[Database connections](../guides/database_connections.md).
 
-- [API connector and pagination](../concepts/connectors/api_connector.md)
-- [Kafka connector](../concepts/connectors/kafka_connector.md)
-- [Manifest evolution](../concepts/schema/manifest_evolution.md)
-- [Quick Start](quickstart.md)
-- [Concepts](../concepts/index.md)
-- [Examples](../examples/index.md)
-- [API Reference](../reference/index.md)
+### Load part of the data
+
+`IngestionParams` can restrict one run without changing the manifest:
+`resources=["people"]` runs only those resources, `connectors=[...]` only
+those connectors (by name or hash, as in `bindings.resource_connector`), and
+`vertices=["person"]` writes only those vertex types. `max_items` stops after
+that many records from each file or table, which is useful for a first look at a large
+source.
+
+```python
+IngestionParams(resources=["people"], max_items=100)
+```
+
+### Run from the command line
+
+`graflo ingest` does the same without Python. It reads the database settings
+from a YAML file (see [Database connections](../guides/database_connections.md))
+and the records through the manifest's bindings:
+
+```bash
+graflo ingest --db-config-path db.yaml --schema-path manifest.yaml \
+    --source-path . --fresh-start true
+```
+
+File connectors resolve `sub_path` against the directory you run the command
+from, so run it where the manifest expects its data. `--fresh-start true`
+recreates the schema; without it the records are added to an existing graph.
+
+For files and SQL tables you can also list the sources in a separate file and
+pass it with `--data-source-config-path`, instead of declaring them in the
+manifest's bindings:
+
+```yaml
+data_sources:
+-   source_type: file
+    resource_name: people
+    path: data/people.csv
+```
+
+API and Kafka sources cannot be listed this way: declare them in the
+manifest's bindings and supply their credentials with a connection provider,
+as described in [API connector](../concepts/connectors/api_connector.md) and
+[Kafka connector](../concepts/connectors/kafka_connector.md).
+
+## Writing tips
+
+- Give each edge between the same two vertex types its own `relation`; two
+  edges that differ in nothing else are rejected.
+- Start with an empty `db_profile` and let GraFlo fill in stored names for the
+  target database; record them only when the manifest is shared.
+- Once a manifest is in use, change it with recorded operations rather than by
+  hand, so that the change can be reviewed, replayed and undone; see
+  [Evolving a manifest](../guides/evolving_a_manifest.md). Changing the
+  manifest does not change data already in a database: load the data again,
+  or plan a schema migration with `graflo migrate-schema`.
+
+## What to read next
+
+- [Examples](../examples/index.md): a manifest for each shape of data, from
+  self-references to nested JSON and routed rows.
+- [Vertex identity](../concepts/schema/vertex_identity.md): every way to say
+  what makes a vertex unique.
+- [Transforms](../concepts/ingestion/transforms.md): reshaping records before
+  they become vertices.

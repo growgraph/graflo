@@ -1,0 +1,48 @@
+# Companies and the relations between them, plus a staging entry for the bulk
+# load. Bulk loading itself is switched on in ingest.py: it is a setting of the
+# target database, not of the manifest.
+schema:
+    metadata:
+        name: companies
+        version: 1.0.0
+    graph:
+        vertex_config:
+            vertices:
+            -   name: company
+                properties:
+                -   name
+                identity:
+                -   name
+        edge_config:
+            edges:
+            -   source: company
+                target: company
+                identities:
+                -   -   relation
+                properties:
+                -   date
+    db_profile: {}
+ingestion_model:
+    resources:
+    -   name: relations
+        pipeline:
+        -   vertex: company
+            from:
+                name: company_a
+        -   vertex: company
+            from:
+                name: company_b
+        -   from: company
+            to: company
+            relation_field: relation
+bindings:
+    connectors:
+    -   name: relations_files
+        regex: "^relations.*\\.csv$"
+        sub_path: data
+        resource_name: relations
+    # The staging area "bulk_s3" uses the S3 settings registered at run time
+    # under the label "minio_bulk".
+    staging_proxy:
+    -   name: bulk_s3
+        conn_proxy: minio_bulk

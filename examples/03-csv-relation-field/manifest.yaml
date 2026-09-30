@@ -1,0 +1,36 @@
+schema:
+    metadata:
+        name: companies
+    graph:
+        vertex_config:
+            vertices:
+            -   name: company
+                properties: [name]
+                identity: [name]
+        edge_config:
+            edges:
+            -   source: company
+                target: company
+                properties: [date]
+                identities:
+                -   [relation]
+    db_profile: {}
+ingestion_model:
+    resources:
+    -   name: relations
+        pipeline:
+        -   vertex: company
+            from:
+                name: company_a
+        -   vertex: company
+            from:
+                name: company_b
+        -   edge:
+                from: company
+                to: company
+                relation_field: relation
+bindings:
+    connectors:
+    -   regex: "^relations\\.csv$"
+        sub_path: data
+        resource_name: relations

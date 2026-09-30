@@ -1,4 +1,4 @@
-"""Lifting an arbitrary manifest into a twin-ready schema, through Operations.
+"""Lifting a manifest into one that tracks state and measurements, through Operations.
 
 The claim under test is narrow and checkable: a manifest that fails every
 assertion of the ``world-model`` profile, plus a statement of what its types
@@ -23,32 +23,32 @@ SOSA = "http://www.w3.org/ns/sosa/"
 
 PLAIN: dict = {
     "schema": {
-        "metadata": {"name": "cmdb", "version": "1.0.0"},
+        "metadata": {"name": "maintenance", "version": "1.0.0"},
         "graph": {
             "vertex_config": {
                 "vertices": [
                     {
-                        "name": "ConfigurationItem",
+                        "name": "Machine",
                         "properties": [
-                            {"name": "ci_id", "type": "STRING"},
+                            {"name": "machine_id", "type": "STRING"},
                             {"name": "status", "type": "STRING"},
                             {"name": "temp_c", "type": "FLOAT"},
                         ],
-                        "identity": ["ci_id"],
+                        "identity": ["machine_id"],
                     },
                     {
-                        "name": "BusinessService",
-                        "properties": [{"name": "service_id", "type": "STRING"}],
-                        "identity": ["service_id"],
+                        "name": "ProductionLine",
+                        "properties": [{"name": "line_id", "type": "STRING"}],
+                        "identity": ["line_id"],
                     },
                 ]
             },
             "edge_config": {
                 "edges": [
                     {
-                        "source": "ConfigurationItem",
-                        "target": "BusinessService",
-                        "relation": "supports",
+                        "source": "Machine",
+                        "target": "ProductionLine",
+                        "relation": "installed_on",
                     }
                 ]
             },
@@ -59,23 +59,23 @@ PLAIN: dict = {
 FULL_SPEC = LiftSpec.model_validate(
     {
         "grounding": {
-            "ConfigurationItem": {
+            "Machine": {
                 "iri": f"{PROV}Entity",
                 "exact_match": [f"{PROV}Entity", f"{SOSA}FeatureOfInterest"],
             },
-            "BusinessService": {"iri": f"{PROV}Entity"},
+            "ProductionLine": {"iri": f"{PROV}Entity"},
         },
         "edge_grounding": [
             {
-                "source": "ConfigurationItem",
-                "target": "BusinessService",
-                "relation": "supports",
+                "source": "Machine",
+                "target": "ProductionLine",
+                "relation": "installed_on",
                 "iri": f"{PROV}wasInfluencedBy",
             }
         ],
-        "stateful": {"ConfigurationItem": ["status"]},
-        "observed": ["ConfigurationItem"],
-        "measured": {"ConfigurationItem.temp_c": "Cel"},
+        "stateful": {"Machine": ["status"]},
+        "observed": ["Machine"],
+        "measured": {"Machine.temp_c": "Cel"},
     }
 )
 
@@ -122,35 +122,33 @@ def test_a_lifted_manifest_passes_the_profile_clean() -> None:
 
 def test_state_is_reified_onto_its_own_type_with_a_validity_interval() -> None:
     core = _lift().require_schema().core_schema
-    state = core.vertex_config["ConfigurationItemState"]
+    state = core.vertex_config["MachineState"]
     names = {field.name for field in state.properties}
-    assert {"ci_id", "status", "valid_from", "valid_to"} <= names
+    assert {"machine_id", "status", "valid_from", "valid_to"} <= names
     # Keyed on the subject plus the interval start: the same property of the
     # same entity holds many values over time, and those are different facts.
-    assert state.hash_identity_properties == ["ci_id", "valid_from"]
+    assert state.hash_identity_properties == ["machine_id", "valid_from"]
 
 
 def test_a_moved_property_leaves_the_entity_it_no_longer_belongs_on() -> None:
     core = _lift().require_schema().core_schema
-    names = {f.name for f in core.vertex_config["ConfigurationItem"].properties}
+    names = {f.name for f in core.vertex_config["Machine"].properties}
     assert "status" not in names
-    assert "ci_id" in names
+    assert "machine_id" in names
 
 
 def test_retire_keep_leaves_the_current_value_beside_the_history() -> None:
     spec = FULL_SPEC.model_copy(update={"retire": "keep"})
     core = _lift(spec).require_schema().core_schema
-    names = {f.name for f in core.vertex_config["ConfigurationItem"].properties}
+    names = {f.name for f in core.vertex_config["Machine"].properties}
     assert "status" in names
-    assert "status" in {
-        f.name for f in core.vertex_config["ConfigurationItemState"].properties
-    }
+    assert "status" in {f.name for f in core.vertex_config["MachineState"].properties}
 
 
 def test_the_observation_scaffold_carries_its_unit_per_row() -> None:
     """An abstract observation type cannot name one unit without lying."""
     core = _lift().require_schema().core_schema
-    observation = core.vertex_config["ConfigurationItemObservation"]
+    observation = core.vertex_config["MachineObservation"]
     unit_field = next(f for f in observation.properties if f.name == "result_unit")
     assert unit_field.semantics is not None
     assert "ucumCode" in (unit_field.semantics.iri or "")
@@ -158,7 +156,7 @@ def test_the_observation_scaffold_carries_its_unit_per_row() -> None:
 
 def test_provenance_is_expressible_even_with_nothing_to_attach() -> None:
     """``Evidence -wasAttributedTo-> Agent`` is what makes lineage sayable."""
-    spec = LiftSpec(grounding={"BusinessService": {"iri": f"{PROV}Entity"}})
+    spec = LiftSpec(grounding={"ProductionLine": {"iri": f"{PROV}Entity"}})
     core = _lift(spec).require_schema().core_schema
     assert {"Evidence", "Agent"} <= core.vertex_config.vertex_set
     relations = {e.relation for e in core.edge_config.edges}
@@ -231,7 +229,7 @@ def test_a_spec_naming_a_type_that_is_not_there_is_refused() -> None:
 def test_moving_an_identity_property_is_refused() -> None:
     """An identity that changes over time is not an identity."""
     with pytest.raises(LiftError, match="identify the type"):
-        plan_lift(_manifest(), LiftSpec(stateful={"ConfigurationItem": ["ci_id"]}))
+        plan_lift(_manifest(), LiftSpec(stateful={"Machine": ["machine_id"]}))
 
 
 def test_a_name_the_lift_would_mint_and_that_already_exists_is_refused() -> None:
@@ -284,7 +282,7 @@ def test_an_identity_fallback_is_refused_when_the_authored_document_shows_it() -
 
 def test_measured_naming_a_property_that_is_not_there_is_refused() -> None:
     with pytest.raises(LiftError, match="do not exist"):
-        plan_lift(_manifest(), LiftSpec(measured={"ConfigurationItem.nope": "Cel"}))
+        plan_lift(_manifest(), LiftSpec(measured={"Machine.nope": "Cel"}))
 
 
 # ── the op stream is the artifact ───────────────────────────────────────────
@@ -295,14 +293,14 @@ def test_the_lift_is_a_reviewable_op_list_and_applies_nothing() -> None:
     before = {
         f.name
         for f in manifest.require_schema()
-        .core_schema.vertex_config["ConfigurationItem"]
+        .core_schema.vertex_config["Machine"]
         .properties
     }
     plan_lift(manifest, FULL_SPEC, authored=PLAIN)
     after = {
         f.name
         for f in manifest.require_schema()
-        .core_schema.vertex_config["ConfigurationItem"]
+        .core_schema.vertex_config["Machine"]
         .properties
     }
     assert before == after, "planning must not mutate the manifest"
@@ -328,9 +326,9 @@ def test_the_lift_inverts_back_to_the_original() -> None:
 
     back = apply_evolution(lifted, inverses)
     core = back.require_schema().core_schema
-    assert core.vertex_config.vertex_set == {"ConfigurationItem", "BusinessService"}
-    assert {f.name for f in core.vertex_config["ConfigurationItem"].properties} == {
-        "ci_id",
+    assert core.vertex_config.vertex_set == {"Machine", "ProductionLine"}
+    assert {f.name for f in core.vertex_config["Machine"].properties} == {
+        "machine_id",
         "status",
         "temp_c",
     }

@@ -764,8 +764,8 @@ class NebulaConnection(Connection):
         An nGQL edge type carries no endpoint tags in its DDL -- unlike a
         TigerGraph ``CREATE ... EDGE``, which names them -- so the pairs have to
         be observed on real edges. An edge type present in the catalogue but with
-        no stored edges yields nothing and is dropped, which is the honest
-        outcome: there is no way to tell what it would connect.
+        no stored edges yields nothing and is dropped: there is no way to tell
+        what it would connect.
         """
         query = (
             f"MATCH (a)-[e:`{edge_type}`]->(b) "

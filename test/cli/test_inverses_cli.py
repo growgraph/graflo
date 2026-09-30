@@ -225,7 +225,7 @@ def test_check_runs_the_same_audit_as_a_profile(tmp_path: pathlib.Path) -> None:
     assert "WARN" in result.output
 
 
-EXAMPLE = pathlib.Path(__file__).resolve().parents[2] / "examples" / "23-edge-inverses"
+EXAMPLE = pathlib.Path(__file__).resolve().parents[2] / "examples" / "19-edge-inverses"
 
 
 def test_the_shipped_example_audits_as_its_readme_says() -> None:

@@ -18,9 +18,10 @@ from suthing import FileHandle
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.evolution.ops import (
     CanonicalMap,
+    DerivationSpec,
+    DerivedBranch,
     MergeManifestsOp,
     PropertyEquivalence,
-    SideIdentity,
     VertexEquivalence,
 )
 from graflo.architecture.evolution.preview import (
@@ -31,13 +32,12 @@ from graflo.architecture.evolution.preview import (
     preview_merge,
 )
 
-EXAMPLE = (
-    Path(__file__).resolve().parents[2] / "examples" / "19-union-canonical-equivalence"
-)
+#: Two manifests with overlapping vertex types, a canonical map and an op.
+FIXTURES = Path(__file__).resolve().parents[1] / "data" / "merge_union"
 
 
 def _load(name: str) -> GraphManifest:
-    manifest = GraphManifest.from_config(FileHandle.load(EXAMPLE / name))
+    manifest = GraphManifest.from_config(FileHandle.load(FIXTURES / name))
     manifest.finish_init()
     return manifest
 
@@ -57,7 +57,7 @@ def right() -> GraphManifest:
 @pytest.fixture(scope="module")
 def canonical_map() -> CanonicalMap:
     """``Firm`` is ``Company``; ``firm_id`` is ``company_id``."""
-    return CanonicalMap.model_validate(FileHandle.load(EXAMPLE / "canonical_map.yaml"))
+    return CanonicalMap.model_validate(FileHandle.load(FIXTURES / "canonical_map.yaml"))
 
 
 def _boundary(canonical_map: CanonicalMap, **updates) -> MergeManifestsOp:
@@ -68,7 +68,7 @@ def _boundary(canonical_map: CanonicalMap, **updates) -> MergeManifestsOp:
         ],
         "allow_merges": True,
         "canonical_maps": {"left": canonical_map},
-        # A declared key, standing in for the example's identity alignment:
+        # A declared key, standing in for the example's derived identity:
         # without one the members disagree, which is its own test below.
         **updates,
     }
@@ -77,14 +77,7 @@ def _boundary(canonical_map: CanonicalMap, **updates) -> MergeManifestsOp:
 
 #: Each member keyed on the key it carries. No field is common to all four, so
 #: a single natural key would leave three members completing no key.
-_EACH_OWN_KEY = SideIdentity(
-    members={
-        "Firm": ["company_id"],
-        "Shop": ["shop_id"],
-        "Org": ["org_id"],
-        "Branch": ["branch_id"],
-    }
-)
+_EACH_OWN_KEY: list = ["company_id", "shop_id", "org_id", "branch_id"]
 
 
 def _keyed(canonical_map: CanonicalMap, **updates) -> MergeManifestsOp:
@@ -434,36 +427,30 @@ def test_an_unresolved_identity_is_found_before_compose_reaches_it(
     assert "left:Firm" in finding.nodes
 
 
-def test_an_identity_alignment_settles_it(left, right, canonical_map):
-    """A class whose identity an alignment supplies is not a disagreement."""
-    from graflo.architecture.evolution.ops import (
-        AlignmentAttribute,
-        DerivationSpec,
-        IdentityAlignment,
-    )
-
-    op = _boundary(
-        canonical_map,
-        identity_alignments=[
-            IdentityAlignment(
-                vertex="Company",
-                attributes=[
-                    AlignmentAttribute(
+def test_a_derived_branch_settles_it(left, right, canonical_map):
+    """A class whose identity a derived branch supplies is not a disagreement."""
+    op = MergeManifestsOp(
+        vertex_equivalences=[
+            VertexEquivalence(
+                left=["Firm", "Shop"],
+                right=["Org", "Branch"],
+                identity=[
+                    DerivedBranch(
                         name="match_key",
                         sources={"r_a": DerivationSpec(input=["shared_raw"])},
                     )
                 ],
             )
         ],
+        allow_merges=True,
+        canonical_maps={"left": canonical_map},
     )
     preview = preview_merge(left, right, op, attempt=False)
 
     assert "identity_disagreement" not in {f.kind for f in preview.findings}
 
 
-def test_a_property_equivalence_flagged_as_identity_settles_it(
-    left, right, canonical_map
-):
+def test_a_property_every_member_carries_settles_it(left, right, canonical_map):
     op = MergeManifestsOp(
         vertex_equivalences=[
             VertexEquivalence(
@@ -474,9 +461,9 @@ def test_a_property_equivalence_flagged_as_identity_settles_it(
                         left={"Firm": "shared_raw", "Shop": "shared_raw"},
                         right={"Org": "shared_raw", "Branch": "shared_raw"},
                         into="match_key",
-                        identity=True,
                     )
                 ],
+                identity=["match_key"],
             )
         ],
         allow_merges=True,
@@ -557,7 +544,7 @@ def _cases(canonical_map: CanonicalMap) -> dict[str, MergeManifestsOp]:
 
 # ── what the schema union itself refuses ────────────────────────────────────
 #
-# These cannot be expressed against the example manifests: `manifest_a` and
+# These cannot be expressed against the fixture manifests: `manifest_a` and
 # `manifest_b` are untyped, natural-identity and carry no edges, so none of the
 # identity modes, types, units or edge kinds below has anywhere to live. They
 # get purpose-built pairs instead, and the invariant covers them all the same.

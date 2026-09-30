@@ -9,7 +9,7 @@ def _load_example4_manifest() -> GraphManifest:
     manifest_path = (
         Path(__file__).resolve().parents[2]
         / "examples"
-        / "4-ingest-neo4j"
+        / "04-json-relation-from-key"
         / "manifest.yaml"
     )
     with manifest_path.open("r", encoding="utf-8") as fh:

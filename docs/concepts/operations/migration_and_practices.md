@@ -1,112 +1,238 @@
-# Migration and practices
+# Schema migration
 
-Schema migration workflow, performance levers, and authoring best practices.
+Your graph is loaded and in use, and the manifest has changed: a new vertex
+type, a new property, an edge that was not there before. Before you touch the
+database, you want to know what the change means for the data already stored.
+GraFlo compares the manifest the database was built from with the one you
+want and turns the difference into a plan of operations, each with a risk
+level. This page explains what is compared, what a plan contains, how risk is
+reported, and how far a plan can be applied.
 
-## Schema migration
+This page is about a database that already holds data. To combine or rewrite
+manifests themselves, read [Evolving a manifest](../../guides/evolving_a_manifest.md).
+To move a whole graph to another database, read
+[Graph DB migration](../../guides/graph_db_migration.md).
 
-- **Read-only planning first** — use `migrate_schema plan --from-schema-path ... --to-schema-path ...` to generate a deterministic operation plan before any writes.
-- **Risk-gated execution** — v1 executes only low-risk additive operations by default and blocks high-risk/destructive operations.
-- **Backend scope** — execution adapters are currently focused on ArangoDB and Neo4j; other backends are plan-first until adapter coverage is added.
-- **History and idempotency** — applied revisions are tracked in a migration manifest (`.graflo/migrations.json`) with revision + schema hash checks.
-- **Operational commands** — `plan`, `apply`, `status`, and `history` are exposed through the `migrate_schema` CLI entrypoint.
+## The idea
 
-### Comparing schemas
+A migration plan compares two manifests: the one the database was built from
+and the one you want. The difference becomes an ordered list of operations.
+Each operation carries a risk level. Operations that only add things leave
+every stored record valid, so they are runnable. Everything else is reported
+and blocked, because removing a property or changing what identifies a vertex
+needs a decision you make, not one the tool makes for you.
 
-When you compare schemas, treat it like comparing two building blueprints:
-
-- `--from-schema-path` is the **current building** blueprint.
-- `--to-schema-path` is the **target building** blueprint.
-- `migrate_schema plan` is the **architectural diff report** that tells you what must be added, changed, or removed to get from current to target.
-
-Another useful analogy is `git diff`, but for graph structure:
-
-- Additive changes (new vertex type, new edge, new property, new index) are similar to adding code in a backward-compatible way.
-- Destructive changes (removing properties/types, identity shifts) are similar to breaking API changes: they often require explicit migration steps, data sweeps, or rollouts.
-
-Practical comparison checklist:
-
-1. Run `plan` first and review operations grouped by risk.
-2. Confirm identity changes explicitly (identity shifts are high-impact).
-3. Validate whether each blocked operation needs a manual script, staged rollout, or explicit high-risk approval.
-4. Use `apply --dry-run` before any real apply.
-
-Example:
-
-```bash
-uv run migrate_schema plan \
-  --from-schema-path schema_v1.yaml \
-  --to-schema-path schema_v2.yaml \
-  --output-format json
+```mermaid
+flowchart LR
+    old[manifest as deployed] --> diff[compare]
+    new[manifest you want] --> diff
+    diff --> plan[plan: runnable, blocked, warnings]
+    plan --> apply[apply on the database]
+    apply --> store[history file]
 ```
 
-How to read the output:
+## What is compared
 
-- `operations`: runnable operations under current risk policy (v1 defaults to low-risk subset).
-- `blocked_operations`: operations intentionally withheld for safety.
-- `warnings`: policy and compatibility notes you should resolve before execution.
+Both files are manifests; only their `schema` blocks are compared. The
+comparison covers:
 
-### Migration command examples
+- vertex types: added or removed;
+- vertex properties: added, removed, or changed type (for a list, a change of
+  item type counts);
+- vertex identity: the `identity` list or the way the key is computed; a
+  rekey operation is added when stored keys can no longer be derived from the
+  new identity;
+- secondary identities of a vertex;
+- edge types: added or removed; edge identities changed;
+- edge properties: added, removed, or changed type;
+- indexes declared in `db_profile`, for vertices and edges: added or removed.
+
+The rest of the manifest (resources, transforms, bindings) is not compared: it
+changes how data is loaded, not what the database holds.
+
+## What a plan contains
 
 ```bash
-# Plan changes between two schema versions
-uv run migrate_schema plan \
-  --from-schema-path schema_v1.yaml \
-  --to-schema-path schema_v2.yaml
-
-# Dry-run apply to inspect backend actions
-uv run migrate_schema apply \
-  --from-schema-path schema_v1.yaml \
-  --to-schema-path schema_v2.yaml \
-  --db-config-path db.yaml \
-  --revision 0001_additive_updates \
-  --dry-run
-
-# Persist migration history after real execution
-uv run migrate_schema apply \
-  --from-schema-path schema_v1.yaml \
-  --to-schema-path schema_v2.yaml \
-  --db-config-path db.yaml \
-  --revision 0001_additive_updates \
-  --no-dry-run
-
-# Inspect migration state
-uv run migrate_schema status
-uv run migrate_schema history
+graflo migrate-schema plan \
+  --from-schema-path manifest_deployed.yaml \
+  --to-schema-path manifest_next.yaml
 ```
 
-### Why this helps
+Adding a `work_order` vertex type, an edge from it to `machine` and one
+property of `machine` gives:
 
-Schema comparison gives you a predictable transition path between versions. Instead of discovering incompatibilities during ingestion, you see structural deltas in advance, gate risky steps, and execute a controlled rollout.
+```text
+Migration Plan
+================
+Operations: 3
+Blocked: 0
 
-## Performance optimization
+Runnable operations:
+- ADD_VERTEX vertex:work_order [LOW]
+- ADD_EDGE edge:('work_order', 'machine', 'services') [LOW]
+- ADD_VERTEX_FIELD vertex:machine:field:installed_at [LOW]
+```
 
-For the full concurrency model — what runs in parallel, which knob to turn for which bottleneck, and when graflo deliberately runs serially — see **[Parallelism](../ingestion/parallelism.md)**. In brief:
+Changing the identity of `machine` from `serial` to `model` gives:
 
-- **Batch pipelining** (**`IngestionParams.max_in_flight_batches`**, default 2): casting batch N+1 overlaps writing batch N. Configurations where batch order is semantic (`dynamic_edges`, blank vertices, `extra_weights`, secondary-identity endpoints, bulk load, GraFlo file backend) are serialized automatically.
-- **Batch prefetch** (**`IngestionParams.batch_prefetch`**, default 2): the reader runs ahead of processing — bounded memory, overlapped source I/O. Distinct from pipelining, which overlaps cast and write.
-- **Cast workers** (**`IngestionParams.n_cores`** with `cast_executor="auto"`): with `n_cores > 1`, large batches are cast across worker processes automatically — worth it for heavy per-document work (chained transforms, deep `descend` trees).
-- **Concurrent writes** (**`IngestionParams.max_concurrent_db_ops`**, default 8): vertex collections and edge types within a batch are written concurrently. This is I/O-bound work, which is where concurrency actually pays.
-- **Concurrent sources** (**`IngestionParams.max_concurrent_sources`**, defaults to `min(4, sources)`): how many data sources *of one resource* run at once. Resources themselves always run in declaration order.
-- **TigerGraph token caching**: Secret-based API tokens are cached per process for the ingest run (one fetch per cluster/graph/secret, not per upsert batch or `ConnectionManager` open)
-- **Batch processing**: Process large datasets in configurable batches (`IngestionParams.batch_size` on `Caster` / `GraphEngine`)
-- **Ingestion scope filters**: Limit a run to specific resources (`IngestionParams.resources`), connectors (`IngestionParams.connectors` — name or hash, same refs as `resource_connector`), and/or vertex types (`IngestionParams.vertices`). When both `resources` and `connectors` are set, only connectors bound to listed resources that also match the connector filter are ingested.
+```text
+Migration Plan
+================
+Operations: 0
+Blocked: 2
 
-## Best practices
+Blocked operations:
+- CHANGE_VERTEX_IDENTITY vertex:machine:identity [CRITICAL]
+- REKEY_VERTEX vertex:machine:rekey [CRITICAL]
 
-1. Use compound identity fields for natural keys, and **`schema.db_profile`** secondary indexes for query performance
-2. Leverage blank vertices (`blank: true` on the vertex definition) for complex relationship modeling; include them in the resource pipeline when they must be populated at cast time
-3. Define reusable transforms in **`ingestion_model.transforms`** and reference them from resource steps
-4. Configure appropriate batch sizes based on your data volume; with `n_cores > 1`, keep `batch_size` comfortably above `n_cores × 64` so batches qualify for worker-process casting
-5. Tune for your actual bottleneck: raise `max_concurrent_db_ops` when the database is slow, set `n_cores=4..8` when transforms are heavy — see **[Parallelism](../ingestion/parallelism.md)** for the decision list
-6. Choose the right relationship attribute based on your data format:
-   - **`relation_field`** on an edge **actor** step — relation from a column/field
-   - **`relation_from_key`** on an edge **actor** step — relation from JSON keys
-   - **`relation`** on the logical edge — static relationship name when applicable
-7. Use logical edge **`properties`** (and edge-actor payload options) for temporal or quantitative relationship attributes
-   - Specify types when the target DB requires them (e.g., TigerGraph)
-   - Use typed `Field` objects or dicts with a `type` key for better validation
-8. Leverage key matching (`match_source`, `match_target`) on edge steps for complex matching scenarios
-9. Use PostgreSQL schema inference for automatic schema generation from normalized databases (3NF) with proper PK/FK constraints
-10. Use RDF/OWL schema inference (`infer_schema_from_rdf`) when ingesting data from SPARQL endpoints or `.ttl` files with a well-defined ontology
-11. Specify property types for better validation and database-specific optimizations, especially when targeting TigerGraph
-12. **Bidirectional edges**: declare the pair in `edge_config.inverses` and stop there unless the target needs more — the inverse name already reads the forward edge backwards, which costs nothing on most backends. Store it only when you must, one way per pair: (a) a TigerGraph native inverse (`db_profile.native_inverses`, `SetNativeInversesOp`) for a `WITH REVERSE_EDGE` pair with one load path; or (b) a materialized inverse — a declared edge fed by `emit_inverse` on the steps that write the forward relation (`AddInverseEdgesOp`) — for portability. For truly symmetric relationships, `directed: false` edges declared in `edge_config.symmetric` (`UNDIRECTED EDGE` on TigerGraph). `plan_realize_inverses` picks per backend and says why; after merging sources, run `graflo inverses audit` — a materialized inverse that one resource never feeds is the usual casualty, and `graflo inverses repair` fixes it. The schema refuses (a) and (b) on the same relation.
+Warnings:
+- High-risk operations are blocked by default. Re-run with explicit allow flag in future guarded workflow.
+```
+
+A plan has three parts:
+
+| Part | Meaning |
+|---|---|
+| Runnable operations | Operations that `apply` will execute, in the order shown |
+| Blocked operations | Operations withheld because of their risk level |
+| Warnings | Notes to resolve before applying |
+
+`--output-format json` adds the full comparison: every operation with its
+`target`, `old_value`, `new_value`, `risk` and `reversible` flag, plus
+`conflicts`, which name the identity changes and say why each needs a
+decision. `--output-path` also writes the output to a file.
+
+Operations are ordered: additions first (vertex types, edge types,
+properties, indexes), then property type changes, then index removals and
+secondary identity changes, then removals of properties, edge types and
+vertex types, and identity changes last.
+
+## How risk is reported
+
+Every operation type has a fixed risk level:
+
+| Risk | Operations | Runnable by default |
+|---|---|---|
+| LOW | add a vertex type, an edge type, a property, an index | yes |
+| MEDIUM | remove or change an index; change a secondary identity | no |
+| HIGH | remove a property, a vertex type or an edge type; change a property type | no |
+| CRITICAL | change a vertex or edge identity; rekey a vertex type | no |
+
+LOW operations leave every stored record valid. A MEDIUM operation changes
+lookups but not stored keys: a secondary identity never keys a write. HIGH
+operations lose or reinterpret data. CRITICAL operations change what makes
+two records the same vertex, so existing records may no longer match their
+own identity.
+
+`--allow-high-risk` moves blocked operations into the runnable list. Use it
+on `plan` to see the full ordered list. On `apply` it does not run them: the
+backends execute additive operations only, and `apply` stops at the first
+operation that is not one.
+
+## How to apply
+
+```bash
+graflo migrate-schema apply \
+  --from-schema-path manifest_deployed.yaml \
+  --to-schema-path manifest_next.yaml \
+  --db-config-path db.yaml \
+  --revision 0002_add_work_orders
+```
+
+`apply` is a dry run by default: it checks the plan and the history and
+prints what it would do, without connecting to the database. `db.yaml` is a
+connection config as `DBConfig.from_dict` reads it, with a `db_type` key such
+as `arango`; see [Database connections](../../guides/database_connections.md).
+For the plan above the dry run prints:
+
+```json
+{
+  "applied": [
+    "[arango] would apply ADD_VERTEX on vertex:work_order",
+    "[arango] would apply ADD_EDGE edge:('work_order', 'machine', 'services')",
+    "[arango] would apply ADD_VERTEX_FIELD vertex:machine:field:installed_at"
+  ],
+  "blocked": [],
+  "dry_run": true,
+  "skipped": []
+}
+```
+
+`apply` refuses in three cases, each before it opens a connection:
+
+- the backend is not ArangoDB or Neo4j, the two backends with a migration
+  executor;
+- the plan has blocked operations, even one;
+- the revision is already in the history with a different target schema.
+
+`--no-dry-run` executes the plan. Each operation declares the target schema
+on the database without recreating it, and both backends refuse that while
+the database holds a graph: ArangoDB raises `SchemaExistsError` when the
+database has any collection or graph, and Neo4j when it has any node. A real
+run against a database built from the deployed manifest therefore stops at
+the first operation and records nothing. For such a database, review the
+change with `plan` and the dry run, then either make it in the database by
+hand, or recreate the schema and ingest again with
+`GraphEngine.define_and_ingest(..., recreate_schema=True)`.
+
+### History
+
+A successful real run records the revision, the backend, a hash of the target
+schema, the operations applied and the time in `.graflo/migrations.json`,
+relative to the directory you run the command from (`--store-path` changes
+it). The record makes `apply` repeatable:
+
+- the same revision on the same backend is skipped, and refused if the schema
+  hash differs, so one revision id cannot mean two different changes;
+- a schema hash already in the history is skipped, so applying the same
+  target twice under two names does nothing the second time.
+
+```bash
+graflo migrate-schema status            # latest record; --backend arango filters
+graflo migrate-schema history           # every record
+```
+
+## From Python
+
+The command line wraps three classes from `graflo.migrate`:
+
+```python
+from graflo.migrate.diff import SchemaDiff
+from graflo.migrate.io import load_schema
+from graflo.migrate.planner import MigrationPlanner
+
+diff = SchemaDiff(
+    schema_old=load_schema("manifest_deployed.yaml"),
+    schema_new=load_schema("manifest_next.yaml"),
+)
+result = diff.compare()  # operations, conflicts, warnings
+plan = MigrationPlanner().build(result)  # operations, blocked_operations, warnings
+print(diff.is_backward_compatible())  # True when every operation is LOW
+```
+
+`MigrationExecutor.execute_plan(...)` from `graflo.migrate.executor` applies
+a plan the way the command does, with the same dry-run default and the same
+history file.
+
+## Practices
+
+- Keep the manifest each database was built from, for example under
+  [version control](../schema/versioning.md). `plan` needs it as
+  `--from-schema-path`. Without it, compare the manifest you want with the
+  database itself: see [Live schema drift](../schema/live_drift.md).
+- Give every change its own revision id, and run `apply` with the same
+  `--store-path` each time. The history file is what ties a revision id to
+  one change.
+- To widen an identity, add properties to the `identity` list instead of
+  replacing it. The plan still reports a CRITICAL identity change, but no
+  rekey: every stored key stays addressable.
+- After adding a vertex type or a resource, load only the new part with
+  `IngestionParams(resources=[...])` or `IngestionParams(vertices=[...])`
+  instead of running the whole ingestion again. An unknown name raises
+  `ValueError`.
+
+## What to read next
+
+- [Live schema drift](../schema/live_drift.md): compare a manifest with what a database holds.
+- [Evolving a manifest](../../guides/evolving_a_manifest.md): change the manifest itself.
+- [Version control](../schema/versioning.md): keep the history of a manifest.
