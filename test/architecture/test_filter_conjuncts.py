@@ -353,7 +353,7 @@ class TestBackendQueryBuilders:
     def test_arango_match_query_parenthesises_an_or_filter(self) -> None:
         from graflo.db.arango.query import fetch_fields_query
 
-        query = fetch_fields_query(
+        query, bind_vars = fetch_fields_query(
             "users",
             [{"email": "ada@example.com"}],
             ["email"],
@@ -361,4 +361,10 @@ class TestBackendQueryBuilders:
             filters=_or(_eq("a", 1), _eq("b", 2)),
         )
 
-        assert '&& (_cdoc["a"] == 1 OR _cdoc["b"] == 2)' in query
+        assert '&& (_cdoc["a"] == @f0 OR _cdoc["b"] == @f1)' in query
+        assert "FOR _doc in @docs" in query
+        assert bind_vars == {
+            "docs": [{"email": "ada@example.com", "__i": 0}],
+            "f0": 1,
+            "f1": 2,
+        }

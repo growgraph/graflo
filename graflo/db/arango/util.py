@@ -16,7 +16,7 @@ Example:
 import logging
 
 from graflo.architecture.schema.edge import Edge
-from graflo.filter.onto import FilterExpression
+from graflo.filter.onto import BoundParams, FilterExpression
 from graflo.onto import ExpressionFlavor
 
 logger = logging.getLogger(__name__)
@@ -60,7 +60,9 @@ def define_extra_edges(g: Edge):
 
 
 def render_filters(
-    filters: None | list | dict | FilterExpression = None, doc_name="d"
+    filters: None | list | dict | FilterExpression = None,
+    doc_name="d",
+    params: BoundParams | None = None,
 ) -> str:
     """Convert filter expressions to AQL filter clauses.
 
@@ -70,6 +72,7 @@ def render_filters(
     Args:
         filters: Filter expression to convert
         doc_name: Name of the document variable in the query
+        params: Bind variables the values go into; literals without it
 
     Returns:
         str: AQL filter clause string
@@ -83,8 +86,8 @@ def render_filters(
         from graflo.filter.onto import parse_filter_expression
 
         ff = parse_filter_expression(filters)
-        literal_condition = ff(doc_name=doc_name, kind=ExpressionFlavor.AQL)
-        filter_clause = f"FILTER {literal_condition}"
+        condition = ff(doc_name=doc_name, kind=ExpressionFlavor.AQL, params=params)
+        filter_clause = f"FILTER {condition}"
     else:
         filter_clause = ""
 

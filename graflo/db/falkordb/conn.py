@@ -51,6 +51,7 @@ from graflo.db.graph_introspection import GraphSchemaInferencer
 from graflo.db.resolve import absent_documents, present_documents
 from graflo.db.util import serialize_value
 from graflo.filter.onto import (
+    BoundParams,
     FilterExpression,
     parse_filter_expression,
     render_conjunct,
@@ -762,9 +763,10 @@ class FalkordbConnection(Connection):
             List of fetched nodes as dictionaries
         """
         # Build filter clause
+        params = BoundParams(self.expression_flavor())
         if filters is not None:
-            ff = FilterExpression.from_dict(filters)
-            filter_clause = f"WHERE {ff(doc_name='n', kind=self.expression_flavor())}"
+            ff = parse_filter_expression(filters)
+            filter_clause = f"WHERE {ff(doc_name='n', kind=params.kind, params=params)}"
         else:
             filter_clause = ""
 
@@ -789,7 +791,7 @@ class FalkordbConnection(Connection):
             {limit_clause}
         """
 
-        result = self.execute(q)
+        result = self.execute(q, **params.values)
 
         # Convert FalkorDB results to list of dictionaries
         if return_keys is not None:
@@ -871,10 +873,12 @@ class FalkordbConnection(Connection):
 
         # Add additional filters if provided
         if filters is not None:
-            ff = FilterExpression.from_dict(filters)
+            bound = BoundParams(self.expression_flavor())
+            ff = parse_filter_expression(filters)
             where_clauses.append(
-                render_conjunct(ff, doc_name="r", kind=self.expression_flavor())
+                render_conjunct(ff, doc_name="r", kind=bound.kind, params=bound)
             )
+            params.update(bound.values)
 
         where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 
@@ -1073,9 +1077,10 @@ class FalkordbConnection(Connection):
             Aggregation results (dict for grouped aggregations, int/float for single value)
         """
         # Build filter clause
+        params = BoundParams(self.expression_flavor())
         if filters is not None:
             ff = parse_filter_expression(filters)
-            filter_clause = f"WHERE {ff(doc_name='n', kind=self.expression_flavor())}"
+            filter_clause = f"WHERE {ff(doc_name='n', kind=params.kind, params=params)}"
         else:
             filter_clause = ""
 
@@ -1087,7 +1092,7 @@ class FalkordbConnection(Connection):
                     {filter_clause}
                     RETURN n.{discriminant} AS key, count(*) AS count
                 """
-                result = self.execute(q)
+                result = self.execute(q, **params.values)
                 return {row[0]: row[1] for row in result.result_set}
             else:
                 q = f"""
@@ -1095,7 +1100,7 @@ class FalkordbConnection(Connection):
                     {filter_clause}
                     RETURN count(*) AS count
                 """
-                result = self.execute(q)
+                result = self.execute(q, **params.values)
                 return result.result_set[0][0] if result.result_set else 0
 
         elif aggregation_function == AggregationType.MAX:
@@ -1106,7 +1111,7 @@ class FalkordbConnection(Connection):
                 {filter_clause}
                 RETURN max(n.{aggregated_field}) AS max_value
             """
-            result = self.execute(q)
+            result = self.execute(q, **params.values)
             return result.result_set[0][0] if result.result_set else None
 
         elif aggregation_function == AggregationType.MIN:
@@ -1117,7 +1122,7 @@ class FalkordbConnection(Connection):
                 {filter_clause}
                 RETURN min(n.{aggregated_field}) AS min_value
             """
-            result = self.execute(q)
+            result = self.execute(q, **params.values)
             return result.result_set[0][0] if result.result_set else None
 
         elif aggregation_function == AggregationType.AVERAGE:
@@ -1128,7 +1133,7 @@ class FalkordbConnection(Connection):
                 {filter_clause}
                 RETURN avg(n.{aggregated_field}) AS avg_value
             """
-            result = self.execute(q)
+            result = self.execute(q, **params.values)
             return result.result_set[0][0] if result.result_set else None
 
         elif aggregation_function == AggregationType.SORTED_UNIQUE:
@@ -1142,7 +1147,7 @@ class FalkordbConnection(Connection):
                 RETURN DISTINCT n.{aggregated_field} AS value
                 ORDER BY value
             """
-            result = self.execute(q)
+            result = self.execute(q, **params.values)
             return [row[0] for row in result.result_set]
 
         else:

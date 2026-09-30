@@ -55,6 +55,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`SparqlConnector.typed_objects`**, also on the RDF data sources: properties whose objects
   are also read by class, as `<property>@<Class>`. RDF schema inference sets it for a property
   with several ranges.
+- **`graflo.filter.BoundParams`** collects the values of the filters rendered with `params=` under
+  placeholders (`@name` in AQL, `$name` in Cypher, `%(name)s` in SQL), for the driver to bind.
 
 ### Changed
 
@@ -148,6 +150,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   foreign key to the whole primary key; a one-field identity keeps `source_id` / `target_id`. An
   edge table written by an earlier version for a composite identity must be written again.
   `fetch_edges` refuses a table with a composite endpoint.
+- **Filter values reach ArangoDB, Neo4j, Memgraph, FalkorDB and PostgreSQL as bound parameters**
+  in `fetch_docs`, `fetch_edges`, `aggregate` and the lookups built on them (`resolve_vertices`,
+  `fetch_present_documents`). ArangoDB's edge anchors and present-document lookups bind their ids
+  and documents too. NebulaGraph and TigerGraph filters stay literals, and refuse a value with no
+  safe literal: a control character other than newline, carriage return or tab, a non-finite
+  number, or an object of another type. A TigerGraph REST filter refuses a string holding `"` or
+  `,`.
 
 - **uv is pinned to one release line.** `pyproject.toml` sets `[tool.uv] required-version`, and
   the workflows pin a release within it. A different uv minor rewrote `uv.lock` wholesale with
@@ -276,6 +285,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **RDF inference linked each object of a property with several ranges under every range.**
 - **Two PostgreSQL endpoints sharing their first identity field were one endpoint**: edge tables
   stored only that field.
+- **ArangoDB `fetch_edges` with `filters` sent `FILTER FILTER`**, which the database rejects.
+- **An ArangoDB edge read restricted to a far-end type matched other collections**: its
+  `LIKE 'type/%'` read `_` in the name as a wildcard.
+- **A filter written with a Python operator (`operator: __eq__`) put the operator into every query
+  language** (`doc["x"] __eq__ == 1`).
+- **A literal boolean filter value was written `True`**, which AQL rejects, and a date unquoted.
+- **NebulaGraph `fetch_present_documents` wrote the VID into its query unescaped.**
 
 ## [1.14.1]
 

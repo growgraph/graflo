@@ -101,6 +101,7 @@ from graflo.db.field_type_support import assert_schema_supported
 from graflo.db.graph_introspection import GraphSchemaInferencer
 from graflo.db.resolve import absent_documents, present_documents
 from graflo.filter.onto import (
+    BoundParams,
     FilterExpression,
     parse_filter_expression,
     render_conjunct,
@@ -993,9 +994,10 @@ class MemgraphConnection(Connection):
 
         q = f"MATCH (n:{class_name})"
 
+        params = BoundParams(self.expression_flavor())
         if filters is not None:
-            ff = FilterExpression.from_dict(filters)
-            filter_str = ff(doc_name="n", kind=self.expression_flavor())
+            ff = parse_filter_expression(filters)
+            filter_str = ff(doc_name="n", kind=params.kind, params=params)
             q += f" WHERE {filter_str}"
 
         # Handle projection
@@ -1009,7 +1011,7 @@ class MemgraphConnection(Connection):
             q += f" LIMIT {limit}"
 
         cursor = self.conn.cursor()
-        cursor.execute(q)
+        cursor.execute(q, params.values)
         results = []
 
         if return_keys:
@@ -1088,10 +1090,11 @@ class MemgraphConnection(Connection):
             where_clauses.append("t.id = $to_id")
 
         # Add relationship property filters
+        bound = BoundParams(self.expression_flavor())
         if filters is not None:
-            ff = FilterExpression.from_dict(filters)
+            ff = parse_filter_expression(filters)
             where_clauses.append(
-                render_conjunct(ff, doc_name="r", kind=self.expression_flavor())
+                render_conjunct(ff, doc_name="r", kind=bound.kind, params=bound)
             )
 
         if where_clauses:
@@ -1122,7 +1125,7 @@ class MemgraphConnection(Connection):
             q += f" LIMIT {limit}"
 
         # Execute query with parameters
-        params: dict[str, Any] = {"from_id": from_id}
+        params: dict[str, Any] = {"from_id": from_id, **bound.values}
         if to_id:
             params["to_id"] = to_id
 
@@ -1298,9 +1301,10 @@ class MemgraphConnection(Connection):
 
         # Build filter clause
         filter_clause = ""
+        params = BoundParams(self.expression_flavor())
         if filters is not None:
             ff = parse_filter_expression(filters)
-            filter_str = ff(doc_name="n", kind=self.expression_flavor())
+            filter_str = ff(doc_name="n", kind=params.kind, params=params)
             filter_clause = f" WHERE {filter_str}"
 
         q = f"MATCH (n:{class_name}){filter_clause}"
@@ -1309,7 +1313,7 @@ class MemgraphConnection(Connection):
             if discriminant:
                 q += f" RETURN n.{discriminant} AS key, count(*) AS count"
                 cursor = self.conn.cursor()
-                cursor.execute(q)
+                cursor.execute(q, params.values)
                 rows = cursor.fetchall()
                 cursor.close()
                 return {row[0]: row[1] for row in rows}
@@ -1327,7 +1331,7 @@ class MemgraphConnection(Connection):
             raise ValueError(f"Unsupported aggregation type: {aggregation_function}")
 
         cursor = self.conn.cursor()
-        cursor.execute(q)
+        cursor.execute(q, params.values)
         rows = cursor.fetchall()
         cursor.close()
 

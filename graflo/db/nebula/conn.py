@@ -1019,7 +1019,7 @@ class NebulaConnection(Connection):
             vid = make_vid(class_name, doc, match_keys)
             try:
                 rs = self._execute(
-                    f'FETCH PROP ON `{class_name}` "{vid}" '
+                    f'FETCH PROP ON `{class_name}` "{escape_nebula_string(vid)}" '
                     f"YIELD properties(vertex) AS props"
                 )
                 rows = rs.rows_as_dicts()

@@ -68,6 +68,26 @@ and a shared sampling introspection. On any store,
 `graflo.db.resolve.present_documents` and `absent_documents` implement
 `fetch_present_documents` and `keep_absent_documents` over `fetch_docs`.
 
+#### Values in queries
+
+A filter value or an id a read is given does not go into query text when your
+driver binds parameters. Render filters with a
+`graflo.filter.onto.BoundParams` for your flavor, pass it as `params=` to
+every filter of one query, and hand its `values` to the driver:
+
+```python
+params = BoundParams(ExpressionFlavor.CYPHER)
+where = parse_filter_expression(filters)(doc_name="n", kind=params.kind, params=params)
+self.execute(f"MATCH (n:{label}) WHERE {where} RETURN n", **params.values)
+```
+
+`BoundParams` writes `@name` for AQL, `$name` for Cypher and `%(name)s` for
+PostgreSQL. nGQL and GSQL filters are written as literals: strings escaped,
+dates quoted, and a value with no safe literal (a control character other than
+newline, carriage return or tab, a non-finite number, an object of another
+type) refused. If your flavor binds parameters, add its placeholder to
+`BoundParams`.
+
 #### Capability flags
 
 Declare what you implement as class variables. `ConnectionCapability` names

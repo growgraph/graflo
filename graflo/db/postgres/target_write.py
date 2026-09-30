@@ -27,7 +27,7 @@ from graflo.db.conn import (
     deletable_endpoints,
 )
 from graflo.db.field_type_support import assert_field_type_supported
-from graflo.filter.onto import FilterExpression, parse_filter_expression
+from graflo.filter.onto import BoundParams, FilterExpression, parse_filter_expression
 from graflo.onto import AggregationType, DBType, ExpressionFlavor
 
 
@@ -839,9 +839,10 @@ class PostgresTargetWriteMixin:
             select_clause = "*"
 
         where_clause = ""
+        params = BoundParams(ExpressionFlavor.SQL)
         if filters is not None:
             expr = parse_filter_expression(filters)
-            rendered = str(expr(kind=ExpressionFlavor.SQL))
+            rendered = str(expr(kind=ExpressionFlavor.SQL, params=params))
             if rendered:
                 where_clause = f" WHERE {rendered}"
 
@@ -851,7 +852,7 @@ class PostgresTargetWriteMixin:
             f"{_quote_ident(pg_schema)}.{_quote_ident(table)}"
             f"{where_clause}{limit_clause}"
         )
-        return self.read(q)
+        return self.read(q, params.values or None)
 
     def fetch_edges(
         self,
@@ -893,8 +894,14 @@ class PostgresTargetWriteMixin:
         qualified = f"{_quote_ident(pg_schema)}.{_quote_ident(edge_type)}"
 
         extra = ""
+        bound = BoundParams(ExpressionFlavor.SQL)
         if filters is not None:
-            rendered = str(parse_filter_expression(filters)(kind=ExpressionFlavor.SQL))
+            # Both branches of an ANY read name the same placeholders.
+            rendered = str(
+                parse_filter_expression(filters)(
+                    kind=ExpressionFlavor.SQL, params=bound
+                )
+            )
             if rendered:
                 extra = f" AND ({rendered})"
         far_clause = ""
@@ -920,7 +927,7 @@ class PostgresTargetWriteMixin:
         if limit is not None:
             sql = f"{sql} LIMIT {int(limit)}"
 
-        params: dict[str, Any] = {"from_id": from_id}
+        params: dict[str, Any] = {"from_id": from_id, **bound.values}
         if to_id is not None:
             params["to_id"] = to_id
         rows = self.read(sql, params)
@@ -986,8 +993,13 @@ class PostgresTargetWriteMixin:
             expression = f"{sql_function}({_quote_ident(aggregated_field)})"
 
         where_clause = ""
+        params = BoundParams(ExpressionFlavor.SQL)
         if filters is not None:
-            rendered = str(parse_filter_expression(filters)(kind=ExpressionFlavor.SQL))
+            rendered = str(
+                parse_filter_expression(filters)(
+                    kind=ExpressionFlavor.SQL, params=params
+                )
+            )
             if rendered:
                 where_clause = f" WHERE {rendered}"
 
@@ -1000,7 +1012,7 @@ class PostgresTargetWriteMixin:
                 f"{expression} AS _value FROM {qualified}{where_clause} "
                 f"GROUP BY {column}"
             )
-        return self.read(q)
+        return self.read(q, params.values or None)
 
     def keep_absent_documents(
         self,

@@ -52,6 +52,7 @@ from graflo.db.graph_introspection import (
 )
 from graflo.db.resolve import absent_documents, present_documents
 from graflo.filter.onto import (
+    BoundParams,
     FilterExpression,
     parse_filter_expression,
     render_conjunct,
@@ -642,9 +643,10 @@ class Neo4jConnection(Connection):
         Returns:
             list: Fetched nodes
         """
+        params = BoundParams(self.expression_flavor())
         if filters is not None:
-            ff = FilterExpression.from_dict(filters)
-            filter_clause = f"WHERE {ff(doc_name='n', kind=self.expression_flavor())}"
+            ff = parse_filter_expression(filters)
+            filter_clause = f"WHERE {ff(doc_name='n', kind=params.kind, params=params)}"
         else:
             filter_clause = ""
 
@@ -665,7 +667,7 @@ class Neo4jConnection(Connection):
             f"  RETURN n {keep_clause}"
             f"  {limit_clause}"
         )
-        cursor = self.execute(q)
+        cursor = self.execute(q, **params.values)
         r = [item["n"] for item in cursor.data()]
         return r
 
@@ -726,10 +728,12 @@ class Neo4jConnection(Connection):
 
         # Add additional filters if provided
         if filters is not None:
-            ff = FilterExpression.from_dict(filters)
+            bound = BoundParams(self.expression_flavor())
+            ff = parse_filter_expression(filters)
             where_clauses.append(
-                render_conjunct(ff, doc_name="r", kind=self.expression_flavor())
+                render_conjunct(ff, doc_name="r", kind=bound.kind, params=bound)
             )
+            params.update(bound.values)
 
         where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 
@@ -846,10 +850,11 @@ class Neo4jConnection(Connection):
                 or the aggregation type is not supported.
         """
         filter_clause = ""
+        params = BoundParams(self.expression_flavor())
         if filters is not None:
             expression = parse_filter_expression(filters)
             filter_clause = (
-                f" WHERE {expression(doc_name='n', kind=self.expression_flavor())}"
+                f" WHERE {expression(doc_name='n', kind=params.kind, params=params)}"
             )
 
         label = _cypher_escape_identifier(str(class_name))
@@ -859,7 +864,7 @@ class Neo4jConnection(Connection):
             if discriminant:
                 field = _cypher_escape_identifier(discriminant)
                 query += f" RETURN n.`{field}` AS key, count(*) AS value"
-                rows = self.execute(query).data()
+                rows = self.execute(query, **params.values).data()
                 return {row["key"]: row["value"] for row in rows}
             query += " RETURN count(n) AS value"
         else:
@@ -881,7 +886,7 @@ class Neo4jConnection(Connection):
                     f"Unsupported aggregation type: {aggregation_function}"
                 )
 
-        rows = self.execute(query).data()
+        rows = self.execute(query, **params.values).data()
         if aggregation_function == AggregationType.SORTED_UNIQUE:
             return [row["value"] for row in rows]
         return rows[0]["value"] if rows else None

@@ -62,8 +62,8 @@ from graflo.db.graph_introspection import (
     strip_internal_properties,
 )
 from graflo.db.util import get_data_from_cursor, json_serializer
-from graflo.filter.onto import FilterExpression
-from graflo.onto import AggregationType, DBType
+from graflo.filter.onto import BoundParams, FilterExpression
+from graflo.onto import AggregationType, DBType, ExpressionFlavor
 from graflo.util.transform import pick_unique_dict
 
 logger = logging.getLogger(__name__)
@@ -130,20 +130,28 @@ def _arango_edge_anchor_clause(
     direction: EdgeDirection,
     to_type: str | None,
     to_vertex_id: str | None,
+    bind_vars: dict[str, Any],
 ) -> str:
     """Build the AQL FILTER anchoring an edge read on one vertex.
 
     Endpoint filters follow the anchor to the *opposite* end, so ``to_type`` /
     ``to_vertex_id`` keep meaning "the other endpoint" in every direction. The
     edge index covers ``_from`` and ``_to``, so no branch is more expensive.
+    The ids go into *bind_vars*, never into the query text.
     """
+    bind_vars["anchor"] = anchor_vertex_id
+    if to_type:
+        bind_vars["far_prefix"] = f"{to_type}/"
+    if to_vertex_id is not None:
+        bind_vars["far"] = to_vertex_id
 
     def _branch(anchor_field: str, other_field: str) -> str:
-        parts = [f"e.{anchor_field} == '{anchor_vertex_id}'"]
+        parts = [f"e.{anchor_field} == @anchor"]
         if to_type:
-            parts.append(f"e.{other_field} LIKE '{to_type}/%'")
+            # Not LIKE: `_` in a collection name is a LIKE wildcard.
+            parts.append(f"STARTS_WITH(e.{other_field}, @far_prefix)")
         if to_vertex_id is not None:
-            parts.append(f"e.{other_field} == '{to_vertex_id}'")
+            parts.append(f"e.{other_field} == @far")
         return " && ".join(parts)
 
     if direction is EdgeDirection.OUT:
@@ -358,17 +366,20 @@ class ArangoConnection(Connection):
             )
             raise
 
-    def execute(self, query: str, **kwargs: Any) -> Any:
+    def execute(
+        self, query: str, bind_vars: dict[str, Any] | None = None, **kwargs: Any
+    ) -> Any:
         """Execute an AQL query.
 
         Args:
             query: AQL query string to execute
+            bind_vars: Values the query names as ``@name``
             **kwargs: Additional query parameters
 
         Returns:
             Cursor: ArangoDB cursor for the query results
         """
-        cursor = self.conn.aql.execute(query)
+        cursor = self.conn.aql.execute(query, bind_vars=bind_vars or None)
         return cursor
 
     def close(self) -> None:
@@ -1180,7 +1191,7 @@ class ArangoConnection(Connection):
             list | dict: Documents that exist in the database, either as a
                 flat list or a dictionary mapping batch indices to documents
         """
-        q0 = fetch_fields_query(
+        q0, bind_vars = fetch_fields_query(
             collection_name=class_name,
             docs=batch,
             match_keys=match_keys,
@@ -1188,7 +1199,7 @@ class ArangoConnection(Connection):
             filters=filters,
         )
         # {"__i": i, "_group": [doc]}
-        cursor = self.execute(q0)
+        cursor = self.execute(q0, bind_vars=bind_vars)
 
         if flatten:
             rdata = []
@@ -1225,7 +1236,8 @@ class ArangoConnection(Connection):
         Returns:
             list: Fetched documents
         """
-        filter_clause = render_filters(filters, doc_name="d")
+        params = BoundParams(ExpressionFlavor.AQL)
+        filter_clause = render_filters(filters, doc_name="d", params=params)
 
         if return_keys is None:
             if unset_keys is None:
@@ -1251,7 +1263,7 @@ class ArangoConnection(Connection):
             f"  {limit_clause}"
             f"  RETURN {return_clause}"
         )
-        cursor = self.execute(q)
+        cursor = self.execute(q, bind_vars=params.values)
         return get_data_from_cursor(cursor)
 
     def fetch_edges(
@@ -1305,25 +1317,29 @@ class ArangoConnection(Connection):
             # This is a simplified version - in practice you might want to list all edge collections
             raise ValueError("edge_type is required for ArangoDB edge fetching")
 
-        filter_clause = render_filters(filters, doc_name="e")
+        params = BoundParams(ExpressionFlavor.AQL)
+        # Already a `FILTER ...` clause, or empty.
+        filter_clause = render_filters(filters, doc_name="e", params=params)
 
         to_vertex_id: str | None = None
         if to_id and to_type:
             to_vertex_id = to_id if to_id.startswith(to_type) else f"{to_type}/{to_id}"
 
+        bind_vars: dict[str, Any] = {}
         anchor_clause = _arango_edge_anchor_clause(
-            from_vertex_id, direction, to_type, to_vertex_id
+            from_vertex_id, direction, to_type, to_vertex_id, bind_vars
         )
+        bind_vars.update(params.values)
 
         query = f"""
             FOR e IN {edge_collection}
                 FILTER {anchor_clause}
-                {f"FILTER {filter_clause}" if filter_clause else ""}
+                {filter_clause}
                 {f"LIMIT {limit}" if limit else ""}
                 RETURN e
         """
 
-        cursor = self.execute(query)
+        cursor = self.execute(query, bind_vars=bind_vars)
         result = list(get_data_from_cursor(cursor))
 
         # Apply projection
@@ -1358,7 +1374,8 @@ class ArangoConnection(Connection):
         Returns:
             list: Aggregation results
         """
-        filter_clause = render_filters(filters, doc_name="doc")
+        params = BoundParams(ExpressionFlavor.AQL)
+        filter_clause = render_filters(filters, doc_name="doc", params=params)
 
         if (
             aggregated_field is not None
@@ -1391,7 +1408,7 @@ class ArangoConnection(Connection):
                     {collect_clause}
                     RETURN {return_clause}"""
 
-        cursor = self.execute(q)
+        cursor = self.execute(q, bind_vars=params.values)
         data = get_data_from_cursor(cursor)
         return data
 
