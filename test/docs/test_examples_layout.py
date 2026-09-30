@@ -96,4 +96,4 @@ def test_docs_page_is_generated_and_in_the_nav(directory: Path) -> None:
     assert not (ROOT / "docs" / page).exists(), (
         f"docs/{page} is committed, so the generated page would be shadowed"
     )
-    assert page in (ROOT / "mkdocs.yml").read_text(encoding="utf-8")
+    assert page in (ROOT / "properdocs.yml").read_text(encoding="utf-8")

@@ -563,13 +563,13 @@ dev = [
     { name = "ty" },
 ]
 docs = [
-    { name = "mkdocs" },
     { name = "mkdocs-gen-files" },
     { name = "mkdocs-glightbox" },
     { name = "mkdocs-literate-nav" },
     { name = "mkdocs-material" },
     { name = "mkdocs-table-reader-plugin" },
     { name = "mkdocstrings", extra = ["python"] },
+    { name = "properdocs" },
 ]
 plot = [
     { name = "pygraphviz" },
@@ -583,7 +583,6 @@ requires-dist = [
     { name = "falkordb", specifier = ">=1.0.9" },
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.140.0" },
     { name = "ijson", specifier = ">=3.2.3,<4" },
-    { name = "mkdocs", marker = "extra == 'docs'", specifier = ">=1.6.1" },
     { name = "mkdocs-gen-files", marker = "extra == 'docs'", specifier = ">=0.5.0" },
     { name = "mkdocs-glightbox", marker = "extra == 'docs'", specifier = ">=0.4.0" },
     { name = "mkdocs-literate-nav", marker = "extra == 'docs'", specifier = ">=0.6.2" },
@@ -597,6 +596,7 @@ requires-dist = [
     { name = "pandas", specifier = ">=2.0.3,<4" },
     { name = "pandas-stubs", specifier = "==2.3.0.250703" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.2.0" },
+    { name = "properdocs", marker = "extra == 'docs'", specifier = ">=1.6.7" },
     { name = "psycopg2-binary", specifier = ">=2.9.11" },
     { name = "pydantic", specifier = ">=2.12.5" },
     { name = "pydantic-settings", specifier = ">=2.12.0" },

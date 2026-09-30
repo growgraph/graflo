@@ -62,8 +62,8 @@ docs = [
   "mkdocs-literate-nav>=0.6.2",
   "mkdocs-material>=9.6.12",
   "mkdocs-table-reader-plugin>=3.1.0",
-  "mkdocs>=1.6.1",
-  "mkdocstrings[python]>=0.29.1"
+  "mkdocstrings[python]>=0.29.1",
+  "properdocs>=1.6.7"
 ]
 plot = [
   "pygraphviz>=1.14"

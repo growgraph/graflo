@@ -43,7 +43,7 @@ The extras add tooling only; they do not switch ingestion features on or off.
 | Extra | What it adds |
 |-------|--------------|
 | `dev` | Tests and checks: `pytest` and its plugins, `hypothesis`, `ty`, `pre-commit` |
-| `docs` | Building this site: MkDocs and its plugins |
+| `docs` | Building this site: ProperDocs and its plugins |
 | `plot` | `pygraphviz`, which draws the diagrams of `graflo plot-manifest` and the `--plot` figures of `graflo merge` and `graflo merge3` |
 
 With pip, name the extras you want:

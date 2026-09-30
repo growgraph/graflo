@@ -107,7 +107,7 @@ Optional extras (see the
 [Installation](https://growgraph.github.io/graflo/getting_started/installation/) guide):
 
 - `dev`: pytest and its plugins, hypothesis, ty, pre-commit
-- `docs`: the MkDocs stack for building the documentation site
+- `docs`: ProperDocs and its plugins, for building the documentation site
 - `plot`: `pygraphviz` for `graflo plot-manifest` and the `--plot` figures of
   `graflo merge` and `graflo merge3`; install system Graphviz first
 

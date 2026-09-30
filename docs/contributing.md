@@ -86,7 +86,7 @@ To build and preview the docs site locally:
 
 ```bash
 uv sync --extra docs
-uv run mkdocs serve
+uv run properdocs serve
 ```
 
 If you edit the GraFlo meta-ontology (`graflo/rdf/ontology/graflo.ttl`), regenerate the interactive visualization and commit the updated assets:

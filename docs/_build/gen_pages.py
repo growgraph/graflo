@@ -53,6 +53,11 @@ for path in sorted(Path(PACKAGE).rglob("*.py")):
 
     with mkdocs_gen_files.open(full_doc_path, "w") as f:
         ident = ".".join([PACKAGE] + parts)
+        # The sidebar labels a page by its title, and a column of dotted paths
+        # truncates to the same prefix on every row. The title is the module's
+        # own name -- the sidebar's nesting supplies the rest -- while the
+        # heading, and with it the search result, keeps the full path.
+        f.write(f'---\ntitle: "{parts[-1]}"\n---\n\n')
         if is_pkg_init:
             # `show_submodules: false` keeps a package page from inlining its
             # whole subtree (which would render `architecture` as one enormous
@@ -71,4 +76,5 @@ for path in sorted(Path(PACKAGE).rglob("*.py")):
         else:
             f.write(f"# `{ident}`\n\n::: {ident}\n")
 
-    mkdocs_gen_files.set_edit_path(full_doc_path, path)
+    # Edit paths resolve against the docs directory; the module lives above it.
+    mkdocs_gen_files.set_edit_path(full_doc_path, Path("..", path))

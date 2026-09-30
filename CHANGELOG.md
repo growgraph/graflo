@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [Unreleased]
+
+### Changed
+
+- **The documentation site is built with ProperDocs.** The `docs` extra depends on `properdocs`
+  instead of `mkdocs`, the configuration file is `properdocs.yml`, and the commands are
+  `properdocs build` and `properdocs serve`. ProperDocs continues MkDocs 1.x and loads the same
+  theme and plugins; the generated pages are unchanged by the switch.
+- **Docs theme.** A GrowGraph palette in both colour schemes (ink header, the mark's orange for
+  links and accents), Montserrat headings, Source Sans 3 body text and JetBrains Mono code, set in
+  `docs/stylesheets/extra.css`. Top-level sections are tabs, code blocks have a copy button, pages
+  have an edit link, and search splits identifiers on underscores, so `vertex_router` is found by
+  `router`.
+- **Docs home page.** The same text, laid out as a landing page, with a diagram of sources, the
+  manifest and the targets.
+- **API reference sidebar.** A module page is titled by the module's own name (`vertex`) rather
+  than its dotted path, which the sidebar cut off at the same prefix on every row. The page heading
+  keeps the full path.
+
+### Fixed
+
+- **Edit links on API reference pages** pointed under `docs/` instead of at the module's source
+  file.
+- **The docs workflow did not run on changes under `examples/`**, although the example pages are
+  generated from the example READMEs.
+
 ## [1.14.1]
 
 ### Added
