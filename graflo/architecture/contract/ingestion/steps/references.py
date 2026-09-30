@@ -5,8 +5,9 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-#: ``(target vertex, relation, {target field: record field})``.
-Reference = tuple[str, str, Mapping[str, str]]
+#: ``(target vertex, relation, {target field: record field})``, optionally with a
+#: fourth element, the role the targets are read in (the relation by default).
+Reference = tuple[str, str, Mapping[str, str]] | tuple[str, str, Mapping[str, str], str]
 
 
 def subject_role(relations: set[str]) -> str:
@@ -32,15 +33,19 @@ def subject_with_references(
     """
     if not references:
         return [{"vertex": vertex}]
-    subject = subject_role({relation for _, relation, _ in references})
+    resolved = [
+        (ref[0], ref[1], ref[2], ref[3] if len(ref) > 3 else ref[1])
+        for ref in references
+    ]
+    subject = subject_role({role for _, _, _, role in resolved})
     pipeline: list[dict[str, Any]] = [{"vertex": vertex, "role": subject}]
-    for target, relation, fields in references:
+    for target, relation, fields, role in resolved:
         pipeline.append(
             {
                 "vertex": target,
                 "from": dict(fields),
                 "extraction_scope": "mapped_only",
-                "role": relation,
+                "role": role,
             }
         )
         pipeline.append(
@@ -50,7 +55,7 @@ def subject_with_references(
                     "to": target,
                     "relation": relation,
                     "match_source": subject,
-                    "match_target": relation,
+                    "match_target": role,
                 }
             }
         )

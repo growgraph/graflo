@@ -99,8 +99,8 @@ def config_for(
     suite that ingests into ``public`` breaks it.
 
     Neo4j and Memgraph take no namespace: neither has a per-suite database on
-    the community edition, which is ``CORE-NEO4J-NS-001`` and the reason the
-    cross-backend suites are run serially.
+    the community edition, which is why the cross-backend suites are run
+    serially.
 
     Args:
         flavor: One of :data:`ALL_BACKENDS`.

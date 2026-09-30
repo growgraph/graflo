@@ -490,6 +490,18 @@ class TestUnionCoverage:
         assert len(exported) == 46
         assert len(_union_members()) == 45  # 46 minus the binary merge op
 
+    def test_every_op_is_reversible_or_says_why_not(self) -> None:
+        """The split quoted wherever the vocabulary is described; update both."""
+        from graflo.architecture.evolution.inverse import _HANDLERS, IRREVERSIBLE
+
+        names = {
+            model.model_fields["op"].default
+            for model in typing.get_args(typing.get_args(ManifestOp)[0])
+        }
+        assert set(_HANDLERS) | set(IRREVERSIBLE) == names
+        assert not set(_HANDLERS) & set(IRREVERSIBLE)
+        assert (len(_HANDLERS), len(IRREVERSIBLE)) == (38, 8)
+
 
 class TestRoundTrip:
     @pytest.mark.parametrize("op_name", sorted(OP_PAYLOADS))

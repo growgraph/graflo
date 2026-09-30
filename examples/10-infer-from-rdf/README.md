@@ -101,7 +101,10 @@ core_schema:
   the full IRI of the instance (`http://example.org/alice`), which is its
   identity, and `_key`, the last part of the IRI (`alice`).
 - Each object property becomes an edge from its `rdfs:domain` to its
-  `rdfs:range`, named after the property.
+  `rdfs:range`, named after the property. A property with several ranges gives
+  one edge per range, and each object is linked under the classes it has:
+  the connector lists the property in `typed_objects`, and the source adds a
+  field `<property>@<Class>` holding the objects of that class.
 
 The resource for `Researcher` makes a `Researcher` vertex, then reads the IRI in
 `authorOf` into a `Publication` vertex and adds the `authorOf` edge; the same

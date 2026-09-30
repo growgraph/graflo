@@ -102,6 +102,11 @@ class ActorWrapper:
         self.init_ctx = init_ctx
         self.actor.init_transforms(init_ctx)
         self.actor.finish_init(init_ctx)
+        # What inference may write: the edges declared, and those the steps
+        # registered while initialising -- not ones a record registers mid-cast.
+        self.__dict__["_inferable_edge_ids"] = frozenset(
+            edge_id for edge_id, _ in init_ctx.edge_config.items()
+        )
 
     def count(self) -> int:
         return self.actor.count()
@@ -178,6 +183,7 @@ class ActorWrapper:
             target_db_flavor=self.target_db_flavor,
             edge_derivation=self.init_ctx.edge_derivation,
             inverse_pairs=self._inverse_pairs(),
+            inferable=self.__dict__.get("_inferable_edge_ids"),
         )
 
         for vertex_name, dd in assembly_ctx.acc_vertex.items():

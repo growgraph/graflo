@@ -477,7 +477,9 @@ class RegistryBuilder:
                     page_size=ingestion_params.batch_size,
                 )
                 sparql_source = SparqlEndpointDataSource(
-                    config=source_config, same_as=connector.same_as
+                    config=source_config,
+                    same_as=connector.same_as,
+                    typed_objects=connector.typed_objects,
                 )
                 registry.register(sparql_source, resource_name=resource_name)
 
@@ -496,6 +498,7 @@ class RegistryBuilder:
                     path=connector.rdf_file,
                     rdf_class=connector.rdf_class,
                     same_as=connector.same_as,
+                    typed_objects=connector.typed_objects,
                 )
                 registry.register(rdf_source, resource_name=resource_name)
 

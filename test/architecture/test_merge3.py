@@ -112,7 +112,7 @@ def test_sanitize_touches_only_the_profile() -> None:
 
 
 def test_a_vertex_slot_is_convention_independent() -> None:
-    """The fold of CORE-MERGE-001 into merge.
+    """Slots key on the canonical name.
 
     Without this, one side's `order_line` and the other's `OrderLine` occupy
     different slots, merge cleanly, and produce a schema holding both as
@@ -899,3 +899,51 @@ def test_editing_a_pipeline_conflicts_with_removing_a_vertex_it_now_casts() -> N
 
     assert merged is None
     assert merge3._vertex_slot("company") in {tuple(c.slot) for c in result.conflicts}
+
+
+def test_an_edit_to_a_relation_this_side_renamed_reads_its_endpoints() -> None:
+    """The base knows the relation by its old name; the side's own rename says so."""
+    base = _people_and_companies([{**KNOWS, "relation": "employs"}])
+    left_ops: list[ManifestOp] = [
+        ops_module.RenameRelationsOp(renames={"employs": "hires"}),
+        ops_module.AddEdgePropertiesOp(additions={"hires": ["since"]}),
+    ]
+    right_ops: list[ManifestOp] = [
+        ops_module.RenameVerticesOp(renames={"company": "firm"})
+    ]
+
+    found = merge3._dependencies(left_ops, right_ops, base)
+
+    assert len(found) == 2
+
+
+def test_a_resource_reads_the_fields_it_maps() -> None:
+    op = ops_module.AddResourcesOp(
+        resources=[
+            {
+                "name": "people",
+                "pipeline": [{"vertex": "person", "from": {"email": "mail"}}],
+            }
+        ]
+    )
+
+    assert merge3._field_slot("person", "email") in op_reads(op)
+
+
+def test_adding_a_resource_conflicts_with_removing_a_field_it_maps() -> None:
+    base = _with_resources(_person(["id", "email"]), {"people": [{"vertex": "person"}]})
+    added = _with_resources(
+        _person(["id", "email"]),
+        {
+            "people": [{"vertex": "person"}],
+            "mail": [{"vertex": "person", "from": {"id": "id", "email": "mail"}}],
+        },
+    )
+    trimmed = _with_resources(_person(["id"]), {"people": [{"vertex": "person"}]})
+
+    merged, result = merge_three_way(base, added, trimmed)
+
+    assert merged is None
+    assert merge3._field_slot("person", "email") in {
+        tuple(c.slot) for c in result.conflicts
+    }

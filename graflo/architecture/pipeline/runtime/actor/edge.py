@@ -215,6 +215,7 @@ class EdgeActor(Actor):
 
         if self.edge is not None:
             # Static mode: register schema Edge now.
+            self._adopt_declared_relation()
             edge_id = self.edge.edge_id
             init_ctx.edge_config.update_edges(
                 self.edge, vertex_config=self.vertex_config
@@ -235,6 +236,43 @@ class EdgeActor(Actor):
                 init_ctx, self._static_source, self._static_target
             )
             self._check_inverse_emission(init_ctx, None)
+
+    def _declared_relations(self, source: str, target: str) -> set[str | None]:
+        """Relations the edge config declares from *source* to *target*."""
+        if self.edge_config is None:
+            return set()
+        return {
+            edge.relation
+            for edge in self.edge_config.edges
+            if edge.source == source and edge.target == target
+        }
+
+    def _adopt_declared_relation(self) -> None:
+        """Give a static step that names no relation the one its endpoints declare.
+
+        Otherwise the step registers a relation-less edge beside the declared
+        one, and the writer drops every edge it renders. Several declared
+        relations cannot be chosen between, so the step is refused.
+        """
+        if (
+            self.edge is None
+            or self.edge.relation is not None
+            or self._relation_from_data()
+        ):
+            return
+        declared = self._declared_relations(self.edge.source, self.edge.target)
+        if not declared or None in declared:
+            return
+        if len(declared) > 1:
+            raise ValueError(
+                f"edge step {self.edge.source} -> {self.edge.target} names no "
+                f"relation, and {sorted(r for r in declared if r)} are declared "
+                "between them; name one with `relation`"
+            )
+        (relation,) = declared
+        payload = self.edge.to_dict(skip_defaults=True)
+        payload["relation"] = relation
+        self.edge = Edge.from_dict(payload)
 
     def _check_inverse_emission(
         self, init_ctx: ActorInitContext, edge_id: EdgeId | None
@@ -606,6 +644,12 @@ class EdgeActor(Actor):
             relation: str | None = self._relation_map.get(raw_relation, raw_relation)
         else:
             relation = self._static_relation
+        if relation is None and not self._relation_from_data():
+            # The per-document counterpart of `_adopt_declared_relation`; with
+            # several declared relations the edge stays relation-less.
+            declared = self._declared_relations(source_type, target_type)
+            if len(declared) == 1:
+                (relation,) = declared
 
         # Create / retrieve cached schema Edge.
         edge = self._get_or_create_edge(source_type, target_type, relation)

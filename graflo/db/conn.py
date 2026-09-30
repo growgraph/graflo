@@ -256,7 +256,8 @@ class Connection(abc.ABC):
     #:
     #: It says an emitter is registered — not that every operation is
     #: implemented, and not that applying to a *populated* target works
-    #: (it does not, on any backend: see ``CORE-MIGRATE-001``).
+    #: (it does not, on any backend: the emitters' DDL meets the first-write
+    #: guard, which refuses a populated target).
     supports_schema_ddl: ClassVar[bool] = False
     #: Whether :meth:`introspect_graph_schema` samples rows rather than reading a
     #: catalogue. Sampling recovers a *lower bound* — a property present on no

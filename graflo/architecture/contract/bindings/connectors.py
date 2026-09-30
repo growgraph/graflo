@@ -538,13 +538,22 @@ class SparqlConnector(ResourceConnector):
         default="collapse",
         description="How owl:sameAs statements between IRIs are read.",
     )
+    typed_objects: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Properties (local names) whose objects are also read by class, as "
+            "``<property>@<Class>``: for a property with several ranges."
+        ),
+    )
 
     def _hash_payload(self) -> dict[str, Any]:
         payload = super()._hash_payload()
-        # Left out at its default, so a connector that does not set it keeps
-        # the hash it is referred to by.
+        # Left out at their defaults, so a connector that does not set them
+        # keeps the hash it is referred to by.
         if self.same_as == "collapse":
             del payload["same_as"]
+        if not self.typed_objects:
+            del payload["typed_objects"]
         return payload
 
     @model_validator(mode="after")

@@ -473,3 +473,49 @@ class TestInferredResourceCast:
             ("alice", "acme")
         ]
         assert _edges(entities, "Person", "Person", "knows") == [("alice", "bob")]
+
+
+_FOREST = """
+ex:Oak a owl:Class .
+ex:Zebra a owl:Class .
+ex:Birch a owl:Class .
+ex:feeds a owl:ObjectProperty ; rdfs:domain ex:Oak ; rdfs:range ex:Zebra , ex:Birch .
+ex:shades a owl:ObjectProperty ; rdfs:domain ex:Oak ; rdfs:range ex:Birch .
+"""
+
+
+class TestSeveralRanges:
+    """A property with several ranges links each object under its own class."""
+
+    def test_each_range_reads_the_objects_of_its_class(self, tmp_path: Path) -> None:
+        _, ingestion_model = _infer_all(tmp_path, _FOREST)
+        oak = ingestion_model.fetch_resource("Oak")
+
+        entities = oak(
+            {
+                "_uri": EX + "oak1",
+                "_key": "oak1",
+                "feeds": [EX + "z1", EX + "b1"],
+                "feeds@Zebra": EX + "z1",
+                "feeds@Birch": EX + "b1",
+                "shades": EX + "b2",
+            }
+        )
+
+        assert _edges(entities, "Oak", "Zebra", "feeds") == [("oak1", "z1")]
+        assert _edges(entities, "Oak", "Birch", "feeds") == [("oak1", "b1")]
+        assert _edges(entities, "Oak", "Birch", "shades") == [("oak1", "b2")]
+
+    def test_the_bindings_ask_for_the_split(self, tmp_path: Path) -> None:
+        path = tmp_path / "onto.ttl"
+        path.write_text(_ONTOLOGY_PREFIXES + _FOREST, encoding="utf-8")
+
+        bindings = RdfInferenceManager().create_bindings(path)
+
+        by_class = {
+            c.rdf_class.removeprefix(EX): c
+            for c in bindings.connectors
+            if isinstance(c, SparqlConnector)
+        }
+        assert by_class["Oak"].typed_objects == ["feeds"]
+        assert by_class["Zebra"].typed_objects == []

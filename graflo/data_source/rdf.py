@@ -116,6 +116,50 @@ def _add_value(doc: dict[str, Any], name: str, value: Any) -> None:
         doc[name] = [existing, value]
 
 
+#: The IRI of ``rdf:type``.
+RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
+
+
+def _values(value: Any) -> list[Any]:
+    """A property's values as a list, whether it holds one or several."""
+    if value is None:
+        return []
+    return list(value) if isinstance(value, list) else [value]
+
+
+def split_objects_by_type(
+    docs: list[dict[str, Any]],
+    properties: Iterable[str],
+    types_of: Callable[[list[str]], dict[str, set[str]]],
+) -> None:
+    """Add ``<property>@<Class>`` beside each listed property, in place.
+
+    The new field holds the property's objects typed ``<Class>`` (the class
+    IRI's local name); an object of several classes is under each, one of none
+    under no field. *types_of* maps IRIs to their ``rdf:type`` IRIs.
+    """
+    wanted = list(dict.fromkeys(properties))
+    if not wanted:
+        return
+    objects = sorted(
+        {
+            value
+            for doc in docs
+            for name in wanted
+            for value in _values(doc.get(name))
+            if isinstance(value, str) and not value.startswith(BLANK_PREFIX)
+        }
+    )
+    if not objects:
+        return
+    types = types_of(objects)
+    for doc in docs:
+        for name in wanted:
+            for value in _values(doc.get(name)):
+                for cls in sorted(types.get(value, ())):
+                    _add_value(doc, f"{name}@{_local_name(cls)}", value)
+
+
 def _node_term(node: Any) -> Term:
     """An rdflib node as a :class:`Term`."""
     from rdflib.term import BNode, Literal
@@ -131,11 +175,14 @@ def _triples_to_docs(
     rdf_class: str | None = None,
     *,
     same_as: Literal["collapse", "keep"] = "collapse",
+    typed_objects: Iterable[str] = (),
 ) -> list[dict]:
     """Convert triples from *graph* into flat dictionaries grouped by subject.
 
     When *rdf_class* is given only subjects that are ``a <rdf_class>`` are
-    returned.  Otherwise all subjects are included.
+    returned.  Otherwise all subjects are included. The objects of each
+    property in *typed_objects* are also split by class
+    (:func:`split_objects_by_type`).
 
     Each dict has ``_uri`` and ``_key`` plus one key per predicate local-name.
     Documents are in ``_uri`` order, and the values of a property in a fixed one.
@@ -200,6 +247,19 @@ def _triples_to_docs(
         if aliases:
             doc["_same_as"] = aliases
         docs.append(doc)
+
+    def types_of(iris: list[str]) -> dict[str, set[str]]:
+        return {
+            iri: {
+                str(cls)
+                for member in components.members(iri)
+                for cls in graph.objects(URIRef(member), RDF.type)
+                if isinstance(cls, URIRef)
+            }
+            for iri in iris
+        }
+
+    split_objects_by_type(docs, typed_objects, types_of)
     return docs
 
 
@@ -277,6 +337,13 @@ class RdfDataSource(AbstractDataSource, abc.ABC):
         default="collapse",
         description="How owl:sameAs statements between IRIs are read.",
     )
+    typed_objects: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Properties (local names) whose objects are also read by class, as "
+            "``<property>@<Class>``: for a property with several ranges."
+        ),
+    )
 
     @staticmethod
     def _yield_batches(
@@ -349,7 +416,12 @@ class RdfFileDataSource(RdfDataSource):
             self._resolve_format(),
         )
 
-        docs = _triples_to_docs(g, rdf_class=self.rdf_class, same_as=self.same_as)
+        docs = _triples_to_docs(
+            g,
+            rdf_class=self.rdf_class,
+            same_as=self.same_as,
+            typed_objects=self.typed_objects,
+        )
         yield from self._yield_batches(docs, batch_size, limit)
 
 
@@ -418,6 +490,14 @@ class SparqlSourceConfig(ConfigBaseModel):
         """Every triple whose subject is a blank node."""
         base = self._select("?s ?p ?o . FILTER(isBlank(?s))")
         return self._page(f"{base} ORDER BY ?s ?p ?o", offset)
+
+    def types_query(self, iris: list[str], offset: int = 0) -> str:
+        """The ``rdf:type`` of each of *iris*, as ``?s`` and ``?o``."""
+        values = " ".join(f"<{iri}>" for iri in iris)
+        base = self._select(
+            f"VALUES ?s {{ {values} }} ?s ?p ?o . FILTER(?p = <{RDF_TYPE}>)"
+        )
+        return self._page(f"{base} ORDER BY ?s ?o", offset)
 
     def subjects_query(self, iris: list[str], offset: int = 0) -> str:
         """Every triple of the subjects *iris*."""
@@ -544,6 +624,28 @@ class SparqlEndpointDataSource(RdfDataSource):
         def full() -> bool:
             return limit is not None and emitted >= limit
 
+        def types_of(iris: list[str]) -> dict[str, set[str]]:
+            canonical = {
+                member: iri for iri in iris for member in components.members(iri)
+            }
+            members = sorted(canonical)
+            found: dict[str, set[str]] = {}
+            for start in range(0, len(members), _SUBJECTS_PER_QUERY):
+                chunk = members[start : start + _SUBJECTS_PER_QUERY]
+                for binding in self._bindings(
+                    wrapper,
+                    lambda offset, chunk=chunk: config.types_query(chunk, offset),
+                ):
+                    if binding["o"]["type"] == "uri":
+                        found.setdefault(canonical[binding["s"]["value"]], set()).add(
+                            binding["o"]["value"]
+                        )
+            return found
+
+        def out(docs: list[dict]) -> list[dict]:
+            split_objects_by_type(docs, self.typed_objects, types_of)
+            return docs
+
         rows_by_subject = groupby(
             self._bindings(wrapper, lambda offset: config.build_query(offset=offset)),
             key=lambda binding: (binding["s"]["type"], binding["s"]["value"]),
@@ -571,7 +673,7 @@ class SparqlEndpointDataSource(RdfDataSource):
             batch.append(doc)
             emitted += 1
             if len(batch) >= batch_size:
-                yield batch
+                yield out(batch)
                 batch = []
 
         for uri in sorted(held):
@@ -594,11 +696,11 @@ class SparqlEndpointDataSource(RdfDataSource):
             batch.append(held[uri])
             emitted += 1
             if len(batch) >= batch_size:
-                yield batch
+                yield out(batch)
                 batch = []
 
         if batch:
-            yield batch
+            yield out(batch)
 
 
 # Backward-compatible alias

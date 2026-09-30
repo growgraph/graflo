@@ -348,10 +348,11 @@ The relation, one of:
   (see the [relation from key example](../../examples/json-relation-from-key/index.md)
   (4)).
 
-An edge whose `(source, target, relation)` the schema does not declare is not
-written. The writer logs a warning that names it, once per run. The usual
-cause is a step that names no relation between two types whose declared edge
-has one.
+A step that names no relation takes the one the schema declares between its
+two types. When the schema declares several, the manifest is refused at load
+and the step must name one. An edge whose `(source, target, relation)` the
+schema does not declare is not written; the writer logs a warning that names
+it, once per run.
 
 Payload and selection:
 
@@ -361,7 +362,9 @@ Payload and selection:
   of an endpoint vertex onto the edge, under the name `<vertex type>@<field>`
   (see the [filters and weights example](../../examples/vertex-filters-and-weights/index.md)
   (5)). `filter: {<field>: <value>}` on an entry reads only the vertices whose
-  field has that value.
+  field has that value. Each entry goes on every edge the step writes for the
+  record. When an entry reads as many vertices as there are edges, they pair by
+  position; any other count takes the first vertex, with a warning.
 - `match_source` / `match_target` / `match`: only connect vertices reached
   under this key of a nested record. `exclude_source` / `exclude_target` skip
   vertices reached under it.

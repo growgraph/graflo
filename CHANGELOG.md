@@ -52,6 +52,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`ProjectManifestOp.partial_resources`**: `trim` (default) keeps a resource the projection
   shortens and logs a warning naming it; `drop` removes it.
 - **`checkout_parent(base, history, commit_id)`**: the manifest a commit was applied to.
+- **`SparqlConnector.typed_objects`**, also on the RDF data sources: properties whose objects
+  are also read by class, as `<property>@<Class>`. RDF schema inference sets it for a property
+  with several ranges.
 
 ### Changed
 
@@ -120,6 +123,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ancestor, `graflo merge` for unrelated lineages.
 - **`MigrationRecord.operations` holds the operations applied**, with their targets and values.
   A record written earlier loads with each operation's type only.
+- **An edge step that names no relation takes the one declared between its endpoints**; with
+  several declared, the manifest is refused at load. It used to register a relation-less edge
+  the writer then dropped.
+- **A vertex weight goes on every edge the step writes for the record.** An entry read from as
+  many vertices as there are edges pairs them by position; any other count takes the first,
+  with a warning.
+- **Edge inference reads the edges declared when the resource was set up.** A type an edge step
+  registers for one record is no longer inferred for the records after it.
+- **Three-way merge reads the fields a pipeline maps** (a vertex step's `from`, a router's
+  `vertex_from_map`), and an op on a relation its side renamed reads the renamed relation's
+  endpoints.
 
 - **uv is pinned to one release line.** `pyproject.toml` sets `[tool.uv] required-version`, and
   the workflows pin a release within it. A different uv minor rewrote `uv.lock` wholesale with
@@ -243,6 +257,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   step behind.
 - **`diff_manifests` declared a synthetic key as a property** before the identity change that
   creates it.
+- **A vertex weight dropped edges**: weights were paired with a record's edges by position
+  across all entries, so a record with more edges than weight vertices lost the rest.
+- **RDF inference linked each object of a property with several ranges under every range.**
 
 ## [1.14.1]
 
@@ -1197,7 +1214,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Compose matches type names by canonical form**, closing `CORE-MERGE-001`. Composition matched vertices and relations by *raw name*, so a manifest authored as `order_line` combined with one authored as `OrderLine` produced two unrelated types with the source data split between them and nothing raising. Names now collide both exactly and when they key alike under `canonical_key`, and the existing `name_conflict` policy decides what happens.
+- **Compose matches type names by canonical form.** Composition matched vertices and relations by *raw name*, so a manifest authored as `order_line` combined with one authored as `OrderLine` produced two unrelated types with the source data split between them and nothing raising. Names now collide both exactly and when they key alike under `canonical_key`, and the existing `name_conflict` policy decides what happens.
 
   **Reusing that policy rather than adding a flag is the point.** An exact collision has always raised under the default `name_conflict="error"`, and exact equality is the *stronger* evidence that two types are one concept — so a weaker signal must not trigger a more aggressive action. `error` raises `ComposeNameConflictError` naming both spellings and the three ways out; `prefix_right` keeps them apart explicitly; and a new `fuse_right` adopts the left spelling, rewriting the right side's *pipelines* as well as its schema.
 
@@ -1233,7 +1250,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   Dispatch is on the op *class*, not its `op` literal, so a type checker catches a field read against the wrong op model and a renamed literal cannot fall through to the catch-all. A test asserts every member of the union resolves to a real slot.
 
-  **`CORE-MERGE-001` is folded in**: slots key on `canonical_key`, so one side's `order_line` and the other's `OrderLine` occupy the same slot and *conflict* rather than silently becoming two unrelated types with the data split between them.
+  **Slots key on `canonical_key`**, so one side's `order_line` and the other's `OrderLine` occupy the same slot and *conflict* rather than silently becoming two unrelated types with the data split between them.
 
 - **Tracked merges.** `MergeRecipe` records how a merge was resolved, content-addressed with resolutions hashed in slot order so the same decisions always address the same recipe. `re_merge` replays those decisions when the left side advances and surfaces only genuinely new conflicts; a recorded resolution whose slot no longer conflicts is *reported as unused*, never force-applied — re-applying a stale decision to an uncontested slot is how a re-merge quietly reverts someone's work.
 
@@ -1404,7 +1421,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   `property_case` carries an obligation the other two do not. **A property name binds to a key in the source document**, so any value other than `preserve` requires emitting the rename that `NamingConvention.rename_map()` computes; without it the schema declares `customerEmail` while the document still holds `customer_email`, and the column populates with nothing, silently.
 
-- **Conversion and cross-convention identity** — `convert()` restyles an identifier without being told its current style (`split_words` recovers the words from any of them, so conversion cannot be told the wrong origin), and `canonical_key()` / `same_concept()` decide whether two names denote one concept. **Merges must compare on those**: composition matches by name, so a PascalCase manifest merged with a snake_case one otherwise yields `Customer` and `customer` as unrelated types with the data split between them and nothing raising. Recorded as `CORE-MERGE-001` for graflo's own compose ops.
+- **Conversion and cross-convention identity** — `convert()` restyles an identifier without being told its current style (`split_words` recovers the words from any of them, so conversion cannot be told the wrong origin), and `canonical_key()` / `same_concept()` decide whether two names denote one concept. **Merges must compare on those**: composition matches by name, so a PascalCase manifest merged with a snake_case one otherwise yields `Customer` and `customer` as unrelated types with the data split between them and nothing raising.
 
 ### Changed
 
@@ -1414,7 +1431,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Ontology 1.4.0 → 1.5.0.** `gf:NamingConvention`, `gf:NameCase` with six individuals, `gf:hasNamingConvention`, `gf:vertexCase`, `gf:relationCase`, `gf:propertyCase`, `gf:singularVertexNames`, plus JSON-LD context terms and a round-trip test. Unlike `gf:semanticIri` these carry `rdfs:domain`: that property is domain-free because it attaches at four points and no single domain is true of it, while the naming block attaches at exactly one — and the domain is what lets the docs viz reach `gf:NamingConvention` rather than leaving it outside every derived block.
 
-  A parametrised test asserts every `NameCase` member has an individual and survives the round trip, because `add_enum_individual` emits *nothing* for an unmapped value — the mechanism by which `FieldType.UUID` and `LIST` came to be dropped unnoticed (`CORE-RDF-001`).
+  A parametrised test asserts every `NameCase` member has an individual and survives the round trip, because `add_enum_individual` emits *nothing* for an unmapped value — the mechanism by which `FieldType.UUID` and `LIST` came to be dropped unnoticed.
 
 ## [1.10.5]
 

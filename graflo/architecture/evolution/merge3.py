@@ -88,8 +88,8 @@ class MergeError(RuntimeError):
 def _vertex_slot(name: str) -> Slot:
     """A vertex's slot, keyed on its *canonical* name.
 
-    Keying on ``canonical_key`` rather than the raw string is the fold of
-    ``CORE-MERGE-001`` into merge: without it, one side's ``order_line`` and the
+    Keying on ``canonical_key`` rather than the raw string matters because
+    without it, one side's ``order_line`` and the
     other's ``OrderLine`` occupy different slots, merge cleanly, and produce a
     schema holding both as unrelated types with the data split between them and
     nothing raising. Detecting that is exactly what a conflict is for.
@@ -339,15 +339,49 @@ def op_slots(op: ManifestOp) -> set[Slot]:
 _ENDPOINT_TOKENS = frozenset({"source", "target", "relation"})
 
 
-def _relation_endpoints(base: GraphManifest | None, relation: str) -> set[Slot]:
-    """The vertices the edges of *relation* connect in *base*."""
+#: ``{relation name: the base relations it stands for}``, from one side's renames.
+RelationAliases = dict[str, set[str]]
+
+
+def relation_aliases(side_ops: list[ManifestOp]) -> RelationAliases:
+    """The base relations each name a side's renames and merges introduce stands for.
+
+    An op after a rename addresses the new name, which the base does not know;
+    its endpoints are those of the relation it was renamed from.
+    """
+    aliases: RelationAliases = {}
+
+    def carry(old: str, new: str) -> None:
+        aliases.setdefault(new, set()).update(aliases.get(old, {old}))
+
+    for op in side_ops:
+        if isinstance(op, ops.RenameRelationsOp):
+            for old, new in op.renames.items():
+                carry(old, new)
+        elif isinstance(op, ops.CanonicalizeOp):
+            for old, new in op.relations.items():
+                carry(old, new)
+        elif isinstance(op, ops.MergeEdgesOp):
+            for source in op.sources:
+                carry(source, op.into)
+    return aliases
+
+
+def _relation_endpoints(
+    base: GraphManifest | None,
+    relation: str,
+    aliases: RelationAliases | None = None,
+) -> set[Slot]:
+    """The vertices the edges of *relation*, or the relations it stands for, connect in *base*."""
     if base is None or base.graph_schema is None:
         return set()
-    wanted = _relation_slot(relation)
+    wanted = {
+        _relation_slot(name) for name in {relation, *(aliases or {}).get(relation, ())}
+    }
     return {
         _vertex_slot(name)
         for edge in base.graph_schema.core_schema.edge_config.edges
-        if edge.relation is not None and _relation_slot(edge.relation) == wanted
+        if edge.relation is not None and _relation_slot(edge.relation) in wanted
         for name in (edge.source, edge.target)
     }
 
@@ -374,7 +408,11 @@ def _identity_target_fields(target: Any) -> list[str]:
     return []
 
 
-def op_reads(op: ManifestOp, base: GraphManifest | None = None) -> set[Slot]:
+def op_reads(
+    op: ManifestOp,
+    base: GraphManifest | None = None,
+    aliases: RelationAliases | None = None,
+) -> set[Slot]:
     """What *op* needs to be there and does not itself change.
 
     :func:`op_slots` is what an op writes. That is not enough to tell whether
@@ -392,7 +430,8 @@ def op_reads(op: ManifestOp, base: GraphManifest | None = None) -> set[Slot]:
     the op does not say; that is read from *base*. A relation one side renamed
     is looked up under the name *base* knows, so its endpoints are not seen --
     the rename itself occupies both names and conflicts with the other side's
-    edits to the relation, which covers the common case.
+    edits to the relation. *aliases* (:func:`relation_aliases` of the op's own
+    side) lets an op after a rename read the endpoints of the renamed relation.
 
     An op not listed reads nothing beyond what it writes: a property op lives
     under its vertex's slot, so the containment of written slots already ties
@@ -438,31 +477,31 @@ def op_reads(op: ManifestOp, base: GraphManifest | None = None) -> set[Slot]:
         for selector in op.edges:
             reads |= {_vertex_slot(selector.source), _vertex_slot(selector.target)}
         for relation in op.relations:
-            reads |= _relation_endpoints(base, relation)
+            reads |= _relation_endpoints(base, relation, aliases)
     elif isinstance(op, ops.AddEdgePropertiesOp):
         for relation in op.additions:
-            reads |= _relation_endpoints(base, relation)
+            reads |= _relation_endpoints(base, relation, aliases)
     elif isinstance(op, ops.RemoveEdgePropertiesOp):
         for relation in op.removals:
-            reads |= _relation_endpoints(base, relation)
+            reads |= _relation_endpoints(base, relation, aliases)
     elif isinstance(op, (ops.RenameEdgePropertiesOp, ops.RenameRelationsOp)):
         for relation in op.renames:
-            reads |= _relation_endpoints(base, relation)
+            reads |= _relation_endpoints(base, relation, aliases)
     elif isinstance(op, ops.MergeEdgesOp):
         for relation in [*op.sources, op.into]:
-            reads |= _relation_endpoints(base, relation)
+            reads |= _relation_endpoints(base, relation, aliases)
     elif isinstance(op, (ops.AddInverseEdgesOp, ops.SetNativeInversesOp)):
         for relation in op.relations or []:
-            reads |= _relation_endpoints(base, relation)
+            reads |= _relation_endpoints(base, relation, aliases)
     elif isinstance(op, ops.RetractEdgeInversesOp):
         for relation in op.relations:
-            reads |= _relation_endpoints(base, relation)
+            reads |= _relation_endpoints(base, relation, aliases)
     elif isinstance(op, ops.DeclareEdgeInversesOp):
         for relation in [*op.inverses, *op.inverses.values(), *op.symmetric]:
-            reads |= _relation_endpoints(base, relation)
+            reads |= _relation_endpoints(base, relation, aliases)
     elif isinstance(op, ops.ChangeFieldTypesOp):
         for relation in op.edges:
-            reads |= _relation_endpoints(base, relation)
+            reads |= _relation_endpoints(base, relation, aliases)
 
     # ── keys ────────────────────────────────────────────────────────────────
     elif isinstance(op, ops.ReplaceIdentityOp):
@@ -486,10 +525,11 @@ def op_reads(op: ManifestOp, base: GraphManifest | None = None) -> set[Slot]:
 
 
 def _pipeline_reads(resource: Any) -> set[Slot]:
-    """The vertices a resource names and the fixed relations its edge steps write.
+    """What a resource's pipeline names: vertices, fixed relations, mapped fields.
 
-    Fields a pipeline reads are not listed: a vertex removed or renamed on the
-    other side is caught, a property removed from under a pipeline is not.
+    A mapped field is a vertex property a step fills from a named column
+    (a vertex step's ``from``, a router's ``vertex_from_map``). A property a
+    step fills by its own name is not listed.
     """
     from graflo.architecture.contract.ingestion.steps.ref import iter_edge_steps
 
@@ -497,7 +537,32 @@ def _pipeline_reads(resource: Any) -> set[Slot]:
     for view in iter_edge_steps(list(resource.pipeline)):
         for relation in view.relations_written() or set():
             reads.add(_relation_slot(relation))
+    for vertex, field in _mapped_fields(list(resource.pipeline)):
+        reads.add(_field_slot(vertex, field))
     return reads
+
+
+def _mapped_fields(pipeline: list[Any]) -> set[tuple[str, str]]:
+    """``(vertex, property)`` for every property a step maps from a named column."""
+    from graflo.architecture.contract.ingestion.steps.normalize import (
+        normalize_actor_step,
+    )
+
+    found: set[tuple[str, str]] = set()
+    for raw in pipeline:
+        if not isinstance(raw, dict):
+            continue
+        step = normalize_actor_step(dict(raw))
+        kind = step.get("type")
+        if kind == "vertex" and isinstance(step.get("from"), dict):
+            found |= {(step["vertex"], field) for field in step["from"]}
+        elif kind == "vertex_router" and isinstance(step.get("vertex_from_map"), dict):
+            for vertex, mapping in step["vertex_from_map"].items():
+                if isinstance(mapping, dict):
+                    found |= {(vertex, field) for field in mapping}
+        elif kind == "descend" and isinstance(step.get("pipeline"), list):
+            found |= _mapped_fields(step["pipeline"])
+    return found
 
 
 def _depends_on(read: Slot, written: Slot) -> bool:
@@ -724,9 +789,10 @@ def _dependencies(
         _canonical_ops([op]) for op in writers
     }
     found: dict[str, set[Slot]] = {}
+    aliases = relation_aliases(readers)
     for reader in readers:
         key = _canonical_ops([reader])
-        reads = op_reads(reader, base)
+        reads = op_reads(reader, base, aliases)
         if key in shared or not reads:
             continue
         for writer in writers:

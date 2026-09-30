@@ -196,3 +196,43 @@ class TestSameAs:
         by_key = {doc["_key"]: doc for doc in docs}
         assert sorted(by_key) == ["alice", "bob", "robert", "zed"]
         assert by_key["bob"]["sameAs"] == EX + "robert"
+
+
+_FEEDING = """
+ex:oak1 a ex:Oak ; ex:feeds ex:z1 , ex:b1 , ex:u1 .
+ex:z1 a ex:Zebra .
+ex:b1 a ex:Birch .
+ex:z9 a ex:Zebra .
+ex:z1 owl:sameAs ex:z9 .
+ex:b2 a ex:Birch .
+ex:oak2 a ex:Oak ; ex:feeds ex:b3 .
+ex:b3 owl:sameAs ex:b2 .
+"""
+
+
+class TestTypedObjects:
+    """Objects of a listed property are also read by their class."""
+
+    def _check(self, docs: list[dict]) -> None:
+        oak1, oak2 = docs
+        assert sorted(oak1["feeds"]) == [EX + "b1", EX + "u1", EX + "z1"]
+        assert oak1["feeds@Zebra"] == EX + "z1"
+        assert oak1["feeds@Birch"] == EX + "b1"
+        # A type stated on another member of the object's sameAs component.
+        assert oak2["feeds@Birch"] == EX + "b2"
+
+    def test_the_endpoint_splits_objects_by_type(self, read) -> None:
+        docs, _ = read(_FEEDING, rdf_class=EX + "Oak", typed_objects=["feeds"])
+        self._check(docs)
+
+    def test_the_file_splits_objects_by_type(self, tmp_path) -> None:
+        path = tmp_path / "data.ttl"
+        path.write_text(_PREFIXES + _FEEDING, encoding="utf-8")
+        source = RdfFileDataSource(
+            path=path, rdf_class=EX + "Oak", typed_objects=["feeds"]
+        )
+        self._check([doc for batch in source.iter_batches() for doc in batch])
+
+    def test_an_unlisted_property_is_read_as_before(self, read) -> None:
+        docs, _ = read(_FEEDING, rdf_class=EX + "Oak")
+        assert not [key for key in docs[0] if "@" in key]

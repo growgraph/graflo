@@ -257,8 +257,7 @@ def _resolve_schema_collisions(
     the left spelling upstream, and ``prefix_right`` keeps both apart here.
 
     Left alone the right names merge into two unrelated types with the
-    source data split between them and nothing raising, which is the whole of
-    ``CORE-MERGE-001``.
+    source data split between them and nothing raising.
     """
     exact = [name for name in right_names if name in left_names and name not in exempt]
     near = canonical_near_collisions(left_names, right_names, exempt=exempt)
@@ -314,7 +313,7 @@ def _resolve_schema_collisions(
 def _assert_no_canonical_split(schema: Schema) -> None:
     """No two merged vertex types or relations may denote one concept.
 
-    The invariant ``CORE-MERGE-001`` is actually about, asserted on the result
+    The invariant canonical name matching exists for, asserted on the result
     rather than only at the sites that could violate it -- so a future path
     into the union is covered without anyone remembering to add a check.
     """
@@ -1370,7 +1369,7 @@ def _union_schema(
                 continue  # a cluster member, merged above under its merged name
             # Anything else sharing a name with the union is a collision the
             # policy should have refused or prefixed. Skipping it would drop
-            # its model silently, which is the data loss CORE-MERGE-001 is about.
+            # its model silently.
             raise ValueError(
                 f"merge_manifests: unreachable -- right vertex {v.name!r} "
                 "shares a name with the union but no cluster merges it"

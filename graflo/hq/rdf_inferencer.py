@@ -17,6 +17,9 @@ The mapping follows these conventions:
   including when domain and range are the same class (e.g. ``Publication`` -> ``Publication`` for ``cites``).
   The subject and the objects of each property are kept in their own role, so an
   edge joins the subject to the objects of its own property and to nothing else.
+  A property with several ranges reads each range from ``<property>@<Class>``,
+  the objects the source found typed with that class (``typed_objects`` on the
+  connector).
 
 Classes, fields, edges and resources are ordered by IRI.
 
@@ -36,6 +39,7 @@ from graflo.architecture.contract.bindings import (
 from graflo.architecture.contract.ingestion import IngestionModel
 from graflo.architecture.contract.ingestion.resource import Resource
 from graflo.architecture.contract.ingestion.steps.references import (
+    Reference,
     subject_with_references,
 )
 from graflo.architecture.schema import (
@@ -85,6 +89,50 @@ def _ontology_classes(g: Any) -> dict[str, str]:
             )
         classes[name] = uri
     return classes
+
+
+def _object_edges(g: Any, classes: dict[str, str]) -> list[dict[str, str]]:
+    """``{source, target, relation}`` per object property, domain and range, in IRI order."""
+    from rdflib import OWL, RDF, RDFS
+
+    class_names = {uri: name for name, uri in classes.items()}
+
+    def named(prop: Any, predicate: Any) -> list[str]:
+        return [
+            class_names[uri]
+            for uri in sorted({str(cls) for cls in g.objects(prop, predicate)})
+            if uri in class_names
+        ]
+
+    edges: list[dict[str, str]] = []
+    for op in sorted(set(g.subjects(RDF.type, OWL.ObjectProperty)), key=str):
+        if op == OWL.sameAs:
+            # An identity statement, settled when the data is read.
+            continue
+        op_name = _local_name(str(op))
+        for src in named(op, RDFS.domain):
+            for tgt in named(op, RDFS.range):
+                edge_def = {"source": src, "target": tgt, "relation": op_name}
+                if edge_def not in edges:
+                    edges.append(edge_def)
+    return edges
+
+
+def _typed_properties(edges: list[dict[str, str]]) -> dict[str, list[str]]:
+    """Per domain class, the properties with several ranges, in IRI order.
+
+    A record carries no class for the objects of such a property, so they are
+    read split by type.
+    """
+    ranges: dict[tuple[str, str], int] = {}
+    for edge_def in edges:
+        key = (edge_def["source"], edge_def["relation"])
+        ranges[key] = ranges.get(key, 0) + 1
+    typed: dict[str, list[str]] = {}
+    for (source, relation), count in ranges.items():
+        if count > 1:
+            typed.setdefault(source, []).append(relation)
+    return typed
 
 
 def _declared_inverses(
@@ -257,17 +305,8 @@ class RdfInferenceManager:
                     fields_by_class[domain_name].append(dp_name)
 
         # -- Discover object properties -> edges ------------------------------
-        edges: list[dict[str, str]] = []
-        for op in sorted(set(g.subjects(RDF.type, OWL.ObjectProperty)), key=str):
-            if op == OWL.sameAs:
-                # An identity statement, settled when the data is read.
-                continue
-            op_name = _local_name(str(op))
-            for src in named(op, RDFS.domain):
-                for tgt in named(op, RDFS.range):
-                    edge_def = {"source": src, "target": tgt, "relation": op_name}
-                    if edge_def not in edges:
-                        edges.append(edge_def)
+        edges = _object_edges(g, classes)
+        typed = _typed_properties(edges)
 
         logger.info("Discovered %d edges", len(edges))
 
@@ -310,15 +349,16 @@ class RdfInferenceManager:
 
         resources: list[Resource] = []
         for cls_name in classes:
-            # The object of a property is the target's `_uri`.
-            references = [
-                (
-                    edge_def["target"],
-                    edge_def["relation"],
-                    {"_uri": edge_def["relation"]},
+            # The object of a property is the target's `_uri`; a property with
+            # several ranges reads each from the objects typed with it.
+            references: list[Reference] = []
+            for edge_def in edge_defs_by_source.get(cls_name, []):
+                relation = field = edge_def["relation"]
+                if relation in typed.get(cls_name, []):
+                    field = f"{relation}@{edge_def['target']}"
+                references.append(
+                    (edge_def["target"], relation, {"_uri": field}, field)
                 )
-                for edge_def in edge_defs_by_source.get(cls_name, [])
-            ]
             resources.append(
                 Resource(
                     name=cls_name,
@@ -362,7 +402,9 @@ class RdfInferenceManager:
             Bindings with one SparqlConnector per class.
         """
         # Always load the ontology from the local file, not from the endpoint.
-        classes = _ontology_classes(_load_graph(source))
+        g = _load_graph(source)
+        classes = _ontology_classes(g)
+        typed = _typed_properties(_object_edges(g, classes))
 
         bindings = Bindings()
         for cls_name, cls_uri in classes.items():
@@ -371,6 +413,7 @@ class RdfInferenceManager:
                 endpoint_url=endpoint_url,
                 graph_uri=graph_uri,
                 rdf_file=Path(source) if not endpoint_url else None,
+                typed_objects=typed.get(cls_name, []),
             )
             bindings.add_connector(connector)
             bindings.bind_resource(cls_name, connector)

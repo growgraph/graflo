@@ -427,11 +427,17 @@ def render_weights(
     *,
     vertex_weights: list[Weight] | None = None,
 ) -> defaultdict[str | None, list]:
-    """Process and apply weights to edge documents."""
+    """Put the attributes of each weight entry's vertices on the record's edges.
+
+    An entry read from one vertex goes on every edge. An entry read from as many
+    vertices as a relation has edges pairs them by position; any other count
+    goes on every edge from the first vertex, with a warning.
+    """
     vertex_weights = vertex_weights or []
-    weights: list = []
+    entries: list[tuple[str, list[dict]]] = []
 
     for w in vertex_weights:
+        weights: list[dict] = []
         vertex = w.name
         if vertex is None or vertex not in vertex_config.vertex_set:
             continue
@@ -479,9 +485,41 @@ def render_weights(
                             f" a non existent vcollection {vertex}"
                         )
                 weights += [weight]
-    if weights:
+        if weights:
+            entries.append((vertex, weights))
+    if entries:
         for r, edocs in edges.items():
             edges[r] = [
-                (u, v, {**w, **weight}) for (u, v, w), weight in zip(edocs, weights)
+                (u, v, {**attrs, **_weight_for(edge, entries, index, len(edocs))})
+                for index, (u, v, attrs) in enumerate(edocs)
             ]
     return edges
+
+
+#: Weight/edge count mismatches already reported, so each is logged once.
+_reported_weight_mismatches: set[tuple[Any, ...]] = set()
+
+
+def _weight_for(
+    edge: Edge, entries: list[tuple[str, list[dict]]], index: int, count: int
+) -> dict:
+    """The weight attributes of edge *index* out of *count*, over every entry."""
+    merged: dict = {}
+    for vertex, weights in entries:
+        if len(weights) == count:
+            merged.update(weights[index])
+            continue
+        if len(weights) > 1:
+            key = (edge.edge_id, vertex, len(weights), count)
+            if key not in _reported_weight_mismatches:
+                _reported_weight_mismatches.add(key)
+                logger.warning(
+                    "edge %s: %d '%s' weight vertices for %d edges; every edge "
+                    "takes the first",
+                    edge.edge_id,
+                    len(weights),
+                    vertex,
+                    count,
+                )
+        merged.update(weights[0])
+    return merged
