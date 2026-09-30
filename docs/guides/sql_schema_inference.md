@@ -40,7 +40,8 @@ manifest = engine.infer_manifest(pg_config, schema_name="public")
 `infer_manifest` reads the tables of the PostgreSQL schema `public` with their
 columns and keys, and returns a complete manifest:
 
-- a `schema` with a vertex type per entity table and an edge per link table;
+- a `schema` with a vertex type per entity table, an edge per link table and
+  an edge per foreign key of an entity table;
 - an `ingestion_model` with one [resource](../concepts/glossary.md#resource)
   per table;
 - `bindings` with one table connector per table, all under the connection
@@ -194,8 +195,12 @@ ingestion_model:
 
 The second step reads `machine_serial` as the machine's `serial_number`.
 `lookup_only: true` uses it to find the machine for the edge without writing a
-machine vertex from the work order row. Keep the edges and resources the draft
-already has; the snippet shows only what to add.
+machine vertex from the work order row. This finds the machine when
+`serial_number` is its identity. When the machine is keyed on another column,
+declare `serial_number` as a secondary identity and select it on the edge; see
+[A source that knows only an alternative identifier](../concepts/schema/vertex_identity.md#a-source-that-knows-only-an-alternative-identifier).
+Keep the edges and resources the draft already has; the snippet shows only what
+to add.
 
 Load the edited manifest before you continue:
 

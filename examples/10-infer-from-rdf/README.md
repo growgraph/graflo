@@ -105,6 +105,8 @@ core_schema:
   one edge per range, and each object is linked under the classes it has:
   the connector lists the property in `typed_objects`, and the source adds a
   field `<property>@<Class>` holding the objects of that class.
+- Anonymous classes (`owl:unionOf` and the like) are skipped. Two classes with
+  the same local name would share a vertex type, so inference refuses them.
 
 The resource for `Researcher` makes a `Researcher` vertex, then reads the IRI in
 `authorOf` into a `Publication` vertex and adds the `authorOf` edge; the same

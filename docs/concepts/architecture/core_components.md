@@ -467,6 +467,7 @@ Set beside `name` and `pipeline`:
 | `fail_fast` | `false` | Fail the record when a transform's input fields are missing. By default a `rename` maps the fields that are present and a `call` writes nothing. |
 | `tolerate_transform_errors` | `true` | When a transform raises, set its output fields to `null`, record the failure, and continue with the record. See [document cast errors](../ingestion/doc_errors.md). |
 | `types` | empty | `{field: type}` conversions applied to top-level fields before the steps. The types are `int`, `float`, `str`, `bool`, `bytes`, `list`, `dict`, `tuple` and `set`; other names are ignored. |
+| `encoding` | `utf-8` | The character encoding the resource's files are read with: `utf-8` or `ISO-8859-1`. |
 | `extra_weights` | empty | Edge properties copied from endpoint vertices as stored in the database, read between the vertex and edge writes of each batch. The resource then runs serially; see [parallelism](../ingestion/parallelism.md). |
 
 ## Names in the target database

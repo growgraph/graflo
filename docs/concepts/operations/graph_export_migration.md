@@ -190,7 +190,8 @@ names of its `schema.yaml`.
 - A sampled schema is a lower bound: it lists what the sample showed. Raise
   `sample_limit` when types have rare properties, or check the result of
   `infer_schema_from_graph` before you migrate.
-- The file backend appends instead of merging records, as described above.
+- The file backend appends instead of merging records, as described above,
+  and cannot [remove vertices or edges](deleting_instances.md).
 - `GraFloBackendConfig.from_docker_env()` raises `NotImplementedError`: a
   file backend has no container, so give it an `output_dir`.
 - Edge keys are tuples `(source, target, relation)` in Python. In JSON output

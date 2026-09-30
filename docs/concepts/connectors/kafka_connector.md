@@ -150,7 +150,7 @@ GraFlo commits the offsets of the consumer group itself; automatic commits are o
 
 A group with no committed offsets starts where `auto_offset_reset` says: `earliest` reads the topic from its oldest message, and `latest` reads only messages that arrive after the consumer joins. To read a topic again from the start, run with a new `group_id`.
 
-Delivery is at least once. A batch that was read and not written, because the run failed or was stopped, is read again by the next run; a batch written out of turn is committed only when every batch before it is written too. Writes are upserts, so a record read twice is stored once. Three cases commit nothing: a dry run (`IngestionParams(dry=True)`), a sample, and a native bulk load that fails before its data is loaded.
+Delivery is at least once. A batch that was read and not written, because the run failed or was stopped, is read again by the next run; a batch written out of turn is committed only when every batch before it is written too. A database target upserts, so a record read twice is stored once; the [file backend](../glossary.md#file-backend) appends, so it stores the record twice. Three cases commit nothing: a dry run (`IngestionParams(dry=True)`), a sample taken with `GraphEngine.sample_resources`, and a native bulk load that fails before its data is loaded.
 
 `KafkaDataSource` used on its own follows the same rule: `iter_batches` commits nothing until you call `acknowledge(batch_index)` for a batch you have written, and `close()` commits what is acknowledged and leaves the group.
 

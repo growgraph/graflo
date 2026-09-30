@@ -684,9 +684,7 @@ class GraphEngine:
     ) -> Schema:
         """Infer a graflo Schema from a graph database source.
 
-        Requires only introspection. This used to demand bulk-export support and
-        so reached three backends; it now reaches every backend that can
-        describe itself, which is all eight.
+        Requires only schema introspection, which every backend provides.
         """
         conn = ConnectionManager.open_read_connection(
             source_config, require=ConnectionCapability.SCHEMA_INTROSPECTION
@@ -756,7 +754,7 @@ class GraphEngine:
 
         Raises:
             ValueError: If the target does not support deleting vertices, as
-                the file backend, which is append-only, and NebulaGraph do not.
+                the file backend, which is append-only, does not.
         """
         writer = DBWriter(schema=schema, ingestion_model=IngestionModel(resources=[]))
         writer.delete_vertices(target_db_config, vertex, key_docs)

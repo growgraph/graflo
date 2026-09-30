@@ -50,7 +50,6 @@ _CONCURRENT_UPSERT_SAFE_FLAVORS = frozenset(
 )
 
 
-#: Targets written by one operation at a time, whatever ``max_concurrent`` says.
 def _weight_source_fields(weight: Weight) -> list[str]:
     """Vertex fields a weight reads: ``fields`` then ``map`` keys, deduplicated."""
     return list(dict.fromkeys([*weight.fields, *weight.map]))

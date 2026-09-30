@@ -177,8 +177,9 @@ print("\n".join(report.to_lines()))
 
 `check_manifest_config` takes the manifest as written, and is the one to use.
 `check_manifest` accepts an already parsed `GraphManifest`, but without the
-authored document assertions 2 and 3 can only warn, because parsing has already
-erased the difference between a declared value and a default. Both take
+authored document, passed as `authored=`, assertions 2 and 3 can only warn,
+because parsing has already erased the difference between a declared value and
+a default. Both take
 `waivers=`, a `ProfileWaivers` document.
 
 ## Further reading

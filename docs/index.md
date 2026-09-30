@@ -94,8 +94,8 @@ pip install graflo
 A manifest names the vertex and edge types, says which properties identify a
 vertex, and says how each kind of record becomes vertices and edges. The same
 manifest loads into ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph,
-NebulaGraph, PostgreSQL or the file backend, and records with the same identity
-become one vertex. GraFlo also copies an existing graph from Neo4j, ArangoDB or
+NebulaGraph, PostgreSQL or the file backend; in a database, records with the
+same identity become one vertex. GraFlo also copies an existing graph from Neo4j, ArangoDB or
 PostgreSQL into another database.
 
 </div>

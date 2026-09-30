@@ -346,7 +346,7 @@ commit     kind     rev?  ops  label
 b4c026b9   edit     True  5    key machines by serial number (head)
 history replays cleanly (1 commit(s), 1 head(s))
 matches machines.yaml
-manifest hash: e8d32eca1102
+manifest hash: 496e1224d20d
 written: restored.yaml
 ```
 

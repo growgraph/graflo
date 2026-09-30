@@ -168,16 +168,16 @@ When you serialize a manifest, you pass a **`base_uri`** that identifies *that* 
 | Path under `base_uri` | RDF type |
 |-----------------------|----------|
 | `(base_uri)` | `gf:GraphManifest` |
-| `schema/` | `gf:Schema` |
+| `schema` | `gf:Schema` |
 | `schema/core/vertex-config` | `gf:VertexConfig` |
 | `schema/core/edge-config` | `gf:EdgeConfig` |
 | `schema/core/vertex/Person` | `gf:Vertex` |
 | `schema/core/edge/Person_knows_Person` | `gf:Edge` |
-| `ingestion/` | `gf:IngestionModel` |
+| `ingestion` | `gf:IngestionModel` |
 | `ingestion/resource/my_resource` | `gf:Resource` |
 | `ingestion/transform/my_transform` | `gf:ProtoTransform` |
-| `bindings/` | `gf:Bindings` |
-| `bindings/connector/<hash>` | `gf:FileConnector` / `TableConnector` / `SparqlConnector` |
+| `bindings` | `gf:Bindings` |
+| `bindings/connector/<hash>` | the `gf:BoundConnector` subclass of the connector, such as `gf:FileConnector` |
 
 Pipeline steps are **blank nodes** typed with the appropriate `gf:*Actor` class (and `gf:Actor`); the full step dict is stored in `gf:stepPayload` as JSON so round-trip preserves shorthand YAML shapes (`vertex: person`, nested `descend`, `transform.call`, …).
 

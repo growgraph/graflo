@@ -37,11 +37,12 @@ schema:
 An index entry takes `fields` and, optionally, `unique` (default `false`),
 `type` (`persistent`, the default, `hash`, `skiplist` or `fulltext`) and
 `name`. Every backend builds `persistent`, `hash` and `skiplist` as a plain
-index. Only ArangoDB builds `fulltext`; on any other target a `fulltext` index
-is refused when the schema is applied, with the vertex or edge it is declared
-on. With `unique: true`, ArangoDB and PostgreSQL build the index as a
-uniqueness constraint and reject a write that repeats a value; the table below
-says what the other backends do with it.
+index. Only ArangoDB builds `fulltext`; on any other database a `fulltext`
+index is refused when the schema is applied, with the vertex or edge it is
+declared on. The file backend builds no index and ignores it. With
+`unique: true`, ArangoDB and PostgreSQL build the index as a uniqueness
+constraint and reject a write that repeats a value; the table below says what
+the other backends do with it.
 
 `sparse` and `deduplicate` are ArangoDB index options; the other backends
 ignore them.

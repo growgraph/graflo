@@ -10,6 +10,9 @@ for each vertex type.
 The [identity](../glossary.md#identity) is declared once, on the vertex type.
 When the graph is written, the database upserts on it: a record whose identity
 matches a stored vertex updates that vertex instead of creating a second one.
+On NebulaGraph the identity values form the vertex ID behind the tag,
+`<tag>::<identity values>`, so vertices of two types with the same identity
+values stay two vertices.
 
 !!! note "The GraFlo file backend appends"
     The GraFlo file backend writes every record it receives and does not
@@ -77,9 +80,10 @@ not create duplicates.
 ```
 
 The hash is written to `id` only when the record has none, so a record
-carrying its own `id` would keep it. A vertex keyed by a hash therefore may not
-declare a property `id`; loading one is refused, as is `replace_identity` onto a
-hash or a funnel for a vertex that declares one.
+carrying its own `id` would keep it. A vertex keyed by a hash that leaves
+`identity` out therefore may not declare a property `id`; loading one is
+refused, as is `replace_identity` onto a hash or a funnel for a vertex that
+declares one.
 
 Only the listed fields enter the hash. A record whose listed fields are all
 empty gets no `id`, rather than the hash of `{sensor_id: null, taken_at: null}`;
@@ -230,7 +234,7 @@ present and non-empty wins, and its values are hashed into `id`.
 
 ```yaml
 -   name: party
-    properties: [id, email, phone, country, name]
+    properties: [email, phone, country, name]
     identity: [id]
     identity_funnel:
         branches:

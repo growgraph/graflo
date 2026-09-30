@@ -100,7 +100,7 @@ class IngestionParams(BaseModel):
             "runs in-process; with n_cores > 1 large batches are spread over "
             "worker processes automatically. 'inline' pins casting in-process "
             "regardless of n_cores; 'process' always uses worker processes; "
-            "'thread' is a legacy escape hatch (GIL-bound, rarely useful). "
+            "'thread' casts in threads of the main process (GIL-bound). "
             "With dynamic_edges=True this setting is effectively ignored — "
             "edge discovery is order-dependent, so casting always runs "
             "sequentially in-process; no action needed on your side. See the "
@@ -149,7 +149,7 @@ class IngestionParams(BaseModel):
             "batch order is semantic are forced to 1 automatically and logged at "
             "INFO — see the 'Parallelism' concept page for the full list "
             "(dynamic_edges, blank vertices, extra_weights, secondary-identity "
-            "endpoints, native bulk load, graflo_backend target). Set to 1 to "
+            "endpoints, native bulk load). Set to 1 to "
             "disable overlap entirely."
         ),
     )
@@ -172,8 +172,7 @@ class IngestionParams(BaseModel):
         ge=1,
         description=(
             "Upper bound on concurrent DB operations per batch. Writes are I/O-bound, "
-            "so this is where concurrency actually pays; it used to default to "
-            "n_cores, which meant writes were serial out of the box."
+            "so this is where concurrency pays."
         ),
     )
     datetime_after: str | None = None

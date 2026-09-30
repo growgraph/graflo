@@ -57,6 +57,9 @@ trailing `_`. `maintenance_api` reads `MAINTENANCE_API_*`, and a label
 | `{PREFIX}HEADER_NAME` | no, default `Authorization` | The header that carries the token or key |
 | `{PREFIX}PREFIX` | no, default `Bearer` | Text put before a `bearer` token in the header |
 
+With none of `TOKEN`, `USERNAME` and `PASSWORD` set, the API is read without
+credentials and no authentication header is sent.
+
 ```bash
 export MAINTENANCE_API_BASE_URL=https://maintenance.example.com
 export MAINTENANCE_API_TOKEN=...

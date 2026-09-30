@@ -124,6 +124,7 @@ After step 1 or step 4 the directory looks like this:
 
 ```text
 artifacts/plant-graph/
+├── .lock
 ├── INDEX.json
 ├── schema.yaml
 ├── vertices/
@@ -132,8 +133,10 @@ artifacts/plant-graph/
     └── work_order__services__machine.000.jsonl.gz
 ```
 
-`INDEX.json` lists every type with its record count and chunk paths. After
-step 3 the target database holds the same types and records.
+`INDEX.json` lists every type with its record count and chunk paths. A
+writer holds a lock on `.lock` while it adds its chunks to `INDEX.json`, so
+several writers, in one process or several, can fill one directory at once.
+After step 3 the target database holds the same types and records.
 
 The file backend appends records rather than merging them. After step 4, a
 vertex that two resources both produce is stored once per resource, so a

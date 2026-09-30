@@ -37,7 +37,8 @@ check cannot match the commit to your acceptance.
    ```bash
    uv sync --extra dev
    ```
-   Add `--extra docs` if you will build the documentation site locally.
+   Add `--extra docs` in the same command if you will build the documentation
+   site locally: `uv sync` removes the extras you leave out.
 4. Install pre-commit hooks:
    ```bash
    uv run pre-commit install
@@ -85,7 +86,7 @@ check cannot match the commit to your acceptance.
 To build and preview the docs site locally:
 
 ```bash
-uv sync --extra docs
+uv sync --extra dev --extra docs
 uv run properdocs serve
 ```
 
@@ -123,7 +124,7 @@ Per-engine compose files, ports, and env notes are in [`docker/README.md`](https
 uv run pytest test
 ```
 
-TigerGraph, NebulaGraph and Kafka tests are gated behind `--run-tigergraph`, `--run-nebula` and `--run-kafka`.
+Tests marked `tigergraph`, `nebula`, `kafka`, `performance` or `bulk_e2e` are skipped unless you pass the matching option: `--run-tigergraph`, `--run-nebula`, `--run-kafka`, `--run-performance` or `--run-bulk-e2e`.
 
 The suites under `test/db`, `test/data_source` and `test/object_storage` need the containers. The rest runs in-process, and CI runs exactly that part on every pull request:
 
