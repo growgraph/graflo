@@ -311,8 +311,10 @@ A union joins two lines of history that share no ancestor, so both inputs must
 already be commits in the store: `graflo commit --root` starts the second line
 rather than extending the first. The commit stores the diff from its first
 parent, like any merge commit, so `checkout` and hash verification need no
-special case. Its recipe records the whole declaration (equivalences, canonical
-maps, identity alignments) and no merge base, because there is none. Because
+special case. Its recipe records the whole declaration (equivalences with their
+identities, canonical maps) and no merge base, because there is none. A recipe
+whose declaration the op model no longer loads is refused as a `CommitError`
+that says so. Because
 the commit is a diff, every block the union changes needs an op; `set_bindings`
 and `set_db_profile` cover the bindings and the database profile.
 

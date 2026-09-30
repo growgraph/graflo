@@ -91,6 +91,7 @@ from .equivalence import (
     subject,
 )
 from .merge import (
+    DemotedKey,
     MergeIdentityError,
     MergeNameConflictError,
     _resolve_schema_collisions,
@@ -106,8 +107,8 @@ from .ops import (
     CanonicalMap,
     MergeManifestsOp,
     RelationEquivalence,
-    SideIdentity,
     VertexEquivalence,
+    identity_branches_funnel,
 )
 
 logger = logging.getLogger(__name__)
@@ -147,6 +148,7 @@ FindingKind = Literal[
     "unknown_property",
     "identity_disagreement",
     "identity_coverage",
+    "identity_collision",
     "type_conflict",
     "unit_conflict",
     "identity_mode_conflict",
@@ -154,6 +156,7 @@ FindingKind = Literal[
     "secondary_identity_conflict",
     "edge_conflict",
     "reference_conversion",
+    "lookup_demotion",
 ]
 
 #: A refusal's ``check`` phrase to the finding kind it is an instance of. The
@@ -183,6 +186,7 @@ _KIND_BY_CHECK: dict[str, FindingKind] = {
     "clash": "disagreement",
     "identity disagreement": "identity_disagreement",
     "identity coverage": "identity_coverage",
+    "identity collision": "identity_collision",
     "cluster conflict": "cluster_overlap",
     # What the schema union refuses. ``edge type disagreement`` has to outrank
     # the bare ``disagreement`` above, which longest-match already guarantees;
@@ -203,7 +207,9 @@ _KINDS_BY_TYPE: dict[type[BaseException], frozenset[FindingKind]] = {
     ),
     UnknownMemberError: frozenset({"unknown_member"}),
     MergeIncompleteError: frozenset({"incomplete", "name_collision"}),
-    MergeIdentityError: frozenset({"identity_disagreement", "identity_coverage"}),
+    MergeIdentityError: frozenset(
+        {"identity_disagreement", "identity_coverage", "identity_collision"}
+    ),
     MergeNameConflictError: frozenset({"near_collision", "name_collision"}),
     # Inert while the union's refusals set ``check`` -- which they all do. Kept
     # so a raise site added later without one still classifies rather than
@@ -289,8 +295,9 @@ class PreviewCluster(ConfigBaseModel):
     declared_identity: bool = PydanticField(
         default=False, description="Whether the declaration states an `identity`."
     )
-    aligned: bool = PydanticField(
-        default=False, description="Whether an `identity_alignments` entry names it."
+    derived_identity: bool = PydanticField(
+        default=False,
+        description="Whether its `identity` has a derived or `local_key` branch.",
     )
 
 
@@ -845,7 +852,6 @@ class _Builder:
 
     def _record_clusters(self) -> None:
         """One :class:`PreviewCluster` per declaration, with its member edges."""
-        aligned = {a.vertex for a in self.op.identity_alignments}
         for kind, clusters in (
             ("vertex", self.index.vertices),
             ("relation", self.index.relations),
@@ -874,7 +880,10 @@ class _Builder:
                         synthesized=cluster.synthesized,
                         declared_identity=getattr(cluster.declaration, "identity", None)
                         is not None,
-                        aligned=into in aligned,
+                        derived_identity=isinstance(
+                            cluster.declaration, VertexEquivalence
+                        )
+                        and cluster.declaration.has_derivation,
                     )
                 )
                 if composed_id is None:
@@ -1208,24 +1217,26 @@ class _Builder:
         """Fill in every merged class's attribute rows.
 
         The union of its members' properties under that side's composite
-        rename -- which is what the merged vertex actually carries. Marked as
-        identity when the declaration says so, or when a member keys on it.
+        rename -- which is what the merged vertex actually carries -- plus the
+        attributes its derived identity branches add. Marked as identity when
+        a declared branch keys on it, or, with nothing declared, when a member
+        keys on it.
         """
         for cluster in self.index.vertices:
             if not cluster.into:
                 continue
             declaration = cluster.declaration
-            declared_identity = (
-                set(declaration.identity)
-                if isinstance(declaration, VertexEquivalence)
-                and isinstance(declaration.identity, list)
-                else set()
-            )
-            flagged = {
-                pe.into
-                for pe in getattr(declaration, "properties", [])
-                if getattr(pe, "identity", False)
-            }
+            declared_identity: set[str] = set()
+            derived: list[str] = []
+            if isinstance(declaration, VertexEquivalence):
+                declared_identity = {
+                    f for fields in declaration.raw_branches() for f in fields
+                }
+                derived = [b.name for b in declaration.derived_branches()]
+                local_key = declaration.local_key_branch()
+                if local_key is not None:
+                    derived.append(local_key.name)
+                declared_identity.update(derived)
             for side in _SIDES:
                 schema = self.manifests[side].graph_schema
                 if schema is None:
@@ -1248,11 +1259,12 @@ class _Builder:
                             composed_name,
                             identity=(
                                 composed_name in declared_identity
-                                or composed_name in flagged
                                 or (not declared_identity and prop.name in keyed)
                             ),
                             field_type=_type_label(prop),
                         )
+            for name in derived:
+                self.attribute("merged", cluster.into, name, identity=True)
 
     def identity_checks(self) -> None:
         """Members of one cluster no single key serves, unresolved or uncovered.
@@ -1262,30 +1274,29 @@ class _Builder:
         :func:`~graflo.architecture.evolution.merge._check_identity_coverage`:
         only plain natural keys take part in disagreement -- blank, assigned,
         hash and funnel identities are reconciled (or refused) by the vertex
-        merge itself. A declared key, or flags over disagreeing members, must
-        be one every member can complete. A ``SideIdentity`` is checked by its
-        own lowering, and an aligned class is re-keyed by its alignment.
+        merge itself. A declared key of property branches must be one every
+        member can complete; one with a derived branch is checked by its own
+        lowering. A funnel must not meet a member declaring ``id``.
         """
-        aligned = {a.vertex for a in self.op.identity_alignments}
         for cluster in self.index.vertices:
             declaration = cluster.declaration
             if not isinstance(declaration, VertexEquivalence):
                 continue
-            if cluster.into in aligned or isinstance(
-                declaration.identity, SideIdentity
-            ):
-                continue
             keys, properties = self._member_identity_state(cluster)
             if declaration.identity is not None:
-                self._identity_coverage(cluster, declaration.identity, properties)
+                raw = declaration.raw_branches()
+                if declaration.has_derivation or len(raw) > 1:
+                    self._synthetic_id_collision(cluster, keys, properties)
+                if not declaration.has_derivation:
+                    self._identity_coverage(
+                        cluster,
+                        list(raw[0])
+                        if len(raw) == 1
+                        else identity_branches_funnel(declaration.identity),
+                        properties,
+                    )
                 continue
             if len({frozenset(k) for _s, _m, k in keys}) <= 1:
-                continue
-            flagged = list(
-                dict.fromkeys(pe.into for pe in declaration.properties if pe.identity)
-            )
-            if flagged:
-                self._identity_coverage(cluster, flagged, properties)
                 continue
             detail = "; ".join(f"{s}:{m}={list(k)}" for s, m, k in keys)
             self.finding(
@@ -1295,6 +1306,30 @@ class _Builder:
                 nodes=[
                     subject("merged", cluster.into),
                     *(subject(s, m) for s, m, _k in keys),
+                ],
+            )
+
+    def _synthetic_id_collision(
+        self,
+        cluster: Cluster,
+        keys: Sequence[tuple[Side, str, tuple[str, ...]]],
+        properties: Mapping[tuple[Side, str], set[str]],
+    ) -> None:
+        colliding = [
+            (side, member)
+            for side, member, _key in keys
+            if "id" in properties.get((side, member), set())
+        ]
+        if colliding:
+            self.finding(
+                "identity_collision",
+                f"merged vertex {cluster.into!r} is keyed on a funnel, whose "
+                f"synthetic key is `id`, but "
+                f"{', '.join(f'{s}:{m}' for s, m in colliding)} declare a "
+                "property `id`",
+                nodes=[
+                    subject("merged", cluster.into),
+                    *(subject(s, m) for s, m in colliding),
                 ],
             )
 
@@ -1343,6 +1378,20 @@ class _Builder:
             if isinstance(identity, IdentityFunnel)
             else [set(identity)]
         )
+        if isinstance(identity, IdentityFunnel):
+            declared_anywhere = (
+                set().union(*properties.values()) if properties else set()
+            )
+            unreachable = sorted(
+                {f for branch in branches for f in branch - declared_anywhere}
+            )
+            if unreachable:
+                self.finding(
+                    "identity_coverage",
+                    f"merged vertex {cluster.into!r} is keyed on a funnel with "
+                    f"branches over {unreachable}, which no member declares",
+                    nodes=[subject("merged", cluster.into)],
+                )
         uncovered = [
             (side, member)
             for (side, member), declared in properties.items()
@@ -1378,7 +1427,7 @@ class _Builder:
         one bad cluster would abort every other cluster's finding.
 
         Merge reaches the kernel once more after the union, through
-        ``_apply_identity_alignments``; no case is known that refuses only
+        ``_apply_derived_identities``; no case is known that refuses only
         there, and this pass would not see it if one appeared.
         """
         for cluster in self.index.vertices:
@@ -1841,7 +1890,7 @@ def preview_merge(
     Args:
         left: The left manifest, in whatever vocabulary it is in.
         right: The right manifest.
-        op: The merge op: equivalences, canonical maps, identity alignments.
+        op: The merge op: equivalences (with their identities) and canonical maps.
         canonical_maps: Extra ``(side, map)`` pairs, folded into ``op``'s.
         attempt: Whether to run a real merge for the authoritative outcome.
 
@@ -1907,7 +1956,9 @@ def _attempt(
 
     A merge that went through may still have changed what a resource does:
     each resource it turned from upserting a merged class into referencing it
-    writes none of those records any more, which is a ``note``.
+    writes none of those records any more, which is a ``note``. So is each
+    member key demoted beside a funnel of several branches: it no longer
+    deduplicates the member's own records.
     """
     from .alignment import AlignmentConflictError
     from .merge import (
@@ -1917,7 +1968,7 @@ def _attempt(
     )
 
     try:
-        merged, converted = _merge_manifests(
+        merged, report = _merge_manifests(
             left, right, op, canonical_maps=canonical_maps, finish_init=False
         )
     except (
@@ -1935,10 +1986,10 @@ def _attempt(
             kind="reference_conversion",
             severity="note",
             message=(
-                f"resource {ref.resource!r} upserted {ref.vertex!r} but no identity "
-                f"alignment derives its key there, so it now looks {ref.vertex!r} up "
-                f"by {ref.key!r} and writes none of those records; add it to the "
-                "alignment if its rows carry the aligned inputs"
+                f"resource {ref.resource!r} upserted {ref.vertex!r} but no derived "
+                f"identity branch names it, so it now looks {ref.vertex!r} up by "
+                f"{ref.key!r} and writes none of those records; add it to a "
+                "derived branch's sources if its rows carry the inputs"
             ),
             source="merge",
             nodes=[
@@ -1946,9 +1997,38 @@ def _attempt(
                 *(subject(ref.side, member) for member in ref.members),
             ],
         )
-        for ref in converted
+        for ref in report.converted
     ]
+    notes.extend(_demotion_notes(report.demoted))
     return outcome_from_manifest(merged), (), notes
+
+
+def _demotion_notes(demoted: Sequence[DemotedKey]) -> list[MergeFinding]:
+    """A note per member key that no longer deduplicates the member's records.
+
+    A record keys on the first funnel branch it completes. When a member's
+    records can complete two or more branches, one entity seen once with an
+    earlier branch's attribute and once without becomes two vertices -- which
+    its own key, now a non-unique lookup, used to prevent.
+    """
+    return [
+        MergeFinding(
+            kind="lookup_demotion",
+            severity="note",
+            message=(
+                f"records of {key.side}:{key.member} key on the first of "
+                f"{list(key.branches)} they complete, so two with the same "
+                f"{list(key.fields)} that complete different ones become two "
+                f"{key.vertex!r} vertices; {list(key.fields)} is now the "
+                f"lookup-only secondary {key.secondary!r} and no longer "
+                "deduplicates them"
+            ),
+            source="merge",
+            nodes=[subject("merged", key.vertex), subject(key.side, key.member)],
+        )
+        for key in demoted
+        if len(key.branches) >= 2
+    ]
 
 
 __all__ = [

@@ -84,8 +84,8 @@ ingestion_model:
         -   vertex: Machine
             lookup_only: true
             type: vertex
-        -   source: WorkOrder
-            target: Machine
+        -   from: WorkOrder
+            to: Machine
             relation: targets
             type: edge
             target_match: by_asset_id

@@ -14,9 +14,4 @@ allow_merges: true
 vertex_equivalences:
 -   left: [Firm, Shop]
     right: [Org, Branch]
-    identity:
-        members:
-            Firm: [company_id]
-            Shop: [shop_id]
-            Org: [org_id]
-            Branch: [branch_id]
+    identity: [company_id, shop_id, org_id, branch_id]

@@ -140,6 +140,28 @@ class TestTheCommit:
                 recipe=build_merge_recipe(left, right, MergeManifestsOp()),
             )
 
+    def test_a_recipe_in_a_retired_vocabulary_is_a_commit_error(self) -> None:
+        """A recorded declaration the op model no longer loads names the cause."""
+        left, right = _manifest("Machine"), _manifest("Reading")
+        recipe = build_merge_recipe(left, right, MergeManifestsOp())
+        stale = recipe.model_copy(
+            update={
+                "equivalences": {
+                    **recipe.equivalences,
+                    "identity_alignments": [{"vertex": "Machine"}],
+                }
+            }
+        )
+
+        with pytest.raises(CommitError, match="no longer loads"):
+            build_merge_commit(
+                left,
+                _compose(left, right),
+                parents=["a" * 12, "b" * 12],
+                recipe=stale,
+                right=right,
+            )
+
 
 class TestReplay:
     def test_the_compose_commit_replays_from_its_first_parent(self) -> None:

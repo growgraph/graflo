@@ -16,14 +16,14 @@ import pytest
 
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.evolution import (
-    AlignmentAttribute,
     AlignmentConflictError,
     CanonicalMap,
     DerivationSpec,
-    IdentityAlignment,
+    DerivedBranch,
+    IdentityBranchDecl,
     IdentityReplacement,
+    LocalKeyBranch,
     LocalKeySource,
-    LocalKeySpec,
     MergeIdentityError,
     MergeManifestsOp,
     NaturalIdentityTarget,
@@ -34,7 +34,6 @@ from graflo.architecture.evolution import (
     merge_manifests,
 )
 from graflo.architecture.evolution.rewrite import collect_endpoint_selectors
-from graflo.architecture.schema.identity_funnel import IdentityBranch, IdentityFunnel
 from graflo.hq.document_caster import DocumentCaster
 from graflo.hq.ingestion_parameters import IngestionParams
 
@@ -121,32 +120,34 @@ def _side_b(*, properties: list[str] | None = None) -> GraphManifest:
     return manifest
 
 
-def _alignment(name: str = "name_key", **overrides) -> IdentityAlignment:
-    base: dict = {
-        "vertex": "Z",
-        "attributes": [
-            AlignmentAttribute(
-                name=name,
-                sources={
-                    "r_x": DerivationSpec(input=["name"], foo="normalized_key"),
-                    "r_y": DerivationSpec(input=["cname"], foo="normalized_key"),
-                },
-            )
-        ],
-        "local_key": LocalKeySpec(
-            sources={
-                "r_x": LocalKeySource(field="x_id", tag="a"),
-                "r_y": LocalKeySource(field="y_id", tag="b"),
-            }
-        ),
-    }
-    base.update(overrides)
-    return IdentityAlignment.model_validate(base)
+def _name_key(name: str = "name_key", **sources: DerivationSpec) -> DerivedBranch:
+    """A derived branch each side computes from its own raw name column."""
+    return DerivedBranch(
+        name=name,
+        sources=sources
+        or {
+            "r_x": DerivationSpec(input=["name"]),
+            "r_y": DerivationSpec(input=["cname"]),
+        },
+    )
+
+
+def _local_key() -> LocalKeyBranch:
+    return LocalKeyBranch(
+        local_key={
+            "r_x": LocalKeySource(field="x_id", tag="a"),
+            "r_y": LocalKeySource(field="y_id", tag="b"),
+        }
+    )
+
+
+def _derived_identity(name: str = "name_key") -> list[IdentityBranchDecl]:
+    """``Z`` keyed on a normalized name, falling back to each side's tagged key."""
+    return [_name_key(name), _local_key()]
 
 
 def _merge(
     *equivalences: VertexEquivalence,
-    alignments: list[IdentityAlignment] | None = None,
     left: GraphManifest | None = None,
     right: GraphManifest | None = None,
 ) -> GraphManifest:
@@ -155,7 +156,6 @@ def _merge(
         right if right is not None else _side_b(),
         MergeManifestsOp(
             vertex_equivalences=list(equivalences),
-            identity_alignments=alignments or [],
             canonical_maps={"left": CanonicalMap(vertices={"Ap": "Zp"})},
             allow_self_relations=True,
         ),
@@ -179,58 +179,6 @@ def _pipeline(manifest: GraphManifest, resource: str) -> list:
     )
 
 
-class TestFlaggedIdentity:
-    def test_flag_over_disagreeing_keys_replaces_them(self) -> None:
-        """The flag names the one field-set every member carries, so it is the key.
-
-        Appending it to ``[x_id, y_id]`` would build a key no record carries.
-        """
-        merged = _merge(
-            VertexEquivalence(
-                left="X",
-                right="Y",
-                into="Z",
-                properties=[
-                    PropertyEquivalence(
-                        left="name", right="cname", into="name", identity=True
-                    )
-                ],
-            )
-        )
-        assert _z(merged).identity == ["name"]
-        assert _secondaries(merged) == {"by_x_id": ["x_id"], "by_y_id": ["y_id"]}
-
-    def test_flag_over_disagreeing_keys_honours_retire_keep(self) -> None:
-        merged = _merge(
-            VertexEquivalence(
-                left="X",
-                right="Y",
-                into="Z",
-                retire="keep",
-                properties=[
-                    PropertyEquivalence(
-                        left="name", right="cname", into="name", identity=True
-                    )
-                ],
-            )
-        )
-        assert _z(merged).identity == ["name"]
-        assert _secondaries(merged) == {}
-
-    def test_flag_must_be_carried_by_every_member(self) -> None:
-        with pytest.raises(MergeIdentityError, match="coverage|carr"):
-            _merge(
-                VertexEquivalence(
-                    left="X",
-                    right="Y",
-                    into="Z",
-                    properties=[
-                        PropertyEquivalence(left="name", into="name", identity=True)
-                    ],
-                )
-            )
-
-
 class TestDeclaredIdentityCoverage:
     def test_natural_key_a_member_does_not_declare_is_refused(self) -> None:
         """``Y`` has no ``name``: every ``Y`` record would complete no key."""
@@ -239,6 +187,10 @@ class TestDeclaredIdentityCoverage:
         assert excinfo.value.check == "identity coverage"
 
     def test_natural_key_every_member_carries_is_accepted(self) -> None:
+        """The one field-set every member carries replaces their disagreeing keys.
+
+        Appending it to ``[x_id, y_id]`` would build a key no record carries.
+        """
         merged = _merge(
             VertexEquivalence(
                 left="X",
@@ -251,108 +203,110 @@ class TestDeclaredIdentityCoverage:
         assert _z(merged).identity == ["name"]
         assert _secondaries(merged) == {"by_x_id": ["x_id"], "by_y_id": ["y_id"]}
 
-    def test_funnel_a_member_completes_no_branch_of_is_refused(self) -> None:
-        funnel = IdentityFunnel(branches=[IdentityBranch(id="name", fields=["name"])])
-        with pytest.raises(MergeIdentityError, match="right:Y"):
-            _merge(VertexEquivalence(left="X", right="Y", into="Z", identity=funnel))
-
-    def test_funnel_every_member_completes_a_branch_of_is_accepted(self) -> None:
-        funnel = IdentityFunnel(
-            branches=[
-                IdentityBranch(id="name", fields=["name"]),
-                IdentityBranch(id="y_id", fields=["y_id"]),
-            ]
-        )
+    def test_natural_key_honours_retire_keep(self) -> None:
         merged = _merge(
-            VertexEquivalence(left="X", right="Y", into="Z", identity=funnel)
+            VertexEquivalence(
+                left="X",
+                right="Y",
+                into="Z",
+                retire="keep",
+                identity=["name"],
+                properties=[NAME_EQUIVALENCE],
+            )
         )
-        assert _z(merged).identity_funnel is not None
-
-
-class TestAlignmentDemotesMemberKeys:
-    def test_member_keys_become_secondaries_without_being_listed(self) -> None:
-        merged = _merge(
-            VertexEquivalence(left="X", right="Y", into="Z"),
-            alignments=[_alignment()],
-        )
-        assert _z(merged).identity == ["id"]
-        assert _secondaries(merged) == {"by_x_id": ["x_id"], "by_y_id": ["y_id"]}
-
-    def test_a_listed_secondary_keeps_its_name(self) -> None:
-        merged = _merge(
-            VertexEquivalence(left="X", right="Y", into="Z"),
-            alignments=[_alignment(secondary_identities={"x_key": ["x_id"]})],
-        )
-        assert _secondaries(merged) == {"x_key": ["x_id"], "by_y_id": ["y_id"]}
-
-    def test_retire_keep_opts_out(self) -> None:
-        merged = _merge(
-            VertexEquivalence(left="X", right="Y", into="Z", retire="keep"),
-            alignments=[_alignment()],
-        )
+        assert _z(merged).identity == ["name"]
         assert _secondaries(merged) == {}
 
-    def test_declared_key_the_alignment_replaces_is_still_demoted(self) -> None:
-        """Demotion is decided against the final primary, not the intermediate one.
-
-        ``[x_id]`` equals X's own key, so demoting it at the declaration would
-        restate the primary; the alignment then replaces that primary, and
-        ``x_id`` must still be addressable.
-        """
+    def test_a_single_property_branch_is_a_natural_key_not_a_funnel(self) -> None:
         merged = _merge(
-            VertexEquivalence(left="X", right="Y", into="Z", identity=["x_id"]),
-            alignments=[_alignment()],
-            right=_side_b(properties=["y_id", "cname", "x_id"]),
-        )
-        assert _secondaries(merged) == {"by_x_id": ["x_id"], "by_y_id": ["y_id"]}
-
-    @pytest.mark.parametrize(
-        "equivalence",
-        [
             VertexEquivalence(
                 left="X",
                 right="Y",
                 into="Z",
                 identity=["name"],
                 properties=[NAME_EQUIVALENCE],
-            ),
+            )
+        )
+        assert _z(merged).identity_funnel is None
+        assert _z(merged).identity == ["name"]
+
+    def test_funnel_a_member_completes_no_branch_of_is_refused(self) -> None:
+        """``Y`` carries neither ``name`` (it has ``cname``) nor ``x_id``."""
+        with pytest.raises(MergeIdentityError, match="right:Y") as excinfo:
+            _merge(
+                VertexEquivalence(
+                    left="X", right="Y", into="Z", identity=["name", "x_id"]
+                )
+            )
+        assert excinfo.value.check == "identity coverage"
+
+    def test_funnel_every_member_completes_a_branch_of_is_accepted(self) -> None:
+        merged = _merge(
+            VertexEquivalence(left="X", right="Y", into="Z", identity=["name", "y_id"])
+        )
+        funnel = _z(merged).identity_funnel
+        assert funnel is not None
+        assert [b.id for b in funnel.branches] == ["name", "y_id"]
+
+    def test_a_funnel_over_a_member_declaring_id_is_refused(self) -> None:
+        """A funnel's synthetic key is ``id``; a real ``id`` column would bypass it."""
+        with pytest.raises(MergeIdentityError, match="right:Y") as excinfo:
+            _merge(
+                VertexEquivalence(
+                    left="X", right="Y", into="Z", identity=["x_id", "y_id"]
+                ),
+                right=_side_b(properties=["y_id", "cname", "id"]),
+            )
+        assert excinfo.value.check == "identity collision"
+
+
+class TestDerivedIdentityDemotesMemberKeys:
+    def test_member_keys_become_secondaries_without_being_listed(self) -> None:
+        merged = _merge(
+            VertexEquivalence(
+                left="X", right="Y", into="Z", identity=_derived_identity()
+            )
+        )
+        assert _z(merged).identity == ["id"]
+        assert _secondaries(merged) == {"by_x_id": ["x_id"], "by_y_id": ["y_id"]}
+
+    def test_retire_keep_opts_out(self) -> None:
+        merged = _merge(
             VertexEquivalence(
                 left="X",
                 right="Y",
                 into="Z",
-                properties=[
-                    PropertyEquivalence(
-                        left="name", right="cname", into="name", identity=True
-                    )
-                ],
-            ),
-        ],
-        ids=["declared", "flagged"],
-    )
-    def test_target_named_like_the_merges_own_key_is_not_a_collision(
-        self, equivalence: VertexEquivalence
-    ) -> None:
-        """The collision guards a key the records carry, not one the merge wrote.
-
-        ``name`` is neither member's key; the declaration made it ``Z``'s key
-        only until the alignment replaces it.
-        """
-        merged = _merge(equivalence, alignments=[_alignment(name="name")])
-        assert _z(merged).identity_funnel is not None
-        assert _secondaries(merged) == {"by_x_id": ["x_id"], "by_y_id": ["y_id"]}
+                retire="keep",
+                identity=_derived_identity(),
+            )
+        )
+        assert _secondaries(merged) == {}
 
     def test_target_named_like_a_members_own_key_is_a_collision(self) -> None:
+        """Deriving ``x_id`` would overwrite the key ``X`` records carry."""
         with pytest.raises(AlignmentConflictError, match="identity collision"):
             _merge(
                 VertexEquivalence(
                     left="X",
                     right="Y",
                     into="Z",
-                    identity=["name"],
-                    properties=[NAME_EQUIVALENCE],
-                ),
-                alignments=[_alignment(name="x_id")],
+                    identity=_derived_identity(name="x_id"),
+                )
             )
+
+    def test_a_property_branch_may_name_a_members_own_key(self) -> None:
+        """Keying on a member's own key is a property branch, not a collision."""
+        merged = _merge(
+            VertexEquivalence(
+                left="X",
+                right="Y",
+                into="Z",
+                identity=[_name_key("match_key"), "x_id", "y_id"],
+            )
+        )
+        funnel = _z(merged).identity_funnel
+        assert funnel is not None
+        assert [b.id for b in funnel.branches] == ["match_key", "x_id", "y_id"]
 
     def test_raw_column_named_like_the_other_sides_rename_target_is_accepted(
         self,
@@ -360,38 +314,18 @@ class TestAlignmentDemotesMemberKeys:
         """``r_x`` reads its own raw ``name``; B renaming ``cname`` onto it is B's affair."""
         merged = _merge(
             VertexEquivalence(
-                left="X", right="Y", into="Z", properties=[NAME_EQUIVALENCE]
-            ),
-            alignments=[
-                _alignment(
-                    attributes=[
-                        AlignmentAttribute(
-                            name="name_key",
-                            sources={
-                                "r_x": DerivationSpec(
-                                    input=["name"], foo="normalized_key"
-                                ),
-                                "r_y": DerivationSpec(
-                                    input=["cname"], foo="normalized_key"
-                                ),
-                            },
-                        )
-                    ]
-                )
-            ],
+                left="X",
+                right="Y",
+                into="Z",
+                properties=[NAME_EQUIVALENCE],
+                identity=_derived_identity(),
+            )
         )
         assert _z(merged).identity == ["id"]
 
-    def test_two_alignments_for_one_class_are_refused(self) -> None:
-        with pytest.raises(ValueError, match="more than one identity alignment"):
-            MergeManifestsOp(
-                vertex_equivalences=[VertexEquivalence(left="X", right="Y", into="Z")],
-                identity_alignments=[_alignment("k1"), _alignment("k2")],
-            )
 
-
-class TestResourcesOutsideTheAlignment:
-    def test_an_upserting_producer_the_alignment_misses_becomes_a_reference(
+class TestResourcesOutsideTheDerivedBranches:
+    def test_an_upserting_producer_no_derived_branch_names_becomes_a_reference(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         """``r_ap`` carries ``X``'s own key and nothing of the new one.
@@ -401,8 +335,9 @@ class TestResourcesOutsideTheAlignment:
         """
         with caplog.at_level(logging.WARNING):
             merged = _merge(
-                VertexEquivalence(left="X", right="Y", into="Z"),
-                alignments=[_alignment()],
+                VertexEquivalence(
+                    left="X", right="Y", into="Z", identity=_derived_identity()
+                ),
                 left=_side_a(reference_step={"vertex": "X"}),
             )
         z_step = next(s for s in _pipeline(merged, "r_ap") if s.get("vertex") == "Z")
@@ -412,10 +347,35 @@ class TestResourcesOutsideTheAlignment:
         ]
         assert "r_ap" in caplog.text and "by_x_id" in caplog.text
 
+    def test_a_resource_completing_a_property_branch_is_not_converted(self) -> None:
+        """``r_ap`` derives no ``match_key``, but its ``X`` records carry ``x_id``.
+
+        They key on the ``x_id`` branch, so the resource keeps upserting ``Z``.
+        """
+        merged = _merge(
+            VertexEquivalence(
+                left="X",
+                right="Y",
+                into="Z",
+                identity=[_name_key("match_key"), "x_id", "y_id"],
+            ),
+            left=_side_a(reference_step={"vertex": "X"}),
+        )
+        z_step = next(s for s in _pipeline(merged, "r_ap") if s.get("vertex") == "Z")
+        assert not z_step.get("lookup_only")
+        caster = DocumentCaster(merged.require_ingestion_model())
+        result = asyncio.run(
+            caster.cast_batch(
+                [{"ap_id": "p1", "x_id": "x1"}], "r_ap", params=IngestionParams()
+            )
+        )
+        assert [doc["x_id"] for doc in result.graph.vertices["Z"]] == ["x1"]
+
     def test_a_converted_reference_still_emits_its_edge(self) -> None:
         merged = _merge(
-            VertexEquivalence(left="X", right="Y", into="Z"),
-            alignments=[_alignment()],
+            VertexEquivalence(
+                left="X", right="Y", into="Z", identity=_derived_identity()
+            ),
             left=_side_a(reference_step={"vertex": "X"}),
         )
         caster = DocumentCaster(merged.require_ingestion_model())
@@ -432,15 +392,21 @@ class TestResourcesOutsideTheAlignment:
     ) -> None:
         with pytest.raises(AlignmentConflictError, match="retire: keep"):
             _merge(
-                VertexEquivalence(left="X", right="Y", into="Z", retire="keep"),
-                alignments=[_alignment()],
+                VertexEquivalence(
+                    left="X",
+                    right="Y",
+                    into="Z",
+                    retire="keep",
+                    identity=_derived_identity(),
+                ),
                 left=_side_a(reference_step={"vertex": "X"}),
             )
 
     def test_a_reference_is_pinned_to_the_demoted_member_key(self) -> None:
         merged = _merge(
-            VertexEquivalence(left="X", right="Y", into="Z"),
-            alignments=[_alignment()],
+            VertexEquivalence(
+                left="X", right="Y", into="Z", identity=_derived_identity()
+            )
         )
         assert collect_endpoint_selectors(_pipeline(merged, "r_ap")) == [
             ("Z", "by_x_id")
@@ -448,8 +414,9 @@ class TestResourcesOutsideTheAlignment:
 
     def test_a_pinned_reference_still_emits_its_edge(self) -> None:
         merged = _merge(
-            VertexEquivalence(left="X", right="Y", into="Z"),
-            alignments=[_alignment()],
+            VertexEquivalence(
+                left="X", right="Y", into="Z", identity=_derived_identity()
+            )
         )
         caster = DocumentCaster(merged.require_ingestion_model())
         result = asyncio.run(
@@ -553,9 +520,10 @@ def _merge_routed(
         MergeManifestsOp.model_validate(
             {
                 "vertex_equivalences": [
-                    VertexEquivalence(left="X", right="Y", into="Z")
+                    VertexEquivalence(
+                        left="X", right="Y", into="Z", identity=_derived_identity()
+                    )
                 ],
-                "identity_alignments": [_alignment()],
                 "allow_self_relations": True,
                 "router_scope": router_scope,
             }
@@ -694,12 +662,7 @@ class TestRoutedReferences:
                         left=["X", "C"],
                         right="Y",
                         into="Z",
-                        identity=IdentityFunnel(
-                            branches=[
-                                IdentityBranch(id="x", fields=["x_id"]),
-                                IdentityBranch(id="y", fields=["y_id"]),
-                            ]
-                        ),
+                        identity=["x_id", "y_id"],
                     )
                 ],
                 allow_merges=True,
@@ -711,31 +674,47 @@ class TestRoutedReferences:
         assert edge["target_match"] == {"Z": "by_x_id"}
 
 
-class TestAlignmentDerivations:
+class TestDerivedBranchDerivations:
     def test_a_derivation_that_cannot_bind_its_inputs_is_refused(self) -> None:
-        """``gated_normalized_key`` takes a gate and a value; one input binds neither."""
+        """``normalized_key`` (the default) takes one value; two inputs cannot bind."""
         with pytest.raises(AlignmentConflictError, match="derivation signature"):
             _merge(
-                VertexEquivalence(left="X", right="Y", into="Z"),
-                alignments=[
-                    _alignment(
-                        attributes=[
-                            AlignmentAttribute(
-                                name="name_key",
-                                sources={
-                                    "r_x": DerivationSpec(input=["name"]),
-                                    "r_y": DerivationSpec(input=["cname"]),
-                                },
-                            )
-                        ]
-                    )
-                ],
+                VertexEquivalence(
+                    left="X",
+                    right="Y",
+                    into="Z",
+                    identity=[
+                        _name_key(
+                            r_x=DerivationSpec(input=["name", "x_id"]),
+                            r_y=DerivationSpec(input=["cname"]),
+                        ),
+                        _local_key(),
+                    ],
+                )
             )
 
-    def test_aligned_records_fuse_on_the_normalized_name(self) -> None:
+    def test_a_one_input_derivation_binds_the_default_function(self) -> None:
         merged = _merge(
-            VertexEquivalence(left="X", right="Y", into="Z"),
-            alignments=[_alignment()],
+            VertexEquivalence(
+                left="X",
+                right="Y",
+                into="Z",
+                identity=[
+                    _name_key(
+                        r_x=DerivationSpec(input=["name"]),
+                        r_y=DerivationSpec(input=["cname"]),
+                    ),
+                    _local_key(),
+                ],
+            )
+        )
+        assert _z(merged).identity_funnel is not None
+
+    def test_derived_records_fuse_on_the_normalized_name(self) -> None:
+        merged = _merge(
+            VertexEquivalence(
+                left="X", right="Y", into="Z", identity=_derived_identity()
+            )
         )
         caster = DocumentCaster(merged.require_ingestion_model())
         ids = []
@@ -814,8 +793,11 @@ def test_preview_notes_each_resource_merge_turns_into_a_reference() -> None:
         _side_a(reference_step={"vertex": "X"}),
         _side_b(),
         MergeManifestsOp(
-            vertex_equivalences=[VertexEquivalence(left="X", right="Y", into="Z")],
-            identity_alignments=[_alignment()],
+            vertex_equivalences=[
+                VertexEquivalence(
+                    left="X", right="Y", into="Z", identity=_derived_identity()
+                )
+            ],
             canonical_maps={"left": CanonicalMap(vertices={"Ap": "Zp"})},
             allow_self_relations=True,
         ),
@@ -826,3 +808,39 @@ def test_preview_notes_each_resource_merge_turns_into_a_reference() -> None:
     assert notes[0].severity == "note"
     assert "r_ap" in notes[0].message and "by_x_id" in notes[0].message
     assert notes[0] not in preview.blocking
+
+
+def _preview(identity: list[IdentityBranchDecl]):
+    from graflo.architecture.evolution.preview import preview_merge
+
+    return preview_merge(
+        _side_a(),
+        _side_b(),
+        MergeManifestsOp(
+            vertex_equivalences=[
+                VertexEquivalence(left="X", right="Y", into="Z", identity=identity)
+            ],
+            canonical_maps={"left": CanonicalMap(vertices={"Ap": "Zp"})},
+            allow_self_relations=True,
+        ),
+    )
+
+
+def test_preview_notes_a_demoted_key_is_now_a_lookup() -> None:
+    """A member whose records complete two funnel branches loses its dedup key.
+
+    ``X`` records derive ``name_key`` and ``local_key`` alike, so one seen with
+    and without a name keys twice; ``x_id`` is only a lookup now. One property
+    branch per member leaves each member a single completable branch.
+    """
+    preview = _preview(_derived_identity())
+    assert preview.outcome.status == "merged"
+    notes = [f for f in preview.findings if f.kind == "lookup_demotion"]
+    assert len(notes) == 2
+    assert any("'by_x_id'" in n.message for n in notes)
+    assert any("'by_y_id'" in n.message for n in notes)
+    assert all(n.severity == "note" and n not in preview.blocking for n in notes)
+
+    per_member = _preview(["x_id", "y_id"])
+    assert per_member.outcome.status == "merged"
+    assert not [f for f in per_member.findings if f.kind == "lookup_demotion"]

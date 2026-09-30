@@ -5,21 +5,17 @@ op: merge_manifests
 canonical_maps:
     right: {properties: {Device: {serial: serial_number}}}
 
-# 2. Machines and devices are one type, named Machine.
+# 2. Machines and devices are one type, named Machine, and this is how records
+#    from both sides find each other.
 vertex_equivalences:
 -   left: Machine
     right: Device
     into: Machine
-
-# 3. How records from both sides find each other.
-identity_alignments:
--   vertex: Machine
-    attributes:
+    identity:
     -   name: match_key
         sources:
-            register: {foo: normalized_key, input: [serial_number]}
-            devices: {foo: normalized_key, input: [serial]}
-    local_key:
-        sources:
+            register: {input: [serial_number]}
+            devices: {input: [serial]}
+    -   local_key:
             register: {field: asset_id, tag: maintenance}
             devices: {field: device_id, tag: sensors}

@@ -66,7 +66,13 @@ def left_relabel_ops(
 
     if recipe.kind != "merge":
         return []
-    op = MergeManifestsOp.model_validate(recipe.equivalences)
+    try:
+        op = MergeManifestsOp.model_validate(recipe.equivalences)
+    except ValueError as exc:
+        raise CommitError(
+            "the recorded merge declaration no longer loads (the merge op "
+            f"vocabulary changed since it was recorded): {exc}"
+        ) from exc
     try:
         resolution = resolve_clusters(
             op, left=left.model_copy(deep=True), right=right.model_copy(deep=True)

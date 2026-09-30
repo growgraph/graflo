@@ -1,19 +1,21 @@
-"""Identity alignment: merge an equivalence identity from fundamental ops.
+"""Derived identity: lower a merged class's identity branches to fundamental ops.
 
-An :class:`IdentityAlignment` states, for one canonical class, which canonical
-attributes carry cross-source entity equivalence and how each resource derives
-them. It is a *composer*, not a mechanism: :func:`alignment_to_ops` emits only
-fundamental ops —
+A :class:`~graflo.architecture.evolution.ops.VertexEquivalence` declares the
+merged key as ordered funnel branches. A branch over properties the members
+already carry needs nothing but the funnel. A
+:class:`~graflo.architecture.evolution.ops.DerivedBranch` or
+:class:`~graflo.architecture.evolution.ops.LocalKeyBranch` needs each source to
+compute its attribute, and :func:`identity_to_ops` emits only fundamental ops
+for that —
 
-1. ``AddVertexPropertiesOp`` — declare the canonical attributes on the class;
-2. ``AddResourceTransformsOp`` — per-resource derivation steps (gating,
-   normalization, local-key namespacing) appended to the pipelines;
-3. ``ReplaceIdentityOp`` — a priority funnel over the canonical attributes,
-   in declared order, with the namespaced ``local_key`` as the last branch;
-4. ``AddSecondaryIdentitiesOp`` — the ``secondary_identities`` the alignment
-   lists. Inside ``merge_manifests`` the members' own pre-merge keys are
-   demoted as well, without being listed: merge knows each member's key and
-   demotes it against the class's final identity.
+1. ``AddVertexPropertiesOp`` — declare the derived attributes on the class;
+2. ``AddResourceTransformsOp`` — per-resource derivation steps
+   (normalization, local-key namespacing) appended to the pipelines;
+3. ``EnsureExtractedFieldsOp`` — when a producing router restricts what it
+   extracts;
+4. ``ReplaceIdentityOp`` — a priority funnel over the branches, in declared
+   order. ``merge_manifests`` then demotes each member's own key to a
+   secondary identity against that final funnel.
 
 The division of labor is deliberate: **a primary identity is a property of the
 class**, so the funnel references only canonical attributes; *how* a given
@@ -37,15 +39,16 @@ attribute for its own documents.
 A derivation that is *not* keyed by member is guarded the same way whenever a
 router produces the class: ``when`` admits the discriminator values that route
 onto it — the ``type_map`` keys mapping to it, or its own name for
-pass-through — so the step runs for no other class's documents. Only a level
-where a plain ``vertex`` step also produces the class, or whose routers read
-different discriminators, lowers unguarded; there a sibling class declaring a
-canonical attribute name is refused, since the router would hand it the
-derived value.
+pass-through — so the step runs for no other class's documents. An explicit
+``when`` on the spec replaces that derived guard. Only a level where a plain
+``vertex`` step also produces the class, or whose routers read different
+discriminators, lowers unguarded; there a sibling class declaring a derived
+attribute name is refused, since the router would hand it the derived value.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -58,32 +61,34 @@ from graflo.architecture.contract.ingestion.resource import (
     step_looks_up,
     step_produces_vertices,
 )
+from graflo.architecture.contract.ingestion.steps.models import TransformGuardConfig
 from graflo.architecture.contract.ingestion.steps.normalize import (
     normalize_actor_step,
 )
 from graflo.architecture.contract.manifest import GraphManifest
-from graflo.architecture.schema.identity_funnel import IdentityBranch, IdentityFunnel
-from graflo.architecture.schema.vertex import SecondaryIdentity
+from graflo.architecture.schema.identity_funnel import IdentityFunnel
 
 from .canonical import CanonicalMap
 from .equivalence import Side
 from .ops import (
     AddResourceTransformsOp,
-    AddSecondaryIdentitiesOp,
     AddVertexPropertiesOp,
-    AlignmentAttribute,
     CanonicalizeOp,
     DerivationSpec,
+    DerivedBranch,
     EnsureExtractedFields,
     EnsureExtractedFieldsOp,
     FunnelIdentityTarget,
-    IdentityAlignment,
+    IdentityBranchDecl,
     IdentityReplacement,
+    LocalKeyBranch,
     LocalKeySource,
-    LocalKeySpec,
     ManifestOp,
+    NaturalIdentityTarget,
     ReplaceIdentityOp,
-    SharedDerivation,
+    branch_fields,
+    check_identity_branches,
+    identity_branches_funnel,
 )
 
 #: Anything whose ``properties`` say which attribute names exist only
@@ -91,24 +96,13 @@ from .ops import (
 VocabularyMap = CanonicalMap | CanonicalizeOp
 
 __all__ = [
-    "AlignmentAttribute",
     "AlignmentConflictError",
-    "AlignmentRow",
-    "DerivationSpec",
-    "IdentityAlignment",
-    "LocalKeySource",
-    "LocalKeySpec",
-    "SharedDerivation",
-    "alignment_to_ops",
-    "validate_alignment",
+    "IdentityPlan",
+    "identity_to_ops",
+    "validate_identity",
 ]
 
 logger = logging.getLogger(__name__)
-
-#: Deprecated spelling of :class:`AlignmentAttribute`. "Row" collided with the
-#: ingestion data unit (an observation at a ``LocationIndex``); an entry here is
-#: one canonical attribute.
-AlignmentRow = AlignmentAttribute
 
 #: Pre-merge side manifests keyed by side (``"left"`` / ``"right"``), as
 #: ``merge_manifests`` holds them: after its resource rename policy, before
@@ -118,15 +112,80 @@ SideManifests = Mapping[str, GraphManifest]
 #: The aligned cluster's member classes per side.
 ClusterMembers = Mapping[str, Collection[str]]
 
+#: A branch that derives its attribute in the pipelines.
+SteppedBranch = DerivedBranch | LocalKeyBranch
+
 
 class AlignmentConflictError(ValueError):
-    """An identity alignment contradicts the union manifest or canonical maps."""
+    """A derived identity contradicts the union manifest or canonical maps."""
 
 
 def _conflict(check: str, detail: str, hint: str) -> AlignmentConflictError:
     return AlignmentConflictError(
-        f"identity alignment conflict ({check}): {detail}. {hint}"
+        f"derived identity conflict ({check}): {detail}. {hint}"
     )
+
+
+@dataclass(frozen=True)
+class IdentityPlan:
+    """One class's declared identity branches, and where its sources derive them.
+
+    ``branches`` are in funnel order, as :attr:`VertexEquivalence.identity`
+    declares them; ``at`` is :attr:`VertexEquivalence.derive_at`.
+    """
+
+    vertex: str
+    branches: tuple[IdentityBranchDecl, ...]
+    at: Mapping[str, list[int]] = dataclasses.field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        try:
+            check_identity_branches(self.branches, label=f"identity of {self.vertex!r}")
+        except ValueError as exc:
+            raise _conflict(
+                "identity branches", str(exc), "Reorder or rename the branches."
+            ) from exc
+
+    @property
+    def derived(self) -> list[DerivedBranch]:
+        """The derived branches, in priority order."""
+        return [b for b in self.branches if isinstance(b, DerivedBranch)]
+
+    @property
+    def local_key(self) -> LocalKeyBranch | None:
+        """The ``local_key`` branch, if declared."""
+        return next((b for b in self.branches if isinstance(b, LocalKeyBranch)), None)
+
+    @property
+    def stepped(self) -> list[SteppedBranch]:
+        """Branches whose attribute the pipelines derive, derived ones first."""
+        out: list[SteppedBranch] = list(self.derived)
+        if self.local_key is not None:
+            out.append(self.local_key)
+        return out
+
+    @property
+    def raw(self) -> list[tuple[str, ...]]:
+        """Branches over properties the members carry, as field tuples."""
+        return [
+            tuple(branch_fields(b)) for b in self.branches if isinstance(b, str | list)
+        ]
+
+    def derived_names(self) -> list[str]:
+        """Attributes the pipelines derive: every derived branch, then the local key."""
+        return [branch.name for branch in self.stepped]
+
+    def funnel(self) -> IdentityFunnel:
+        """The funnel the branches declare."""
+        return identity_branches_funnel(self.branches)
+
+
+def _specs(
+    branch: SteppedBranch, resource: str
+) -> list[DerivationSpec | LocalKeySource]:
+    if isinstance(branch, DerivedBranch):
+        return list(branch.specs_for(resource))
+    return list(branch.sources_for(resource))
 
 
 def _canonical_rename_targets(canonical_maps: Sequence[VocabularyMap]) -> set[str]:
@@ -136,11 +195,6 @@ def _canonical_rename_targets(canonical_maps: Sequence[VocabularyMap]) -> set[st
         for attr_map in cm.properties.values():
             targets.update(new for old, new in attr_map.items() if old != new)
     return targets
-
-
-def _scratch_name(into: str, index: int) -> str:
-    """Scratch field one column-presence derivation writes before the coalesce."""
-    return f"_{into}__{index}"
 
 
 def _resource_pipelines(manifest: GraphManifest) -> dict[str, list]:
@@ -156,6 +210,10 @@ def _vertex_set(manifest: GraphManifest) -> set[str]:
     if schema is None:
         return set()
     return set(schema.core_schema.vertex_config.vertex_set)
+
+
+def _guard_dict(guard: TransformGuardConfig) -> dict[str, Any]:
+    return {"field": guard.field, "in": list(guard.values)}
 
 
 # --------------------------------------------------------------------------- #
@@ -188,17 +246,12 @@ class _MemberProduction:
 MemberProductions = dict[str, dict[str, _MemberProduction]]
 
 
-def _member_keyed_resources(alignment: IdentityAlignment) -> dict[str, set[str]]:
+def _member_keyed_resources(plan: IdentityPlan) -> dict[str, set[str]]:
     """Member classes each resource keys any of its sources by."""
     out: dict[str, set[str]] = {}
-    for attribute in alignment.attributes:
-        for resource in attribute.sources:
-            members = attribute.members_for(resource)
-            if members is not None:
-                out.setdefault(resource, set()).update(members)
-    if alignment.local_key is not None:
-        for resource in alignment.local_key.sources:
-            members = alignment.local_key.members_for(resource)
+    for branch in plan.stepped:
+        for resource in branch.sources:
+            members = branch.members_for(resource)
             if members is not None:
                 out.setdefault(resource, set()).update(members)
     return out
@@ -249,7 +302,7 @@ def _produced_vertices(
 
 
 def _resolve_member_production(
-    alignment: IdentityAlignment,
+    plan: IdentityPlan,
     resource: str,
     member: str,
     sides: SideManifests,
@@ -267,12 +320,12 @@ def _resolve_member_production(
             f"{sorted(_produced_vertices(pipeline, known_vertices=known))}. "
             "A vertex_router routes any class the side's schema declares.",
         )
-    if resource in alignment.at:
-        path = list(alignment.at[resource])
+    if resource in plan.at:
+        path = list(plan.at[resource])
         if path not in candidates:
             raise _conflict(
                 "level produces nothing",
-                f"`at` sends resource {resource!r} derivations to level "
+                f"`derive_at` sends resource {resource!r} derivations to level "
                 f"{path or 'root'}, which produces no {member!r}",
                 f"{member!r} is produced at {candidates}.",
             )
@@ -280,7 +333,8 @@ def _resolve_member_production(
         raise _conflict(
             "ambiguous level",
             f"resource {resource!r} produces {member!r} at levels {candidates}",
-            f"Pick one with IdentityAlignment(at={{{resource!r}: {candidates[0]}}}).",
+            f"Pick one with derive_at={{{resource!r}: {candidates[0]}}} on the "
+            "equivalence.",
         )
     else:
         path = candidates[0]
@@ -303,7 +357,7 @@ def _resolve_member_production(
 
 
 def resolve_member_productions(
-    alignment: IdentityAlignment, sides: SideManifests
+    plan: IdentityPlan, sides: SideManifests
 ) -> MemberProductions:
     """How each resource produces every member its sources are keyed by.
 
@@ -316,9 +370,9 @@ def resolve_member_productions(
     under a different ``descend`` would not see them.
     """
     out: MemberProductions = {}
-    for resource, members in sorted(_member_keyed_resources(alignment).items()):
+    for resource, members in sorted(_member_keyed_resources(plan).items()):
         per_member = {
-            member: _resolve_member_production(alignment, resource, member, sides)
+            member: _resolve_member_production(plan, resource, member, sides)
             for member in sorted(members)
         }
         levels = {tuple(p.level) for p in per_member.values()}
@@ -328,7 +382,7 @@ def resolve_member_productions(
                 f"resource {resource!r} produces "
                 f"{ {m: p.level for m, p in per_member.items()} }",
                 "Derivations are appended per resource at one level; produce "
-                "the members at one level or align them through separate "
+                "the members at one level or derive them through separate "
                 "resources.",
             )
         out[resource] = per_member
@@ -336,18 +390,17 @@ def resolve_member_productions(
 
 
 def rekey_members(
-    alignment: IdentityAlignment,
+    plan: IdentityPlan,
     *,
     sides: SideManifests,
     resolve: Callable[[Side, str], str],
-) -> IdentityAlignment:
+) -> IdentityPlan:
     """Name every member key as its side names the member.
 
     *resolve* maps ``(side, key)`` to the member it names — ``merge_manifests``
-    passes the aligned cluster's resolution, so a member may be keyed by its
-    own name or its canonical one. Unresolved keys pass through for the
-    validator to report. Two keys naming one member under one resource are
-    refused.
+    passes the cluster's resolution, so a member may be keyed by its own name
+    or its canonical one. Unresolved keys pass through for the validator to
+    report. Two keys naming one member under one resource are refused.
     """
 
     def _names(resource: str, keys: Iterable[str]) -> dict[str, str]:
@@ -367,53 +420,30 @@ def rekey_members(
             out[key] = member
         return out
 
-    attributes: list[AlignmentAttribute] = []
-    for attribute in alignment.attributes:
-        sources: dict[
-            str,
-            DerivationSpec
-            | SharedDerivation
-            | list[DerivationSpec]
-            | dict[str, DerivationSpec],
-        ] = {}
-        for resource, spec in attribute.sources.items():
-            if isinstance(spec, SharedDerivation):
-                names = _names(resource, spec.members)
-                members: list[str] | dict[str, dict[str, Any]] = (
-                    [names[m] for m in spec.members]
-                    if isinstance(spec.members, list)
-                    else {names[m]: p for m, p in spec.members.items()}
-                )
-                sources[resource] = spec.model_copy(update={"members": members})
-            elif isinstance(spec, dict):
-                names = _names(resource, spec)
-                sources[resource] = {names[m]: v for m, v in spec.items()}
-            else:
-                sources[resource] = spec
-        attributes.append(attribute.model_copy(update={"sources": sources}))
-
-    local_key = alignment.local_key
-    if local_key is not None:
-        local_sources: dict[
-            str, LocalKeySource | list[LocalKeySource] | dict[str, LocalKeySource]
-        ] = {}
-        for resource, entry in local_key.sources.items():
+    def _rekeyed(entries: Mapping[str, Any]) -> dict[str, Any]:
+        out: dict[str, Any] = {}
+        for resource, entry in entries.items():
             if isinstance(entry, dict):
                 names = _names(resource, entry)
-                local_sources[resource] = {names[m]: v for m, v in entry.items()}
+                out[resource] = {names[m]: v for m, v in entry.items()}
             else:
-                local_sources[resource] = entry
-        local_key = local_key.model_copy(update={"sources": local_sources})
+                out[resource] = entry
+        return out
 
-    return alignment.model_copy(
-        update={"attributes": attributes, "local_key": local_key}
-    )
+    branches: list[IdentityBranchDecl] = []
+    for branch in plan.branches:
+        if isinstance(branch, DerivedBranch):
+            branch = branch.model_copy(update={"sources": _rekeyed(branch.sources)})
+        elif isinstance(branch, LocalKeyBranch):
+            branch = branch.model_copy(update={"local_key": _rekeyed(branch.local_key)})
+        branches.append(branch)
+    return dataclasses.replace(plan, branches=tuple(branches))
 
 
 def _require_sides(
-    alignment: IdentityAlignment, sides: SideManifests | None
+    plan: IdentityPlan, sides: SideManifests | None
 ) -> SideManifests | None:
-    if sides is None and _member_keyed_resources(alignment):
+    if sides is None and _member_keyed_resources(plan):
         raise _conflict(
             "member-keyed sources without sides",
             "sources keyed by member class need the pre-merge side manifests "
@@ -430,20 +460,20 @@ def _require_sides(
 
 
 def resolve_derivation_levels(
-    alignment: IdentityAlignment,
+    plan: IdentityPlan,
     manifest: GraphManifest,
     *,
     productions: MemberProductions | None = None,
 ) -> dict[str, list[int]]:
     """Pipeline level each referenced resource derives at, keyed by resource.
 
-    A derivation must land at the level that produces the aligned class: an
-    actor reads its transform buffer at its own ``LocationIndex`` with no
-    ancestor fallback, and a ``descend`` subtree runs before its own level's
+    A derivation must land at the level that produces the class: an actor
+    reads its transform buffer at its own ``LocationIndex`` with no ancestor
+    fallback, and a ``descend`` subtree runs before its own level's
     transforms. Placing it anywhere else derives nothing, silently.
 
-    ``IdentityAlignment.at`` overrides the lookup. A member-keyed resource
-    takes the level its members are produced at (see
+    ``plan.at`` (the equivalence's ``derive_at``) overrides the lookup. A
+    member-keyed resource takes the level its members are produced at (see
     :func:`resolve_member_productions`). Otherwise a resource must produce the
     class at exactly one level — zero and several are both
     :class:`AlignmentConflictError`, because either answer the resolver could
@@ -452,16 +482,16 @@ def resolve_derivation_levels(
     pipelines = _resource_pipelines(manifest)
     known = _vertex_set(manifest)
     levels: dict[str, list[int]] = {}
-    for resource in sorted(_referenced_resources(alignment)):
+    for resource in sorted(_referenced_resources(plan)):
         pipeline = pipelines.get(resource, [])
-        if resource in alignment.at:
-            path = list(alignment.at[resource])
+        if resource in plan.at:
+            path = list(plan.at[resource])
             try:
                 level = resolve_pipeline_level(list(pipeline), path)
             except ValueError as exc:
                 raise _conflict(
                     "unresolvable level",
-                    f"`at` for resource {resource!r}: {exc}",
+                    f"`derive_at` for resource {resource!r}: {exc}",
                     "Each index must address a descend step; [] is the root level.",
                 ) from exc
             # An override that resolves but produces nothing is the failure this
@@ -469,23 +499,22 @@ def resolve_derivation_levels(
             # run, find no inputs, and skip without a word.
             if not any(
                 isinstance(step, dict)
-                and alignment.vertex
-                in step_produces_vertices(step, known_vertices=known)
+                and plan.vertex in step_produces_vertices(step, known_vertices=known)
                 for step in level
             ):
                 candidates = find_vertex_producing_levels(
-                    pipeline, alignment.vertex, known_vertices=known
+                    pipeline, plan.vertex, known_vertices=known
                 )
                 raise _conflict(
                     "level produces nothing",
-                    f"`at` sends resource {resource!r} derivations to level "
-                    f"{path or 'root'}, which produces no {alignment.vertex!r}",
+                    f"`derive_at` sends resource {resource!r} derivations to level "
+                    f"{path or 'root'}, which produces no {plan.vertex!r}",
                     (
                         f"A transform is only visible to actors at its own "
-                        f"level; {alignment.vertex!r} is produced at {candidates}."
+                        f"level; {plan.vertex!r} is produced at {candidates}."
                     )
                     if candidates
-                    else f"This resource never produces {alignment.vertex!r}.",
+                    else f"This resource never produces {plan.vertex!r}.",
                 )
             levels[resource] = path
             continue
@@ -497,35 +526,32 @@ def resolve_derivation_levels(
             continue
 
         candidates = find_vertex_producing_levels(
-            pipeline, alignment.vertex, known_vertices=known
+            pipeline, plan.vertex, known_vertices=known
         )
         if not candidates:
             raise _conflict(
                 "resource does not produce the class",
-                f"resource {resource!r} has no pipeline step producing "
-                f"{alignment.vertex!r}",
-                "An alignment derives canonical attributes for the documents "
-                "that become this class; a resource that never produces it has "
+                f"resource {resource!r} has no pipeline step producing {plan.vertex!r}",
+                "A derived branch computes an attribute for the documents that "
+                "become this class; a resource that never produces it has "
                 "nothing to derive.",
             )
         if len(candidates) > 1:
             raise _conflict(
                 "ambiguous level",
-                f"resource {resource!r} produces {alignment.vertex!r} at "
+                f"resource {resource!r} produces {plan.vertex!r} at "
                 f"levels {candidates}",
                 f"Derivation inputs live at one level. Pick it with "
-                f"IdentityAlignment(at={{{resource!r}: {candidates[0]}}}).",
+                f"derive_at={{{resource!r}: {candidates[0]}}} on the equivalence.",
             )
         levels[resource] = candidates[0]
     return levels
 
 
-def _referenced_resources(alignment: IdentityAlignment) -> set[str]:
-    names: set[str] = set(alignment.at)
-    for attribute in alignment.attributes:
-        names.update(attribute.sources)
-    if alignment.local_key is not None:
-        names.update(alignment.local_key.sources)
+def _referenced_resources(plan: IdentityPlan) -> set[str]:
+    names: set[str] = set(plan.at)
+    for branch in plan.stepped:
+        names.update(branch.sources)
     return names
 
 
@@ -585,21 +611,15 @@ def _class_guard(steps: list[dict], vertex: str) -> dict[str, Any] | None:
     return {"field": type_fields[0], "in": list(_routed_values(routers, vertex))}
 
 
-def _unkeyed_names(alignment: IdentityAlignment, resource: str) -> list[str]:
-    """Canonical attributes *resource* derives without a member key."""
-    names = [
-        attribute.name
-        for attribute in alignment.attributes
-        if resource in attribute.sources and attribute.members_for(resource) is None
+def _unguarded_names(plan: IdentityPlan, resource: str) -> list[str]:
+    """Attributes *resource* derives with neither a member key nor its own ``when``."""
+    return [
+        branch.name
+        for branch in plan.stepped
+        if resource in branch.sources
+        and branch.members_for(resource) is None
+        and all(spec.when is None for spec in _specs(branch, resource))
     ]
-    local_key = alignment.local_key
-    if (
-        local_key is not None
-        and resource in local_key.sources
-        and local_key.members_for(resource) is None
-    ):
-        names.append(local_key.name)
-    return names
 
 
 # --------------------------------------------------------------------------- #
@@ -607,8 +627,8 @@ def _unkeyed_names(alignment: IdentityAlignment, resource: str) -> list[str]:
 # --------------------------------------------------------------------------- #
 
 
-def validate_alignment(
-    alignment: IdentityAlignment,
+def validate_identity(
+    plan: IdentityPlan,
     manifest: GraphManifest,
     *,
     canonical_maps: Sequence[VocabularyMap] = (),
@@ -616,65 +636,64 @@ def validate_alignment(
     cluster_members: ClusterMembers | None = None,
     member_identity: Collection[str] | None = None,
     uncovered_producers: Literal["refuse", "allow"] = "refuse",
+    completes_property_branch: Callable[[str], bool] | None = None,
 ) -> None:
-    """Fail loudly when *alignment* contradicts *manifest* or the canonical maps.
+    """Fail loudly when *plan* contradicts *manifest* or the canonical maps.
 
-    *manifest* is the merged union the alignment ops will be applied to.
-    Pass the maps used to canonicalize the sides — declared
-    :class:`CanonicalMap`\\ s or the composite
-    :class:`~graflo.architecture.evolution.ops.CanonicalizeOp` merge applied — to catch
-    derivation inputs written in canonical vocabulary: renamed documents still
-    carry their raw field names, so a rename *target* used as a derivation
-    input reads an absent field and silently derives nothing.
+    *manifest* is the merged union the ops will be applied to. Pass the maps
+    used to canonicalize the sides — declared :class:`CanonicalMap`\\ s or the
+    composite :class:`~graflo.architecture.evolution.ops.CanonicalizeOp`
+    merge applied — to catch derivation inputs written in canonical
+    vocabulary: renamed documents still carry their raw field names, so a
+    rename *target* used as a derivation input reads an absent field and
+    silently derives nothing.
 
     *sides* are the pre-merge side manifests, required by member-keyed
-    sources; *cluster_members* are the aligned cluster's members per side,
-    which lets a member key be checked against the cluster it claims.
+    sources; *cluster_members* are the cluster's members per side, which lets
+    a member key be checked against the cluster it claims.
 
-    *member_identity* are the identity fields the aligned class's records
-    carry — for a merged class, its members' own pre-merge keys under their
-    canonical names. A target attribute named like one would overwrite that
-    key's value with the derived one. It defaults to the class's current
-    identity in *manifest*, which in a merge is only the intermediate one the
-    alignment replaces.
+    *member_identity* are the identity fields the class's records carry — for
+    a merged class, its members' own pre-merge keys under their canonical
+    names. A derived attribute named like one would overwrite that key's
+    value with the derived one. It defaults to the class's current identity
+    in *manifest*.
 
     *uncovered_producers* decides a resource that upserts the class but
     derives none of its key (see :func:`uncovered_producers`): ``refuse`` it,
     or ``allow`` it for a caller that turns it into a reference -- merge does,
     once the member keys it can look the class up by exist.
+    *completes_property_branch* says whether a resource's records complete
+    one of the plan's property branches; see :func:`uncovered_producers`.
     """
     schema = manifest.graph_schema
     if schema is None:
-        raise AlignmentConflictError("identity alignment requires graph_schema")
+        raise AlignmentConflictError("a derived identity requires graph_schema")
     vertex_config = schema.core_schema.vertex_config
-    if alignment.vertex not in vertex_config.vertex_set:
+    if plan.vertex not in vertex_config.vertex_set:
         raise _conflict(
             "unknown vertex",
-            f"{alignment.vertex!r} is not defined in the manifest",
+            f"{plan.vertex!r} is not defined in the manifest",
             f"Defined: {sorted(vertex_config.vertex_set)}.",
         )
     if manifest.ingestion_model is None:
         raise AlignmentConflictError(
-            "identity alignment requires ingestion_model — derivations are "
+            "a derived identity requires ingestion_model — derivations are "
             "resource pipeline steps"
         )
     known_resources = {r.name for r in manifest.ingestion_model.resources}
 
-    resource_refs: set[str] = set()
+    resource_refs: set[str] = set(plan.at)
     raw_inputs: dict[str, list[str]] = {}
-    for attribute in alignment.attributes:
-        resource_refs.update(attribute.sources)
-        for resource in attribute.sources:
-            for spec in attribute.specs_for(resource):
-                raw_inputs.setdefault(resource, []).extend(spec.input)
-    if alignment.local_key is not None:
-        resource_refs.update(alignment.local_key.sources)
-        for resource in alignment.local_key.sources:
-            for src in alignment.local_key.sources_for(resource):
-                raw_inputs.setdefault(resource, []).append(src.field)
-                if src.gate is not None:
-                    raw_inputs.setdefault(resource, []).append(src.gate)
-    resource_refs.update(alignment.at)
+    for branch in plan.stepped:
+        resource_refs.update(branch.sources)
+        for resource in branch.sources:
+            for spec in _specs(branch, resource):
+                fields = raw_inputs.setdefault(resource, [])
+                fields.extend(
+                    spec.input if isinstance(spec, DerivationSpec) else [spec.field]
+                )
+                if spec.when is not None:
+                    fields.append(spec.when.field)
 
     missing = sorted(resource_refs - known_resources)
     if missing:
@@ -684,10 +703,8 @@ def validate_alignment(
             f"Defined: {sorted(known_resources)}.",
         )
 
-    sides = _require_sides(alignment, sides)
-    productions = (
-        resolve_member_productions(alignment, sides) if sides is not None else {}
-    )
+    sides = _require_sides(plan, sides)
+    productions = resolve_member_productions(plan, sides) if sides is not None else {}
     for resource, per_member in productions.items():
         assert sides is not None
         side, _ = _side_of(resource, sides)
@@ -699,7 +716,7 @@ def validate_alignment(
                     "member outside the cluster",
                     f"resource {resource!r} ({side}) keys derivations by "
                     f"{outside}, which are not members of the "
-                    f"{alignment.vertex!r} cluster on that side",
+                    f"{plan.vertex!r} cluster on that side",
                     f"Members on the {side}: {sorted(allowed)}.",
                 )
         for production in per_member.values():
@@ -709,31 +726,29 @@ def validate_alignment(
     current_identity = set(
         member_identity
         if member_identity is not None
-        else vertex_config.identity_fields(alignment.vertex)
+        else vertex_config.identity_fields(plan.vertex)
     )
-    into_names = [attribute.name for attribute in alignment.attributes]
-    if alignment.local_key is not None:
-        into_names.append(alignment.local_key.name)
-    colliding = sorted(set(into_names) & current_identity)
+    colliding = sorted(set(plan.derived_names()) & current_identity)
     if colliding:
         raise _conflict(
             "identity collision",
-            f"target attributes {colliding} are already identity fields of "
-            f"{alignment.vertex!r}'s records",
-            "Pick canonical attribute names distinct from the current key; "
-            "the alignment replaces the identity wholesale.",
+            f"derived attributes {colliding} are already identity fields of "
+            f"{plan.vertex!r}'s records",
+            "Pick attribute names distinct from the members' own keys; a "
+            "derivation would overwrite the key's value. To key on a member's "
+            "own key, list it as a property branch.",
         )
 
-    declared = set(vertex_config.property_names(alignment.vertex))
-    for name, fields in alignment.secondary_identities.items():
-        undeclared = sorted(set(fields) - declared)
-        if undeclared:
-            raise _conflict(
-                "undeclared secondary fields",
-                f"secondary identity {name!r} references {undeclared}, not "
-                f"declared on {alignment.vertex!r}",
-                "Secondary identities index existing properties.",
-            )
+    declared = set(vertex_config.property_names(plan.vertex))
+    undeclared = sorted({f for fields in plan.raw for f in fields} - declared)
+    if undeclared:
+        raise _conflict(
+            "undeclared property branch",
+            f"property branches name {undeclared}, which {plan.vertex!r} does "
+            "not declare",
+            "A property branch keys on a property the members carry, under "
+            "its canonical name.",
+        )
 
     rename_targets = _canonical_rename_targets(tuple(canonical_maps))
     if rename_targets:
@@ -753,61 +768,31 @@ def validate_alignment(
                     "transform inputs).",
                 )
 
-    levels = resolve_derivation_levels(alignment, manifest, productions=productions)
+    levels = resolve_derivation_levels(plan, manifest, productions=productions)
     if uncovered_producers == "refuse":
-        _check_uncovered_producers(alignment, manifest)
-    _check_derivation_signatures(alignment)
-
-    # Scratch fields exist only for the column-presence (list) form; a
-    # member-keyed derivation is the single writer of its attribute.
-    scratch_names = {
-        _scratch_name(attribute.name, index)
-        for attribute in alignment.attributes
-        for resource in attribute.sources
-        if attribute.members_for(resource) is None
-        and len(attribute.specs_for(resource)) > 1
-        for index in range(len(attribute.specs_for(resource)))
-    }
-    if alignment.local_key is not None:
-        scratch_names |= {
-            _scratch_name(alignment.local_key.name, index)
-            for resource in alignment.local_key.sources
-            if alignment.local_key.members_for(resource) is None
-            and len(alignment.local_key.sources_for(resource)) > 1
-            for index in range(len(alignment.local_key.sources_for(resource)))
-        }
-    colliding_scratch = sorted(scratch_names & declared)
-    if colliding_scratch:
-        raise _conflict(
-            "scratch name collision",
-            f"multi-branch derivations would write {colliding_scratch}, which "
-            f"are declared properties of {alignment.vertex!r}",
-            "Rename the property, or the canonical attribute the scratch "
-            "names are derived from.",
-        )
+        _check_uncovered_producers(plan, manifest, completes_property_branch)
+    _check_derivation_signatures(plan)
 
     for resource, path in sorted(levels.items()):
-        steps = _producing_steps(manifest, resource, path, alignment.vertex)
+        steps = _producing_steps(manifest, resource, path, plan.vertex)
         unguarded = (
-            _unkeyed_names(alignment, resource)
-            if _class_guard(steps, alignment.vertex) is None
+            _unguarded_names(plan, resource)
+            if _class_guard(steps, plan.vertex) is None
             else []
         )
         for step in steps:
             if unguarded:
-                _check_sibling_classes(alignment, manifest, step, resource, unguarded)
-            _warn_on_one_derivation_for_several_members(alignment, step, resource)
+                _check_sibling_classes(plan, manifest, step, resource, unguarded)
+            _warn_on_one_derivation_for_several_members(plan, step, resource)
     if sides is not None and cluster_members is not None:
         for resource in productions:
-            _warn_on_partial_member_coverage(
-                alignment, resource, sides, cluster_members
-            )
+            _warn_on_partial_member_coverage(plan, resource, sides, cluster_members)
 
-    if alignment.local_key is None:
+    if plan.local_key is None and not plan.raw:
         logger.warning(
-            "identity alignment for %r has no local_key: records matching no "
-            "aligned attribute complete no funnel branch and are dropped",
-            alignment.vertex,
+            "identity for %r has no local_key branch: records deriving none of "
+            "its attributes complete no funnel branch and are dropped",
+            plan.vertex,
         )
 
 
@@ -851,45 +836,61 @@ def _raw_properties(
 
 
 def uncovered_producers(
-    alignment: IdentityAlignment, manifest: GraphManifest
+    plan: IdentityPlan,
+    manifest: GraphManifest,
+    *,
+    completes_property_branch: Callable[[str], bool] | None = None,
 ) -> list[str]:
-    """Resources that upsert the aligned class but derive none of its key, sorted.
+    """Resources that upsert the class but can complete none of its key, sorted.
 
-    Every record of the class keys on the funnel over the alignment's
-    attributes. A resource the alignment never names derives none of them, so
+    Every record of the class keys on the funnel over the plan's branches. A
+    resource no derived branch names derives none of their attributes, so
     each record it upserts completes no branch and is dropped -- the whole
-    resource, and every edge it emits to the class. A resource whose steps
+    resource, and every edge it emits to the class -- unless it completes a
+    property branch. *completes_property_branch* answers that per resource
+    (merge knows each member's properties); without it, a plan with any
+    property branch is taken to cover every resource. A resource whose steps
     producing the class only look it up (``lookup_only``, on a vertex step or
     a router) upserts nothing and is not listed.
     """
-    covered = _referenced_resources(alignment)
+    covered = _referenced_resources(plan)
     known = _vertex_set(manifest)
-    return [
-        resource
-        for resource, pipeline in sorted(_resource_pipelines(manifest).items())
-        if resource not in covered
-        and any(
-            not step_looks_up(step, alignment.vertex)
-            for step in _steps_producing_anywhere(pipeline, alignment.vertex, known)
-        )
-    ]
+    out: list[str] = []
+    for resource, pipeline in sorted(_resource_pipelines(manifest).items()):
+        if resource in covered:
+            continue
+        if not any(
+            not step_looks_up(step, plan.vertex)
+            for step in _steps_producing_anywhere(pipeline, plan.vertex, known)
+        ):
+            continue
+        if plan.raw and (
+            completes_property_branch is None or completes_property_branch(resource)
+        ):
+            continue
+        out.append(resource)
+    return out
 
 
 def _check_uncovered_producers(
-    alignment: IdentityAlignment, manifest: GraphManifest
+    plan: IdentityPlan,
+    manifest: GraphManifest,
+    completes_property_branch: Callable[[str], bool] | None,
 ) -> None:
-    """Refuse the :func:`uncovered_producers` of *alignment*, all of them at once."""
-    uncovered = uncovered_producers(alignment, manifest)
+    """Refuse the :func:`uncovered_producers` of *plan*, all of them at once."""
+    uncovered = uncovered_producers(
+        plan, manifest, completes_property_branch=completes_property_branch
+    )
     if uncovered:
         raise _conflict(
             "uncovered producer",
-            f"resources {uncovered} produce {alignment.vertex!r} but the "
-            "alignment derives none of its funnel attributes there, so every "
-            "record they upsert would complete no branch and be dropped",
-            "Add a resource whose rows carry the aligned inputs to an "
-            "attribute's sources; mark the step of one that only references the "
-            "class `lookup_only` (on a vertex_router, `lookup_only: "
-            f"[{alignment.vertex}]`). Merge does the latter itself.",
+            f"resources {uncovered} produce {plan.vertex!r} but derive none of "
+            "its identity branches there, so every record they upsert would "
+            "complete no branch and be dropped",
+            "Add a resource whose rows carry the inputs to a derived branch's "
+            "sources; mark the step of one that only references the class "
+            "`lookup_only` (on a vertex_router, `lookup_only: "
+            f"[{plan.vertex}]`). Merge does the latter itself.",
         )
 
 
@@ -911,7 +912,7 @@ def _steps_producing_anywhere(
     return out
 
 
-def _check_derivation_signatures(alignment: IdentityAlignment) -> None:
+def _check_derivation_signatures(plan: IdentityPlan) -> None:
     """Refuse a derivation whose function cannot take its inputs and parameters.
 
     The call is ``foo(*input, **params)``. One that cannot bind fails for
@@ -923,15 +924,15 @@ def _check_derivation_signatures(alignment: IdentityAlignment) -> None:
     import importlib
     import inspect
 
-    for attribute in alignment.attributes:
-        for resource in attribute.sources:
-            for spec in attribute.specs_for(resource):
+    for branch in plan.derived:
+        for resource in branch.sources:
+            for spec in branch.specs_for(resource):
                 try:
                     function = getattr(importlib.import_module(spec.module), spec.foo)
                 except (ImportError, AttributeError) as exc:
                     raise _conflict(
                         "derivation signature",
-                        f"resource {resource!r} derives {attribute.name!r} with "
+                        f"resource {resource!r} derives {branch.name!r} with "
                         f"{spec.module}.{spec.foo}, which cannot be imported ({exc})",
                         "Name a function the module defines.",
                     ) from exc
@@ -944,31 +945,32 @@ def _check_derivation_signatures(alignment: IdentityAlignment) -> None:
                 except TypeError as exc:
                     raise _conflict(
                         "derivation signature",
-                        f"resource {resource!r} derives {attribute.name!r} as "
+                        f"resource {resource!r} derives {branch.name!r} as "
                         f"{spec.foo}(*{spec.input}, **{spec.params}), which "
                         f"{spec.foo}{signature} cannot take ({exc})",
                         "Give `input` one field per positional parameter — "
-                        "`normalized_key` takes one, `gated_normalized_key` a "
-                        "gate and a value.",
+                        "`normalized_key` (the default) takes one, "
+                        "`gated_normalized_key` a gate and a value.",
                     ) from exc
 
 
 def _check_sibling_classes(
-    alignment: IdentityAlignment,
+    plan: IdentityPlan,
     manifest: GraphManifest,
     step: dict,
     resource: str,
     into_names: list[str],
 ) -> None:
-    """Refuse a canonical attribute name another routed class also declares.
+    """Refuse a derived attribute name another routed class also declares.
 
     Only for a derivation that lowers unguarded — the level also produces the
     class through a plain ``vertex`` step, or its routers read different
-    discriminators. A router hands the whole merged observation to whichever
-    class it selects, and extraction keeps a class's declared properties, so a
-    sibling class declaring one of the names would silently absorb the value
-    derived for the aligned class. A guarded derivation never runs for the
-    sibling's documents and needs none of this.
+    discriminators, and the spec sets no ``when`` of its own. A router hands
+    the whole merged observation to whichever class it selects, and
+    extraction keeps a class's declared properties, so a sibling class
+    declaring one of the names would silently absorb the value derived for
+    this class. A guarded derivation never runs for the sibling's documents
+    and needs none of this.
     """
     if step.get("type") != "vertex_router":
         return
@@ -976,7 +978,7 @@ def _check_sibling_classes(
     assert schema is not None
     vertex_config = schema.core_schema.vertex_config
     siblings = step_produces_vertices(step, known_vertices=vertex_config.vertex_set) - {
-        alignment.vertex
+        plan.vertex
     }
     for sibling in sorted(siblings):
         if sibling not in vertex_config.vertex_set:
@@ -986,15 +988,15 @@ def _check_sibling_classes(
             raise _conflict(
                 "canonical attribute claimed by a sibling class",
                 f"resource {resource!r} routes to {sibling!r} at the same level "
-                f"as {alignment.vertex!r}, and {sibling!r} declares {shared}",
+                f"as {plan.vertex!r}, and {sibling!r} declares {shared}",
                 f"A router passes one observation to whichever class it picks, "
                 f"so {sibling!r} would absorb the derived value. Rename the "
-                f"canonical attribute, or the property on {sibling!r}.",
+                f"derived attribute, or the property on {sibling!r}.",
             )
 
 
 def _warn_on_one_derivation_for_several_members(
-    alignment: IdentityAlignment, step: dict, resource: str
+    plan: IdentityPlan, step: dict, resource: str
 ) -> None:
     """Flag a router folding several members onto the class with one derivation.
 
@@ -1004,37 +1006,29 @@ def _warn_on_one_derivation_for_several_members(
     if step.get("type") != "vertex_router":
         return
     type_map = step.get("type_map") or {}
-    branches = sorted(k for k, v in type_map.items() if v == alignment.vertex)
-    if len(branches) < 2:
+    routed = sorted(k for k, v in type_map.items() if v == plan.vertex)
+    if len(routed) < 2:
         return
     single = [
-        attribute.name
-        for attribute in alignment.attributes
-        if attribute.members_for(resource) is None
-        and len(attribute.specs_for(resource)) == 1
+        branch.name
+        for branch in plan.stepped
+        if resource in branch.sources and branch.members_for(resource) is None
     ]
-    local_key = alignment.local_key
-    if (
-        local_key is not None
-        and local_key.members_for(resource) is None
-        and len(local_key.sources_for(resource)) == 1
-    ):
-        single.append(local_key.name)
     if single:
         logger.warning(
-            "identity alignment for %r: resource %r routes %s onto %r but "
-            "derives %s one way — correct when those members share a key "
-            "column, otherwise key the derivation by member",
-            alignment.vertex,
+            "identity for %r: resource %r routes %s onto %r but derives %s one "
+            "way — correct when those members share a key column, otherwise "
+            "key the derivation by member",
+            plan.vertex,
             resource,
-            branches,
-            alignment.vertex,
+            routed,
+            plan.vertex,
             single,
         )
 
 
 def _warn_on_partial_member_coverage(
-    alignment: IdentityAlignment,
+    plan: IdentityPlan,
     resource: str,
     sides: SideManifests,
     cluster_members: ClusterMembers,
@@ -1045,30 +1039,25 @@ def _warn_on_partial_member_coverage(
     funnel branch they complete — possibly intended, never silent.
     """
     side, manifest = _side_of(resource, sides)
-    produced = _produced_vertices(_resource_pipelines(manifest)[resource])
+    produced = _produced_vertices(
+        _resource_pipelines(manifest)[resource], known_vertices=_vertex_set(manifest)
+    )
     in_cluster = produced & set(cluster_members.get(side, ()))
-    targets: list[tuple[str, list[str] | None]] = [
-        (attribute.name, attribute.members_for(resource))
-        for attribute in alignment.attributes
-    ]
-    if alignment.local_key is not None:
-        targets.append(
-            (alignment.local_key.name, alignment.local_key.members_for(resource))
-        )
-    for into, members in targets:
+    for branch in plan.stepped:
+        members = branch.members_for(resource)
         if members is None:
             continue
         uncovered = sorted(in_cluster - set(members))
         if uncovered:
             logger.warning(
-                "identity alignment for %r: resource %r produces %s but derives "
-                "%r only for %s — records of the uncovered members carry no %r",
-                alignment.vertex,
+                "identity for %r: resource %r produces %s but derives %r only "
+                "for %s — records of the uncovered members carry no %r",
+                plan.vertex,
                 resource,
                 sorted(in_cluster),
-                into,
+                branch.name,
                 sorted(members),
-                into,
+                branch.name,
             )
 
 
@@ -1077,8 +1066,8 @@ def _warn_on_partial_member_coverage(
 # --------------------------------------------------------------------------- #
 
 
-def alignment_to_ops(
-    alignment: IdentityAlignment,
+def identity_to_ops(
+    plan: IdentityPlan,
     *,
     manifest: GraphManifest | None = None,
     canonical_maps: Sequence[VocabularyMap] = (),
@@ -1086,39 +1075,37 @@ def alignment_to_ops(
     cluster_members: ClusterMembers | None = None,
     member_identity: Collection[str] | None = None,
     uncovered_producers: Literal["refuse", "allow"] = "refuse",
+    completes_property_branch: Callable[[str], bool] | None = None,
 ) -> list[ManifestOp]:
-    """Merge the alignment into an ordered list of fundamental ops.
+    """Lower *plan* to an ordered list of fundamental ops.
 
     Apply the result to the merged union with
     :func:`~graflo.architecture.evolution.apply.apply_evolution`. When
-    *manifest* is given, :func:`validate_alignment` runs first. Member-keyed
+    *manifest* is given, :func:`validate_identity` runs first. Member-keyed
     sources need *sides* (the pre-merge manifests) to resolve how each
     resource produces each member; ``merge_manifests`` passes them.
     """
     if manifest is not None:
-        validate_alignment(
-            alignment,
+        validate_identity(
+            plan,
             manifest,
             canonical_maps=canonical_maps,
             sides=sides,
             cluster_members=cluster_members,
             member_identity=member_identity,
             uncovered_producers=uncovered_producers,
+            completes_property_branch=completes_property_branch,
         )
-    sides = _require_sides(alignment, sides)
-    productions = (
-        resolve_member_productions(alignment, sides) if sides is not None else {}
-    )
+    sides = _require_sides(plan, sides)
+    productions = resolve_member_productions(plan, sides) if sides is not None else {}
 
     ops: list[ManifestOp] = []
-
-    into_names = [attribute.name for attribute in alignment.attributes]
-    if alignment.local_key is not None:
-        into_names.append(alignment.local_key.name)
-    ops.append(AddVertexPropertiesOp(additions={alignment.vertex: list(into_names)}))
+    into_names = plan.derived_names()
+    if into_names:
+        ops.append(AddVertexPropertiesOp(additions={plan.vertex: list(into_names)}))
 
     if manifest is not None:
-        levels = resolve_derivation_levels(alignment, manifest, productions=productions)
+        levels = resolve_derivation_levels(plan, manifest, productions=productions)
     else:
         levels = {
             resource: list(next(iter(per_member.values())).level)
@@ -1130,60 +1117,52 @@ def alignment_to_ops(
     class_guards: dict[str, dict[str, Any] | None] = {}
     if manifest is not None:
         for resource, path in levels.items():
-            steps = _producing_steps(manifest, resource, path, alignment.vertex)
-            class_guards[resource] = _class_guard(steps, alignment.vertex)
+            steps = _producing_steps(manifest, resource, path, plan.vertex)
+            class_guards[resource] = _class_guard(steps, plan.vertex)
 
     additions: dict[str, list[dict[str, Any]]] = {}
-    for attribute in alignment.attributes:
-        for resource in attribute.sources:
+    for branch in plan.stepped:
+        for resource in branch.sources:
             additions.setdefault(resource, []).extend(
-                _derivation_steps(
-                    attribute.name,
-                    attribute.specs_for(resource),
-                    guards=_guards(
-                        productions, resource, attribute.members_for(resource)
-                    ),
-                    when=class_guards.get(resource),
+                _branch_steps(
+                    branch,
+                    resource,
+                    productions=productions,
+                    class_guard=class_guards.get(resource),
                 )
             )
-    if alignment.local_key is not None:
-        local_key = alignment.local_key
-        for resource in local_key.sources:
-            additions.setdefault(resource, []).extend(
-                _local_key_steps(
-                    local_key,
-                    local_key.sources_for(resource),
-                    guards=_guards(
-                        productions, resource, local_key.members_for(resource)
-                    ),
-                    when=class_guards.get(resource),
-                )
+    if additions:
+        ops.append(
+            AddResourceTransformsOp(
+                additions=additions,
+                at={
+                    resource: path
+                    for resource, path in levels.items()
+                    if path and resource in additions
+                },
             )
-    ops.append(
-        AddResourceTransformsOp(
-            additions=additions,
-            at={
-                resource: path
-                for resource, path in levels.items()
-                if path and resource in additions
-            },
         )
-    )
 
-    if manifest is not None:
-        ensure = _ensure_extracted_fields_op(alignment, manifest, levels, into_names)
+    if manifest is not None and into_names:
+        ensure = _ensure_extracted_fields_op(plan, manifest, levels, into_names)
         if ensure is not None:
             ops.append(ensure)
 
-    # Always a funnel, even for a single attribute: gating means presence is never
-    # guaranteed, and include_branch_id keeps branches collision-free.
-    branches = [IdentityBranch(id=name, fields=[name]) for name in into_names]
+    # One property branch is a natural key; anything else is a funnel, because
+    # a derived attribute is never guaranteed present and include_branch_id
+    # keeps branches over equal values apart.
+    if len(plan.branches) == 1 and not plan.stepped:
+        target: FunnelIdentityTarget | NaturalIdentityTarget = NaturalIdentityTarget(
+            identity=list(plan.raw[0])
+        )
+    else:
+        target = FunnelIdentityTarget(funnel=plan.funnel())
     ops.append(
         ReplaceIdentityOp(
             replacements={
-                alignment.vertex: IdentityReplacement(
-                    to=FunnelIdentityTarget(funnel=IdentityFunnel(branches=branches)),
-                    # The pre-alignment identity on a merged class is the
+                plan.vertex: IdentityReplacement(
+                    to=target,
+                    # The pre-lowering identity on a merged class is the
                     # merged union of the side keys — a field-set no record
                     # carries. Demoting it would index nothing; merge demotes
                     # the per-member keys once this funnel is in place.
@@ -1192,31 +1171,7 @@ def alignment_to_ops(
             }
         )
     )
-
-    if alignment.secondary_identities:
-        ops.append(
-            AddSecondaryIdentitiesOp(
-                additions={
-                    alignment.vertex: [
-                        SecondaryIdentity(name=name, fields=list(fields))
-                        for name, fields in sorted(
-                            alignment.secondary_identities.items()
-                        )
-                    ]
-                }
-            )
-        )
-
     return ops
-
-
-def _guards(
-    productions: MemberProductions, resource: str, members: list[str] | None
-) -> list[dict[str, Any] | None] | None:
-    """One guard per keyed member (``None`` for a plain ``vertex`` producer)."""
-    if members is None:
-        return None
-    return [productions[resource][member].guard() for member in members]
 
 
 def _call_step(
@@ -1225,8 +1180,7 @@ def _call_step(
     foo: str,
     params: dict[str, Any],
     output: str,
-    input_fields: list[str] | None = None,
-    strategy: str | None = None,
+    input_fields: list[str],
     when: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     call: dict[str, Any] = {
@@ -1234,172 +1188,75 @@ def _call_step(
         "foo": foo,
         "params": params,
         "output": [output],
+        "input": list(input_fields),
     }
-    if input_fields is not None:
-        call["input"] = list(input_fields)
-    if strategy is not None:
-        call["strategy"] = strategy
     transform: dict[str, Any] = {"call": call}
     if when is not None:
         transform["when"] = when
     return {"transform": transform}
 
 
-def _coalesce_step(
-    into: str, count: int, *, when: dict[str, Any] | None = None
-) -> dict[str, Any]:
-    """The single writer of *into*, picking whichever column-presence branch fired.
-
-    ``strategy: all`` hands the function the whole merged observation and
-    empties the missing-input guard, so a branch whose own columns are absent
-    from a document skips without taking the coalesce down with it. Behind a
-    router it carries the class guard like the branches: unguarded, it would
-    write ``None`` into every other class's documents.
-    """
-    return _call_step(
-        module="graflo.util.transform",
-        foo="coalesce_fields",
-        params={"fields": [_scratch_name(into, i) for i in range(count)]},
-        output=into,
-        strategy="all",
-        when=when,
-    )
-
-
-def _derivation_steps(
-    into: str,
-    specs: list[DerivationSpec],
+def _branch_steps(
+    branch: SteppedBranch,
+    resource: str,
     *,
-    guards: list[dict[str, Any] | None] | None = None,
-    when: dict[str, Any] | None = None,
+    productions: MemberProductions,
+    class_guard: dict[str, Any] | None,
 ) -> list[dict[str, Any]]:
-    """Steps deriving *into* from *specs*, in order.
+    """The steps *resource* derives *branch*'s attribute with, in order.
 
-    Member-keyed (*guards* given): one step per member, each the single writer
-    of *into* for the documents its guard admits — a guarded step that does
-    not fire writes nothing, so nothing clobbers.
-
-    Otherwise one spec writes ``into`` directly, and several (the
-    column-presence form) write scratch fields that a coalesce reduces: two
-    steps writing ``into`` would clobber behind a ``vertex_router``, which
-    merges the transform buffer into one observation dict where a later
-    ``None`` overwrites an earlier real value. *when* is the class guard a
-    router-produced level supplies; every unkeyed step carries it, so the
-    derivation runs for no other class's documents.
+    One step per spec, each the single writer of the attribute for the
+    documents its guard admits: a guarded step that does not fire writes
+    nothing, so nothing clobbers behind a ``vertex_router`` (which merges the
+    transform buffer into one observation dict, where a later ``None`` would
+    overwrite an earlier real value). A member-keyed spec is guarded by its
+    member's production; an unkeyed one by its own ``when``, else by the class
+    guard a router-produced level supplies.
     """
-    if guards is not None:
-        return [
-            _call_step(
-                module=spec.module,
-                foo=spec.foo,
-                params=dict(spec.params),
-                output=into,
-                input_fields=list(spec.input),
-                when=guard,
-            )
-            for spec, guard in zip(specs, guards, strict=True)
+    members = branch.members_for(resource)
+    specs = _specs(branch, resource)
+    if members is not None:
+        guards = [productions[resource][member].guard() for member in members]
+    else:
+        guards = [
+            _guard_dict(spec.when) if spec.when is not None else class_guard
+            for spec in specs
         ]
-    if len(specs) == 1:
-        spec = specs[0]
-        return [
-            _call_step(
-                module=spec.module,
-                foo=spec.foo,
-                params=dict(spec.params),
-                output=into,
-                input_fields=list(spec.input),
-                when=when,
-            )
-        ]
-    steps = [
-        _call_step(
-            module=spec.module,
-            foo=spec.foo,
-            params=dict(spec.params),
-            output=_scratch_name(into, index),
-            input_fields=list(spec.input),
-            when=when,
-        )
-        for index, spec in enumerate(specs)
-    ]
-    steps.append(_coalesce_step(into, len(specs), when=when))
-    return steps
-
-
-def _local_key_call(src: LocalKeySource, sep: str) -> tuple[str, dict, list[str]]:
-    """``(foo, params, input)`` for one local-key source, gated or not."""
-    if src.gate is None:
-        return "tagged_key", {"tag": src.tag, "sep": sep}, [src.field]
-    return (
-        "gated_tagged_key",
-        {"tag": src.tag, "sep": sep, "prefix": src.gate_prefix},
-        [src.gate, src.field],
-    )
-
-
-def _local_key_steps(
-    local_key: LocalKeySpec,
-    sources: list[LocalKeySource],
-    *,
-    guards: list[dict[str, Any] | None] | None = None,
-    when: dict[str, Any] | None = None,
-) -> list[dict[str, Any]]:
-    """Steps filling the local-key fallback for one resource, in order.
-
-    *when* is the class guard of a router-produced level, carried by every
-    unkeyed step; a source's own ``gate`` stays the function's admission test.
-    """
-    if guards is not None:
-        steps = []
-        for src, guard in zip(sources, guards, strict=True):
-            foo, params, input_fields = _local_key_call(src, local_key.sep)
+    steps: list[dict[str, Any]] = []
+    for spec, guard in zip(specs, guards, strict=True):
+        if isinstance(spec, DerivationSpec):
             steps.append(
                 _call_step(
-                    module="graflo.util.transform",
-                    foo=foo,
-                    params=params,
-                    output=local_key.name,
-                    input_fields=input_fields,
+                    module=spec.module,
+                    foo=spec.foo,
+                    params=dict(spec.params),
+                    output=branch.name,
+                    input_fields=list(spec.input),
                     when=guard,
                 )
             )
-        return steps
-    if len(sources) == 1:
-        foo, params, input_fields = _local_key_call(sources[0], local_key.sep)
-        return [
-            _call_step(
-                module="graflo.util.transform",
-                foo=foo,
-                params=params,
-                output=local_key.name,
-                input_fields=input_fields,
-                when=when,
+        else:
+            assert isinstance(branch, LocalKeyBranch)
+            steps.append(
+                _call_step(
+                    module="graflo.util.transform",
+                    foo="tagged_key",
+                    params={"tag": spec.tag, "sep": branch.sep},
+                    output=branch.name,
+                    input_fields=[spec.field],
+                    when=guard,
+                )
             )
-        ]
-    steps = []
-    for index, src in enumerate(sources):
-        foo, params, input_fields = _local_key_call(src, local_key.sep)
-        steps.append(
-            _call_step(
-                module="graflo.util.transform",
-                foo=foo,
-                params=params,
-                output=_scratch_name(local_key.name, index),
-                input_fields=input_fields,
-                when=when,
-            )
-        )
-    steps.append(_coalesce_step(local_key.name, len(sources), when=when))
     return steps
 
 
 def _ensure_extracted_fields_op(
-    alignment: IdentityAlignment,
+    plan: IdentityPlan,
     manifest: GraphManifest,
     levels: dict[str, list[int]],
     into_names: list[str],
 ) -> EnsureExtractedFieldsOp | None:
-    """Widen restrictive routers so the canonical attributes reach the class.
+    """Widen restrictive routers so the derived attributes reach the class.
 
     Only routers need this. A router's child ``VertexActor`` runs at a
     ``LocationIndex`` whose transform buffer is empty, so derived attributes
@@ -1409,7 +1266,7 @@ def _ensure_extracted_fields_op(
     """
     additions: dict[str, list[EnsureExtractedFields]] = {}
     for resource, path in sorted(levels.items()):
-        for step in _producing_steps(manifest, resource, path, alignment.vertex):
+        for step in _producing_steps(manifest, resource, path, plan.vertex):
             if step.get("type") != "vertex_router":
                 continue
             if step.get("keep_fields") is None and (
@@ -1418,7 +1275,7 @@ def _ensure_extracted_fields_op(
                 continue
             additions.setdefault(resource, []).append(
                 EnsureExtractedFields(
-                    vertex=alignment.vertex, fields=list(into_names), at=list(path)
+                    vertex=plan.vertex, fields=list(into_names), at=list(path)
                 )
             )
     if not additions:

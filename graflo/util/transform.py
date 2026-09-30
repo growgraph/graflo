@@ -567,7 +567,7 @@ def normalized_key(
 ) -> str | None:
     """Return *value* in the normal form :func:`gated_normalized_key` emits, ungated.
 
-    The single-input derivation for an identity alignment every record of a
+    The single-input derivation for a derived identity branch every record of a
     source takes part in: aligning ``Acme`` from one side with `` ACME `` from
     the other needs a shared normal form, not a gate. Sharing the normal form
     with :func:`gated_normalized_key` means a gated source and an ungated one
@@ -689,29 +689,15 @@ def tagged_key(value: object, *, tag: str | None, sep: str = ":") -> str | None:
 def coalesce_fields(doc: dict[str, Any], *, fields: list[str]) -> Any:
     """First non-empty value among *fields* on *doc*, or ``None``.
 
-    The branch selector for the column-presence form of a routed derivation.
-    When one resource derives a canonical attribute several ways — one per
-    class its ``vertex_router`` collapses onto the aligned class, each keying
-    from its own column — each derivation writes its own scratch field and
-    returns ``None`` for the branches it does not serve. This picks the one
-    that fired. (A derivation keyed by *member* needs none of this: its step
-    carries a ``when`` guard and writes the attribute directly.)
-
-    A single writer per canonical attribute is the point. Two steps writing the
-    same key work on a plain ``vertex`` step, whose buffer extraction skips
-    ``None``, but not behind a ``vertex_router``: the router merges the buffer
-    into one observation dict, where a later ``None`` overwrites an earlier
-    real value.
-
-    Called with ``strategy: all``, so a branch whose own columns are absent
-    from the document skips without taking the coalesce down with it.
+    Called with ``strategy: all``, so it reads the whole observation and a
+    field absent from the document is skipped rather than failing the step.
 
     Args:
         doc: The merged observation.
-        fields: Scratch field names, in priority order.
+        fields: Field names, in priority order.
 
     Returns:
-        The first present, non-empty value, or ``None`` when none fired.
+        The first present, non-empty value, or ``None`` when there is none.
     """
     for field in fields:
         value = doc.get(field)
@@ -721,38 +707,3 @@ def coalesce_fields(doc: dict[str, Any], *, fields: list[str]) -> Any:
             continue
         return value
     return None
-
-
-def gated_tagged_key(
-    gate: str | None,
-    value: object,
-    *,
-    tag: str | None,
-    sep: str = ":",
-    prefix: str = "",
-) -> str | None:
-    """:func:`tagged_key` behind a gate, for a routed source.
-
-    When one resource contributes several side-local keys — one per class its
-    ``vertex_router`` collapses onto the aligned class — the router's
-    discriminator selects which one applies. ``None`` when the gate does not
-    match, which is an empty value to identity digests. This is the explicit,
-    hand-written form (``LocalKeySource.gate``); a source keyed by member gets
-    its gate derived from the router as a ``when`` guard on the step instead.
-
-    Args:
-        gate: Field deciding which branch this document is (the discriminator).
-        value: The side-local key material.
-        tag: Namespace prefix identifying the branch; empty for none.
-        sep: Separator between *tag* and the key.
-        prefix: Required prefix of *gate*; ``""`` always passes.
-
-    Returns:
-        ``f"{tag}{sep}{key}"``, or ``None`` when the gate fails or *value* is
-        missing or empty.
-    """
-    if gate is None:
-        return None
-    if not str(gate).startswith(prefix):
-        return None
-    return tagged_key(value, tag=tag, sep=sep)

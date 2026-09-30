@@ -6,18 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [Unreleased]
+## [1.14.1]
 
 ### Added
 
-- `vertex_router` takes `lookup_only`: `true` for every class it routes to, or a list of classes.
-- Per-class endpoint selectors, `source_match` / `target_match: {Class: selector}`, for an endpoint
-  a router role fills; a class they do not name matches on its primary identity.
-- `vertex_router` takes `type_map_only`: a value its `type_map` does not name is skipped instead of
-  routed as the class of that name.
-- `MergeManifestsOp.router_scope` (`side` | `union`), below.
-- Docs: a glossary, a guide to database connections, a guide to evolving a manifest, and a page on
-  merging manifests.
+- **`vertex_router` `lookup_only` and `type_map_only`.** `lookup_only` is `true` for every class the
+  router emits, or a list of classes. `type_map_only` skips a value the `type_map` does not name
+  instead of routing it as a class of that name.
+- **`source_match` / `target_match` per endpoint class.** `{Class: selector}` selects the field an
+  endpoint a router role fills matches on; classes not named match on their primary identity.
+- **`MergeManifestsOp.router_scope`** (`side` | `union`). `side` closes each side's routers over
+  that side's classes after merge; `union` leaves them open.
+- **`DerivationSpec.when` and `LocalKeySource.when`.** An explicit `{field, in}` guard on a
+  derivation, replacing the guard merge used to derive from the resource's router. Not allowed on
+  a source keyed by member.
+- **`VertexEquivalence.derive_at`.** The per-resource pipeline level at which a merged class's
+  derivations run when a resource produces the class at more than one level.
+- **Preview note `lookup_demotion`.** Emitted for each member key demoted beside a funnel whose
+  branches that member's records can complete in more than one way — the key no longer
+  deduplicates them.
+- **Docs:** a glossary, a guide to database connections, a guide to evolving a manifest, and a page
+  on merging manifests.
 
 ### Changed
 
@@ -45,26 +54,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The descriptions `graflo lift` writes for derived state and observation types name the subject
   without an article: "Mutable facts about `Machine`, ..." and "A measurement of `Machine` at a
   time."
-- Docs: the quick start is one walkthrough; the manifest evolution page is split into evolution,
-  merging, and a guide; code snippets import configs from `graflo.connections`.
+- **Docs:** the quick start is one walkthrough; the manifest evolution page is split into
+  evolution, merging, and a guide; code snippets import configs from `graflo.connections`.
 
-- Merge turns a resource that upserts an aligned class without deriving its key into a reference:
-  its productions of the class become lookups on the member's demoted key and its edges are
-  pinned, with a warning and a `reference_conversion` preview note that those records are no
-  longer written. It was refused, and still is when no member key was demoted (`retire: keep`).
-  Called directly, `validate_alignment` refuses all such resources in one error.
-- The cast logs the vertex and edge documents it drops for want of an identity value.
-- Merge closes each side's routers over that side's classes: renamed classes keep their
-  `{old: new}` entries, the rest are listed as themselves, and `type_map_only` is set. A value
-  naming only the other side's class is skipped, as before the merge, where it used to write that
-  class. `router_scope: union` keeps routers open.
+- **The merged key is declared once, as `identity` on the `VertexEquivalence`: ordered funnel
+  branches.** A branch is a property the members carry (`serial_number`, or a composite
+  `[plant, tag]`), a derived branch `{name, sources}` each resource computes from its own columns,
+  or `{local_key: {...}}`, always last. One property branch is a natural key; any other list is a
+  funnel. This replaces `identity_alignments`, `SideIdentity`, an `IdentityFunnel` on the
+  equivalence, and `PropertyEquivalence(identity=True)`, which declared the same key four ways and
+  let a declared `identity` be silently overwritten by an alignment.
+
+  ```yaml
+  vertex_equivalences:
+  -   left: Asset
+      right: Device
+      identity:
+      -   name: match_key
+          sources: {assets: {input: [serial_number]}, devices: {input: [serial]}}
+      -   local_key:
+              assets: {field: asset_id, tag: maintenance}
+              devices: {field: device_id, tag: sensors}
+  ```
+
+  - **`identity: [a, b]` now means two branches**, one key per member; a composite natural key is
+    `[[a, b]]`. The lowering is `identity_to_ops(IdentityPlan(...))` and `validate_identity`, in
+    place of `alignment_to_ops` and `validate_alignment`.
+- **`DerivationSpec.foo` defaults to `normalized_key`.** One input instead of `gated_normalized_key`
+  (a gate and a value), so `{input: [serial]}` needs no `foo`.
+- **A merge commit whose recorded declaration no longer loads raises `CommitError`**, naming the
+  cause, not a raw validation error.
+- **Merge turns a branch-incomplete upsert resource into a reference.** A resource that upserts a
+  merged class but can fill none of its branches becomes a lookup on the member's demoted key with
+  pinned edges, a warning, and a `reference_conversion` preview note that those records are no
+  longer written. A resource whose members carry a property branch keeps upserting. It was refused,
+  and still is when no member key was demoted (`retire: keep`). Called directly, `validate_identity`
+  refuses all such resources in one error.
+- **The cast logs dropped documents.** Vertex and edge records dropped for want of an identity value
+  are logged.
+- **Merge closes each side's routers over that side's classes** when `router_scope` is `side`:
+  renamed classes keep their `{old: new}` entries, the rest are listed as themselves, and
+  `type_map_only` is set. A value naming only the other side's class is skipped, as before the
+  merge, where it used to write that class.
 
 ### Fixed
 
-- Edge steps whose endpoint comes from a router role, or whose relation comes from the data,
-  ignored `source_match` / `target_match` and lost their edges at cast time.
-- The identity-alignment collision check compares targets with the members' own keys: a key the
-  cluster declares or flags no longer trips it, and a member's own key no longer slips past it.
+- **Edge steps from a router role or data relation ignored endpoint selectors** and lost their edges
+  at cast time (`source_match` / `target_match`).
+- **The derived-attribute collision check compares names with the members' own keys**, so a member's
+  own key no longer slips past it.
+- **The warning for a member with no member-keyed derivation** covers missed members a pass-through
+  router produces.
+- **A merged class keyed on a funnel is refused when a member declares a property `id`, the funnel's
+  own key** (`identity collision`): those records kept their `id` and bypassed the funnel.
+- **A funnel branch no member declares is refused** (`identity coverage`); it could never fire.
+- **An `IdentityPlan` built directly checks its branches as an equivalence does:** a `local_key`
+  ahead of another branch, which would shadow it, is refused.
+
+### Removed
+
+- **`identity_alignments` and related merge types.** `MergeManifestsOp.identity_alignments`,
+  `IdentityAlignment`, `AlignmentAttribute`, `AlignmentRow`, `LocalKeySpec`, `SideIdentity`,
+  `side_identity_to_funnel`, and `PropertyEquivalence.identity` — declare the key as `identity`
+  on the `VertexEquivalence`. Secondary identities are no longer named on the declaration: each
+  member's own key is demoted as `by_<fields>`; add others with `add_secondary_identities`. An
+  identity for a class no equivalence declares is `replace_identity` plus
+  `add_resource_transforms`, not a merge declaration.
+- **`SharedDerivation` and the list form of `sources`.** Scratch fields plus `coalesce_fields` —
+  key the sources by member instead.
+- **`LocalKeySource.gate` / `gate_prefix` and `graflo.util.transform.gated_tagged_key`.** Use
+  `when`.
 
 ## [1.14.0]
 

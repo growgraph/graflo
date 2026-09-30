@@ -35,17 +35,10 @@ BOUNDARY_OP: dict = {
 }
 
 
-#: Each member keyed on the key it carries (a ``SideIdentity``, one funnel
-#: branch per member). No field is common to all four members, so a single
-#: natural key would leave three of them completing no key -- merge refuses it.
-EACH_OWN_KEY: dict = {
-    "members": {
-        "Company": ["company_id"],
-        "Shop": ["shop_id"],
-        "Org": ["org_id"],
-        "Branch": ["branch_id"],
-    }
-}
+#: Each member keyed on the key it carries, one funnel branch per member. No
+#: field is common to all four members, so a single natural key would leave
+#: three of them completing no key -- merge refuses it.
+EACH_OWN_KEY: list = ["company_id", "shop_id", "org_id", "branch_id"]
 
 #: The same cluster with its identity settled, so it merges. Without it the
 #: four members disagree on their natural key -- which the preview reports and

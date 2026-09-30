@@ -300,13 +300,13 @@ A declaration in a union that vertex types on the two sides are one type, writte
 
 One equivalence taken as a whole: its members on both sides and the merged name. Error messages use the word, as in `ClusterConflictError`, raised when a type appears in two equivalences or two equivalences share a merged name. See [Merging manifests](schema/merging_manifests.md).
 
-### identity alignment
+### identity branch
 
-A declaration in a union of how records of a merged type find each other across sources: canonical attributes that each resource derives from its own columns, tried in order, and a `local_key` fallback. The union keys the merged type on an identity funnel over them; the class is `IdentityAlignment`. See [Merging manifests](schema/merging_manifests.md#identity-alignment).
+One entry of a vertex equivalence's `identity`, the merged type's key in priority order: a property the members carry (`serial_number`, or a composite `[plant, tag]`), a derived branch that each resource computes from its own columns (`{name, sources}`, class `DerivedBranch`), or a `local_key` fallback, always last (`LocalKeyBranch`). One property branch is a natural key; any other list keys the type on an identity funnel over the branches. See [Merging manifests](schema/merging_manifests.md#keying-the-merged-type).
 
 ### union
 
-Combining two unrelated manifests into one with `merge_manifests(left, right, op)` or `graflo merge`. Nothing is inferred: the op declares equivalences, canonical maps and identity alignments, and the union refuses, naming the problem, when the two sides disagree on a type, a unit, a key or a database setting. See [Merging manifests](schema/merging_manifests.md).
+Combining two unrelated manifests into one with `merge_manifests(left, right, op)` or `graflo merge`. Nothing is inferred: the op declares equivalences with their identities and canonical maps, and the union refuses, naming the problem, when the two sides disagree on a type, a unit, a key or a database setting. See [Merging manifests](schema/merging_manifests.md).
 
 ### three-way merge
 

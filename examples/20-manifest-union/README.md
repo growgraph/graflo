@@ -77,23 +77,23 @@ vertex_equivalences:
 
 ### 3. Say how records from both sides find each other
 
-This is an identity alignment. Each resource computes a `match_key` from its
-serial number column with the function `normalized_key`, which trims and
-lowercases the value (`foo` names the function to call). `input` names the
-column as it appears in that resource's file, so the sensor feed still says
-`serial`. A record with no serial number falls back to `local_key`, its own key
-behind a tag: `maintenance:A2`.
+This is the equivalence's `identity`: the keys of the combined type, tried in
+order. Each resource computes a `match_key` from its serial number column; the
+default function, `normalized_key`, trims and lowercases the value. `input`
+names the column as it appears in that resource's file, so the sensor feed
+still says `serial`. A record with no serial number falls back to `local_key`,
+its own key behind a tag: `maintenance:A2`.
 
 ```yaml
-identity_alignments:
--   vertex: Machine
-    attributes:
+vertex_equivalences:
+-   left: Asset
+    right: Device
+    identity:
     -   name: match_key
         sources:
-            assets: {foo: normalized_key, input: [serial_number]}
-            devices: {foo: normalized_key, input: [serial]}
-    local_key:
-        sources:
+            assets: {input: [serial_number]}
+            devices: {input: [serial]}
+    -   local_key:
             assets: {field: asset_id, tag: maintenance}
             devices: {field: device_id, tag: sensors}
 ```
@@ -124,6 +124,11 @@ W1 -> Hydraulic press (vertex 303d50890862)
 W2 -> Conveyor (vertex d154517d907c)
 ```
 
+`asset_id` is now a key to look machines up by, not the key that makes them
+one. A record of `A1` without a serial number would key on `maintenance:A1`
+and become a second machine beside the one matched on `hp-0042`. The preview
+of this merge says so, as a `lookup_demotion` note.
+
 ## What goes wrong
 
 **The combined type has no name.** [`merge_no_name.yaml`](merge_no_name.yaml) holds step 2 alone. Run step 4 with `--op merge_no_name.yaml`:
@@ -140,7 +145,7 @@ merge refused: MergeIdentityError: merge_manifests: merged vertex 'Machine' has 
 
 ## Also possible
 
-- One equivalence can name [several types per side](../../docs/concepts/schema/merging_manifests.md#several-types-on-one-side), and the combined type can key on [an explicit identity or a flagged shared property](../../docs/concepts/schema/merging_manifests.md#keying-the-merged-type).
+- One equivalence can name [several types per side](../../docs/concepts/schema/merging_manifests.md#several-types-on-one-side), and the combined type can key on [a property every member carries, or one key per member](../../docs/concepts/schema/merging_manifests.md#keying-the-merged-type).
 - `--plot conflicts.svg` draws [every conflict at once](../../docs/concepts/schema/merging_manifests.md#previewing-every-conflict).
 - The same merge from Python, with [`merge_manifests`](../../docs/concepts/schema/merging_manifests.md#from-python):
 

@@ -32,7 +32,7 @@ three declarations:
 |---|---|---|
 | what each side's names become | [canonical map](#naming-the-merged-type) | `Asset` is called `Machine`; a device's `serial` is `serial_number` |
 | which types are one | [vertex equivalence](#declaring-which-types-are-one) | `Asset` and `Device` are one type |
-| how records from both sides find each other | [identity alignment](#identity-alignment) | match on the normalized serial number, otherwise keep the record's own key |
+| how records from both sides find each other | the equivalence's [`identity`](#keying-the-merged-type) | match on the normalized serial number, otherwise keep the record's own key |
 
 All three live in one document, the merge op (the class is `MergeManifestsOp`).
 This is `merge.yaml` from the example:
@@ -45,15 +45,12 @@ canonical_maps:
 vertex_equivalences:
 -   left: Asset
     right: Device
-identity_alignments:
--   vertex: Machine
-    attributes:
+    identity:
     -   name: match_key
         sources:
-            assets: {foo: normalized_key, input: [serial_number]}
-            devices: {foo: normalized_key, input: [serial]}
-    local_key:
-        sources:
+            assets: {input: [serial_number]}
+            devices: {input: [serial]}
+    -   local_key:
             assets: {field: asset_id, tag: maintenance}
             devices: {field: device_id, tag: sensors}
 ```
@@ -73,8 +70,8 @@ flowchart LR
 ```
 
 The order explains two rules you meet below: an equivalence names a type in its
-own side's spelling, and an identity alignment reads each resource's raw column
-names, because the records keep those names after the union.
+own side's spelling, and a derivation reads each resource's raw column names,
+because the records keep those names after the union.
 
 ## Running a union
 
@@ -229,7 +226,8 @@ vertex_equivalences:
 | `left`, `right` | The member types on each side: one name, or a list |
 | `into` | The merged type's name; optional, see [How the merged name is found](#how-the-merged-name-is-found) |
 | `properties` | Property equivalences: renames onto a canonical property name |
-| `identity` | The merged type's key, when you declare it; see [Keying the merged type](#keying-the-merged-type) |
+| `identity` | The merged type's key, as ordered branches, when you declare it; see [Keying the merged type](#keying-the-merged-type) |
+| `derive_at` | Per resource, the pipeline level its derivations run at, needed only when the resource produces the type at more than one level |
 | `retire` | What becomes of each member's own key once the type is re-keyed: `demote` (default) or `keep` |
 
 Properties with the same spelling on every member become one property without
@@ -317,17 +315,27 @@ identifies the merged type: when the members key on different fields
 merge refused: MergeIdentityError: merge_manifests: merged vertex 'Machine' has members that disagree on identity (left:Asset=['asset_id']; right:Device=['device_id']) and nothing resolves it. [...]
 ```
 
-You declare the key in one of four ways:
+You declare the key as `identity` on the equivalence: a list of branches in
+priority order. A record keys on the first branch it completes, and two records
+become one vertex when they complete the same branch with the same values. A
+branch is one of three things:
 
-| Declaration | The merged type is keyed on | Use it when |
+| Branch | Written as | Keys a record on |
 |---|---|---|
-| `identity: [serial_number]` on the equivalence | that natural key | every member carries the fields, under their canonical names |
-| `identity:` as a `SideIdentity` or an identity funnel | a [funnel](../glossary.md#identity-funnel), one branch per member | members key on different fields and should stay distinct unless a shared branch matches |
-| `identity: true` on a property equivalence | the flagged property | one property every member carries is the key as it is |
-| an entry in `identity_alignments` | a funnel over derived attributes | the key must be normalized, filtered or namespaced per source; see [Identity alignment](#identity-alignment) |
+| a property | `serial_number`, or `[plant, tag]` for a composite | the value of a property the members carry, under its canonical name |
+| a derived branch | `{name: match_key, sources: {...}}` | an attribute each resource computes from its own columns; see [Deriving the key per source](#deriving-the-key-per-source) |
+| a local key | `{local_key: {...}}`, always last | the record's own key behind a per-source tag |
 
-A flagged property joins the members' key when the members agree on one, and
-replaces it when they disagree. For example:
+One property branch is a plain natural key. Any other list is an
+[identity funnel](../glossary.md#identity-funnel), whose synthetic key is `id`:
+
+| `identity:` | The merged type is keyed on | Use it when |
+|---|---|---|
+| `[serial_number]` | that natural key | every member carries the field, under its canonical name |
+| `[asset_id, device_id]` | a funnel, one branch per member's own key | the members stay distinct records under one type |
+| a derived branch, then a `local_key` | a funnel over derived attributes | the key must be normalized, filtered or namespaced per source |
+
+For example, keying on a property the sensor feed spells differently:
 
 ```yaml
 vertex_equivalences:
@@ -335,19 +343,23 @@ vertex_equivalences:
     right: Device
     into: Machine
     properties:
-    -   {right: serial, into: serial_number, identity: true}
+    -   {right: serial, into: serial_number}
+    identity: [serial_number]
 ```
 
-Whichever way you choose, every member must be able to fill the key: every field
-of a natural key, or every required field of one funnel branch, declared on the
-member under its canonical name. A member that cannot would lose all its
-records, so the union refuses and names it (`identity coverage`).
+Every member must be able to fill the key: every field of a natural key, or
+every required field of one funnel branch, declared on the member under its
+canonical name. A member that cannot would lose all its records, so the union
+refuses and names it (`identity coverage`); it refuses a branch no member
+declares for the same reason. A funnel also refuses a member that declares a
+property named `id`, the funnel's own key: that member's records would keep
+their `id` and bypass the funnel (`identity collision`).
 
 The check reads the manifests, not the data. A record whose key field is empty
 still has no identity: it is not written, and the cast logs a warning such as
 `Cast dropped 1 'Machine' document(s) with no value for its identity
-['serial_number']`. In the example, the conveyor `A2` has no serial number. An
-identity alignment with a `local_key` keeps such records.
+['serial_number']`. In the example, the conveyor `A2` has no serial number. A
+`local_key` branch keeps such records.
 
 Once the merged type has its new key, each member's own key becomes a
 [secondary identity](../glossary.md#secondary-identity) named `by_<fields>`, such
@@ -356,45 +368,52 @@ records become one vertex, but it lets a source that knows only the old key
 still find the vertex. Set `retire: keep` on the equivalence to leave the old
 key fields as plain properties instead.
 
-## Identity alignment
+### The old key no longer deduplicates
 
-An identity alignment says how records of the merged type find each other
-across sources. It declares canonical attributes that carry the key, how each
-resource derives them from its own columns, and a fallback key for records that
-carry none of them:
+Before the union, two maintenance records with `asset_id: A1` were one vertex.
+After it, a record keys on the first branch it completes, so `A1` read once with
+a serial number and once without becomes two machines, one keyed by the serial
+number and one by `maintenance:A1`, and `by_asset_id` finds both. The funnel
+fuses records on the branch they reach first, not on any key they happen to
+share.
+
+`preview_merge` reports each member key in that position as a
+`lookup_demotion` note. When a source's own key must keep deduplicating its
+records, list it as a property branch ahead of the derived ones; that source's
+records then key on it and no longer fuse with the other source.
+
+## Deriving the key per source
+
+A derived branch says how each resource computes an attribute from its own
+columns, so that records from both sources that describe the same thing compute
+the same value:
 
 ```yaml
-identity_alignments:
--   vertex: Machine
-    attributes:
+    identity:
     -   name: match_key
         sources:
-            assets: {foo: normalized_key, input: [serial_number]}
-            devices: {foo: normalized_key, input: [serial]}
-    local_key:
-        sources:
+            assets: {input: [serial_number]}
+            devices: {input: [serial]}
+    -   local_key:
             assets: {field: asset_id, tag: maintenance}
             devices: {field: device_id, tag: sensors}
 ```
 
-- `vertex` is the merged type's name.
-- `attributes` lists the canonical attributes in priority order. A record is
-  keyed by the first attribute it has a value for, so two records become one
-  vertex when their first present attribute has the same value. A match on a
-  later attribute does not join two records when one of them also has an
-  earlier one.
+- `name` is the attribute the branch keys on; the union adds it to the merged
+  type.
 - `sources` is keyed by resource name, because each resource derives the
   attribute from its own columns. `input` names those columns as they appear in
   the resource's records: `serial` for the sensor feed, even though the merged
   property is `serial_number`.
-- `local_key` is the fallback: a record with no aligned attribute is keyed by
+- `local_key` is the fallback: a record with no derived attribute is keyed by
   its own key behind a tag, so `A2` from the maintenance system becomes
   `maintenance:A2`. The tag keeps two sources whose own keys overlap apart.
   `tag` is required; write `tag: null` only when the values are already unique
-  across every source of the type, such as UUIDs.
-- `secondary_identities` (optional) adds lookup keys: `{name: [fields]}`.
-- `at` (optional) names the pipeline level to derive at, per resource, when a
-  resource produces the type at more than one level.
+  across every source of the type, such as UUIDs. `name` (default `local_key`)
+  and `sep` (default `:`) sit beside `local_key`.
+- `when` (optional, on a derivation or a local-key source) runs it only for
+  records whose raw column holds one of the listed values:
+  `when: {field: kind, in: [firm]}`.
 
 Each derivation calls a function from `graflo.util.transform` by the name in
 `foo` (another module is named with `module`), with the `input` columns and the
@@ -402,23 +421,21 @@ keyword `params`:
 
 | Function | Inputs | Returns |
 |---|---|---|
-| `normalized_key` | the value | the value trimmed and lowercased (`strip_prefix`, `casefold` and `strip_chars` adjust it) |
-| `gated_normalized_key` (the default) | a gate column, then the value | the normalized value when the gate starts with `params.prefix`, else nothing |
+| `normalized_key` (the default) | the value | the value trimmed and lowercased (`strip_prefix`, `casefold` and `strip_chars` adjust it) |
+| `gated_normalized_key` | a gate column, then the value | the normalized value when the gate starts with `params.prefix`, else nothing |
 | `affix_gated_key` | the value | the value without its marker when it carries `params.prefix` and `params.suffix`, else nothing |
 
 A function that returns nothing does not drop the record: the record skips that
-attribute and falls back to the next one, or to its `local_key`. It is
-written, but not joined with records from the other source. Use
-`gated_normalized_key` when another column decides whether a record takes part,
-and `affix_gated_key` when the key value carries its own marker, such as
-`ext_A42`.
+branch and falls back to the next one, or to its local key. It is written, but
+not joined with records from the other source. Use `gated_normalized_key` when
+another column decides whether a record takes part, and `affix_gated_key` when
+the key value carries its own marker, such as `ext_A42`.
 
-The union adds the attributes to the merged type, appends the derivation steps
-to each resource, and re-keys the type on an identity funnel over the
-attributes, with the `local_key` as its last branch. Each member's own key
-becomes a secondary identity, as described in
-[Keying the merged type](#keying-the-merged-type). An op may carry at most one
-alignment per type, because each one replaces the type's identity.
+The union adds the derived attributes to the merged type, appends the
+derivation steps to each resource, and re-keys the type on an identity funnel
+over the branches, in the order declared. Each member's own key becomes a
+secondary identity, as described in
+[Keying the merged type](#keying-the-merged-type).
 
 ### A resource that produces several members
 
@@ -429,45 +446,48 @@ says how each member derives the attribute:
 | `sources[resource]` | Use it when |
 |---|---|
 | one derivation | the members share the key column and its format |
-| a list of derivations | each member carries its key in its own column; the column that has a value decides |
-| a mapping from member type to derivation | which member a record is must decide: the members share a column, or each has its own marker |
-| `{spec: ..., members: ...}` (a `SharedDerivation`) | the mapping above, when only a parameter differs per member, or nothing does |
+| a mapping from member type to derivation | which member a record is must decide: each carries its key in its own column, or its own marker |
 
 ```yaml
 sources:
     registry:
-        spec: {foo: affix_gated_key, input: [external_ref]}
-        members: {Asset: {prefix: "ast_"}, Equipment: {prefix: "eq_"}}
+        Asset: {foo: affix_gated_key, input: [external_ref], params: {prefix: "ast_"}}
+        Equipment: {foo: affix_gated_key, input: [external_ref], params: {prefix: "eq_"}}
 ```
 
 You do not write which rows belong to which member. The union reads how the
 resource produces each member on its side (a plain vertex step, or the router
 values that map to it) and guards each derivation step so that it runs only for
-that member's records. The
+that member's records. A derivation that is not keyed by member is guarded the
+same way when a router produces the type, so it runs for no other type's
+records. An explicit `when` replaces the guard the union derives; a derivation
+keyed by member may not set one, because the member already decides. The
 [router union alignment example (21)](../../examples/router-union-alignment/index.md)
 shows one routed type end to end, with keying per type as a variant.
 
-### Rules an alignment must follow
+### Rules a derived branch must follow
 
-The union refuses an alignment (`AlignmentConflictError`) when:
+The union refuses a derived branch (`AlignmentConflictError`) when:
 
-- a derivation's `input` names a canonical property instead of the resource's
-  own column;
-- an attribute has the name of a member's own key field;
+- a derivation's `input` or `when` names a canonical property instead of the
+  resource's own column;
+- a derived attribute has the name of a member's own key field (to key on that
+  field, list it as a property branch);
 - a resource it names does not produce the type, or produces it at more than one
-  level without `at`;
+  level without `derive_at`;
 - a member it names is not a member of that side, or its resource does not
   produce it;
 - a function does not accept its `input` and `params`.
 
-A resource that writes the merged type but has no derivation in the alignment
-could never fill any branch of the new key. The union turns its steps for that
-type into lookups, points its edges at the demoted key, and logs a warning that
-its records of that type are no longer written. That is right for a source that
-only refers to the type. If the resource was meant to own records of the type,
-add it to an attribute's `sources`. When no member key was demoted for such a
-resource to look the type up by, for example under `retire: keep`, the union
-refuses instead (`uncovered producer`).
+A resource that writes the merged type, appears in no derived branch, and whose
+records complete no property branch could never fill any branch of the new
+key. The union turns its steps for that type into lookups, points its edges at
+the demoted key, and logs a warning that its records of that type are no longer
+written. That is right for a source that only refers to the type. If the
+resource was meant to own records of the type, add it to a derived branch's
+`sources`. When no member key was demoted for such a resource to look the type
+up by, for example under `retire: keep`, the union refuses instead
+(`uncovered producer`).
 
 ## How definitions combine
 
@@ -545,9 +565,9 @@ Every refusal names what it is about and what to change:
 | `MergeCanonicalConflictError` | an unnamed cluster, a map and an equivalence that send one name to two places, or dangling map entries | add `into`, fix the map, or [check it first](#checking-a-map-before-a-union) |
 | `MergeIncompleteError` | a name both sides carry, or a map that sends a type onto a merged name without making it a member | add the declaration its completion prints |
 | `MergeNameConflictError` | two spellings of one name | declare an equivalence, or choose a `name_conflict` policy |
-| `MergeIdentityError` | members disagree on their key, or a declared key some member cannot fill | [declare the key](#keying-the-merged-type) |
+| `MergeIdentityError` | members disagree on their key, a declared key some member cannot fill, or a funnel over a member declaring `id` | [declare the key](#keying-the-merged-type) |
 | type or unit conflict | a property declared with two types or two units | retype or re-ground one side first |
-| `AlignmentConflictError` | an identity alignment breaks [its rules](#rules-an-alignment-must-follow) | fix the derivation |
+| `AlignmentConflictError` | a derived branch breaks [its rules](#rules-a-derived-branch-must-follow) | fix the derivation |
 
 ## Previewing every conflict
 

@@ -112,9 +112,9 @@ def _fold_canonical_maps(
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
     default=None,
     help=(
-        "MergeManifestsOp document: vertex/property/relation equivalences, "
-        "canonical maps and identity alignments. Omitted merges a disjoint "
-        "union."
+        "MergeManifestsOp document: vertex/property/relation equivalences "
+        "(with the merged key as `identity`) and canonical maps. Omitted "
+        "merges a disjoint union."
     ),
 )
 @click.option(

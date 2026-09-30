@@ -999,7 +999,7 @@ def build_merge_recipe(
     ``resolutions`` stays empty.
 
     What takes their place is the declaration itself. The whole op is recorded
-    -- equivalences, canonical maps, identity alignments, resource renames and
+    -- equivalences and their identities, canonical maps, resource renames and
     the name-conflict policy -- because all of it is "how these two were
     joined", and a re-merge that had only the equivalences would reconstruct a
     different manifest.

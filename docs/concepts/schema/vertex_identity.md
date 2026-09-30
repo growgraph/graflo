@@ -246,7 +246,10 @@ A funnel merges records that share a branch. A person whose email appears in
 one source and whose phone appears in the other becomes two vertices: deciding
 that the two identifiers belong to one person needs evidence the funnel does
 not have. [Cross-resource identity discovery](cross_resource_identity.md)
-looks for that evidence in samples.
+looks for that evidence in samples. The same rule is why, in a union, a
+member's own key stops deduplicating its records once the merged type is keyed
+on a funnel; see
+[Merging manifests](merging_manifests.md#the-old-key-no-longer-deduplicates).
 
 [The identity funnel example (17)](../../examples/identity-funnel/index.md)
 runs two sources through one funnel.

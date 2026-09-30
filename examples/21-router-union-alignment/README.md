@@ -77,23 +77,18 @@ vertex_equivalences:
 -   left: Machine
     right: Device
     into: Machine
-
-identity_alignments:
--   vertex: Machine
-    attributes:
+    identity:
     -   name: match_key
         sources:
-            register: {foo: normalized_key, input: [serial_number]}
-            devices: {foo: normalized_key, input: [serial]}
-    local_key:
-        sources:
+            register: {input: [serial_number]}
+            devices: {input: [serial]}
+    -   local_key:
             register: {field: asset_id, tag: maintenance}
             devices: {field: device_id, tag: sensors}
 ```
 
-The identity alignment names the `register` resource as a whole (`foo` names
-the function that computes the key). Nothing in it mentions the `type` column
-or production lines.
+The `identity` names the `register` resource as a whole. Nothing in it
+mentions the `type` column or production lines.
 
 ### 3. Build the combined manifest
 
@@ -172,13 +167,13 @@ example 20 produces.
 If the router sent two of its types into the combined type, say `machine` rows
 to `Machine` and `robot` rows to `Robot`, the equivalence would list both
 (`left: [Machine, Robot]`, with `allow_merges: true`). The register's entry in
-the alignment can then be keyed by type, and each type gets its own step,
+`sources` can then be keyed by type, and each type gets its own step,
 guarded on its own `type` value:
 
 ```yaml
 register:
-    Machine: {foo: normalized_key, input: [serial_number]}
-    Robot: {foo: normalized_key, input: [serial_number]}
+    Machine: {input: [serial_number]}
+    Robot: {input: [serial_number]}
 ```
 
 See [one derivation per type](../../docs/concepts/schema/merging_manifests.md#a-resource-that-produces-several-members).
