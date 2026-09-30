@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`graflo.filter.onto.render_conjunct`** renders a filter as one operand of an `AND`, and
   **`SelectSpec.effective_base_alias()`** returns the alias a view's query gives its base table,
   or `None` when it gives none.
+- **`GraphEngine.ingest(data_source_registry=...)`**, also on `Caster.ingest`: the sources to
+  read, by resource, instead of the ones the bindings declare.
 
 ### Changed
 
@@ -32,6 +34,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A failed SQL source query raises.** `SQLDataSource.iter_batches` logged the error and yielded
   nothing, so a query the database rejected looked like an empty table.
 - **A `.tsv` file is read with a tab separator** unless `sep` is given.
+- **A source that cannot be built fails the run.** An API or Kafka connector with no registered
+  connection configuration, a table connector with no PostgreSQL configuration and a SPARQL
+  connector with neither `endpoint_url` nor `rdf_file` were skipped with a warning, even under
+  `strict_registry`, which is the default. With `strict_registry=False` they are still skipped, and
+  every source skipped that way is now logged.
+- **A failed API request raises.** `APIDataSource.iter_batches` logged the error and stopped, so
+  a run that failed on a later page kept the earlier pages and ended normally.
+- **`429` is in the default `retry_status_forcelist`** of an API connector. Retries stay off
+  until `retries` is set.
+- **`graflo ingest` has no `--source-path`.** The option was required and never read. The command
+  reads the sources the bindings declare, or the ones listed with `--data-source-config-path`, and
+  refuses a connection that cannot be a target.
+- **A non-empty `merge_collections` on a resource is refused.** Nothing read it.
 
 - **uv is pinned to one release line.** `pyproject.toml` sets `[tool.uv] required-version`, and
   the workflows pin a release within it. A different uv minor rewrote `uv.lock` wholesale with
@@ -83,6 +98,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   quoted header cell holding the separator was split. One reader now parses the header and every
   record with the file's separator, and `max_items` counts records.
 - **`Resource.encoding` was not used when reading files.**
+- **`<PREFIX>SCHEMA_NAME` was not read from the environment**, and an unprefixed `SCHEMA` or
+  `SCHEMA_NAME` was. `TIGERGRAPH_SCHEMA_NAME`, `NEBULA_SCHEMA_NAME` and `POSTGRES_SCHEMA_NAME` are
+  now read; `schema` stays accepted as a key in code and in config files.
+- **`Neo4jConfig` completed a Bolt URI with the HTTP port.** `bolt://host` and `neo4j://host` now
+  get `bolt_port`, or 7687 when it is not set; `http://host` keeps 7474.
+- **An API with no token was sent an empty credential.** `RestApiConnConfig.from_env` built a
+  bearer `ApiAuth` without a token, so every request carried `Authorization: Bearer`. With no
+  token, username or password it builds no `auth`, and an `auth` without a token sends no header.
+- **`graflo ingest` failed at start-up**, loading a logging configuration file the package does
+  not contain.
+- **`graflo ingest --data-source-config-path` wrote with the default flavor** unless
+  `--fresh-start` had defined the schema first. It now runs through `GraphEngine.ingest`.
+- **An invalid `transform` step was always reported as "Expected exactly one of `rename` or
+  `call`".** The error now states the rule the step broke, and an invalid `edge` step no longer
+  lists the complaints of the other step kinds.
 - **Edit links on API reference pages** pointed under `docs/` instead of at the module's source
   file.
 - **The docs workflow did not run on changes under `examples/`**, although the example pages are

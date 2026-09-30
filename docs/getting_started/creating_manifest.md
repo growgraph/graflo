@@ -235,7 +235,7 @@ and the records through the manifest's bindings:
 
 ```bash
 graflo ingest --db-config-path db.yaml --schema-path manifest.yaml \
-    --source-path . --fresh-start true
+    --fresh-start true
 ```
 
 File connectors resolve `sub_path` against the directory you run the command

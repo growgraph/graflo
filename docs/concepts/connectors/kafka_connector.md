@@ -211,7 +211,7 @@ provider.bind_from_bindings(bindings=bindings)
 - The connector only reads. GraFlo does not write to Kafka.
 - `KafkaConnConfig` has no fields for certificate files or a custom certificate authority.
 - An error reported by the broker while polling raises an exception and ends the ingestion.
-- A connector whose label has no registered configuration is skipped with a warning in the log; the other connectors run as usual.
+- A connector whose label has no registered configuration fails the run before anything is read, with a `ValueError` that names the resource and the connector. With `IngestionParams(strict_registry=False)` it is skipped with a warning in the log and the other connectors run as usual.
 
 ## What to read next
 

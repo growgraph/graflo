@@ -68,6 +68,11 @@ class RegistryBuilder:
 
         For each ingestion resource, registers every bound connector (same
         resource may have multiple physical sources).
+
+        A source that cannot be built -- no connector bound, no connection
+        configuration registered, a registration error -- is logged and
+        skipped; with *strict* the build raises once every resource has been
+        tried, listing them all.
         """
         registry = DataSourceRegistry()
         provider = connection_provider or EmptyConnectionProvider()
@@ -121,9 +126,9 @@ class RegistryBuilder:
                             f"Failed to register FILE source for resource "
                             f"'{resource_name}' (connector '{cref}'): {e}"
                         )
+                        if not strict:
+                            logger.warning("%s, skipping", msg)
                         failures.append(msg)
-                        if strict:
-                            continue
 
                 elif kind == BoundSourceKind.SQL_TABLE:
                     if not isinstance(connector, TableConnector):
@@ -148,9 +153,9 @@ class RegistryBuilder:
                             f"Failed to register SQL source for resource "
                             f"'{resource_name}' (connector '{cref}'): {e}"
                         )
+                        if not strict:
+                            logger.warning("%s, skipping", msg)
                         failures.append(msg)
-                        if strict:
-                            continue
 
                 elif kind == BoundSourceKind.SPARQL:
                     if not isinstance(connector, SparqlConnector):
@@ -175,9 +180,9 @@ class RegistryBuilder:
                             f"Failed to register SPARQL source for resource "
                             f"'{resource_name}' (connector '{cref}'): {e}"
                         )
+                        if not strict:
+                            logger.warning("%s, skipping", msg)
                         failures.append(msg)
-                        if strict:
-                            continue
 
                 elif kind == BoundSourceKind.API:
                     if not isinstance(connector, APIConnector):
@@ -201,9 +206,9 @@ class RegistryBuilder:
                             f"Failed to register API source for resource "
                             f"'{resource_name}' (connector '{cref}'): {e}"
                         )
+                        if not strict:
+                            logger.warning("%s, skipping", msg)
                         failures.append(msg)
-                        if strict:
-                            continue
 
                 elif kind == BoundSourceKind.KAFKA:
                     if not isinstance(connector, KafkaConnector):
@@ -226,9 +231,9 @@ class RegistryBuilder:
                             f"Failed to register Kafka source for resource "
                             f"'{resource_name}' (connector '{cref}'): {e}"
                         )
+                        if not strict:
+                            logger.warning("%s, skipping", msg)
                         failures.append(msg)
-                        if strict:
-                            continue
 
                 else:
                     msg = (
@@ -348,10 +353,10 @@ class RegistryBuilder:
                 resource_name, connector
             )
         if postgres_config is None:
-            logger.warning(
-                f"PostgreSQL table '{resource_name}' has no connection config, skipping"
+            raise ValueError(
+                f"no PostgreSQL connection configuration for table "
+                f"'{connector.table_name}'"
             )
-            return
 
         table_name = connector.table_name
         schema_name = connector.schema_name
@@ -435,6 +440,9 @@ class RegistryBuilder:
         * **File mode** (``connector.rdf_file`` is set): creates an
           :class:`RdfFileDataSource` that parses a local RDF file.
         """
+        if not connector.endpoint_url and not connector.rdf_file:
+            raise ValueError("SparqlConnector has neither endpoint_url nor rdf_file")
+
         try:
             if connector.endpoint_url:
                 from graflo.data_source.rdf import (
@@ -496,13 +504,6 @@ class RegistryBuilder:
                     resource_name,
                 )
 
-            else:
-                logger.warning(
-                    "SparqlConnector for resource '%s' has neither endpoint_url nor "
-                    "rdf_file set, skipping",
-                    resource_name,
-                )
-
         except Exception as e:
             logger.error(
                 "Failed to create data source for SPARQL resource '%s': %s",
@@ -529,11 +530,10 @@ class RegistryBuilder:
             else None
         )
         if not isinstance(generalized, ApiGeneralizedConnConfig):
-            logger.warning(
-                "API connector for resource '%s' has no RestApiConnConfig, skipping",
-                resource_name,
+            raise ValueError(
+                "no REST API connection configuration is registered for the "
+                "connector's conn_proxy"
             )
-            return
 
         runtime = generalized.config
         # The connector's declared page size is what the endpoint accepts; the
@@ -568,19 +568,18 @@ class RegistryBuilder:
         connection_provider: ConnectionProvider,
     ) -> None:
         """Register Kafka topic data sources for a resource."""
-        from graflo.data_source.kafka import KafkaDataSource
-
         generalized = (
             connection_provider.get_generalized_conn_config(connector)
             if hasattr(connection_provider, "get_generalized_conn_config")
             else None
         )
         if not isinstance(generalized, KafkaGeneralizedConnConfig):
-            logger.warning(
-                "Kafka connector for resource '%s' has no KafkaConnConfig, skipping",
-                resource_name,
+            raise ValueError(
+                "no Kafka connection configuration is registered for the "
+                "connector's conn_proxy"
             )
-            return
+
+        from graflo.data_source.kafka import KafkaDataSource
 
         kafka_config = connector.build_kafka_config(conn=generalized.config)
         kafka_source = KafkaDataSource(config=kafka_config)

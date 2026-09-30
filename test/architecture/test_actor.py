@@ -796,6 +796,40 @@ def test_transform_call_dress_shorthand_requires_input():
         )
 
 
+@pytest.mark.parametrize(
+    "step,reason",
+    [
+        ({"transform": {}}, "exactly one of rename or call"),
+        (
+            {"transform": {"call": {"module": "m"}}},
+            "Inline call functions require both call.module and call.foo",
+        ),
+        (
+            {"transform": {"call": {"use": "x", "bogus": 1}}},
+            "`call.bogus`: Extra inputs are not permitted",
+        ),
+        (
+            {"transform": {"call": {"use": "x", "strategy": "sometimes"}}},
+            "`call.strategy`: Input should be 'single', 'each' or 'all'",
+        ),
+        (
+            {"transform": {"rename": {"a": "b"}, "when": {"field": "k"}}},
+            "`when.in`: Field required",
+        ),
+        ({"edge": {"from": "a"}}, "edge step requires 'to'"),
+    ],
+)
+def test_invalid_step_reports_the_rule_it_broke(step, reason):
+    with pytest.raises(ValueError) as excinfo:
+        ActorWrapper(pipeline=[step])
+
+    message = str(excinfo.value)
+    assert reason in message
+    # The step's own kind is known, so the other kinds' complaints are noise.
+    assert "Input should be 'vertex'" not in message
+    assert "vertex_router" not in message
+
+
 def test_transform_target_keys_updates_vertex_fields():
     vc = VertexConfig.from_dict(
         {

@@ -125,7 +125,6 @@ except DocErrorBudgetExceeded as err:
 graflo ingest \
   --db-config-path config/db.yaml \
   --schema-path manifest.yaml \
-  --source-path data \
   --on-doc-error skip \
   --doc-error-sink artifacts/cast_failures.jsonl.gz
 ```

@@ -62,6 +62,9 @@ class RestApiConnConfig(BaseModel):
         - ``AUTH_TYPE``: ``bearer``, ``basic``, ``digest``, or ``api_key`` (default: ``bearer``)
         - ``TOKEN``, ``USERNAME``, ``PASSWORD``
         - ``HEADER_NAME``, ``PREFIX`` (bearer / api_key)
+
+        With none of ``TOKEN``, ``USERNAME`` and ``PASSWORD`` set the API is
+        taken to be open: ``auth`` is ``None`` and no credential header is sent.
         """
         base_url = os.environ.get(f"{env_prefix}BASE_URL")
         if not base_url:
@@ -76,11 +79,17 @@ class RestApiConnConfig(BaseModel):
                 f"Invalid {env_prefix}AUTH_TYPE={auth_type_raw!r}; "
                 "expected bearer, basic, digest, or api_key"
             )
+        token = os.environ.get(f"{env_prefix}TOKEN")
+        username = os.environ.get(f"{env_prefix}USERNAME")
+        password = os.environ.get(f"{env_prefix}PASSWORD")
+        if not (token or username or password):
+            return cls(base_url=cast(str, base_url))
+
         auth = ApiAuth(
             auth_type=cast(AuthType, auth_type_lower),
-            token=os.environ.get(f"{env_prefix}TOKEN"),
-            username=os.environ.get(f"{env_prefix}USERNAME"),
-            password=os.environ.get(f"{env_prefix}PASSWORD"),
+            token=token,
+            username=username,
+            password=password,
             header_name=cast(
                 str,
                 os.environ.get(f"{env_prefix}HEADER_NAME") or "Authorization",

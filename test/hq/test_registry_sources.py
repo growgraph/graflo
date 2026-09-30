@@ -1,13 +1,20 @@
-"""What RegistryBuilder hands each source: the run-time date range and file settings."""
+"""What RegistryBuilder hands each source, and what it does with one it cannot build."""
 
 from __future__ import annotations
 
+import logging
 import pathlib
+from collections.abc import Callable
+
+import pytest
 
 from graflo.architecture.contract.bindings import (
+    APIConnector,
     Bindings,
     ColumnTimeFilter,
     FileConnector,
+    KafkaConnector,
+    SparqlConnector,
     TableConnector,
 )
 from graflo.architecture.contract.ingestion import IngestionModel
@@ -206,3 +213,72 @@ class TestFileSources:
         source = self._source(tmp_path, "events.csv", encoding="ISO-8859-1")
 
         assert source.encoding == EncodingType.ISO_8859
+
+
+Connector = (
+    APIConnector | FileConnector | KafkaConnector | SparqlConnector | TableConnector
+)
+
+#: A connector of each kind that needs something the run did not supply, and
+#: the words the refusal names it with.
+UNBUILDABLE: list[tuple[Callable[[], Connector], str]] = [
+    (
+        lambda: APIConnector(path="/events", resource_name="events"),
+        "no REST API connection configuration",
+    ),
+    (
+        lambda: KafkaConnector(topics=["events"], group_id="g", resource_name="events"),
+        "no Kafka connection configuration",
+    ),
+    (
+        lambda: TableConnector(table_name="events", resource_name="events"),
+        "no PostgreSQL connection configuration",
+    ),
+    (
+        lambda: SparqlConnector(
+            rdf_class="http://example.org/E", resource_name="events"
+        ),
+        "neither endpoint_url nor rdf_file",
+    ),
+]
+UNBUILDABLE_IDS = ["api-source", "kafka-source", "table-source", "sparql-source"]
+
+
+class TestSourceThatCannotBeBuilt:
+    @staticmethod
+    def _build(connector: Connector, *, strict: bool) -> list:
+        registry = RegistryBuilder(_schema(), _ingestion_model()).build(
+            Bindings(connectors=[connector]), IngestionParams(), strict=strict
+        )
+        return registry.get_data_sources("events")
+
+    @pytest.mark.parametrize("make,reason", UNBUILDABLE, ids=UNBUILDABLE_IDS)
+    def test_strict_build_refuses(
+        self, make: Callable[[], Connector], reason: str
+    ) -> None:
+        with pytest.raises(ValueError, match=reason):
+            self._build(make(), strict=True)
+
+    @pytest.mark.parametrize("make,reason", UNBUILDABLE, ids=UNBUILDABLE_IDS)
+    def test_lenient_build_skips_and_logs(
+        self,
+        make: Callable[[], Connector],
+        reason: str,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        with caplog.at_level(logging.WARNING, logger="graflo.hq.registry_builder"):
+            sources = self._build(make(), strict=False)
+
+        assert sources == []
+        assert reason in caplog.text
+
+    def test_lenient_build_logs_a_source_that_fails_to_register(
+        self, tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        missing = FileConnector(sub_path=tmp_path / "absent", resource_name="events")
+
+        with caplog.at_level(logging.WARNING, logger="graflo.hq.registry_builder"):
+            sources = self._build(missing, strict=False)
+
+        assert sources == []
+        assert "Failed to register FILE source for resource 'events'" in caplog.text

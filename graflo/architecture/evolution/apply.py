@@ -159,9 +159,6 @@ def _prune_ingestion_for_removed_vertices(
             continue
         payload = resource.to_dict(skip_defaults=False)
         payload["pipeline"] = pipeline
-        payload["merge_collections"] = [
-            c for c in resource.merge_collections if c not in removed
-        ]
         for key in ("infer_edge_only", "infer_edge_except", "extra_weights"):
             specs = payload.get(key)
             if isinstance(specs, list):
@@ -353,7 +350,6 @@ def _rewrite_ingestion_for_merge(im: IngestionModel, mapping: dict[str, str]) ->
     for r in im.resources:
         d = r.to_dict(skip_defaults=False)
         d["pipeline"] = rewrite_vertex_names_in_pipeline(r.pipeline, mapping)
-        d["merge_collections"] = [mapping.get(c, c) for c in r.merge_collections]
         if d.get("infer_edge_only"):
             d["infer_edge_only"] = rewrite_vertex_names_in_value(
                 d["infer_edge_only"], mapping
@@ -708,9 +704,6 @@ def _rewrite_ingestion_for_canonicalize(
         pipeline = rewrite_vertex_names_in_pipeline(resource.pipeline, vertex_map)
         rewrite_entity_names_in_pipeline(pipeline, edges=relation_map)
         d["pipeline"] = pipeline
-        d["merge_collections"] = [
-            vertex_map.get(name, name) for name in resource.merge_collections
-        ]
         for key in ("infer_edge_only", "infer_edge_except", "extra_weights"):
             if d.get(key):
                 d[key] = _rewrite_relation_names_in_value(
@@ -1299,15 +1292,6 @@ def _apply_rename_entities(
                         vertices=vertex_map,
                         edges=edge_map,
                     )
-
-                # `merge_collections` holds vertex names; `collect_vertex_names`
-                # counts them, so leaving them behind strands the reference.
-                merge_collections = resource.get("merge_collections")
-                if isinstance(merge_collections, list):
-                    resource["merge_collections"] = [
-                        vertex_map.get(name, name) if isinstance(name, str) else name
-                        for name in merge_collections
-                    ]
 
                 for spec_key in ("infer_edge_only", "infer_edge_except"):
                     specs = resource.get(spec_key)

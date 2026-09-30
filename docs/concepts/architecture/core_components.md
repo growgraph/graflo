@@ -506,6 +506,14 @@ Beyond names, `db_profile` holds the target flavor (`db_flavor`, default
 `edge_specs[].indexes`; see [backend indexes](../schema/backend_indexes.md)),
 `native_inverses`, and `default_property_values`.
 
+An `edge_specs` entry may carry a `purpose`: a second stored copy of the same
+edge, with its own `relation_name` and its own indexes (`indexes_mode` says
+whether they `inherit`, `append` to or `replace` those of the entry without a
+purpose). Only ArangoDB reads it, and only when the schema is defined: it
+creates one edge collection per purpose. Ingestion writes every edge to the
+entry without a purpose, so a purpose collection holds what you write to it
+yourself.
+
 TigerGraph stores a value for every attribute a vertex or edge type declares,
 including one a record does not supply. `default_property_values` sets that
 value, as the `DEFAULT` clause of the attribute when the schema is created; a

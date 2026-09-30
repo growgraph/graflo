@@ -35,8 +35,9 @@ If you leave the field that names the graph empty, GraFlo uses the manifest's
 different: `database` must name a database that exists, and GraFlo creates the
 tables in the schema `schema_name`, `public` when it is not set.
 
-Write the port in the URI. When it is missing GraFlo adds a default, and for
-Neo4j that default is the HTTP port 7474, not the Bolt port 7687.
+A URI without a port gets the database's default. For Neo4j the default
+follows the scheme: `bolt_port` when it is set and otherwise 7687 for `bolt`
+and `neo4j` URIs, 7474 for `http` and `https`.
 
 ### 2. Fill in the settings
 
@@ -62,9 +63,10 @@ conn_conf = ArangoConfig.from_env()
 field name in upper case: `ARANGO_URI`, `ARANGO_USERNAME`, `ARANGO_PASSWORD`,
 `ARANGO_DATABASE`. Fields that only one database has are read the same way,
 for example `NEO4J_BOLT_PORT`, `TIGERGRAPH_SECRET` (token authentication) and
-`NEBULA_VERSION` (`3` or `5`). `schema_name` is the exception: it is not read
-from a prefixed variable, so for TigerGraph, NebulaGraph and the PostgreSQL
-schema pass it in code, as shown next.
+`NEBULA_VERSION` (`3` or `5`). The graph, space or schema name is read from
+`TIGERGRAPH_SCHEMA_NAME`, `NEBULA_SCHEMA_NAME` and `POSTGRES_SCHEMA_NAME`. In
+code and in a YAML file the field also accepts the key `schema`; the
+environment does not.
 
 When one program talks to two databases of the same kind, give each set of
 variables its own qualifier:

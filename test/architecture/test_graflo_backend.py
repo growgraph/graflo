@@ -182,6 +182,52 @@ def test_ingest_manifest_to_file_backend(
     assert index.vertices["person"].record_count >= 3
 
 
+def test_ingest_reads_a_given_registry_in_the_target_flavor(tmp_path: Path) -> None:
+    from graflo.architecture import GraphManifest
+    from graflo.data_source.factory import DataSourceFactory
+    from graflo.data_source.registry import DataSourceRegistry
+
+    config = {
+        "schema": {
+            "metadata": {"name": "hr"},
+            "graph": {
+                "vertex_config": {
+                    "vertices": [
+                        {"name": "person", "properties": ["id"], "identity": ["id"]}
+                    ]
+                },
+                "edge_config": {"edges": []},
+            },
+            "db_profile": {},
+        },
+        "ingestion_model": {
+            "resources": [{"name": "people", "pipeline": [{"vertex": "person"}]}]
+        },
+    }
+    backend = GraFloBackendConfig(output_dir=tmp_path / "graph")
+    engine = GraphEngine(target_db_flavor=DBType.GRAFLO_BACKEND)
+    declared = GraphManifest.from_config(config)
+    declared.finish_init()
+    engine.define_schema(manifest=declared, target_db_config=backend)
+
+    # A second manifest object: nothing has pointed it at the target yet.
+    manifest = GraphManifest.from_config(config)
+    manifest.finish_init()
+    registry = DataSourceRegistry()
+    registry.register(
+        DataSourceFactory.create_in_memory_data_source([{"id": "a"}, {"id": "b"}]),
+        resource_name="people",
+    )
+    engine.ingest(
+        manifest=manifest, target_db_config=backend, data_source_registry=registry
+    )
+
+    assert manifest.require_schema().db_profile.db_flavor == DBType.GRAFLO_BACKEND
+    reader = GraFloBackendReader(backend.output_dir)
+    people = [doc for batch in reader.iter_vertex_batches("person") for doc in batch]
+    assert {doc["id"] for doc in people} == {"a", "b"}
+
+
 def test_writer_resume_appends_chunks(tmp_path: Path) -> None:
     schema = _sample_schema()
     config = GraFloBackendConfig(output_dir=tmp_path, chunk_size=1)

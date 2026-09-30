@@ -51,7 +51,7 @@ class APIConfig(ConfigBaseModel):
     retries: int = 0
     retry_backoff_factor: float = 0.1
     retry_status_forcelist: list[int] = Field(
-        default_factory=lambda: [500, 502, 503, 504]
+        default_factory=lambda: [429, 500, 502, 503, 504]
     )
     verify: bool = True
     pagination: PaginationConfig | None = None
@@ -59,7 +59,11 @@ class APIConfig(ConfigBaseModel):
 
 
 class APIDataSource(AbstractDataSource):
-    """Data source for REST API endpoints."""
+    """Data source for REST API endpoints.
+
+    A request that fails after its retries raises ``requests.RequestException``
+    from :meth:`iter_batches`, on whichever page it happens.
+    """
 
     config: APIConfig
     source_type: DataSourceType = DataSourceType.API
@@ -89,11 +93,14 @@ class APIDataSource(AbstractDataSource):
                     auth.username or "",
                     auth.password or "",
                 )
-            elif auth.auth_type == "bearer":
-                token = auth.token or ""
-                session.headers[auth.header_name] = f"{auth.prefix} {token}".strip()
-            elif auth.auth_type == "api_key":
-                session.headers[auth.header_name] = auth.token or ""
+            # No token, no header: a bare scheme or an empty key is not a
+            # credential, and some servers reject it outright.
+            elif auth.auth_type == "bearer" and auth.token:
+                session.headers[auth.header_name] = (
+                    f"{auth.prefix} {auth.token}".strip()
+                )
+            elif auth.auth_type == "api_key" and auth.token:
+                session.headers[auth.header_name] = auth.token
 
         session.headers.update(self.config.headers)
         return session
@@ -136,19 +143,17 @@ class APIDataSource(AbstractDataSource):
                     elif request.strategy == "cursor" and cursor is not None:
                         params[request.cursor_param] = cursor
 
-                try:
-                    response = session.request(
-                        method=self.config.method,
-                        url=self.config.url,
-                        params=params,
-                        timeout=self.config.timeout,
-                        verify=self.config.verify,
-                    )
-                    response.raise_for_status()
-                    data = response.json()
-                except requests.RequestException as e:
-                    logger.error(f"API request failed: {e}")
-                    break
+                # A failed page raises: stopping here would hand the caller a
+                # truncated stream that looks complete.
+                response = session.request(
+                    method=self.config.method,
+                    url=self.config.url,
+                    params=params,
+                    timeout=self.config.timeout,
+                    verify=self.config.verify,
+                )
+                response.raise_for_status()
+                data = response.json()
 
                 if pagination is not None and resolved_response is None:
                     resolved_response = ResolvedApiResponse.resolve(

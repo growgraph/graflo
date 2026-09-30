@@ -26,6 +26,7 @@ from graflo.connections.provider import (
     InMemoryConnectionProvider,
     SparqlGeneralizedConnConfig,
 )
+from graflo.data_source.registry import DataSourceRegistry
 from graflo.db.conn import ConnectionCapability
 from graflo.db.manager import ConnectionManager
 from graflo.db.postgres.conn import PostgresConnection
@@ -471,6 +472,7 @@ class GraphEngine:
         ingestion_params: IngestionParams | None = None,
         connection_provider: ConnectionProvider | None = None,
         graph_target_namespace: str | None = None,
+        data_source_registry: DataSourceRegistry | None = None,
     ) -> None:
         """Ingest data into the graph database.
 
@@ -484,6 +486,8 @@ class GraphEngine:
                 If None, uses default IngestionParams()
             graph_target_namespace: Same semantics as ``define_schema``; use when
                 calling ``ingest`` without a prior ``define_schema`` on this config.
+            data_source_registry: Sources to read, by resource, instead of the
+                ones the manifest's bindings declare.
         """
         schema = manifest.require_schema()
         ingestion_model = manifest.require_ingestion_model()
@@ -513,6 +517,7 @@ class GraphEngine:
             bindings=bindings or Bindings(),
             ingestion_params=ingestion_params,
             connection_provider=connection_provider or self.connection_provider,
+            data_source_registry=data_source_registry,
         )
 
     # ------------------------------------------------------------------

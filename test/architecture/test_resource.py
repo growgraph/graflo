@@ -481,3 +481,17 @@ def test_resource_tolerate_transform_errors_defaults_true() -> None:
         }
     )
     assert resource.tolerate_transform_errors is True
+
+
+def test_resource_refuses_merge_collections() -> None:
+    with pytest.raises(ValueError, match="merge_collections is not implemented"):
+        Resource.from_dict(
+            {"name": "r", "pipeline": [{"vertex": "a"}], "merge_collections": ["a"]}
+        )
+
+
+def test_resource_accepts_empty_merge_collections() -> None:
+    resource = Resource.from_dict(
+        {"name": "r", "pipeline": [{"vertex": "a"}], "merge_collections": []}
+    )
+    assert resource.collect_vertex_names() == {"a"}

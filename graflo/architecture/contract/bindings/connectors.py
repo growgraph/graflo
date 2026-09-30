@@ -700,9 +700,10 @@ class APIConnector(ResourceConnector):
         row_annotations: Constant fields merged into every fetched document (doc wins).
         headers: Non-secret HTTP headers.
         timeout: Request timeout in seconds.
-        retries: Number of retry attempts.
+        retries: Number of retry attempts. ``0`` fails on the first error.
         retry_backoff_factor: Backoff factor for retries.
-        retry_status_forcelist: HTTP status codes to retry on.
+        retry_status_forcelist: HTTP status codes to retry on. A ``Retry-After``
+            header on the response sets the wait.
         verify: Verify SSL certificates.
     """
 
@@ -715,7 +716,7 @@ class APIConnector(ResourceConnector):
     retries: int = 0
     retry_backoff_factor: float = 0.1
     retry_status_forcelist: list[int] = Field(
-        default_factory=lambda: [500, 502, 503, 504]
+        default_factory=lambda: [429, 500, 502, 503, 504]
     )
     verify: bool = True
 

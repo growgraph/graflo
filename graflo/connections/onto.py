@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Self, TypeVar, cast
 from urllib.parse import urlparse
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 if TYPE_CHECKING:
@@ -140,8 +140,11 @@ class DBConfig(BaseSettings, abc.ABC):
     )
     schema_name: str | None = Field(
         default=None,
-        validation_alias=AliasChoices("schema", "schema_name"),
-        description="Schema/graph name (unified internal structure)",
+        description=(
+            "Schema/graph name (unified internal structure). Read from "
+            "``<PREFIX>SCHEMA_NAME``; ``schema`` is accepted as a key in code "
+            "and in config mappings."
+        ),
     )
     request_timeout: float = Field(
         default=60.0, description="Request timeout in seconds"
@@ -157,6 +160,19 @@ class DBConfig(BaseSettings, abc.ABC):
         default=None,
         description="Human-friendly display label for studio and registry views.",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_schema_key(cls, data: Any) -> Any:
+        """Take ``schema`` as a spelling of ``schema_name``.
+
+        A key, not a field alias: an alias would be read from the environment
+        without the class prefix.
+        """
+        if isinstance(data, dict) and "schema" in data:
+            data = dict(data)
+            data["schema_name"] = data.pop("schema")
+        return data
 
     @abc.abstractmethod
     def _get_default_port(self) -> int:
@@ -687,8 +703,11 @@ class Neo4jConfig(DBConfig):
     bolt_port: int | None = Field(default=None, description="Neo4j bolt protocol port")
 
     def _get_default_port(self) -> int:
-        """Get default Neo4j HTTP port."""
-        return 7474
+        """The HTTP port for ``http(s)`` URIs; otherwise ``bolt_port``, or Bolt's default."""
+        scheme = urlparse(self.uri or "").scheme.lower()
+        if scheme in {"http", "https"}:
+            return 7474
+        return self.bolt_port or 7687
 
     def _get_effective_database(self) -> str | None:
         """Neo4j doesn't have a database level (connection -> database -> nodes/relationships)."""

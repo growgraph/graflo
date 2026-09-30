@@ -431,9 +431,8 @@ def test_register_all_api_configs_from_env_prefix_map(
     assert users_cfg.config.auth is not None
     assert users_cfg.config.auth.token == "mapped-token"
     assert orders_cfg.config.base_url == "https://orders.example.com"
-    assert orders_cfg.config.auth is not None
-    assert orders_cfg.config.auth.auth_type == "bearer"
-    assert orders_cfg.config.auth.token is None
+    # No credential in the environment: the API is open, not bearer with no token.
+    assert orders_cfg.config.auth is None
 
 
 def test_register_all_api_configs_from_env_skips_non_api_connectors(

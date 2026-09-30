@@ -544,7 +544,13 @@ class Caster:
         bindings: Bindings | None = None,
         ingestion_params: IngestionParams | None = None,
         connection_provider: ConnectionProvider | None = None,
+        data_source_registry: DataSourceRegistry | None = None,
     ):
+        """Cast and write every resource's sources into *target_db_config*.
+
+        The sources are built from *bindings*, unless *data_source_registry*
+        supplies them.
+        """
         bindings = bindings or Bindings()
         ingestion_params = ingestion_params or IngestionParams()
 
@@ -565,12 +571,15 @@ class Caster:
         )
         self._document_caster = DocumentCaster(self.ingestion_model)
 
-        registry = RegistryBuilder(self.schema, self.ingestion_model).build(
-            bindings,
-            ingestion_params,
-            connection_provider=connection_provider or EmptyConnectionProvider(),
-            strict=ingestion_params.strict_registry,
-        )
+        if data_source_registry is not None:
+            registry = data_source_registry
+        else:
+            registry = RegistryBuilder(self.schema, self.ingestion_model).build(
+                bindings,
+                ingestion_params,
+                connection_provider=connection_provider or EmptyConnectionProvider(),
+                strict=ingestion_params.strict_registry,
+            )
 
         asyncio.run(
             self.ingest_data_sources(

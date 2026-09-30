@@ -95,7 +95,7 @@ At run time a [connection provider](../glossary.md#connection-provider) maps eac
 | `{PREFIX}HEADER_NAME` | no, default `Authorization` | Header that carries the token or key |
 | `{PREFIX}PREFIX` | no, default `Bearer` | Word written before the token (`bearer` only) |
 
-A missing `{PREFIX}BASE_URL`, or an `AUTH_TYPE` other than these four, raises a `ValueError` that names the variable.
+A missing `{PREFIX}BASE_URL`, or an `AUTH_TYPE` other than these four, raises a `ValueError` that names the variable. With none of `TOKEN`, `USERNAME` and `PASSWORD` set, the API is taken to need no authentication and the requests carry no credential header.
 
 When your variables do not follow the label, map the label to the prefix you use:
 
@@ -141,7 +141,7 @@ provider.register_generalized_config(
 provider.bind_from_bindings(bindings=bindings)
 ```
 
-`bind_from_bindings` attaches each connector to the label that its `connector_connection` row names. Leave out `auth` for an API without authentication. The environment route always builds an `ApiAuth`: with the default `bearer` type and no token, every request carries the header `Authorization: Bearer` with nothing after it.
+`bind_from_bindings` attaches each connector to the label that its `connector_connection` row names. Leave out `auth` for an API without authentication.
 
 ### Authentication types
 
@@ -352,12 +352,14 @@ Every request of this connector carries `status=open&plant=north`. Requests have
 |---|---|---|
 | `method` | `GET` | HTTP method |
 | `timeout` | `null` | Seconds to wait for the API; `null` waits without limit |
-| `retries` | `0` | How many times a request is retried after a connection error or a status in `retry_status_forcelist` |
+| `retries` | `0` | How many times a request is retried after a connection error or a status in `retry_status_forcelist`. `0` fails on the first error. |
 | `retry_backoff_factor` | `0.1` | Scales the pause between retries |
-| `retry_status_forcelist` | `[500, 502, 503, 504]` | Status codes that trigger a retry |
+| `retry_status_forcelist` | `[429, 500, 502, 503, 504]` | Status codes that trigger a retry |
 | `verify` | `true` | Check the TLS certificate of the API |
 
 Set a `timeout`: without one, a request to an API that stops answering waits forever. Retries follow the rules of urllib3, which retries on a status code only for idempotent methods such as `GET`, not for `POST`.
+
+For an API that limits its request rate, set `retries` above `0`. A `429` is then retried, and when the response carries a `Retry-After` header GraFlo waits that long before the next attempt. GraFlo does not pace its requests otherwise.
 
 ## Session tokens (`carry_params`)
 
@@ -435,9 +437,9 @@ Templates are expanded when the bindings are loaded. A `conn_proxy` at the top l
 
 ## Errors
 
-- An HTTP error, a connection failure that outlasts the retries, or a body that is not JSON ends the reading of that connector. GraFlo logs the error at ERROR level and keeps the records it has already read; the run raises no exception. Check the log after a run against an unreliable API.
+- An HTTP error, a connection failure that outlasts the retries, or a body that is not JSON raises a `requests.RequestException` and ends the ingestion, on whichever page it happens. Batches written before the failure stay in the graph.
 - An object body with no `records_path`, set or detected, raises a `ValueError`.
-- A connector whose label has no registered configuration is skipped with a warning in the log; the other connectors run as usual.
+- A connector whose label has no registered configuration fails the run before anything is read, with a `ValueError` that names the resource and the connector. With `IngestionParams(strict_registry=False)` it is skipped with a warning in the log and the other connectors run as usual.
 
 ## What to read next
 
