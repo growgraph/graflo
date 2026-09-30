@@ -165,6 +165,7 @@ class ConnectionCapability(Enum):
     GRAPH_EXPORT = "supports_graph_export"
     SCHEMA_INTROSPECTION = "supports_schema_introspection"
     SCHEMA_DDL = "supports_schema_ddl"
+    INSTANCE_DELETE = "supports_instance_delete"
 
     @property
     def label(self) -> str:
@@ -174,7 +175,42 @@ class ConnectionCapability(Enum):
             ConnectionCapability.GRAPH_EXPORT: "bulk graph export",
             ConnectionCapability.SCHEMA_INTROSPECTION: "schema introspection",
             ConnectionCapability.SCHEMA_DDL: "schema migration DDL",
+            ConnectionCapability.INSTANCE_DELETE: "deleting vertices and edges",
         }[self]
+
+
+#: Documents per statement when deleting vertices or edges.
+DEFAULT_DELETE_CHUNK_SIZE = 1000
+
+
+def deletable_docs(
+    key_docs: list[dict[str, Any]], match_keys: Sequence[str]
+) -> list[dict[str, Any]]:
+    """*key_docs* projected onto *match_keys*, without those missing a key field.
+
+    A document without every key field names no vertex, and must not be read
+    as a pattern that matches many.
+    """
+    return [
+        {key: doc[key] for key in match_keys}
+        for doc in key_docs
+        if all(doc.get(key) is not None for key in match_keys)
+    ]
+
+
+def deletable_endpoints(
+    endpoints: list[tuple[dict[str, Any], dict[str, Any]]],
+    match_keys_source: Sequence[str],
+    match_keys_target: Sequence[str],
+) -> list[tuple[dict[str, Any], dict[str, Any]]]:
+    """As :func:`deletable_docs`, for ``(source, target)`` pairs of an edge."""
+    kept: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    for source, target in endpoints:
+        s = deletable_docs([source], match_keys_source)
+        t = deletable_docs([target], match_keys_target)
+        if s and t:
+            kept.append((s[0], t[0]))
+    return kept
 
 
 def _walked_edge_ids(
@@ -228,6 +264,8 @@ class Connection(abc.ABC):
     #: know how far to trust the recovered schema. Set ``False`` only where the
     #: backend stores a real DDL catalogue.
     schema_introspection_is_sampled: ClassVar[bool] = True
+    #: Implements :meth:`delete_vertices` and :meth:`delete_edges`.
+    supports_instance_delete: ClassVar[bool] = False
 
     def __init__(self):
         """Initialize the connection."""
@@ -642,6 +680,68 @@ class Connection(abc.ABC):
 
         return index_matches_by_doc(key_docs, match_keys, buckets)
 
+    def delete_vertices(
+        self,
+        class_name: str,
+        key_docs: list[dict[str, Any]],
+        match_keys: tuple[str, ...],
+        *,
+        chunk_size: int = DEFAULT_DELETE_CHUNK_SIZE,
+    ) -> None:
+        """Remove vertices, with every edge incident to them.
+
+        Names are stored names, as for every write.
+
+        Args:
+            class_name: Stored name of the vertex type.
+            key_docs: One document per vertex to remove, carrying *match_keys*.
+                A document missing a key field removes nothing.
+            match_keys: The vertex type's identity fields, as written.
+            chunk_size: Documents per statement.
+
+        Raises:
+            NotImplementedError: On a backend that does not declare
+                ``supports_instance_delete``.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support deleting vertices"
+        )
+
+    def delete_edges(
+        self,
+        source_class: str,
+        target_class: str,
+        relation_name: str | None,
+        endpoints: list[tuple[dict[str, Any], dict[str, Any]]],
+        match_keys_source: tuple[str, ...],
+        match_keys_target: tuple[str, ...],
+        *,
+        collection_name: str | None = None,
+        chunk_size: int = DEFAULT_DELETE_CHUNK_SIZE,
+    ) -> None:
+        """Remove the edges of one type between the given endpoint pairs.
+
+        Every edge of the type from the source to the target of a pair goes,
+        whatever its properties. Names are stored names, as for every write.
+
+        Args:
+            source_class: Stored name of the source vertex type.
+            target_class: Stored name of the target vertex type.
+            relation_name: Stored relation, as passed to :meth:`insert_edges_batch`.
+            endpoints: ``(source, target)`` documents carrying the match keys.
+            match_keys_source: Identity fields of the source type.
+            match_keys_target: Identity fields of the target type.
+            collection_name: Edge collection, where the backend has one.
+            chunk_size: Pairs per statement.
+
+        Raises:
+            NotImplementedError: On a backend that does not declare
+                ``supports_instance_delete``.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support deleting edges"
+        )
+
     @abc.abstractmethod
     def aggregate(
         self,
@@ -807,10 +907,11 @@ class Connection(abc.ABC):
 
         The default :meth:`_graph_neighbors` is a breadth-first composition of
         :meth:`fetch_edges` and :meth:`fetch_docs`, which gives correct multi-hop
-        semantics on any backend that can answer a single hop. Backends with a
-        native multi-hop form (AQL ``1..k``, Cypher variable-length, nGQL
-        ``GO … STEPS``) override it for a single round trip; the conformance
-        suite asserts the override returns exactly what the default would.
+        semantics on any backend that can answer a single hop. ArangoDB (AQL
+        ``1..k``) and the Cypher backends (variable-length paths) override it
+        for a single round trip; the conformance suite asserts the override
+        returns exactly what the default would. NebulaGraph, TigerGraph and
+        PostgreSQL use the default.
 
         Args:
             vertex_type: Logical type of the anchor vertex.
@@ -948,6 +1049,46 @@ class Connection(abc.ABC):
                 container.edges.setdefault(edge_id, []).extend(rows)
         container.pick_unique()
         return keys.logical_container(container, schema.core_schema.edge_config)
+
+    def export_graph_container(
+        self, schema: Schema, *, limit: int | None = None
+    ) -> GraphContainer:
+        """Every vertex and edge of *schema*, read from this database.
+
+        *schema* is the one :meth:`introspect_graph_schema` returned. The
+        default reads each vertex type with :meth:`fetch_all_docs` and each
+        edge with :meth:`fetch_all_edges`.
+
+        Args:
+            schema: The graph to read.
+            limit: At most this many records per vertex type and per edge.
+        """
+        vertices: dict[str, list] = {}
+        edges: dict[tuple[str, str, str | None], list] = {}
+        vc = schema.core_schema.vertex_config
+
+        for vertex in vc.vertices:
+            docs = self.fetch_all_docs(vertex.name, limit=limit)
+            if docs:
+                vertices[vertex.name] = docs
+
+        for edge in schema.core_schema.edge_config.values():
+            # Backends that store endpoints as a single identity value (rather
+            # than a resolvable document reference) need to be told which field
+            # that value belongs to, so the exported endpoint doc is keyed the
+            # way DBWriter resolves it.
+            edge_docs = self.fetch_all_edges(
+                edge.source,
+                edge.target,
+                edge.relation,
+                match_keys_source=tuple(vc.identity_fields(edge.source)),
+                match_keys_target=tuple(vc.identity_fields(edge.target)),
+                limit=limit,
+            )
+            if edge_docs:
+                edges[edge.edge_id] = edge_docs
+
+        return GraphContainer(vertices=vertices, edges=edges, linear=[])
 
     def introspect_graph_schema(
         self,

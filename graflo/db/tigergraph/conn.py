@@ -76,6 +76,7 @@ class TigerGraphConnection(Connection):
     """TigerGraph database connection — facade over auth, REST, GSQL, DDL, and data ops."""
 
     flavor = DBType.TIGERGRAPH
+    supports_instance_delete = True
     supports_schema_introspection = True
     # GSQL DDL is a real catalogue: the recovered schema is complete, not a
     # lower bound, so `sample_limit` has nothing to bound.
@@ -569,6 +570,12 @@ class TigerGraphConnection(Connection):
 
     def resolve_vertices(self, *args, **kwargs):
         return self._data.resolve_vertices(*args, **kwargs)
+
+    def delete_vertices(self, *args, **kwargs):
+        return self._data.delete_vertices(*args, **kwargs)
+
+    def delete_edges(self, *args, **kwargs):
+        return self._data.delete_edges(*args, **kwargs)
 
     def aggregate(self, *args, **kwargs):
         return self._data.aggregate(*args, **kwargs)

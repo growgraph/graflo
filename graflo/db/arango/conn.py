@@ -44,12 +44,15 @@ from graflo.connections.onto import ArangoConfig
 from graflo.db.arango.query import fetch_fields_query
 from graflo.db.arango.util import render_filters
 from graflo.db.conn import (
+    DEFAULT_DELETE_CHUNK_SIZE,
     Connection,
     NamespaceNotFoundError,
     SchemaExistsError,
     consume_insert_edges_kwargs,
+    deletable_docs,
+    deletable_endpoints,
 )
-from graflo.db.field_type_support import assert_schema_field_types_supported
+from graflo.db.field_type_support import assert_schema_supported
 from graflo.db.graph_introspection import (
     GraphEdgeIntrospection,
     GraphIntrospectionResult,
@@ -178,6 +181,60 @@ def _arango_safe_collection_name(name: str) -> str:
     return name
 
 
+def _aql_attribute(name: str) -> str:
+    """A backtick-quoted AQL attribute name."""
+    return "`" + name.replace("`", "") + "`"
+
+
+def arango_remove_documents_query(collection: str, match_keys: Sequence[str]) -> str:
+    """AQL removing the documents that match a row of ``@rows``; returns their ``_id``."""
+    condition = " AND ".join(
+        f"doc.{_aql_attribute(key)} == row.{_aql_attribute(key)}" for key in match_keys
+    )
+    return (
+        f"FOR row IN @rows FOR doc IN {collection} FILTER {condition} "
+        f"REMOVE doc IN {collection} RETURN OLD._id"
+    )
+
+
+def arango_remove_incident_edges_query(edge_collection: str) -> str:
+    """AQL removing the edges of *edge_collection* with an endpoint in ``@ids``."""
+    return (
+        f"FOR e IN {edge_collection} FILTER e._from IN @ids OR e._to IN @ids "
+        f"REMOVE e IN {edge_collection}"
+    )
+
+
+def arango_remove_edges_query(
+    edge_collection: str,
+    source_collection: str,
+    target_collection: str,
+    source_keys: Sequence[str],
+    target_keys: Sequence[str],
+    *,
+    with_relation: bool,
+) -> str:
+    """AQL removing the edges between the endpoint pairs of ``@rows``.
+
+    A row is ``{"s": source keys, "t": target keys}``. With *with_relation*,
+    only edges whose ``relation`` is ``@relation``.
+    """
+    source = " AND ".join(
+        f"s.{_aql_attribute(k)} == row.s.{_aql_attribute(k)}" for k in source_keys
+    )
+    target = " AND ".join(
+        f"t.{_aql_attribute(k)} == row.t.{_aql_attribute(k)}" for k in target_keys
+    )
+    relation = " AND e.relation == @relation" if with_relation else ""
+    return (
+        f"FOR row IN @rows "
+        f"FOR s IN {source_collection} FILTER {source} "
+        f"FOR t IN {target_collection} FILTER {target} "
+        f"FOR e IN {edge_collection} FILTER e._from == s._id AND e._to == t._id{relation} "
+        f"REMOVE e IN {edge_collection}"
+    )
+
+
 class ArangoConnection(Connection):
     """ArangoDB-specific implementation of the Connection interface.
 
@@ -191,6 +248,7 @@ class ArangoConnection(Connection):
     """
 
     flavor = DBType.ARANGO
+    supports_instance_delete = True
     supports_graph_export = True
     # A migration emitter is registered for this backend
     # (graflo/migrate/executor.py); the other six have none.
@@ -458,7 +516,7 @@ class ArangoConnection(Connection):
         Args:
             schema: Schema containing collection definitions
         """
-        assert_schema_field_types_supported(self.flavor, schema)
+        assert_schema_supported(self.flavor, schema)
         self.define_vertex_classes(schema)
         self.define_edge_classes(
             list(schema.core_schema.edge_config.values()), schema=schema
@@ -1014,6 +1072,90 @@ class ArangoConnection(Connection):
               RETURN {{_key: inserted._key}}
         """
         return query0
+
+    def _edge_collection_names(self) -> list[str]:
+        """Every non-system edge collection of the database."""
+        names: list[str] = []
+        collections = self.conn.collections()
+        if not isinstance(collections, list):
+            return names
+        for collection in collections:
+            if not isinstance(collection, dict):
+                continue
+            name = collection.get("name")
+            if (
+                isinstance(name, str)
+                and not name.startswith("_")
+                and _arango_collection_kind(collection.get("type")) == "edge"
+            ):
+                names.append(name)
+        return names
+
+    def delete_vertices(
+        self,
+        class_name: str,
+        key_docs: list[dict[str, Any]],
+        match_keys: tuple[str, ...],
+        *,
+        chunk_size: int = DEFAULT_DELETE_CHUNK_SIZE,
+    ) -> None:
+        """Remove documents and every edge, in any edge collection, that touches them."""
+        rows = deletable_docs(key_docs, match_keys)
+        if not rows:
+            return
+        edge_collections = self._edge_collection_names()
+        collection = _arango_safe_collection_name(class_name)
+        for start in range(0, len(rows), chunk_size):
+            removed = list(
+                get_data_from_cursor(
+                    self.conn.aql.execute(
+                        arango_remove_documents_query(collection, match_keys),
+                        bind_vars={"rows": rows[start : start + chunk_size]},
+                    )
+                )
+            )
+            if not removed:
+                continue
+            for edges in edge_collections:
+                self.conn.aql.execute(
+                    arango_remove_incident_edges_query(
+                        _arango_safe_collection_name(edges)
+                    ),
+                    bind_vars={"ids": removed},
+                )
+
+    def delete_edges(
+        self,
+        source_class: str,
+        target_class: str,
+        relation_name: str | None,
+        endpoints: list[tuple[dict[str, Any], dict[str, Any]]],
+        match_keys_source: tuple[str, ...],
+        match_keys_target: tuple[str, ...],
+        *,
+        collection_name: str | None = None,
+        chunk_size: int = DEFAULT_DELETE_CHUNK_SIZE,
+    ) -> None:
+        """Remove edges between endpoint pairs, located by their keys."""
+        pairs = deletable_endpoints(endpoints, match_keys_source, match_keys_target)
+        if not pairs:
+            return
+        query = arango_remove_edges_query(
+            _arango_safe_collection_name(
+                collection_name or f"{source_class}_{target_class}_edges"
+            ),
+            _arango_safe_collection_name(source_class),
+            _arango_safe_collection_name(target_class),
+            match_keys_source,
+            match_keys_target,
+            with_relation=relation_name is not None,
+        )
+        rows = [{"s": source, "t": target} for source, target in pairs]
+        for start in range(0, len(rows), chunk_size):
+            bind_vars: dict[str, Any] = {"rows": rows[start : start + chunk_size]}
+            if relation_name is not None:
+                bind_vars["relation"] = relation_name
+            self.conn.aql.execute(query, bind_vars=bind_vars)
 
     def fetch_present_documents(
         self,

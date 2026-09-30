@@ -120,3 +120,19 @@ class TestRestApiConfigFromEnvironment:
             "reader",
             "secret",
         )
+
+
+class TestBulkLoadJobOptions:
+    def test_run_only_is_refused(self) -> None:
+        from graflo.connections.onto import TigergraphBulkLoadJobOptions
+
+        with pytest.raises(ValueError, match="session id"):
+            TigergraphBulkLoadJobOptions.model_validate({"run_mode": "run_only"})
+
+    def test_create_and_run_still_loads(self) -> None:
+        from graflo.connections.onto import TigergraphBulkLoadJobOptions
+
+        options = TigergraphBulkLoadJobOptions.model_validate(
+            {"run_mode": "create_and_run"}
+        )
+        assert options.run_mode == "create_and_run"

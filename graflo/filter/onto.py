@@ -318,6 +318,16 @@ class FilterExpression(ConfigBaseModel):
             update={"deps": [dep.rename_fields(renames) for dep in self.deps]}
         )
 
+    def matches(self, doc: Mapping[str, Any]) -> bool:
+        """Whether *doc* satisfies the expression, evaluated in Python.
+
+        Prefer this to ``expr(kind=ExpressionFlavor.PYTHON, **doc)``, which
+        cannot evaluate a document with a field named ``kind`` or ``doc_name``.
+        """
+        if self.kind == "leaf":
+            return self._cast_python(doc)
+        return self._cast_python_composite(doc)
+
     def __call__(
         self,
         doc_name="doc",
@@ -362,7 +372,7 @@ class FilterExpression(ConfigBaseModel):
         elif kind == ExpressionFlavor.SQL:
             return self._cast_sql()
         elif kind == ExpressionFlavor.PYTHON:
-            return self._cast_python(**kwargs)
+            return self._cast_python(kwargs)
         raise ValueError(f"kind {kind} not implemented")
 
     def _call_composite(
@@ -380,7 +390,7 @@ class FilterExpression(ConfigBaseModel):
         ):
             return self._cast_generic(doc_name=doc_name, kind=kind)
         elif kind == ExpressionFlavor.PYTHON:
-            return self._cast_python_composite(kind=kind, **kwargs)
+            return self._cast_python_composite(kwargs)
         raise ValueError(f"kind {kind} not implemented")
 
     def _in_members(self) -> list[Any]:
@@ -579,10 +589,10 @@ class FilterExpression(ConfigBaseModel):
             value_str = str(value)
         return f"{self.field}{op_str}{value_str}"
 
-    def _cast_python(self, **kwargs: Any) -> bool:
+    def _cast_python(self, doc: Mapping[str, Any]) -> bool:
         if self.field is None:
             return False
-        field_val = kwargs.pop(self.field, None)
+        field_val = doc.get(self.field)
         if self.cmp_operator == ComparisonOperator.IS_NULL:
             return field_val is None
         if self.cmp_operator == ComparisonOperator.IS_NOT_NULL:
@@ -665,18 +675,16 @@ class FilterExpression(ConfigBaseModel):
                 return " || ".join(deps_str_cast)
         return f" {self.operator} ".join(deps_str_cast)
 
-    def _cast_python_composite(self, kind: ExpressionFlavor, **kwargs: Any) -> bool:
+    def _cast_python_composite(self, doc: Mapping[str, Any]) -> bool:
         if self.operator is None:
             raise ValueError("composite expression requires operator")
         if len(self.deps) == 1:
             if self.operator == LogicalOperator.NOT:
-                return not self.deps[0](kind=kind, **kwargs)
+                return not self.deps[0].matches(doc)
             raise ValueError(
                 f" length of deps = {len(self.deps)} but operator is not {LogicalOperator.NOT}"
             )
-        return OperatorMapping[self.operator](
-            [dep(kind=kind, **kwargs) for dep in self.deps]
-        )
+        return OperatorMapping[self.operator]([dep.matches(doc) for dep in self.deps])
 
 
 def render_conjunct(

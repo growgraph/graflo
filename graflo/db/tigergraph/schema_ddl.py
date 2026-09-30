@@ -623,9 +623,9 @@ class SchemaDdlBuilder:
         Args:
             schema: Schema definition
         """
-        from graflo.db.field_type_support import assert_schema_field_types_supported
+        from graflo.db.field_type_support import assert_schema_supported
 
-        assert_schema_field_types_supported(DBType.TIGERGRAPH, schema)
+        assert_schema_supported(DBType.TIGERGRAPH, schema)
         graph_name = self._conn._require_configured_graph_name()
 
         # Validate graph name

@@ -13,7 +13,12 @@ from suthing import batched
 
 from graflo.architecture.graph_types import EdgeDirection
 from graflo.architecture.schema.vertex import FieldType
-from graflo.db.conn import consume_insert_edges_kwargs
+from graflo.db.conn import (
+    DEFAULT_DELETE_CHUNK_SIZE,
+    consume_insert_edges_kwargs,
+    deletable_docs,
+    deletable_endpoints,
+)
 from graflo.db.edge_direction_support import assert_direction_supported
 from graflo.db.resolve import (
     DEFAULT_RESOLVE_CHUNK_SIZE,
@@ -35,6 +40,26 @@ from graflo.onto import AggregationType, DBType, ExpressionFlavor
 from graflo.util.transform import pick_unique_dict
 
 logger = logging.getLogger(__name__)
+
+
+def tigergraph_vertex_endpoint(graph: str, vertex_type: str, vertex_id: str) -> str:
+    """REST++ path of one vertex."""
+    return f"/graph/{graph}/vertices/{vertex_type}/{quote(str(vertex_id), safe='')}"
+
+
+def tigergraph_edge_endpoint(
+    graph: str,
+    source_type: str,
+    source_id: str,
+    edge_type: str,
+    target_type: str,
+    target_id: str,
+) -> str:
+    """REST++ path of the edges of one type between two vertices."""
+    return (
+        f"/graph/{graph}/edges/{source_type}/{quote(str(source_id), safe='')}/"
+        f"{edge_type}/{target_type}/{quote(str(target_id), safe='')}"
+    )
 
 
 def _wrap_tg_exception(func):
@@ -1020,6 +1045,65 @@ class TigerGraphDataOps:
         except Exception as e:
             logger.error(f"Error fetching edges via REST API: {e}")
             raise
+
+    def delete_vertices(
+        self,
+        class_name: str,
+        key_docs: list[dict[str, Any]],
+        match_keys: tuple[str, ...],
+        *,
+        chunk_size: int = DEFAULT_DELETE_CHUNK_SIZE,
+    ) -> None:
+        """Remove vertices by id; TigerGraph removes their edges with them.
+
+        The id is built from *match_keys* the way an upsert builds it.
+        """
+        graph_name = self._conn._require_configured_graph_name()
+        for doc in deletable_docs(key_docs, match_keys):
+            vertex_id = extract_id(doc, match_keys)
+            if vertex_id is None:
+                continue
+            self._conn._call_restpp_api(
+                tigergraph_vertex_endpoint(graph_name, class_name, vertex_id),
+                method="DELETE",
+            )
+
+    def delete_edges(
+        self,
+        source_class: str,
+        target_class: str,
+        relation_name: str | None,
+        endpoints: list[tuple[dict[str, Any], dict[str, Any]]],
+        match_keys_source: tuple[str, ...],
+        match_keys_target: tuple[str, ...],
+        *,
+        collection_name: str | None = None,
+        chunk_size: int = DEFAULT_DELETE_CHUNK_SIZE,
+    ) -> None:
+        """Remove the edges of one type between endpoint pairs, by vertex id."""
+        if relation_name is None:
+            raise ValueError(
+                "A TigerGraph edge is removed by its edge type; none given"
+            )
+        graph_name = self._conn._require_configured_graph_name()
+        for source, target in deletable_endpoints(
+            endpoints, match_keys_source, match_keys_target
+        ):
+            source_id = extract_id(source, match_keys_source)
+            target_id = extract_id(target, match_keys_target)
+            if source_id is None or target_id is None:
+                continue
+            self._conn._call_restpp_api(
+                tigergraph_edge_endpoint(
+                    graph_name,
+                    source_class,
+                    source_id,
+                    relation_name,
+                    target_class,
+                    target_id,
+                ),
+                method="DELETE",
+            )
 
     def resolve_vertices(
         self,

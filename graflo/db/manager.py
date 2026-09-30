@@ -108,19 +108,35 @@ class ConnectionManager:
             ValueError: If the flavor has no implementation, or does not declare
                 *require*.
         """
+        conn_cls = cls.require(connection_config, require)
+        return conn_cls(config=cast(Any, connection_config))
+
+    @classmethod
+    def require(
+        cls, connection_config: DBConfig, capability: ConnectionCapability
+    ) -> Any:
+        """The connection class for *connection_config*, if it declares *capability*.
+
+        Lets a caller refuse an unsupported backend by name before opening a
+        connection.
+
+        Raises:
+            ValueError: If the flavor has no implementation, or does not declare
+                *capability*.
+        """
         db_type = connection_config.connection_type
         conn_cls = cls.target_conn_mapping.get(db_type)
         if conn_cls is None:
             raise ValueError(
                 f"No graph connection implementation for database type {db_type!r}"
             )
-        if not getattr(conn_cls, require.value, False):
-            supported = [t.value for t in cls.flavors_supporting(require)]
+        if not getattr(conn_cls, capability.value, False):
+            supported = [t.value for t in cls.flavors_supporting(capability)]
             raise ValueError(
-                f"Database type {db_type!r} does not support {require.label}. "
+                f"Database type {db_type!r} does not support {capability.label}. "
                 f"Supported types: {supported}"
             )
-        return conn_cls(config=cast(Any, connection_config))
+        return conn_cls
 
     def __init__(
         self,

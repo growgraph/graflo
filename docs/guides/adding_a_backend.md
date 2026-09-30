@@ -56,11 +56,17 @@ Other methods have a default that you override for a capability or for speed:
   `UnsupportedBulkLoad`, and ingestion then writes record by record.
 - `introspect_graph_schema`, `fetch_all_docs` and `fetch_all_edges` raise
   `NotImplementedError`. Implement them together with the matching capability
-  flag below.
+  flag below. `export_graph_container` reads the whole graph through the last
+  two; override it where a store reads its graph another way.
+- `delete_vertices` and `delete_edges` raise `NotImplementedError`. Implement
+  them together with `supports_instance_delete`; `delete_vertices` must remove
+  the edges that touch a removed vertex.
 
 If your store speaks Cypher, reuse `graflo/db/cypher/`: escaping,
-relationship merge, direction handling, traversal queries and a shared
-sampling introspection.
+relationship merge, direction handling, traversal queries, delete statements
+and a shared sampling introspection. On any store,
+`graflo.db.resolve.present_documents` and `absent_documents` implement
+`fetch_present_documents` and `keep_absent_documents` over `fetch_docs`.
 
 #### Capability flags
 
@@ -76,6 +82,7 @@ class MyConnection(Connection):
     supports_schema_introspection = True  # a real introspect_graph_schema
     schema_introspection_is_sampled = False  # False only with a real catalog
     supports_schema_ddl = False  # True only with a migration emitter (step 3)
+    supports_instance_delete = True  # delete_vertices and delete_edges
 ```
 
 An introspector that samples records must leave `property_types` empty and
@@ -90,7 +97,7 @@ recovered schema.
 | 1 | `graflo/onto.py`: a `DBType` member | The flavor itself |
 | 2 | `graflo/onto.py`: `DB_TYPE_TO_EXPRESSION_FLAVOR` | `Connection.expression_flavor()` raises `KeyError` without it |
 | 3 | `graflo/architecture/schema/edge_direction.py`: `REVERSE_TRAVERSAL_COST` | `reverse_traversal_cost()` raises `KeyError` without it |
-| 4 | `graflo/db/field_type_support.py`: `_LIST_NATIVE_DBS` | Say whether `LIST` is native; if it is not, DDL raises `UnsupportedFieldTypeError` for list properties |
+| 4 | `graflo/db/field_type_support.py`: `_LIST_NATIVE_DBS` and `_INDEX_KINDS_BUILT` | Say whether `LIST` is native, and which index kinds beyond a plain index your DDL builds; DDL refuses the rest with `UnsupportedFieldTypeError` or `UnsupportedIndexKindError` |
 | 5 | `graflo/connections/onto.py`: a `DBConfig` subclass with `from_docker_env` | The config, and the test wiring |
 | 6 | `graflo/connections/onto.py`: `TARGET_DATABASES` | `ConnectionManager` refuses to open a flavor that is not listed as a target |
 | 7 | `graflo/connections/mapping.py`: `DB_TYPE_MAPPING` | Flavor to config class, used by `DBConfig.from_dict` |

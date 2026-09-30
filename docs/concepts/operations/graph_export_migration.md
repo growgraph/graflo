@@ -167,11 +167,9 @@ step 3 of the migration runs for that flavor: `schema.yaml` records the stored
 names, and chunk files and records use them. A directory written this way
 records how the graph would be stored in that database.
 
-Such a directory cannot be read back as a source when the hint renamed
-anything: `export_graph` and `migrate_graph` look the chunks up by the logical
-names and find no records for the renamed types. Leave the hint unset on a
-directory you plan to load with `migrate_graph`; the migration adapts the
-names for its target anyway.
+Reading such a directory back, with `export_graph`, `migrate_graph` or
+`GraFloBackendReader.load_graph_container()`, returns the records under the
+names of its `schema.yaml`.
 
 ## Limits
 

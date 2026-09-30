@@ -34,6 +34,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   own.
 - **`SchemaIntrospectionResult.skipped_tables` and `.reference_edges`.** The tables left out of
   the inferred graph, each with the reason, and the edges stated by foreign keys of entity tables.
+- **Removing vertices and edges.** `GraphEngine.delete_vertices` removes vertices with every
+  edge that touches them, and `GraphEngine.delete_edges` removes the edges of one declared edge
+  between endpoint pairs, both by identity under logical names. Implemented on ArangoDB, Neo4j,
+  Memgraph, FalkorDB, TigerGraph and PostgreSQL, declared by
+  `ConnectionCapability.INSTANCE_DELETE`; NebulaGraph and the file backend refuse.
+- **`aggregate` on the file backend**, with the Cypher backends' return shapes.
+- **`FilterExpression.matches(doc)`** evaluates a filter against a document in Python, including a
+  document with a field named `kind` or `doc_name`.
+- **`Connection.export_graph_container`**, what `export_graph` and `migrate_graph` read a source
+  with; a backend overrides it where it reads its graph another way.
+- **`graflo.db.resolve.present_documents` and `absent_documents`** implement
+  `fetch_present_documents` and `keep_absent_documents` over `fetch_docs`.
 
 ### Changed
 
@@ -75,6 +87,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   followed by a digest of its triples.
 - **RDF schema inference skips anonymous classes** and refuses two classes that share a local
   name, which would share a vertex type.
+- **A `fulltext` index is refused on a target that cannot build one**, which is every target but
+  ArangoDB, naming the vertex or edge it is declared on. It used to become a plain index.
+- **`run_mode: run_only` is refused** in TigerGraph bulk-load options. The job is named after a
+  session id that is new on every run, so no existing job could match.
+- **The file backend is written by one operation at a time** whoever writes it; the bound moved
+  from the ingest into `DBWriter`.
+- **Neo4j, Memgraph and FalkorDB answer `fetch_present_documents` by batch position**, as the
+  contract says, and `insert_return_batch` raises saying what to use instead. Neo4j raised on all
+  three.
+- **Traversal reads each backend's edge endpoints under that backend's own names**, and leaves
+  them out of the edge properties.
 
 - **uv is pinned to one release line.** `pyproject.toml` sets `[tool.uv] required-version`, and
   the workflows pin a release within it. A different uv minor rewrote `uv.lock` wholesale with
@@ -179,6 +202,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A blank node got a new key on every read**, so reading the same data again added its vertices
   again instead of updating them. It is now keyed on its content, from a file or an endpoint.
 - **SQL schema inference skipped a table without a primary key without a word.**
+- **A file backend written with `target_flavor_hint` read back empty** when the hint renamed a
+  vertex type: its chunks were looked up under the logical name. `export_graph`, `migrate_graph`
+  and `GraFloBackendReader.load_graph_container` now read them under the stored name and return
+  the logical one.
+- **A walk over the file backend found no edges.** Its edge index was keyed on a name only
+  ArangoDB has, and an edge filter on it matched nothing.
+- **A vertex filter or a file-backend `fetch_docs` filter failed on a document with a field named
+  `kind`**, which collided with an argument of the evaluation.
+- **Memgraph edge indexes indexed nothing.** They were issued as `CREATE INDEX ON :<type>(field)`,
+  a label index; they are now `CREATE EDGE INDEX`.
 
 ## [1.14.1]
 

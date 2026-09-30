@@ -245,3 +245,233 @@ def test_writer_resume_appends_chunks(tmp_path: Path) -> None:
     index = reader.read_index()
     assert index.vertices["person"].record_count == 2
     assert len(index.vertices["person"].chunks) == 2
+
+
+def _renamed_schema() -> Schema:
+    """A vertex type and a relation TigerGraph stores under other names."""
+    return Schema(
+        metadata=GraphMetadata(name="demo"),
+        core_schema=CoreSchema(
+            vertex_config=VertexConfig(
+                vertices=[
+                    Vertex(
+                        name="vertex",
+                        properties=[Field(name="id"), Field(name="colour")],
+                        identity=["id"],
+                    )
+                ]
+            ),
+            edge_config=EdgeConfig(
+                edges=[Edge(source="vertex", target="vertex", relation="to")]
+            ),
+        ),
+    )
+
+
+@pytest.fixture
+def hinted_backend(tmp_path: Path) -> GraFloBackendConfig:
+    """A file backend written for TigerGraph by migrating a plain one into it."""
+    source = tmp_path / "plain"
+    with GraFloBackendWriter(source) as writer:
+        writer.write_schema(_renamed_schema())
+        writer.write_vertex_batch(
+            "vertex", [{"id": "1", "colour": "x"}, {"id": "2", "colour": "y"}]
+        )
+        writer.write_edge_batch(
+            ("vertex", "vertex", "to"), [[{"id": "1"}, {"id": "2"}, {}]]
+        )
+        writer.flush_index()
+    target = GraFloBackendConfig(
+        output_dir=tmp_path / "hinted", target_flavor_hint=DBType.TIGERGRAPH
+    )
+    GraphEngine(target_db_flavor=DBType.GRAFLO_BACKEND).migrate_graph(
+        GraFloBackendConfig(output_dir=source), target
+    )
+    return target
+
+
+class TestRenamedNamesReadBack:
+    def test_the_data_is_stored_under_the_stored_names(
+        self, hinted_backend: GraFloBackendConfig
+    ) -> None:
+        index = GraFloBackendReader(hinted_backend.output_dir).read_index()
+
+        assert list(index.vertices) == ["vertex_vertex"]
+
+    def test_the_reader_returns_it_under_the_logical_names(
+        self, hinted_backend: GraFloBackendConfig
+    ) -> None:
+        data = GraFloBackendReader(hinted_backend.output_dir).load_graph_container()
+
+        assert data.vertices["vertex"] == [
+            {"id": "1", "colour": "x"},
+            {"id": "2", "colour": "y"},
+        ]
+        assert data.edges[("vertex", "vertex", "to")] == [
+            [{"id": "1"}, {"id": "2"}, {}]
+        ]
+
+    def test_an_export_reads_it_back(self, hinted_backend: GraFloBackendConfig) -> None:
+        exported = GraphEngine(target_db_flavor=DBType.GRAFLO_BACKEND).export_graph(
+            hinted_backend
+        )
+
+        assert [doc["colour"] for doc in exported.data.vertices["vertex"]] == ["x", "y"]
+        assert len(exported.data.edges[("vertex", "vertex", "to")]) == 1
+
+    def test_the_export_limit_holds(self, hinted_backend: GraFloBackendConfig) -> None:
+        exported = GraphEngine(target_db_flavor=DBType.GRAFLO_BACKEND).export_graph(
+            hinted_backend, data_limit=1
+        )
+
+        assert len(exported.data.vertices["vertex"]) == 1
+
+    def test_a_walk_follows_its_edges(
+        self, hinted_backend: GraFloBackendConfig
+    ) -> None:
+        schema = GraFloBackendReader(hinted_backend.output_dir).read_schema()
+        with ConnectionManager(connection_config=hinted_backend) as conn:
+            reached = conn.graph_neighbors("vertex", {"id": "1"}, schema=schema)
+
+        assert sum(len(rows) for rows in reached.edges.values()) == 1
+
+
+def test_a_walk_follows_the_edges_of_a_plain_directory(tmp_path: Path) -> None:
+    schema = _sample_schema()
+    with GraFloBackendWriter(tmp_path) as writer:
+        writer.write_schema(schema)
+        writer.write_vertex_batch("person", [{"id": "1"}, {"id": "2"}])
+        writer.write_edge_batch(
+            ("person", "person", "knows"), [[{"id": "1"}, {"id": "2"}, {}]]
+        )
+        writer.flush_index()
+
+    with ConnectionManager(
+        connection_config=GraFloBackendConfig(output_dir=tmp_path)
+    ) as conn:
+        reached = conn.graph_neighbors("person", {"id": "1"}, schema=schema)
+
+    assert [doc["id"] for doc in reached.vertices["person"]] == ["2"]
+
+
+class TestAggregate:
+    @pytest.fixture
+    def conn(self, tmp_path: Path):
+        schema = Schema(
+            metadata=GraphMetadata(name="shop"),
+            core_schema=CoreSchema(
+                vertex_config=VertexConfig(
+                    vertices=[
+                        Vertex(
+                            name="item",
+                            properties=[
+                                Field(name="id"),
+                                Field(name="kind"),
+                                Field(name="price"),
+                            ],
+                            identity=["id"],
+                        )
+                    ]
+                ),
+                edge_config=EdgeConfig(edges=[]),
+            ),
+        )
+        with GraFloBackendWriter(tmp_path) as writer:
+            writer.write_schema(schema)
+            writer.write_vertex_batch(
+                "item",
+                [
+                    {"id": "1", "kind": "tool", "price": 4},
+                    {"id": "2", "kind": "tool", "price": 2},
+                    {"id": "3", "kind": "food", "price": 3},
+                    {"id": "4", "kind": "food"},
+                ],
+            )
+            writer.flush_index()
+        with ConnectionManager(
+            connection_config=GraFloBackendConfig(output_dir=tmp_path)
+        ) as conn:
+            yield conn
+
+    def test_count(self, conn) -> None:
+        from graflo.onto import AggregationType
+
+        assert conn.aggregate("item", AggregationType.COUNT) == 4
+
+    def test_count_by_a_field(self, conn) -> None:
+        from graflo.onto import AggregationType
+
+        assert conn.aggregate("item", AggregationType.COUNT, discriminant="kind") == {
+            "tool": 2,
+            "food": 2,
+        }
+
+    def test_count_with_a_filter(self, conn) -> None:
+        from graflo.onto import AggregationType
+
+        count = conn.aggregate(
+            "item",
+            AggregationType.COUNT,
+            filters={"field": "kind", "cmp_operator": "==", "value": "food"},
+        )
+        assert count == 2
+
+    def test_max_min_and_average_skip_missing_values(self, conn) -> None:
+        from graflo.onto import AggregationType
+
+        assert (
+            conn.aggregate("item", AggregationType.MAX, aggregated_field="price") == 4
+        )
+        assert (
+            conn.aggregate("item", AggregationType.MIN, aggregated_field="price") == 2
+        )
+        assert (
+            conn.aggregate("item", AggregationType.AVERAGE, aggregated_field="price")
+            == 3
+        )
+
+    def test_sorted_unique(self, conn) -> None:
+        from graflo.onto import AggregationType
+
+        assert conn.aggregate(
+            "item", AggregationType.SORTED_UNIQUE, aggregated_field="kind"
+        ) == ["food", "tool"]
+
+    def test_nothing_to_aggregate_is_none(self, conn) -> None:
+        from graflo.onto import AggregationType
+
+        assert (
+            conn.aggregate("item", AggregationType.MAX, aggregated_field="size") is None
+        )
+
+    def test_a_field_is_required_beyond_a_count(self, conn) -> None:
+        from graflo.onto import AggregationType
+
+        with pytest.raises(ValueError, match="aggregated_field"):
+            conn.aggregate("item", AggregationType.MAX)
+
+
+def test_an_edge_filter_keeps_the_matching_edges(tmp_path: Path) -> None:
+    with GraFloBackendWriter(tmp_path) as writer:
+        writer.write_schema(_sample_schema())
+        writer.write_vertex_batch("person", [{"id": "1"}, {"id": "2"}, {"id": "3"}])
+        writer.write_edge_batch(
+            ("person", "person", "knows"),
+            [
+                [{"id": "1"}, {"id": "2"}, {"since": 2020}],
+                [{"id": "1"}, {"id": "3"}, {"since": 2010}],
+            ],
+        )
+        writer.flush_index()
+
+    with ConnectionManager(
+        connection_config=GraFloBackendConfig(output_dir=tmp_path)
+    ) as conn:
+        rows = conn.fetch_edges(
+            "person",
+            "1",
+            edge_type="knows",
+            filters={"field": "since", "cmp_operator": ">", "value": 2015},
+        )
+
+    assert [row["_to_key"] for row in rows] == ["2"]

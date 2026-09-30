@@ -15,7 +15,6 @@ from graflo.architecture.graph_types import (
 )
 from graflo.architecture.graph_types.merge import fuse_doc_basis
 from graflo.architecture.schema.vertex import VertexConfig, VertexName
-from graflo.onto import ExpressionFlavor
 
 from .base import ActorConstants, ActorInitContext, VertexProducingActor
 
@@ -84,9 +83,7 @@ class VertexActor(VertexProducingActor):
     ) -> list[dict[str, Any]]:
         filters = self.vertex_config.filters(self.name)
         return [
-            _doc
-            for _doc in docs
-            if all(cfilter(kind=ExpressionFlavor.PYTHON, **_doc) for cfilter in filters)
+            _doc for _doc in docs if all(cfilter.matches(_doc) for cfilter in filters)
         ]
 
     def _extract_vertex_doc_from_transformed_item(

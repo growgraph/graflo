@@ -9,7 +9,7 @@ import asyncio
 import inspect
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from graflo.architecture.contract.bindings import Bindings
 from graflo.architecture.contract.ingestion import IngestionModel
@@ -648,7 +648,7 @@ class GraphEngine:
             schema = conn.introspect_graph_schema(
                 schema_name=schema_name, sample_limit=sample_limit
             )
-            data = self._export_graph_container(conn, schema, limit=data_limit)
+            data = conn.export_graph_container(schema, limit=data_limit)
         finally:
             conn.close()
         return schema, data
@@ -738,6 +738,52 @@ class GraphEngine:
             conn.close()
         return compare_live_schema(schema, observed, db_flavor=flavor, sampled=sampled)
 
+    def delete_vertices(
+        self,
+        target_db_config: DBConfig,
+        schema: Schema,
+        vertex: str,
+        key_docs: list[dict[str, Any]],
+    ) -> None:
+        """Remove vertices of type *vertex*, with every edge incident to them.
+
+        Args:
+            target_db_config: The database to remove them from.
+            schema: The schema the graph was written with.
+            vertex: Logical vertex type name.
+            key_docs: One document per vertex, carrying its identity fields
+                under logical names. A document missing one removes nothing.
+
+        Raises:
+            ValueError: If the target does not support deleting vertices, as
+                the file backend, which is append-only, and NebulaGraph do not.
+        """
+        writer = DBWriter(schema=schema, ingestion_model=IngestionModel(resources=[]))
+        writer.delete_vertices(target_db_config, vertex, key_docs)
+
+    def delete_edges(
+        self,
+        target_db_config: DBConfig,
+        schema: Schema,
+        edge_id: tuple[str, str, str | None],
+        endpoints: list[tuple[dict[str, Any], dict[str, Any]]],
+    ) -> None:
+        """Remove the edges *edge_id* between the given endpoint pairs.
+
+        Args:
+            target_db_config: The database to remove them from.
+            schema: The schema the graph was written with.
+            edge_id: Logical ``(source, target, relation)`` of a declared edge.
+            endpoints: ``(source, target)`` documents carrying each vertex's
+                identity fields under logical names.
+
+        Raises:
+            ValueError: If the target does not support deleting edges, or the
+                schema does not declare *edge_id*.
+        """
+        writer = DBWriter(schema=schema, ingestion_model=IngestionModel(resources=[]))
+        writer.delete_edges(target_db_config, edge_id, endpoints)
+
     def export_graph(
         self,
         source_config: DBConfig,
@@ -798,38 +844,3 @@ class GraphEngine:
         ingestion_model.finish_init(schema.core_schema)
         writer = DBWriter(schema=schema, ingestion_model=ingestion_model)
         asyncio.run(writer.write(gc=data, conn_conf=target_config, resource_name=None))
-
-    @staticmethod
-    def _export_graph_container(
-        conn,
-        schema: Schema,
-        *,
-        limit: int | None = None,
-    ) -> GraphContainer:
-        """Build a GraphContainer by reading all vertices and edges from *conn*."""
-        vertices: dict[str, list] = {}
-        edges: dict[tuple[str, str, str | None], list] = {}
-        vc = schema.core_schema.vertex_config
-
-        for vertex in vc.vertices:
-            docs = conn.fetch_all_docs(vertex.name, limit=limit)
-            if docs:
-                vertices[vertex.name] = docs
-
-        for edge in schema.core_schema.edge_config.values():
-            # Backends that store endpoints as a single identity value (rather
-            # than a resolvable document reference) need to be told which field
-            # that value belongs to, so the exported endpoint doc is keyed the
-            # way DBWriter resolves it.
-            edge_docs = conn.fetch_all_edges(
-                edge.source,
-                edge.target,
-                edge.relation,
-                match_keys_source=tuple(vc.identity_fields(edge.source)),
-                match_keys_target=tuple(vc.identity_fields(edge.target)),
-                limit=limit,
-            )
-            if edge_docs:
-                edges[edge.edge_id] = edge_docs
-
-        return GraphContainer(vertices=vertices, edges=edges, linear=[])

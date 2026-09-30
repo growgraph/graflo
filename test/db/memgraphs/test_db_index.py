@@ -31,8 +31,19 @@ def test_create_edge_index(conn_conf, test_graph_name, schema_obj):
             list(schema_o.core_schema.edge_config.values()), schema=schema_o
         )
 
-    # Memgraph indexes are created silently.
-    # Verification is implicit - no errors means success.
+    with ConnectionManager(connection_config=conn_conf) as db_client:
+        rows = list(db_client.execute("SHOW INDEX INFO"))
+    declared = {
+        (edge.relation, field)
+        for edge in schema_o.core_schema.edge_config.values()
+        for index in schema_o.db_profile.edge_secondary_indexes(edge.edge_id)
+        for field in index.fields
+    }
+    # Each row reads (index type, label or edge type, property, count).
+    edge_indexes = {
+        (row[1], row[2]) for row in rows if str(row[0]).startswith("edge-type")
+    }
+    assert declared <= edge_indexes
 
 
 def test_manual_index_creation(conn_conf, test_graph_name, clean_db):

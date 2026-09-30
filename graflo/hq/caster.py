@@ -42,7 +42,6 @@ from graflo.hq.ingestion_parameters import (
     IngestionParams,
 )
 from graflo.hq.registry_builder import RegistryBuilder
-from graflo.onto import DBType
 from graflo.util.data_normalize import normalize_rows
 
 logger = logging.getLogger(__name__)
@@ -735,17 +734,6 @@ class Caster:
         """
         if self._db_writer is None:
             writer = self._make_db_writer()
-            if (
-                conn_conf.connection_type == DBType.GRAFLO_BACKEND
-                and writer.max_concurrent > 1
-            ):
-                # The chunked-file backend rewrites its index.json on every
-                # writer close; concurrent writers clobber each other's entries.
-                logger.warning(
-                    "graflo_backend target does not support concurrent writers; "
-                    "forcing max_concurrent_db_ops=1."
-                )
-                writer.max_concurrent = 1
             # Pre-warm the db-aware projection so concurrent write() calls never
             # race the lazy cache fill.
             writer._db_aware_for(conn_conf)

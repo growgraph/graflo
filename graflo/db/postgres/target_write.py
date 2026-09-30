@@ -19,7 +19,13 @@ from graflo.architecture.schema.vertex import (
     field_type_value,
     is_list_field_type,
 )
-from graflo.db.conn import NamespaceNotFoundError, SchemaExistsError
+from graflo.db.conn import (
+    DEFAULT_DELETE_CHUNK_SIZE,
+    NamespaceNotFoundError,
+    SchemaExistsError,
+    deletable_docs,
+    deletable_endpoints,
+)
 from graflo.db.field_type_support import assert_field_type_supported
 from graflo.filter.onto import FilterExpression, parse_filter_expression
 from graflo.onto import AggregationType, DBType, ExpressionFlavor
@@ -169,6 +175,37 @@ def split_edge_table_name(
     return None
 
 
+def delete_rows_query(schema: str, table: str, columns: list[str]) -> str:
+    """Remove the rows of *table* whose *columns* match a row of ``VALUES %s``."""
+    cols = ", ".join(_quote_ident(c) for c in columns)
+    return (
+        f"DELETE FROM {_quote_ident(schema)}.{_quote_ident(table)} "
+        f"WHERE ({cols}) IN (VALUES %s)"
+    )
+
+
+def delete_referencing_rows_query(
+    schema: str,
+    table: str,
+    column: str,
+    vertex_table: str,
+    referenced: str,
+    match_keys: list[str],
+) -> str:
+    """Remove the rows of *table* whose *column* refers to a vertex matched in ``VALUES %s``.
+
+    Edge tables hold endpoint values as text, so the comparison is on text.
+    """
+    cols = ", ".join(f"v.{_quote_ident(k)}" for k in match_keys)
+    return (
+        f"DELETE FROM {_quote_ident(schema)}.{_quote_ident(table)} "
+        f"WHERE {_quote_ident(column)}::text IN ("
+        f"SELECT v.{_quote_ident(referenced)}::text "
+        f"FROM {_quote_ident(schema)}.{_quote_ident(vertex_table)} v "
+        f"WHERE ({cols}) IN (VALUES %s))"
+    )
+
+
 def _edge_unique_index_name(table: str) -> str:
     return f"{table}_edge_uniq"
 
@@ -201,6 +238,7 @@ class PostgresTargetWriteMixin:
     # The graph shape lives in the table layout, which `information_schema`
     # reports in full; nothing here is sampled.
     schema_introspection_is_sampled = False
+    supports_instance_delete = True
     config: Any
     conn: _Psycopg2Conn
     # Supplied by Connection, which follows this mixin in the MRO: annotate
@@ -217,6 +255,11 @@ class PostgresTargetWriteMixin:
         raise NotImplementedError
 
     def get_table_columns(
+        self, table_name: str, schema_name: str | None = None
+    ) -> list[dict[str, Any]]:
+        raise NotImplementedError
+
+    def get_foreign_keys(
         self, table_name: str, schema_name: str | None = None
     ) -> list[dict[str, Any]]:
         raise NotImplementedError
@@ -253,9 +296,9 @@ class PostgresTargetWriteMixin:
 
     def define_schema(self, schema: Schema) -> None:
         self._target_schema = schema
-        from graflo.db.field_type_support import assert_schema_field_types_supported
+        from graflo.db.field_type_support import assert_schema_supported
 
-        assert_schema_field_types_supported(DBType.POSTGRES, schema)
+        assert_schema_supported(DBType.POSTGRES, schema)
         self._define_postgres_tables(schema)
 
     def define_vertex_classes(self, schema: Schema) -> None:
@@ -625,6 +668,71 @@ class PostgresTargetWriteMixin:
             return
         with self.conn.cursor() as cursor:
             execute_values(cursor, upsert_q, values)
+        self.conn.commit()
+
+    def delete_vertices(
+        self,
+        class_name: str,
+        key_docs: list[dict[str, Any]],
+        match_keys: tuple[str, ...],
+        *,
+        chunk_size: int = DEFAULT_DELETE_CHUNK_SIZE,
+    ) -> None:
+        """Remove vertex rows and, first, the edge rows whose foreign keys refer to them."""
+        keys = list(match_keys)
+        rows = deletable_docs(key_docs, keys)
+        if not rows:
+            return
+        pg_schema = _pg_schema_name(self.config)
+        table = vertex_table_name(class_name)
+        referencing = [
+            (other["table_name"], fk["column"], fk.get("references_column") or keys[0])
+            for other in self.get_tables(pg_schema)
+            for fk in self.get_foreign_keys(other["table_name"], pg_schema)
+            if fk["references_table"] == table
+        ]
+        values = [tuple(doc[k] for k in keys) for doc in rows]
+        with self.conn.cursor() as cursor:
+            for start in range(0, len(values), chunk_size):
+                chunk = values[start : start + chunk_size]
+                for other, column, referenced in referencing:
+                    execute_values(
+                        cursor,
+                        delete_referencing_rows_query(
+                            pg_schema, other, column, table, referenced, keys
+                        ),
+                        chunk,
+                    )
+                execute_values(cursor, delete_rows_query(pg_schema, table, keys), chunk)
+        self.conn.commit()
+
+    def delete_edges(
+        self,
+        source_class: str,
+        target_class: str,
+        relation_name: str | None,
+        endpoints: list[tuple[dict[str, Any], dict[str, Any]]],
+        match_keys_source: tuple[str, ...],
+        match_keys_target: tuple[str, ...],
+        *,
+        collection_name: str | None = None,
+        chunk_size: int = DEFAULT_DELETE_CHUNK_SIZE,
+    ) -> None:
+        """Remove edge rows between endpoint pairs, by the values an insert stores."""
+        source_key = (match_keys_source or ("id",))[0]
+        target_key = (match_keys_target or ("id",))[0]
+        pairs = deletable_endpoints(endpoints, (source_key,), (target_key,))
+        if not pairs:
+            return
+        query = delete_rows_query(
+            _pg_schema_name(self.config),
+            edge_table_name(source_class, target_class, relation_name),
+            ["source_id", "target_id"],
+        )
+        values = [(str(s[source_key]), str(t[target_key])) for s, t in pairs]
+        with self.conn.cursor() as cursor:
+            for start in range(0, len(values), chunk_size):
+                execute_values(cursor, query, values[start : start + chunk_size])
         self.conn.commit()
 
     def insert_return_batch(

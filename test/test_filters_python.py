@@ -506,3 +506,42 @@ def test_vertex_filter_no_filters_passes_all(sample_vertex_docs):
     )
     result = _apply_vertex_filters(vc, "raw", sample_vertex_docs)
     assert len(result) == len(sample_vertex_docs)
+
+
+class TestMatches:
+    """``matches`` reads a document's fields whatever they are named."""
+
+    def test_a_field_named_like_a_call_argument(self) -> None:
+        from graflo.filter.onto import FilterExpression
+
+        leaf = FilterExpression.from_dict(
+            {"field": "kind", "cmp_operator": "==", "value": "food"}
+        )
+
+        assert leaf.matches({"kind": "food", "doc_name": "x"})
+        assert not leaf.matches({"kind": "tool"})
+
+    def test_a_composite(self) -> None:
+        from graflo.filter.onto import FilterExpression
+
+        either = FilterExpression.from_dict(
+            {
+                "OR": [
+                    {"field": "kind", "cmp_operator": "==", "value": "food"},
+                    {"field": "price", "cmp_operator": ">", "value": 3},
+                ]
+            }
+        )
+
+        assert either.matches({"kind": "tool", "price": 4})
+        assert not either.matches({"kind": "tool", "price": 2})
+
+    def test_the_document_is_left_alone(self) -> None:
+        from graflo.filter.onto import FilterExpression
+
+        doc = {"kind": "food"}
+        FilterExpression.from_dict(
+            {"field": "kind", "cmp_operator": "==", "value": "food"}
+        ).matches(doc)
+
+        assert doc == {"kind": "food"}

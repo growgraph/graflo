@@ -27,6 +27,7 @@ from graflo.db.edge_direction_support import (
     UnsupportedEdgeDirectionError,
     assert_direction_supported,
 )
+from graflo.onto import DBType
 
 if TYPE_CHECKING:
     from graflo.architecture.schema.edge import Edge
@@ -60,8 +61,6 @@ def edge_query_name(db_aware: Any, edge: Edge, flavor: Any) -> str | None:
     Nebula key on the relation type, and PostgreSQL keys on a derived table name.
     Resolving that here keeps the choice in one place instead of in every caller.
     """
-    from graflo.onto import DBType
-
     if flavor == DBType.POSTGRES:
         from graflo.db.postgres.target_write import edge_table_name
 
@@ -257,7 +256,9 @@ def bfs_neighbors(
                 bucket = container.edges.setdefault(edge_id, [])
                 far_ids: list[str] = []
                 for row in rows:
-                    properties, source_key, target_key = normalize_edge_row(row)
+                    properties, source_key, target_key = normalize_edge_row(
+                        row, conn.flavor
+                    )
                     marker = (edge_id, _row_marker(properties, source_key, target_key))
                     if marker in seen_edges:
                         continue
@@ -419,19 +420,20 @@ def _fetch_edge_rows(
         return []
 
 
-#: Keys under which backends report the two endpoints of an edge row.
-#:
-#: This is a *name union*, not a per-flavor contract: a dict row is matched
-#: against every candidate in order. A backend whose ``fetch_edges`` returns
-#: endpoints under some other name resolves to ``(None, None)`` here, and its
-#: rows are then dropped from the neighbourhood — so a new backend must either
-#: emit one of these names or add its own. :func:`normalize_edge_row` logs when
-#: that happens rather than losing the row quietly.
-_SOURCE_KEYS = ("_from", "source_id", "src", "_src", "from", "from_id", "_from_key")
-_TARGET_KEYS = ("_to", "target_id", "dst", "_dst", "to", "to_id", "_to_key")
+#: Keys under which each backend's ``fetch_edges`` reports the two endpoints of
+#: a dict row. A backend reads only its own pair: a union of every backend's
+#: names would read another backend's column as an endpoint. The Cypher
+#: backends answer with ``(start, type, end)`` triples instead.
+EDGE_ROW_ENDPOINT_KEYS: dict[DBType, tuple[str, str]] = {
+    DBType.ARANGO: ("_from", "_to"),
+    DBType.POSTGRES: ("source_id", "target_id"),
+    DBType.NEBULA: ("_src", "_dst"),
+    DBType.TIGERGRAPH: ("from_id", "to_id"),
+    DBType.GRAFLO_BACKEND: ("_from_key", "_to_key"),
+}
 
-#: Rows already reported as unresolvable, keyed by their sorted column names, so
-#: a mismatch is reported once per shape instead of once per row.
+#: Rows already reported as unresolvable, keyed by flavor and sorted column
+#: names, so a mismatch is reported once per shape instead of once per row.
 _reported_unresolved: set[tuple[str, ...]] = set()
 
 
@@ -443,18 +445,17 @@ def _strip_collection(value: Any) -> str | None:
     return text.split("/", 1)[1] if "/" in text else text
 
 
-def normalize_edge_row(row: Any) -> tuple[dict[str, Any], str | None, str | None]:
+def normalize_edge_row(
+    row: Any, flavor: DBType
+) -> tuple[dict[str, Any], str | None, str | None]:
     """Reduce a backend's edge row to (properties, source key, target key).
 
-    ``fetch_edges`` predates this wave and returns whatever shape each driver
-    finds natural: Arango yields an edge document with ``_from``/``_to``, the
-    Cypher family yields the driver's ``(start props, type, end props)`` triple,
-    PostgreSQL yields ``source_id``/``target_id`` columns. Normalizing here is
-    what lets every backend answer in one ``GraphContainer`` without changing a
-    read path other code already depends on.
+    ``fetch_edges`` returns whatever shape each driver finds natural: the
+    Cypher family yields the driver's ``(start props, type, end props)`` triple, every other backend a dict naming its endpoints under the keys in
+    :data:`EDGE_ROW_ENDPOINT_KEYS`. The endpoint keys are left out of the
+    properties.
     """
     if isinstance(row, (tuple, list)):
-        # Cypher drivers render a relationship as (start, type, end).
         start = row[0] if len(row) > 0 and isinstance(row[0], dict) else {}
         end = row[2] if len(row) > 2 and isinstance(row[2], dict) else {}
         properties = row[1] if len(row) > 1 and isinstance(row[1], dict) else {}
@@ -463,35 +464,30 @@ def normalize_edge_row(row: Any) -> tuple[dict[str, Any], str | None, str | None
             _first_present(start, ("id", "_key", "_id")),
             _first_present(end, ("id", "_key", "_id")),
         )
-    if isinstance(row, dict):
-        source = next(
-            (_strip_collection(row[k]) for k in _SOURCE_KEYS if row.get(k) is not None),
-            None,
-        )
-        target = next(
-            (_strip_collection(row[k]) for k in _TARGET_KEYS if row.get(k) is not None),
-            None,
-        )
-        if source is None and target is None:
-            source = _strip_collection(row.get("_from_key"))
-            target = _strip_collection(row.get("_to_key"))
-        if source is None and target is None and row:
-            # Neither endpoint resolved, so the caller will drop this row from
-            # the neighbourhood. Silent loss reads as "no such neighbour", which
-            # is indistinguishable from a correct empty result — say so instead.
-            shape = tuple(sorted(str(k) for k in row))
-            if shape not in _reported_unresolved:
-                _reported_unresolved.add(shape)
-                logger.warning(
-                    "normalize_edge_row: no endpoint keys in edge row with columns "
-                    "%s; rows of this shape are dropped from traversal. Expected one "
-                    "of %s for the source and %s for the target.",
-                    list(shape),
-                    list(_SOURCE_KEYS),
-                    list(_TARGET_KEYS),
-                )
-        return dict(row), source, target
-    return {}, None, None
+    if not isinstance(row, dict):
+        return {}, None, None
+    properties = dict(row)
+    keys = EDGE_ROW_ENDPOINT_KEYS.get(flavor)
+    source = target = None
+    if keys is not None:
+        source_key, target_key = keys
+        source = _strip_collection(properties.pop(source_key, None))
+        target = _strip_collection(properties.pop(target_key, None))
+    if source is None and target is None and row:
+        # Neither endpoint resolved, so the caller will drop this row from the
+        # neighbourhood. Silent loss reads as "no such neighbour", which is
+        # indistinguishable from a correct empty result -- say so instead.
+        shape = (str(flavor), *sorted(str(k) for k in row))
+        if shape not in _reported_unresolved:
+            _reported_unresolved.add(shape)
+            logger.warning(
+                "normalize_edge_row: no endpoint keys in a %s edge row with columns "
+                "%s; rows of this shape are dropped from traversal. Expected %s.",
+                flavor,
+                sorted(str(k) for k in row),
+                list(keys) if keys is not None else "a (start, properties, end) triple",
+            )
+    return properties, source, target
 
 
 def _first_present(doc: dict[str, Any], keys: tuple[str, ...]) -> str | None:

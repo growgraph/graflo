@@ -18,7 +18,7 @@ from graflo.architecture.evolution.sanitize import (
     materialize_physical_schema,
     with_physical_names,
 )
-from graflo.architecture.graph_types import GraphContainer, Weight
+from graflo.architecture.graph_types import EdgeId, GraphContainer, Weight
 from graflo.architecture.schema import EdgeRuntime, Schema, SchemaDBAware
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.identity_digest import (
@@ -30,6 +30,7 @@ from graflo.architecture.schema.identity_uuid import (
 )
 from graflo.architecture.schema.physical_keys import PhysicalKeys
 from graflo.connections.onto import DBConfig
+from graflo.db.conn import ConnectionCapability
 from graflo.db.manager import ConnectionManager
 from graflo.hq.endpoint_resolve import resolve_edge_endpoints
 from graflo.onto import DBType
@@ -47,6 +48,12 @@ logger = logging.getLogger(__name__)
 _CONCURRENT_UPSERT_SAFE_FLAVORS = frozenset(
     {DBType.POSTGRES, DBType.ARANGO, DBType.TIGERGRAPH, DBType.NEBULA}
 )
+
+#: Targets written by one operation at a time, whatever ``max_concurrent`` says.
+#: The chunked-file backend numbers a new chunk from the index it read when the
+#: connection opened, and rewrites the whole index on close, so two connections
+#: writing at once overwrite each other's chunks and index entries.
+_SINGLE_WRITER_FLAVORS = frozenset({DBType.GRAFLO_BACKEND})
 
 
 def _weight_source_fields(weight: Weight) -> list[str]:
@@ -106,6 +113,7 @@ class DBWriter:
         schema: Schema configuration providing vertex/edge metadata.
         dry: When ``True`` no database mutations are performed.
         max_concurrent: Upper bound on concurrent DB operations (semaphore size).
+            A file-backend target is written by one operation at a time.
     """
 
     def __init__(
@@ -126,6 +134,7 @@ class DBWriter:
         self._keys: PhysicalKeys | None = None
         self._semaphore: asyncio.Semaphore | None = None
         self._semaphore_loop: asyncio.AbstractEventLoop | None = None
+        self._semaphore_bound: int | None = None
         self._collection_locks: dict[str, asyncio.Lock] = {}
         self._collection_locks_loop: asyncio.AbstractEventLoop | None = None
         self._reported_undeclared_edges: set[tuple] = set()
@@ -190,6 +199,77 @@ class DBWriter:
         if resource is not None:
             await self._enrich_extra_weights(gc, conn_conf, resource)
         await self._push_edges(gc, conn_conf, resource)
+
+    def delete_vertices(
+        self, conn_conf: DBConfig, vertex: str, key_docs: list[dict[str, Any]]
+    ) -> None:
+        """Remove vertices of *vertex*, with every edge incident to them.
+
+        *key_docs* carry the vertex's identity fields, under logical names; a
+        document missing one removes nothing. Nothing is removed in a dry run.
+
+        Raises:
+            ValueError: If the target does not support deleting vertices.
+        """
+        ConnectionManager.require(conn_conf, ConnectionCapability.INSTANCE_DELETE)
+        if self.dry:
+            return
+        vc = self._db_aware_for(conn_conf).vertex_config
+        keys = self._keys_for(conn_conf)
+        match_keys = tuple(keys.vertex_fields(vertex, vc.identity_fields(vertex)))
+        with ConnectionManager(connection_config=conn_conf) as db:
+            db.delete_vertices(
+                vc.vertex_dbname(vertex), keys.vertex_docs(vertex, key_docs), match_keys
+            )
+
+    def delete_edges(
+        self,
+        conn_conf: DBConfig,
+        edge_id: EdgeId,
+        endpoints: list[tuple[dict[str, Any], dict[str, Any]]],
+    ) -> None:
+        """Remove the edges *edge_id* between the given ``(source, target)`` pairs.
+
+        Endpoints carry their vertices' identity fields, under logical names.
+        Nothing is removed in a dry run.
+
+        Raises:
+            ValueError: If the target does not support deleting edges, or the
+                schema does not declare *edge_id*.
+        """
+        ConnectionManager.require(conn_conf, ConnectionCapability.INSTANCE_DELETE)
+        core_ec = self.schema.core_schema.edge_config
+        if edge_id not in core_ec:
+            raise ValueError(f"Edge {edge_id} is not declared in the schema")
+        if self.dry:
+            return
+        schema_db = self._db_aware_for(conn_conf)
+        vc = schema_db.vertex_config
+        keys = self._keys_for(conn_conf)
+        edge = core_ec.edge_for(edge_id)
+        runtime = schema_db.edge_config.runtime(edge)
+        _, relation_name = self._project_edge_docs_for_db(
+            docs=[],
+            relation=edge.relation,
+            runtime=runtime,
+            conn_type=conn_conf.connection_type,
+        )
+        source_keys = vc.identity_fields(edge.source)
+        target_keys = vc.identity_fields(edge.target)
+        stored = [
+            (keys.vertex_doc(edge.source, source), keys.vertex_doc(edge.target, target))
+            for source, target in endpoints
+        ]
+        with ConnectionManager(connection_config=conn_conf) as db:
+            db.delete_edges(
+                vc.vertex_dbname(edge.source),
+                vc.vertex_dbname(edge.target),
+                relation_name,
+                stored,
+                tuple(keys.vertex_fields(edge.source, source_keys)),
+                tuple(keys.vertex_fields(edge.target, target_keys)),
+                collection_name=runtime.storage_name(),
+            )
 
     def _validate_bulk_resource(self, resource_name: str | None) -> None:
         if resource_name is None:
@@ -715,16 +795,26 @@ class DBWriter:
             logger.debug("Edge %s endpoint resolution: %s", edge_id, stats.summary())
         return resolved
 
-    def _db_semaphore(self) -> asyncio.Semaphore:
+    def _db_semaphore(self, conn_conf: DBConfig) -> asyncio.Semaphore:
         """Shared semaphore so ``max_concurrent`` bounds the whole run.
 
         Created lazily per event loop: a writer reused across separate
         ``asyncio.run`` calls must not carry a semaphore bound to a closed loop.
         """
         loop = asyncio.get_running_loop()
-        if self._semaphore is None or self._semaphore_loop is not loop:
-            self._semaphore = asyncio.Semaphore(self.max_concurrent)
+        bound = (
+            1
+            if conn_conf.connection_type in _SINGLE_WRITER_FLAVORS
+            else self.max_concurrent
+        )
+        if (
+            self._semaphore is None
+            or self._semaphore_loop is not loop
+            or self._semaphore_bound != bound
+        ):
+            self._semaphore = asyncio.Semaphore(bound)
             self._semaphore_loop = loop
+            self._semaphore_bound = bound
         return self._semaphore
 
     async def _acquire_write_slot(
@@ -734,7 +824,7 @@ class DBWriter:
         itself (Cypher MERGE has no cross-transaction atomicity), a
         per-collection lock so the same collection is written by one batch at a
         time while distinct collections still proceed in parallel."""
-        await stack.enter_async_context(self._db_semaphore())
+        await stack.enter_async_context(self._db_semaphore(conn_conf))
         if conn_conf.connection_type in _CONCURRENT_UPSERT_SAFE_FLAVORS:
             return
         loop = asyncio.get_running_loop()

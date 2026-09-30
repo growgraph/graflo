@@ -108,6 +108,7 @@ nav:
         -   Runtime connector updates: concepts/connectors/runtime_updates.md
     -   Operations:
         -   Graph export and migration: concepts/operations/graph_export_migration.md
+        -   Removing vertices and edges: concepts/operations/deleting_instances.md
         -   Object storage: concepts/operations/object_storage.md
         -   Schema migration: concepts/operations/migration_and_practices.md
 -   Guides:

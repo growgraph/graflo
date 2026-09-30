@@ -63,14 +63,24 @@ class TigergraphBulkLoadJobOptions(BaseModel):
         default="graflo_bulk",
         description="Loading job name prefix (unique suffix is appended per session).",
     )
-    run_mode: Literal["create_and_run", "run_only"] = Field(
+    run_mode: Literal["create_and_run"] = Field(
         default="create_and_run",
-        description="create_and_run issues CREATE then RUN; run_only expects job to exist.",
+        description="The job is created, then run. The only mode.",
     )
     drop_job_after_run: bool = Field(
         default=True,
         description="If True, DROP JOB after a successful RUN (keeps graph catalog tidy).",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_run_only(cls, data: Any) -> Any:
+        if isinstance(data, dict) and data.get("run_mode") == "run_only":
+            raise ValueError(
+                "run_mode 'run_only' is not supported: the job is named after the "
+                "session id, which is new on every run, so no existing job matches"
+            )
+        return data
 
 
 class TigergraphBulkLoadConfig(BaseModel):

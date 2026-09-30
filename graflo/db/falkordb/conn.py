@@ -38,14 +38,17 @@ from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import VertexConfig
 from graflo.connections.onto import FalkordbConfig
 from graflo.db.conn import (
+    DEFAULT_DELETE_CHUNK_SIZE,
     Connection,
     NamespaceNotFoundError,
     SchemaExistsError,
     consume_insert_edges_kwargs,
 )
 from graflo.db.cypher import cypher_rel_pattern, rel_merge_props_map_from_row_index
-from graflo.db.field_type_support import assert_schema_field_types_supported
+from graflo.db.cypher.delete import delete_nodes, delete_relationships
+from graflo.db.field_type_support import assert_schema_supported
 from graflo.db.graph_introspection import GraphSchemaInferencer
+from graflo.db.resolve import absent_documents, present_documents
 from graflo.db.util import serialize_value
 from graflo.filter.onto import (
     FilterExpression,
@@ -73,6 +76,7 @@ class FalkordbConnection(Connection):
     """
 
     flavor = DBType.FALKORDB
+    supports_instance_delete = True
     supports_schema_introspection = True
 
     # Type annotations for instance attributes
@@ -421,7 +425,7 @@ class FalkordbConnection(Connection):
         Args:
             schema: Schema containing vertex and edge class definitions
         """
-        assert_schema_field_types_supported(self.flavor, schema)
+        assert_schema_supported(self.flavor, schema)
 
     def define_vertex_classes(self, schema: Schema):
         """Define vertex classes based on schema.
@@ -536,7 +540,7 @@ class FalkordbConnection(Connection):
         create_namespace: bool = True,
     ) -> None:
         """Define property indexes for the FalkorDB graph."""
-        assert_schema_field_types_supported(self.flavor, schema)
+        assert_schema_supported(self.flavor, schema)
         self.report_edge_direction_support(schema)
         graph_name = self._resolve_graph_name(schema)
         if self._node_count() > 0 and not recreate:
@@ -725,16 +729,15 @@ class FalkordbConnection(Connection):
     def insert_return_batch(
         self, docs: list[dict[str, Any]], class_name: str
     ) -> list[dict[str, Any]] | str:
-        """Insert nodes and return their properties.
-
-        Args:
-            docs: Documents to insert
-            class_name: Label to insert into
+        """Not supported: nodes are written with :meth:`upsert_docs_batch`.
 
         Raises:
-            NotImplementedError: This method is not fully implemented for FalkorDB
+            NotImplementedError: Always.
         """
-        raise NotImplementedError("insert_return_batch is not implemented for FalkorDB")
+        raise NotImplementedError(
+            f"insert_return_batch is not supported by {type(self).__name__}; "
+            "write nodes with upsert_docs_batch and read them back with fetch_docs"
+        )
 
     def fetch_docs(
         self,
@@ -961,6 +964,47 @@ class FalkordbConnection(Connection):
         else:
             return dict(edge) if edge else {}
 
+    def delete_vertices(
+        self,
+        class_name: str,
+        key_docs: list[dict[str, Any]],
+        match_keys: tuple[str, ...],
+        *,
+        chunk_size: int = DEFAULT_DELETE_CHUNK_SIZE,
+    ) -> None:
+        """Remove nodes with ``DETACH DELETE``, which removes their relationships too."""
+        delete_nodes(
+            lambda query, rows: self.execute(query, data=rows),
+            class_name,
+            key_docs,
+            match_keys,
+            chunk_size,
+        )
+
+    def delete_edges(
+        self,
+        source_class: str,
+        target_class: str,
+        relation_name: str | None,
+        endpoints: list[tuple[dict[str, Any], dict[str, Any]]],
+        match_keys_source: tuple[str, ...],
+        match_keys_target: tuple[str, ...],
+        *,
+        collection_name: str | None = None,
+        chunk_size: int = DEFAULT_DELETE_CHUNK_SIZE,
+    ) -> None:
+        """Remove the relationships of one type between the given node pairs."""
+        delete_relationships(
+            lambda query, rows: self.execute(query, data=rows),
+            source_class,
+            target_class,
+            relation_name,
+            endpoints,
+            match_keys_source,
+            match_keys_target,
+            chunk_size,
+        )
+
     def fetch_present_documents(
         self,
         batch: list[dict[str, Any]],
@@ -969,47 +1013,17 @@ class FalkordbConnection(Connection):
         keep_keys: list[str] | tuple[str, ...] | None = None,
         flatten: bool = False,
         filters: list[Any] | dict[str, Any] | None = None,
-    ) -> list[dict[str, Any]]:
-        """Fetch nodes that exist in the database.
+    ) -> list[dict[str, Any]] | dict[int, list[dict[str, Any]]]:
+        """Stored nodes matching *batch*, by batch position; see :func:`present_documents`.
 
-        Args:
-            batch: Batch of documents to check
-            class_name: Label to check in
-            match_keys: Keys to match nodes
-            keep_keys: Keys to keep in result
-            flatten: Unused in FalkorDB
-            filters: Additional query filters
-
-        Returns:
-            Documents that exist in the database
+        With *flatten*, a list of the matches in batch order.
         """
-        if not batch:
-            return []
-
-        # Build match conditions for each document in batch
-        results = []
-        for doc in batch:
-            match_conditions = " AND ".join([f"n.{key} = ${key}" for key in match_keys])
-            params = {key: doc.get(key) for key in match_keys}
-
-            q = f"""
-                MATCH (n:{class_name})
-                WHERE {match_conditions}
-                RETURN n
-                LIMIT 1
-            """
-
-            try:
-                result = self.execute(q, **params)
-                if result.result_set:
-                    node_dict = self._node_to_dict(result.result_set[0][0])
-                    if keep_keys:
-                        node_dict = {k: node_dict.get(k) for k in keep_keys}
-                    results.append(node_dict)
-            except Exception as e:
-                logger.debug(f"Error checking document presence: {e}")
-
-        return results
+        present = present_documents(
+            self, batch, class_name, match_keys, keep_keys=keep_keys, filters=filters
+        )
+        if flatten:
+            return [present[position][0] for position in sorted(present)]
+        return present
 
     def introspect_graph_schema(
         self,
@@ -1144,40 +1158,7 @@ class FalkordbConnection(Connection):
         keep_keys: list[str] | tuple[str, ...] | None = None,
         filters: list[Any] | dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
-        """Keep documents that don't exist in the database.
-
-        Args:
-            batch: Batch of documents to check
-            class_name: Label to check in
-            match_keys: Keys to match nodes
-            keep_keys: Keys to keep in result
-            filters: Additional query filters
-
-        Returns:
-            Documents that don't exist in the database
-        """
-        if not batch:
-            return []
-
-        # Find documents that exist
-        present_docs = self.fetch_present_documents(
-            batch, class_name, match_keys, match_keys, filters=filters
+        """The documents of *batch* with no stored node; see :func:`absent_documents`."""
+        return absent_documents(
+            self, batch, class_name, match_keys, keep_keys=keep_keys, filters=filters
         )
-
-        # Create a set of present document keys for efficient lookup
-        present_keys = set()
-        for doc in present_docs:
-            key_tuple = tuple(doc.get(k) for k in match_keys)
-            present_keys.add(key_tuple)
-
-        # Filter out documents that exist
-        absent_docs = []
-        for doc in batch:
-            key_tuple = tuple(doc.get(k) for k in match_keys)
-            if key_tuple not in present_keys:
-                if keep_keys:
-                    absent_docs.append({k: doc.get(k) for k in keep_keys})
-                else:
-                    absent_docs.append(doc)
-
-        return absent_docs

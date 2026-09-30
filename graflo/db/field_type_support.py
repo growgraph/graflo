@@ -1,9 +1,11 @@
-"""Backend support checks for schema field types (native or raise — no soft conversion)."""
+"""Backend support checks for schema field types and index kinds (native or raise — no soft conversion)."""
 
 from __future__ import annotations
 
 from collections.abc import Iterable
 
+from graflo.architecture.graph_types import IndexType
+from graflo.architecture.graph_types.index_config import Index
 from graflo.architecture.schema.document import Schema
 from graflo.architecture.schema.vertex import (
     Field,
@@ -93,3 +95,54 @@ def tigergraph_type_for_field(field: Field) -> str:
     if type_upper == FieldType.UUID.value:
         return FieldType.STRING.value
     return type_upper
+
+
+class UnsupportedIndexKindError(ValueError):
+    """Raised when a declared index kind cannot be built on the target backend."""
+
+
+#: Index kinds each backend's DDL builds, beyond a plain index. A plain index
+#: (``persistent``, and its ArangoDB-era aliases ``hash`` and ``skiplist``) is
+#: built everywhere an index is built; the file backend builds none, and has no
+#: queries for one to serve.
+_INDEX_KINDS_BUILT: dict[DBType, frozenset[IndexType]] = {
+    DBType.ARANGO: frozenset({IndexType.FULLTEXT}),
+}
+
+_PLAIN_INDEX_KINDS = frozenset(
+    {IndexType.PERSISTENT, IndexType.HASH, IndexType.SKIPLIST}
+)
+
+
+def assert_index_kind_supported(db_type: DBType, index: Index, owner: str) -> None:
+    """Raise if *db_type* cannot build *index* as declared on *owner*.
+
+    A kind the target cannot build would otherwise become a plain index, so a
+    full-text search declared in the schema would silently match nothing.
+    """
+    if db_type == DBType.GRAFLO_BACKEND or index.type in _PLAIN_INDEX_KINDS:
+        return
+    if index.type in _INDEX_KINDS_BUILT.get(db_type, frozenset()):
+        return
+    flavor = getattr(db_type, "value", db_type)
+    raise UnsupportedIndexKindError(
+        f"A {getattr(index.type, 'value', index.type)} index on {index.fields} of '{owner}' cannot be "
+        f"built on backend '{flavor}'. Declare a plain index, or remove it."
+    )
+
+
+def assert_schema_index_kinds_supported(db_type: DBType, schema: Schema) -> None:
+    """Validate every declared vertex and edge index against backend support."""
+    profile = schema.db_profile
+    for vertex in schema.core_schema.vertex_config.vertices:
+        for index in profile.vertex_secondary_indexes(vertex.name):
+            assert_index_kind_supported(db_type, index, vertex.name)
+    for edge in schema.core_schema.edge_config.values():
+        for index in profile.edge_secondary_indexes(edge.edge_id):
+            assert_index_kind_supported(db_type, index, str(edge.edge_id))
+
+
+def assert_schema_supported(db_type: DBType, schema: Schema) -> None:
+    """Refuse a schema whose field types or index kinds *db_type* cannot store."""
+    assert_schema_field_types_supported(db_type, schema)
+    assert_schema_index_kinds_supported(db_type, schema)

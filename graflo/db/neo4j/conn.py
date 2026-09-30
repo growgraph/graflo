@@ -36,18 +36,21 @@ from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import VertexConfig
 from graflo.connections.onto import Neo4jConfig
 from graflo.db.conn import (
+    DEFAULT_DELETE_CHUNK_SIZE,
     Connection,
     NamespaceNotFoundError,
     SchemaExistsError,
     consume_insert_edges_kwargs,
 )
 from graflo.db.cypher import cypher_rel_pattern, rel_merge_props_map_from_row_index
+from graflo.db.cypher.delete import delete_nodes, delete_relationships
 from graflo.db.cypher.traversal import cypher_graph_neighbors
-from graflo.db.field_type_support import assert_schema_field_types_supported
+from graflo.db.field_type_support import assert_schema_supported
 from graflo.db.graph_introspection import (
     GraphSchemaInferencer,
     strip_internal_properties,
 )
+from graflo.db.resolve import absent_documents, present_documents
 from graflo.filter.onto import (
     FilterExpression,
     parse_filter_expression,
@@ -85,6 +88,7 @@ class Neo4jConnection(Connection):
     """
 
     flavor = DBType.NEO4J
+    supports_instance_delete = True
     supports_graph_export = True
     # A migration emitter is registered for this backend
     # (graflo/migrate/executor.py); the other six have none.
@@ -335,7 +339,7 @@ class Neo4jConnection(Connection):
         Args:
             schema: Schema containing vertex and edge class definitions
         """
-        assert_schema_field_types_supported(self.flavor, schema)
+        assert_schema_supported(self.flavor, schema)
 
     def define_vertex_classes(self, schema: Schema):
         """Define vertex classes based on schema.
@@ -462,7 +466,7 @@ class Neo4jConnection(Connection):
         create_namespace: bool = True,
     ) -> None:
         """Define indexes for the schema (labels/relationships are implicit)."""
-        assert_schema_field_types_supported(self.flavor, schema)
+        assert_schema_supported(self.flavor, schema)
         self.report_edge_direction_support(schema)
         db_name = self._resolve_db_name(schema)
         if self._node_count() > 0 and not recreate:
@@ -607,18 +611,15 @@ class Neo4jConnection(Connection):
     def insert_return_batch(
         self, docs: list[dict[str, Any]], class_name: str
     ) -> list[dict[str, Any]] | str:
-        """Insert nodes and return their properties.
-
-        Note: Not implemented in Neo4j.
-
-        Args:
-            docs: Documents to insert
-            class_name: Label to insert into
+        """Not supported: nodes are written with :meth:`upsert_docs_batch`.
 
         Raises:
-            NotImplementedError: This method is not implemented for Neo4j
+            NotImplementedError: Always.
         """
-        raise NotImplementedError()
+        raise NotImplementedError(
+            f"insert_return_batch is not supported by {type(self).__name__}; "
+            "write nodes with upsert_docs_batch and read them back with fetch_docs"
+        )
 
     def fetch_docs(
         self,
@@ -756,6 +757,47 @@ class Neo4jConnection(Connection):
 
         return result
 
+    def delete_vertices(
+        self,
+        class_name: str,
+        key_docs: list[dict[str, Any]],
+        match_keys: tuple[str, ...],
+        *,
+        chunk_size: int = DEFAULT_DELETE_CHUNK_SIZE,
+    ) -> None:
+        """Remove nodes with ``DETACH DELETE``, which removes their relationships too."""
+        delete_nodes(
+            lambda query, rows: self.execute(query, data=rows),
+            class_name,
+            key_docs,
+            match_keys,
+            chunk_size,
+        )
+
+    def delete_edges(
+        self,
+        source_class: str,
+        target_class: str,
+        relation_name: str | None,
+        endpoints: list[tuple[dict[str, Any], dict[str, Any]]],
+        match_keys_source: tuple[str, ...],
+        match_keys_target: tuple[str, ...],
+        *,
+        collection_name: str | None = None,
+        chunk_size: int = DEFAULT_DELETE_CHUNK_SIZE,
+    ) -> None:
+        """Remove the relationships of one type between the given node pairs."""
+        delete_relationships(
+            lambda query, rows: self.execute(query, data=rows),
+            source_class,
+            target_class,
+            relation_name,
+            endpoints,
+            match_keys_source,
+            match_keys_target,
+            chunk_size,
+        )
+
     def fetch_present_documents(
         self,
         batch: list[dict[str, Any]],
@@ -764,23 +806,17 @@ class Neo4jConnection(Connection):
         keep_keys: list[str] | tuple[str, ...] | None = None,
         flatten: bool = False,
         filters: list[Any] | dict[str, Any] | None = None,
-    ) -> list[dict[str, Any]]:
-        """Fetch nodes that exist in the database.
+    ) -> list[dict[str, Any]] | dict[int, list[dict[str, Any]]]:
+        """Stored nodes matching *batch*, by batch position; see :func:`present_documents`.
 
-        Note: Not implemented in Neo4j.
-
-        Args:
-            batch: Batch of documents to check
-            class_name: Label to check in
-            match_keys: Keys to match nodes
-            keep_keys: Keys to keep in result
-            flatten: Unused in Neo4j
-            filters: Additional query filters
-
-        Raises:
-            NotImplementedError: This method is not implemented for Neo4j
+        With *flatten*, a list of the matches in batch order.
         """
-        raise NotImplementedError
+        present = present_documents(
+            self, batch, class_name, match_keys, keep_keys=keep_keys, filters=filters
+        )
+        if flatten:
+            return [present[position][0] for position in sorted(present)]
+        return present
 
     def aggregate(
         self,
@@ -858,21 +894,10 @@ class Neo4jConnection(Connection):
         keep_keys: list[str] | tuple[str, ...] | None = None,
         filters: list[Any] | dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
-        """Keep nodes that don't exist in the database.
-
-        Note: Not implemented in Neo4j.
-
-        Args:
-            batch: Batch of documents to check
-            class_name: Label to check in
-            match_keys: Keys to match nodes
-            keep_keys: Keys to keep in result
-            filters: Additional query filters
-
-        Raises:
-            NotImplementedError: This method is not implemented for Neo4j
-        """
-        raise NotImplementedError
+        """The documents of *batch* with no stored node; see :func:`absent_documents`."""
+        return absent_documents(
+            self, batch, class_name, match_keys, keep_keys=keep_keys, filters=filters
+        )
 
     def introspect_graph_schema(
         self,

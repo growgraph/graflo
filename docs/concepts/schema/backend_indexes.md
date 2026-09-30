@@ -37,8 +37,11 @@ schema:
 ```
 
 An index entry takes `fields` and, optionally, `unique` (default `true`),
-`type` (`persistent`, the default, `hash`, `skiplist` or `fulltext`, used by
-ArangoDB), `sparse`, `deduplicate` and `name`. Because `unique` defaults to
+`type` (`persistent`, the default, `hash`, `skiplist` or `fulltext`),
+`sparse`, `deduplicate` and `name`. Every backend builds `persistent`, `hash`
+and `skiplist` as a plain index. Only ArangoDB builds `fulltext`; on any other
+target a `fulltext` index is refused when the schema is applied, with the
+vertex or edge it is declared on. Because `unique` defaults to
 `true`, ArangoDB and PostgreSQL build a declared index as a uniqueness
 constraint and reject duplicate values. Write `unique: false` unless that is
 what you want.
@@ -80,7 +83,7 @@ logs a warning, because every filtered read on that tag then fails with
 | Backend | Identity index | Declared vertex indexes | Declared edge indexes |
 |---|---|---|---|
 | Neo4j | One index over the identity fields, created with the other indexes. An index, not a uniqueness constraint | `CREATE INDEX` over the fields; `unique` is not applied | A relationship index, or a uniqueness constraint when `unique: true` |
-| Memgraph | One single-property index per identity field, created with the other indexes and again on the match fields when vertices are written | One single-property index per field | One `CREATE INDEX ON :<relation>(<field>)` per field |
+| Memgraph | One single-property index per identity field, created with the other indexes and again on the match fields when vertices are written | One single-property index per field | One `CREATE EDGE INDEX ON :<relation>(<field>)` per field |
 | FalkorDB | One index per identity field, created with the other indexes | One index per field | One relationship index per field |
 | NebulaGraph | A tag index over the identity fields, always created, because `LOOKUP` and filtered `MATCH` need it | A tag index | An edge index |
 | ArangoDB | A unique persistent index over the identity fields, created with the collection; none when the identity is `_key`, which ArangoDB indexes itself | As declared, with `unique` and `type` applied | As declared, on each edge collection |

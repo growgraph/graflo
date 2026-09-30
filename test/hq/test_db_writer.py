@@ -174,6 +174,65 @@ def test_max_concurrent_bounds_concurrent_write_calls(monkeypatch):
     assert state["high_water"] == 1
 
 
+def _high_water_of_concurrent_writes(
+    monkeypatch, conn_conf, max_concurrent: int
+) -> int:
+    schema = _build_schema()
+    writer = DBWriter(
+        schema=schema,
+        ingestion_model=_build_ingestion_model(schema),
+        max_concurrent=max_concurrent,
+    )
+    state = {"active": 0, "high_water": 0}
+
+    class _SlowDB(_FakeDB):
+        def upsert_docs_batch(self, docs, class_name, match_keys, **kwargs):
+            import time
+
+            state["active"] += 1
+            state["high_water"] = max(state["high_water"], state["active"])
+            time.sleep(0.02)
+            state["active"] -= 1
+
+    class _SlowConnectionManager(_FakeConnectionManager):
+        db = _SlowDB()
+
+    monkeypatch.setattr("graflo.hq.db_writer.ConnectionManager", _SlowConnectionManager)
+
+    async def _writes() -> None:
+        await asyncio.gather(
+            *(
+                # Two vertex types, so no per-collection lock serializes them.
+                writer._push_vertices(
+                    GraphContainer(
+                        vertices={"target_v": [{"id": str(n)}], "blank_v": [{}]},
+                        edges={},
+                        linear=[],
+                    ),
+                    conn_conf,
+                )
+                for n in range(2)
+            )
+        )
+
+    asyncio.run(_writes())
+    return state["high_water"]
+
+
+def test_the_file_backend_is_written_by_one_operation_at_a_time(monkeypatch, tmp_path):
+    from graflo.connections.graflo_backend import GraFloBackendConfig
+
+    conn_conf = GraFloBackendConfig(output_dir=tmp_path)
+
+    assert _high_water_of_concurrent_writes(monkeypatch, conn_conf, 4) == 1
+
+
+def test_other_targets_keep_their_concurrency(monkeypatch):
+    conn_conf = ArangoConfig(uri="http://localhost:8529", username="root", password="x")
+
+    assert _high_water_of_concurrent_writes(monkeypatch, conn_conf, 4) > 1
+
+
 # -- extra weights: stored vertex fields copied onto a document's edges ---------
 
 
