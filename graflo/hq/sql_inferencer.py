@@ -7,6 +7,7 @@ here. Use :class:`graflo.hq.sanitizer.Sanitizer` (or
 """
 
 import logging
+from collections.abc import Collection
 from dataclasses import dataclass
 
 from graflo.architecture.contract.ingestion import IngestionModel, Resource
@@ -71,6 +72,7 @@ class SQLInferenceManager:
         self,
         schema_name: str | None = None,
         include_raw_tables: bool = False,
+        entity_tables: Collection[str] | None = None,
     ) -> SchemaIntrospectionResult:
         """Introspect PostgreSQL schema.
 
@@ -78,6 +80,8 @@ class SQLInferenceManager:
             schema_name: Schema name to introspect
             include_raw_tables: Whether to build sampled per-column raw table metadata.
                 Defaults to False for performance (binding/schema inference does not require it).
+            entity_tables: Tables that are entities whatever their shape; a
+                table with two foreign keys is otherwise read as a relationship.
 
         Returns:
             SchemaIntrospectionResult: PostgreSQL schema introspection result
@@ -87,6 +91,7 @@ class SQLInferenceManager:
             schema_name,
             include_raw_tables,
             default_schema=self.default_schema,
+            entity_tables=entity_tables,
         )
 
     def infer_schema(
@@ -125,7 +130,9 @@ class SQLInferenceManager:
         )
 
     def infer_complete_schema(
-        self, schema_name: str | None = None
+        self,
+        schema_name: str | None = None,
+        entity_tables: Collection[str] | None = None,
     ) -> tuple[Schema, IngestionModel]:
         """Infer a complete schema and ingestion model from source.
 
@@ -139,21 +146,34 @@ class SQLInferenceManager:
 
         Args:
             schema_name: Schema name to introspect (source-specific)
+            entity_tables: Tables that are entities whatever their shape
 
         Returns:
             tuple[Schema, IngestionModel]: Complete schema and ingestion model
         """
-        artifacts = self.infer_artifacts(schema_name=schema_name)
+        artifacts = self.infer_artifacts(
+            schema_name=schema_name, entity_tables=entity_tables
+        )
         return artifacts.schema, artifacts.ingestion_model
 
-    def infer_artifacts(self, schema_name: str | None = None) -> SQLInferenceArtifacts:
+    def infer_artifacts(
+        self,
+        schema_name: str | None = None,
+        entity_tables: Collection[str] | None = None,
+    ) -> SQLInferenceArtifacts:
         """Infer schema/resources from a single introspection pass.
+
+        Args:
+            schema_name: Schema name to introspect (source-specific)
+            entity_tables: Tables that are entities whatever their shape
 
         Returns:
             SQLInferenceArtifacts: introspection + schema + ingestion model tuple.
                 The output is NOT sanitized for the target DB flavor.
         """
-        introspection_result = self.introspect(schema_name=schema_name)
+        introspection_result = self.introspect(
+            schema_name=schema_name, entity_tables=entity_tables
+        )
         schema = self.infer_schema(introspection_result, schema_name=schema_name)
         resources = self.create_resources(introspection_result, schema)
         ingestion_model = IngestionModel(resources=resources)

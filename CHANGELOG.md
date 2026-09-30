@@ -25,6 +25,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   nothing by default.
 - **A warning for an edge the schema does not declare.** The writer dropped such edges without a
   word; it now names the edge, once per run.
+- **`SparqlConnector.same_as`**, also on the RDF data sources: `collapse` (default) reads IRIs
+  joined by `owl:sameAs` as one record under the smallest IRI, with the others in `_same_as` and
+  references to them rewritten; `keep` reads the statements as an ordinary property.
+- **`entity_tables` on SQL schema inference** (`GraphEngine.infer_manifest`,
+  `GraphEngine.introspect`, `SQLInferenceManager`, `introspect_schema`): tables read as vertex
+  types whatever their shape, such as a table with two foreign keys that describes a thing of its
+  own.
+- **`SchemaIntrospectionResult.skipped_tables` and `.reference_edges`.** The tables left out of
+  the inferred graph, each with the reason, and the edges stated by foreign keys of entity tables.
 
 ### Changed
 
@@ -57,6 +66,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   has to call both.
 - **A resource with an edge step that takes an endpoint from a role is not cast in worker
   processes.** Such a step adds edge types while it casts, and each worker would keep its own.
+- **A foreign key of an entity table becomes an edge in SQL schema inference.** It runs from the
+  referring table to the one referenced and is named after the column without a trailing `_id`;
+  the table's resource writes it for each row whose key is set. A table left out of the inferred
+  graph is logged with the reason.
+- **An inferred RDF resource keeps the subject and the objects of each property in their own
+  role**, and each edge step names both, with edge inference off. A blank node's `_uri` is `_:`
+  followed by a digest of its triples.
+- **RDF schema inference skips anonymous classes** and refuses two classes that share a local
+  name, which would share a vertex type.
 
 - **uv is pinned to one release line.** `pyproject.toml` sets `[tool.uv] required-version`, and
   the workflows pin a release within it. A different uv minor rewrote `uv.lock` wholesale with
@@ -149,6 +167,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The opt-in test gate skipped unmarked tests.** A test whose parameter id equalled a gated
   marker name (`nebula`, `tigergraph`, `kafka`, `performance`, `bulk_e2e`) was skipped without the
   matching `--run-*` option even when it carried no such marker. The gate now reads the marker.
+- **RDF schema inference ordered classes by set iteration**, so the same ontology could give
+  its vertex types and resources in another order on the next run. Classes, fields, edges and
+  resources now follow IRI order, and an RDF file's subjects are read in IRI order.
+- **A multi-valued RDF object property dropped the record.** A subject with two objects for one
+  property failed with `unhashable type: 'list'`. A list under an identity field now gives one
+  vertex per element, so the subject gets an edge to each object.
+- **An inferred RDF resource linked the wrong vertices.** An object of the subject's own class was
+  read as a second subject, so it got the subject's edges; two properties with one range took each
+  other's objects; and the objects of one property were linked to each other.
+- **A blank node got a new key on every read**, so reading the same data again added its vertices
+  again instead of updating them. It is now keyed on its content, from a file or an endpoint.
+- **SQL schema inference skipped a table without a primary key without a word.**
 
 ## [1.14.1]
 

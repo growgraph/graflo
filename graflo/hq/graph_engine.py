@@ -121,16 +121,20 @@ class GraphEngine:
         postgres_config: PostgresConfig,
         schema_name: str | None = None,
         include_raw_tables: bool = True,
+        entity_tables: list[str] | None = None,
     ) -> SchemaIntrospectionResult:
         """Introspect PostgreSQL schema and return a serializable result.
 
         Args:
             postgres_config: PostgresConfig instance
             schema_name: Schema name to introspect (defaults to config schema_name or 'public')
+            entity_tables: Tables that are entities whatever their shape; a
+                table with two foreign keys is otherwise read as a relationship.
 
         Returns:
             SchemaIntrospectionResult: Introspection result (vertex_tables, edge_tables,
-                raw_tables, schema_name) suitable for serialization.
+                raw_tables, schema_name, reference_edges, skipped_tables) suitable
+                for serialization.
         """
         with PostgresConnection(postgres_config) as postgres_conn:
             inferencer = SQLInferenceManager(
@@ -140,6 +144,7 @@ class GraphEngine:
             return inferencer.introspect(
                 schema_name=schema_name,
                 include_raw_tables=include_raw_tables,
+                entity_tables=entity_tables,
             )
 
     def sample_resources(
@@ -198,6 +203,7 @@ class GraphEngine:
         schema_name: str | None = None,
         fuzzy_threshold: float = 0.8,
         discard_disconnected_vertices: bool = False,
+        entity_tables: list[str] | None = None,
     ) -> GraphManifest:
         """Infer a GraphManifest from PostgreSQL database.
 
@@ -207,6 +213,8 @@ class GraphEngine:
             fuzzy_threshold: Similarity threshold for fuzzy matching (0.0 to 1.0, default 0.8)
             discard_disconnected_vertices: If True, remove vertices that do not take part in
                 any relation (and resources/actors that reference them). Default False.
+            entity_tables: Tables that are entities whatever their shape; a
+                table with two foreign keys is otherwise read as a relationship.
 
         Returns:
             GraphManifest: Inferred manifest with schema, ingestion model, and bindings.
@@ -217,7 +225,9 @@ class GraphEngine:
                 target_db_flavor=self.target_db_flavor,
                 fuzzy_threshold=fuzzy_threshold,
             )
-            artifacts = inferencer.infer_artifacts(schema_name=schema_name)
+            artifacts = inferencer.infer_artifacts(
+                schema_name=schema_name, entity_tables=entity_tables
+            )
             schema, ingestion_model = artifacts.schema, artifacts.ingestion_model
             bindings, provider = (
                 self.resource_mapper.create_bindings_with_provider_from_introspection(

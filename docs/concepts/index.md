@@ -118,7 +118,8 @@ From Python you can also pass records that are already in memory, a list of
 dicts or a DataFrame, through an in-memory data source instead of a
 connector. Where the manifest can be inferred,
 GraFlo writes a draft for you to edit. From a SQL database, entity tables
-become vertex types and link tables (two foreign keys) become edges; see
+become vertex types, and link tables (two foreign keys) and the foreign keys of
+entity tables become edges; see
 [inferring a graph from a SQL database](../guides/sql_schema_inference.md).
 From an ontology, each `owl:Class` becomes a vertex type, each
 `owl:ObjectProperty` an edge type and each `owl:DatatypeProperty` a property;

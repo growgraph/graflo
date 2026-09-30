@@ -476,7 +476,9 @@ class RegistryBuilder:
                     password=password,
                     page_size=ingestion_params.batch_size,
                 )
-                sparql_source = SparqlEndpointDataSource(config=source_config)
+                sparql_source = SparqlEndpointDataSource(
+                    config=source_config, same_as=connector.same_as
+                )
                 registry.register(sparql_source, resource_name=resource_name)
 
                 logger.info(
@@ -493,6 +495,7 @@ class RegistryBuilder:
                 rdf_source = RdfFileDataSource(
                     path=connector.rdf_file,
                     rdf_class=connector.rdf_class,
+                    same_as=connector.same_as,
                 )
                 registry.register(rdf_source, resource_name=resource_name)
 

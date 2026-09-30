@@ -514,6 +514,9 @@ class SparqlConnector(ResourceConnector):
             the auto-generated per-class query is skipped.
         rdf_file: Path to a local RDF file (``.ttl``, ``.rdf``, ``.n3``,
             ``.jsonld``).  Mutually exclusive with *endpoint_url*.
+        same_as: ``collapse`` (default) reads IRIs joined by ``owl:sameAs`` as
+            one record under the smallest IRI, the others listed in
+            ``_same_as``. ``keep`` reads the statements as a property.
     """
 
     rdf_class: str = Field(
@@ -531,6 +534,18 @@ class SparqlConnector(ResourceConnector):
     rdf_file: pathlib.Path | None = Field(
         default=None, description="Path to a local RDF file"
     )
+    same_as: Literal["collapse", "keep"] = Field(
+        default="collapse",
+        description="How owl:sameAs statements between IRIs are read.",
+    )
+
+    def _hash_payload(self) -> dict[str, Any]:
+        payload = super()._hash_payload()
+        # Left out at its default, so a connector that does not set it keeps
+        # the hash it is referred to by.
+        if self.same_as == "collapse":
+            del payload["same_as"]
+        return payload
 
     @model_validator(mode="after")
     def _reject_row_annotations(self) -> Self:

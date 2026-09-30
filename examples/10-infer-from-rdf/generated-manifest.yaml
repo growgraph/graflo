@@ -1,17 +1,34 @@
 core_schema:
     edge_config:
         edges:
-        -   relation: authorOf
-            source: Researcher
-            target: Publication
         -   relation: affiliatedWith
             source: Researcher
             target: Institution
+        -   relation: authorOf
+            source: Researcher
+            target: Publication
         -   relation: cites
             source: Publication
             target: Publication
     vertex_config:
         vertices:
+        -   identity:
+            -   _uri
+            name: Institution
+            properties:
+            -   name: _key
+            -   name: _uri
+            -   name: country
+            -   name: instName
+        -   identity:
+            -   _uri
+            name: Publication
+            properties:
+            -   name: _key
+            -   name: _uri
+            -   name: doi
+            -   name: title
+            -   name: year
         -   identity:
             -   _uri
             name: Researcher
@@ -20,22 +37,5 @@ core_schema:
             -   name: _uri
             -   name: fullName
             -   name: orcid
-        -   identity:
-            -   _uri
-            name: Publication
-            properties:
-            -   name: _key
-            -   name: _uri
-            -   name: title
-            -   name: year
-            -   name: doi
-        -   identity:
-            -   _uri
-            name: Institution
-            properties:
-            -   name: _key
-            -   name: _uri
-            -   name: instName
-            -   name: country
 metadata:
     name: academic_kg

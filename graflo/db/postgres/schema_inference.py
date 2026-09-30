@@ -343,6 +343,23 @@ class PostgresSchemaInferencer:
                 f"Inferred edge '{table_name}' from {source_table} to {target_table}"
             )
 
+        # Foreign keys inside entity tables: a row refers to a row.
+        declared = {edge.edge_id for edge in edges}
+        for reference in introspection_result.reference_edges:
+            edge = Edge(
+                source=reference.source_table,
+                target=reference.target_table,
+                relation=reference.relation,
+            )
+            if (
+                edge.edge_id in declared
+                or reference.source_table not in vertex_names
+                or reference.target_table not in vertex_names
+            ):
+                continue
+            declared.add(edge.edge_id)
+            edges.append(edge)
+
         return EdgeConfig(edges=edges)
 
     def infer_schema(

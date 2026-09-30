@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any, Literal
 
 from graflo.architecture.contract.ingestion.steps import VertexActorConfig
@@ -17,6 +18,30 @@ from graflo.architecture.schema.vertex import VertexConfig, VertexName
 from graflo.onto import ExpressionFlavor
 
 from .base import ActorConstants, ActorInitContext, VertexProducingActor
+
+
+def explode_identity_lists(
+    doc: dict[str, Any], identity_fields: Sequence[str]
+) -> list[dict[str, Any]]:
+    """One document per element when an identity field holds a list.
+
+    A multi-valued source field names several vertices, not one vertex keyed on
+    a list. ``None`` elements are dropped, so an empty list names no vertex.
+
+    Raises:
+        ValueError: If more than one identity field holds a list; how their
+            elements pair is not stated.
+    """
+    listed = [name for name in identity_fields if isinstance(doc.get(name), list)]
+    if not listed:
+        return [doc]
+    if len(listed) > 1:
+        raise ValueError(
+            f"Identity fields {listed} each hold a list; a vertex step can expand "
+            "one multi-valued identity field, not several."
+        )
+    field = listed[0]
+    return [{**doc, field: value} for value in doc[field] if value is not None]
 
 
 class VertexActor(VertexProducingActor):
@@ -166,6 +191,7 @@ class VertexActor(VertexProducingActor):
         effective_lindex = lindex.extend((self.role, 0)) if self.role else lindex
 
         agg = []
+        identity_fields = self.vertex_config.identity_fields(self.name)
         if self.from_doc:
             source_keys = set(self.from_doc.values())
             consumed_from_buffer = False
@@ -177,7 +203,7 @@ class VertexActor(VertexProducingActor):
                         v_f: item.named[d_f] for v_f, d_f in self.from_doc.items()
                     }
                     if any(v is not None for v in projected.values()):
-                        agg.append(projected)
+                        agg.extend(explode_identity_lists(projected, identity_fields))
                     for k in source_keys:
                         item.named.pop(k, None)
                     consumed_from_buffer = True
@@ -196,7 +222,7 @@ class VertexActor(VertexProducingActor):
                     v_f: effective_doc.get(d_f) for v_f, d_f in self.from_doc.items()
                 }
                 if any(v is not None for v in projected.values()):
-                    agg.append(projected)
+                    agg.extend(explode_identity_lists(projected, identity_fields))
             buffer_vertex_keys = tuple(k for k in vertex_keys if k not in self.from_doc)
         else:
             buffer_vertex_keys = vertex_keys
@@ -218,9 +244,7 @@ class VertexActor(VertexProducingActor):
             if passthrough_doc:
                 agg.append(passthrough_doc)
 
-        merged = fuse_doc_basis(
-            agg, index_keys=tuple(self.vertex_config.identity_fields(self.name))
-        )
+        merged = fuse_doc_basis(agg, index_keys=tuple(identity_fields))
 
         for m in merged:
             vertex_rep = VertexRep(vertex=m, lookup_only=self.lookup_only)

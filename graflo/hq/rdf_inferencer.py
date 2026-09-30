@@ -15,6 +15,10 @@ The mapping follows these conventions:
 - **Object properties** (edges) become per-resource pipeline steps on the domain class that
   materialize the range vertex from the object-property field (URI reference) and emit the edge,
   including when domain and range are the same class (e.g. ``Publication`` -> ``Publication`` for ``cites``).
+  The subject and the objects of each property are kept in their own role, so an
+  edge joins the subject to the objects of its own property and to nothing else.
+
+Classes, fields, edges and resources are ordered by IRI.
 
 Requires ``rdflib`` (a **core** dependency of ``graflo``).
 """
@@ -31,6 +35,9 @@ from graflo.architecture.contract.bindings import (
 )
 from graflo.architecture.contract.ingestion import IngestionModel
 from graflo.architecture.contract.ingestion.resource import Resource
+from graflo.architecture.contract.ingestion.steps.references import (
+    subject_with_references,
+)
 from graflo.architecture.schema import (
     CoreSchema,
     GraphMetadata,
@@ -50,6 +57,34 @@ def _local_name(uri: str) -> str:
     if "#" in uri:
         return uri.rsplit("#", 1)[-1]
     return uri.rsplit("/", 1)[-1]
+
+
+def _ontology_classes(g: Any) -> dict[str, str]:
+    """Named classes the ontology declares, as ``{local name: IRI}`` in IRI order.
+
+    Anonymous classes (restrictions, unions) are not vertices. Two classes with
+    one local name would share a vertex name, so they are refused.
+    """
+    from rdflib import OWL, RDF, RDFS, URIRef
+
+    declared = {
+        str(cls)
+        for kind in (OWL.Class, RDFS.Class)
+        for cls in g.subjects(RDF.type, kind)
+        if isinstance(cls, URIRef)
+    }
+    classes: dict[str, str] = {}
+    for uri in sorted(declared):
+        name = _local_name(uri)
+        if not name or uri.startswith((str(OWL), str(RDFS))):
+            continue
+        if name in classes:
+            raise ValueError(
+                f"Classes <{classes[name]}> and <{uri}> share the local name "
+                f"'{name}', which is the vertex name; rename one of them."
+            )
+        classes[name] = uri
+    return classes
 
 
 def _declared_inverses(
@@ -199,44 +234,40 @@ class RdfInferenceManager:
         g = _load_graph(source, endpoint_url=endpoint_url, graph_uri=graph_uri)
 
         # -- Discover classes -------------------------------------------------
-        classes: dict[str, str] = {}  # local_name -> full URI
-        for cls_uri in set(g.subjects(RDF.type, OWL.Class)) | set(
-            g.subjects(RDF.type, RDFS.Class)
-        ):
-            uri_str = str(cls_uri)
-            name = _local_name(uri_str)
-            if (
-                name
-                and not uri_str.startswith(str(OWL))
-                and not uri_str.startswith(str(RDFS))
-            ):
-                classes[name] = uri_str
+        classes = _ontology_classes(g)  # local name -> IRI
+        class_names = {uri: name for name, uri in classes.items()}
 
         logger.info("Discovered %d classes: %s", len(classes), list(classes.keys()))
+
+        def named(prop: Any, predicate: Any) -> list[str]:
+            """Vertex names of the classes *prop* points at, in IRI order."""
+            return [
+                class_names[uri]
+                for uri in sorted({str(cls) for cls in g.objects(prop, predicate)})
+                if uri in class_names
+            ]
 
         # -- Discover datatype properties -> vertex fields --------------------
         fields_by_class: dict[str, list[str]] = {c: ["_key", "_uri"] for c in classes}
 
-        for dp in g.subjects(RDF.type, OWL.DatatypeProperty):
+        for dp in sorted(set(g.subjects(RDF.type, OWL.DatatypeProperty)), key=str):
             dp_name = _local_name(str(dp))
-            for domain in g.objects(dp, RDFS.domain):
-                domain_name = _local_name(str(domain))
-                if domain_name in fields_by_class:
+            for domain_name in named(dp, RDFS.domain):
+                if dp_name not in fields_by_class[domain_name]:
                     fields_by_class[domain_name].append(dp_name)
 
         # -- Discover object properties -> edges ------------------------------
         edges: list[dict[str, str]] = []
-        for op in g.subjects(RDF.type, OWL.ObjectProperty):
+        for op in sorted(set(g.subjects(RDF.type, OWL.ObjectProperty)), key=str):
+            if op == OWL.sameAs:
+                # An identity statement, settled when the data is read.
+                continue
             op_name = _local_name(str(op))
-            domains = [_local_name(str(d)) for d in g.objects(op, RDFS.domain)]
-            ranges = [_local_name(str(r)) for r in g.objects(op, RDFS.range)]
-
-            for src in domains:
-                for tgt in ranges:
-                    if src in classes and tgt in classes:
-                        edges.append(
-                            {"source": src, "target": tgt, "relation": op_name}
-                        )
+            for src in named(op, RDFS.domain):
+                for tgt in named(op, RDFS.range):
+                    edge_def = {"source": src, "target": tgt, "relation": op_name}
+                    if edge_def not in edges:
+                        edges.append(edge_def)
 
         logger.info("Discovered %d edges", len(edges))
 
@@ -279,29 +310,22 @@ class RdfInferenceManager:
 
         resources: list[Resource] = []
         for cls_name in classes:
-            pipeline: list[dict[str, Any]] = [{"vertex": cls_name}]
-            for edge_def in edge_defs_by_source.get(cls_name, []):
-                relation_name = edge_def.get("relation")
-                if relation_name is None:
-                    continue
-                target = edge_def["target"]
-                pipeline.append(
-                    {
-                        "vertex": target,
-                        "from": {"_uri": relation_name},
-                        "extraction_scope": "mapped_only",
-                    }
+            # The object of a property is the target's `_uri`.
+            references = [
+                (
+                    edge_def["target"],
+                    edge_def["relation"],
+                    {"_uri": edge_def["relation"]},
                 )
-                pipeline.append(
-                    {
-                        "edge": {
-                            "from": edge_def["source"],
-                            "to": target,
-                            "relation": relation_name,
-                        }
-                    }
+                for edge_def in edge_defs_by_source.get(cls_name, [])
+            ]
+            resources.append(
+                Resource(
+                    name=cls_name,
+                    pipeline=subject_with_references(cls_name, references),
+                    infer_edges=not references,
                 )
-            resources.append(Resource(name=cls_name, pipeline=pipeline))
+            )
 
         effective_name = schema_name or "rdf_schema"
         schema = Schema(
@@ -337,23 +361,8 @@ class RdfInferenceManager:
         Returns:
             Bindings with one SparqlConnector per class.
         """
-        from rdflib import OWL, RDF, RDFS
-
         # Always load the ontology from the local file, not from the endpoint.
-        g = _load_graph(source)
-
-        classes: dict[str, str] = {}
-        for cls_uri in set(g.subjects(RDF.type, OWL.Class)) | set(
-            g.subjects(RDF.type, RDFS.Class)
-        ):
-            uri_str = str(cls_uri)
-            name = _local_name(uri_str)
-            if (
-                name
-                and not uri_str.startswith(str(OWL))
-                and not uri_str.startswith(str(RDFS))
-            ):
-                classes[name] = uri_str
+        classes = _ontology_classes(_load_graph(source))
 
         bindings = Bindings()
         for cls_name, cls_uri in classes.items():

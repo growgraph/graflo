@@ -282,3 +282,45 @@ class TestSourceThatCannotBeBuilt:
 
         assert sources == []
         assert "Failed to register FILE source for resource 'events'" in caplog.text
+
+
+class TestSparqlSources:
+    @staticmethod
+    def _source(connector: SparqlConnector):
+        registry = RegistryBuilder(_schema(), _ingestion_model()).build(
+            Bindings(connectors=[connector]), IngestionParams(), strict=True
+        )
+        (source,) = registry.get_data_sources("events")
+        return source
+
+    @pytest.mark.parametrize(
+        "location",
+        [{"rdf_file": pathlib.Path("facts.ttl")}, {"endpoint_url": "http://h/ds"}],
+        ids=["file", "endpoint"],
+    )
+    def test_same_as_reaches_the_source(self, location: dict) -> None:
+        def connector(**options: str) -> SparqlConnector:
+            return SparqlConnector(
+                rdf_class="http://example.org/E",
+                resource_name="events",
+                **location,
+                **options,
+            )
+
+        assert self._source(connector()).same_as == "collapse"
+        assert self._source(connector(same_as="keep")).same_as == "keep"
+
+    def test_the_default_does_not_change_the_connector_hash(self) -> None:
+        connector = SparqlConnector(
+            rdf_class="http://example.org/E", rdf_file=pathlib.Path("facts.ttl")
+        )
+
+        assert "same_as" not in connector._hash_payload()
+        assert (
+            connector.hash
+            != SparqlConnector(
+                rdf_class="http://example.org/E",
+                rdf_file=pathlib.Path("facts.ttl"),
+                same_as="keep",
+            ).hash
+        )

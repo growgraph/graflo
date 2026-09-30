@@ -12,6 +12,7 @@ methods and now delegates here.
 from __future__ import annotations
 
 import logging
+from collections.abc import Collection
 from typing import Any
 
 from graflo.architecture.onto_sql import (
@@ -19,7 +20,9 @@ from graflo.architecture.onto_sql import (
     EdgeTableInfo,
     ForeignKeyInfo,
     RawTableInfo,
+    ReferenceEdgeInfo,
     SchemaIntrospectionResult,
+    SkippedTableInfo,
     VertexTableInfo,
 )
 from graflo.db.sql.inference_utils import (
@@ -111,6 +114,7 @@ def detect_vertex_tables(
     schema_name: str | None = None,
     *,
     default_schema: str | None = None,
+    entity_tables: Collection[str] = (),
 ) -> list[VertexTableInfo]:
     """Detect vertex-like tables in the schema.
 
@@ -121,6 +125,9 @@ def detect_vertex_tables(
 
     Args:
         schema_name: Schema name. If None, uses 'public' or config schema_name.
+        entity_tables: Tables that are entities whatever their shape. A table
+            with two foreign keys looks like a relationship; naming it here
+            makes it a vertex and its foreign keys references.
 
     Returns:
         List of vertex table information dictionaries
@@ -147,8 +154,10 @@ def detect_vertex_tables(
         if not pk_columns:
             continue  # Skip tables without primary keys
 
+        named_entity = table_name in entity_tables
+
         # Skip edge-like tables
-        if is_edge_like_table(table_name, pk_columns, fk_columns):
+        if not named_entity and is_edge_like_table(table_name, pk_columns, fk_columns):
             continue
 
         # Count non-FK, non-PK columns (descriptive columns)
@@ -161,7 +170,7 @@ def detect_vertex_tables(
         ]
 
         # If table has descriptive columns, consider it vertex-like
-        if descriptive_columns:
+        if descriptive_columns or named_entity:
             # Mark primary key and unique columns and convert to ColumnInfo
             pk_set = set(pk_columns)
             unique_columns = provider.get_unique_columns(table_name, schema_name)
@@ -212,6 +221,7 @@ def detect_edge_tables(
     vertex_table_names: list[str] | None = None,
     *,
     default_schema: str | None = None,
+    entity_tables: Collection[str] = (),
 ) -> list[EdgeTableInfo]:
     """Detect edge-like tables in the schema.
 
@@ -222,6 +232,7 @@ def detect_edge_tables(
         schema_name: Schema name. If None, uses 'public' or config schema_name.
         vertex_table_names: Optional list of vertex table names for fuzzy matching.
                           If None, will be inferred from detect_vertex_tables().
+        entity_tables: Tables that are entities whatever their shape; never edges.
 
     Returns:
         List of edge table information dictionaries with source_table and target_table
@@ -232,7 +243,10 @@ def detect_edge_tables(
     # Get vertex table names if not provided
     if vertex_table_names is None:
         vertex_tables = detect_vertex_tables(
-            provider, schema_name, default_schema=default_schema
+            provider,
+            schema_name,
+            default_schema=default_schema,
+            entity_tables=entity_tables,
         )
         vertex_table_names = [vt.name for vt in vertex_tables]
 
@@ -255,7 +269,9 @@ def detect_edge_tables(
             continue
 
         # Check if table is edge-like
-        if not is_edge_like_table(table_name, pk_columns, fk_columns):
+        if table_name in entity_tables or not is_edge_like_table(
+            table_name, pk_columns, fk_columns
+        ):
             continue
 
         all_columns = provider.get_table_columns(table_name, schema_name)
@@ -402,12 +418,107 @@ def detect_edge_tables(
                 )
             )
         else:
-            logger.warning(
+            logger.debug(
                 f"Could not determine source/target tables for edge-like table '{table_name}'. "
                 f"Skipping."
             )
 
     return edge_tables
+
+
+def _constraints(foreign_keys: list[ForeignKeyInfo]) -> list[list[ForeignKeyInfo]]:
+    """Foreign-key rows grouped by constraint; an unnamed row is its own."""
+    groups: dict[object, list[ForeignKeyInfo]] = {}
+    for index, fk in enumerate(foreign_keys):
+        groups.setdefault(fk.constraint_name or index, []).append(fk)
+    return list(groups.values())
+
+
+def _key_columns(
+    constraint: list[ForeignKeyInfo], primary_key: list[str]
+) -> dict[str, str] | None:
+    """``{key column of the target: referring column}``, or None.
+
+    None when the constraint refers to something other than the target's whole
+    primary key: a row is matched on its key, and nothing else finds it.
+    """
+    if len(constraint) == 1 and constraint[0].references_column is None:
+        referred = list(primary_key) if len(primary_key) == 1 else []
+    else:
+        referred = [fk.references_column or "" for fk in constraint]
+    if not referred or sorted(referred) != sorted(primary_key):
+        return None
+    by_key = dict(zip(referred, (fk.column for fk in constraint)))
+    return {key: by_key[key] for key in primary_key}
+
+
+def infer_reference_edges(
+    vertex_tables: list[VertexTableInfo],
+) -> list[ReferenceEdgeInfo]:
+    """Edges stated by the foreign keys of entity tables.
+
+    A foreign key from one entity table to the primary key of another says that
+    a row refers to a row: an edge from the referring table to the one referred
+    to. The relation is the referring column without a trailing ``_id``, or the
+    target table's name for a key of several columns.
+    """
+    by_name = {table.name: table for table in vertex_tables}
+    edges: list[ReferenceEdgeInfo] = []
+    for table in vertex_tables:
+        relations: set[str] = set()
+        for constraint in _constraints(table.foreign_keys):
+            first = constraint[0]
+            target = by_name.get(first.references_table)
+            if target is None:
+                continue
+            columns = _key_columns(constraint, target.primary_key)
+            if columns is None:
+                logger.info(
+                    "Foreign key %s.%s -> %s is not read as an edge: it does not "
+                    "refer to the primary key of '%s'",
+                    table.name,
+                    first.column,
+                    target.name,
+                    target.name,
+                )
+                continue
+            relation = target.name
+            if len(constraint) == 1:
+                relation = first.column.removesuffix("_id") or target.name
+            if relation in relations:
+                relation = "_".join(fk.column for fk in constraint)
+            relations.add(relation)
+            edges.append(
+                ReferenceEdgeInfo(
+                    source_table=table.name,
+                    target_table=target.name,
+                    relation=relation,
+                    columns=columns,
+                )
+            )
+    return edges
+
+
+def _skipped_tables(
+    provider: SqlMetadataProvider, schema_name: str | None, kept: set[str]
+) -> list[SkippedTableInfo]:
+    """Tables that became neither a vertex nor an edge, each with the reason."""
+    skipped: list[SkippedTableInfo] = []
+    for table_info in provider.get_tables(schema_name):
+        table_name = table_info["table_name"]
+        if table_name in kept:
+            continue
+        pk_columns = provider.get_primary_keys(table_name, schema_name)
+        if not pk_columns:
+            reason = "no primary key"
+        elif is_edge_like_table(
+            table_name, pk_columns, provider.get_foreign_keys(table_name, schema_name)
+        ):
+            reason = "looks like a relationship, but its two ends could not be told"
+        else:
+            reason = "no columns besides its keys"
+        skipped.append(SkippedTableInfo(name=table_name, reason=reason))
+    return skipped
 
 
 def build_raw_tables(
@@ -484,6 +595,7 @@ def introspect_schema(
     include_raw_tables: bool = False,
     *,
     default_schema: str | None = None,
+    entity_tables: Collection[str] | None = None,
 ) -> SchemaIntrospectionResult:
     """Introspect the database schema and return structured information.
 
@@ -492,30 +604,68 @@ def introspect_schema(
 
     Args:
         schema_name: Schema name. If None, uses 'public' or config schema_name.
+        entity_tables: Tables that are entities whatever their shape. Whether a
+            table with two foreign keys is a relationship or an entity that
+            refers to two others cannot be read from the schema; it is taken
+            for a relationship unless named here.
 
     Returns:
-        SchemaIntrospectionResult with vertex_tables, edge_tables, and schema_name
+        SchemaIntrospectionResult: vertex and edge tables, the edges stated by
+        foreign keys inside vertex tables, and the tables left out with the
+        reason for each.
+
+    Raises:
+        ValueError: If *entity_tables* names a table the schema does not have,
+            or one without a primary key.
     """
     if schema_name is None:
         schema_name = default_schema
+    entities = set(entity_tables or ())
 
     logger.info("Introspecting SQL schema '%s'", schema_name)
 
+    known = {t["table_name"] for t in provider.get_tables(schema_name)}
+    for table_name in sorted(entities):
+        if table_name not in known:
+            raise ValueError(
+                f"entity_tables names '{table_name}', which is not a table of "
+                f"schema '{schema_name}'"
+            )
+        if not provider.get_primary_keys(table_name, schema_name):
+            raise ValueError(
+                f"entity_tables names '{table_name}', which has no primary key "
+                "to identify a vertex by"
+            )
+
     vertex_tables = detect_vertex_tables(
-        provider, schema_name, default_schema=default_schema
+        provider, schema_name, default_schema=default_schema, entity_tables=entities
     )
     edge_tables = detect_edge_tables(
-        provider, schema_name, default_schema=default_schema
+        provider, schema_name, default_schema=default_schema, entity_tables=entities
     )
     raw_tables: list[RawTableInfo] = []
     if include_raw_tables:
         raw_tables = build_raw_tables(provider, schema_name)
+
+    skipped_tables = _skipped_tables(
+        provider,
+        schema_name,
+        {t.name for t in vertex_tables} | {t.name for t in edge_tables},
+    )
+    for skipped in skipped_tables:
+        logger.warning(
+            "Table '%s' is not part of the inferred graph: %s",
+            skipped.name,
+            skipped.reason,
+        )
 
     result = SchemaIntrospectionResult(
         vertex_tables=vertex_tables,
         edge_tables=edge_tables,
         raw_tables=raw_tables,
         schema_name=schema_name or "",
+        reference_edges=infer_reference_edges(vertex_tables),
+        skipped_tables=skipped_tables,
     )
 
     logger.info(
