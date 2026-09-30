@@ -91,6 +91,22 @@ class AbstractDataSource(ConfigBaseModel, abc.ABC):
         """
         raise NotImplementedError("Subclasses must implement iter_batches")
 
+    def acknowledge(self, batch_index: int) -> None:
+        """Say that a batch has been written to the target.
+
+        A source that keeps a read position outside the process (a Kafka
+        consumer group) advances it only past acknowledged batches, so a batch
+        that was read and never written is read again. Other sources ignore
+        the call.
+
+        Args:
+            batch_index: Position of the batch among those the current
+                :meth:`iter_batches` call yielded, from 0.
+        """
+
+    def close(self) -> None:
+        """Release what :meth:`iter_batches` opened. Safe to call more than once."""
+
     def __iter__(self):
         """Make data source iterable, yielding individual items.
 

@@ -209,6 +209,21 @@ class TestProcessPathFallsBackRatherThanFailing:
         spec = caster._cast_spec(runtime, params=IngestionParams(dynamic_edges=True))
         assert spec is None
 
+    def test_per_document_edge_steps_stay_in_process(self, manifest) -> None:
+        """A step that names its edge per document registers it mid-cast too."""
+        config = manifest.to_dict(skip_defaults=False)
+        config["ingestion_model"]["resources"][0]["pipeline"] = [
+            {"vertex": "person", "from": {"pid": "pid"}, "role": "S"},
+            {"vertex": "org", "from": {"oid": "oid"}, "role": "T"},
+            {"edge": {"source_role": "S", "target_role": "T", "relation": "works_at"}},
+        ]
+        routed = GraphManifest.from_config(config)
+        routed.finish_init()
+        caster = DocumentCaster(routed.require_ingestion_model())
+        runtime = routed.require_ingestion_model().fetch_resource("r")
+
+        assert caster._cast_spec(runtime, params=IngestionParams()) is None
+
     def test_a_normal_resource_is_process_castable(self, manifest) -> None:
         caster = DocumentCaster(manifest.require_ingestion_model())
         runtime = manifest.ingestion_model.fetch_resource("r")

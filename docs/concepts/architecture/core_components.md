@@ -280,7 +280,10 @@ Two rules explain most results:
   between their types (`infer_edges`, on by default). The `edge` step above
   is only needed when the relation comes from the record, when a record
   should get only some of the relations the schema declares between two
-  types, or when the edge needs options such as `vertex_weights`.
+  types, or when the edge needs options such as `vertex_weights`. Between two
+  vertices of the same type, the inferred edge starts at the outer one: a
+  record and the records nested in it give edges from the record to each
+  nested one.
 
 ### The `vertex` step
 
@@ -345,6 +348,11 @@ The relation, one of:
   (see the [relation from key example](../../examples/json-relation-from-key/index.md)
   (4)).
 
+An edge whose `(source, target, relation)` the schema does not declare is not
+written. The writer logs a warning that names it, once per run. The usual
+cause is a step that names no relation between two types whose declared edge
+has one.
+
 Payload and selection:
 
 - `properties`: more edge properties, added to the schema edge. Like the ones
@@ -352,7 +360,8 @@ Payload and selection:
 - `vertex_weights`: `[{name: <vertex type>, fields: [...]}]` copies properties
   of an endpoint vertex onto the edge, under the name `<vertex type>@<field>`
   (see the [filters and weights example](../../examples/vertex-filters-and-weights/index.md)
-  (5)).
+  (5)). `filter: {<field>: <value>}` on an entry reads only the vertices whose
+  field has that value.
 - `match_source` / `match_target` / `match`: only connect vertices reached
   under this key of a nested record. `exclude_source` / `exclude_target` skip
   vertices reached under it.

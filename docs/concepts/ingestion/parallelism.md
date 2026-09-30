@@ -74,7 +74,10 @@ engine.ingest(manifest=manifest, target_db_config=conn_conf, ingestion_params=pa
 
 `cast_executor` takes `auto` (the default), `inline` (always in the main
 process), `process` (always in worker processes) or `thread`, which is kept
-for compatibility and rarely helps. The `graflo ingest` command sets
+for compatibility and rarely helps. A resource with an edge step that takes an
+endpoint from a role (`source_role`, `target_role`) is cast in the main
+process whatever you set: such a step adds edge types while it casts, and a
+worker process would keep them to itself. The `graflo ingest` command sets
 `--batch-size` and `--n-cores`; the other settings are available from Python
 only.
 

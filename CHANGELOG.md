@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or `None` when it gives none.
 - **`GraphEngine.ingest(data_source_registry=...)`**, also on `Caster.ingest`: the sources to
   read, by resource, instead of the ones the bindings declare.
+- **`AbstractDataSource.acknowledge(batch_index)` and `close()`.** The ingest calls
+  `acknowledge` for each batch once it is written and `close` when the source is done. Both do
+  nothing by default.
+- **A warning for an edge the schema does not declare.** The writer dropped such edges without a
+  word; it now names the edge, once per run.
 
 ### Changed
 
@@ -47,6 +52,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reads the sources the bindings declare, or the ones listed with `--data-source-config-path`, and
   refuses a connection that cannot be a target.
 - **A non-empty `merge_collections` on a resource is refused.** Nothing read it.
+- **`KafkaDataSource.iter_batches` commits nothing by itself.** Offsets are committed for the
+  batches passed to `acknowledge`, and by `close`. Code that reads a `KafkaDataSource` directly
+  has to call both.
+- **A resource with an edge step that takes an endpoint from a role is not cast in worker
+  processes.** Such a step adds edge types while it casts, and each worker would keep its own.
 
 - **uv is pinned to one release line.** `pyproject.toml` sets `[tool.uv] required-version`, and
   the workflows pin a release within it. A different uv minor rewrote `uv.lock` wholesale with
@@ -110,6 +120,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   not contain.
 - **`graflo ingest --data-source-config-path` wrote with the default flavor** unless
   `--fresh-start` had defined the schema first. It now runs through `GraphEngine.ingest`.
+- **Kafka offsets could be committed before their batch was written.** A batch was committed
+  when the next one was requested, and the reader runs ahead of the writer, so a run that failed
+  in between skipped those records for good. A batch is now committed once it is written, and
+  only when every batch before it is: delivery is at least once. A dry run and a sample commit
+  nothing, and a native bulk load commits after its data is loaded.
+- **An inferred edge between two vertices of one type could point inward.** With no edge step,
+  a record and the records nested in it were connected starting from whichever vertex was
+  recorded first, which was a nested one. The edge now starts at the outer vertex, as it does for
+  an explicit edge step.
+- **A vertex weight's `filter` tested the wrong thing.** It kept a vertex only when the filter
+  value was also one of the vertex's field names, and raised `KeyError` on a vertex without the
+  filtered field. It now keeps the vertices whose field has the value.
+- **`extra_weights` with `vertex_weights` raised on the first batch written.** The enrichment
+  treated each edge as a mapping and paired stored vertices with source records by position in
+  the batch. It now reads the weight vertex of each record back with `resolve_vertices`, which
+  every backend provides, and sets the attributes on that record's edges.
+- **Two cast threads naming the same new edge could both register it**, and one assembling a
+  record could fail with "dictionary changed size during iteration" while another registered
+  one. Registration is serialized, and assembly reads a snapshot.
 - **An invalid `transform` step was always reported as "Expected exactly one of `rename` or
   `call`".** The error now states the rule the step broke, and an invalid `edge` step no longer
   lists the complaints of the other step kinds.

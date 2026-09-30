@@ -292,8 +292,13 @@ def render_edge(
     target_locs = list(target_by_loc)
 
     if lindex is not None:
-        source_locs = sorted(lindex.filter(source_locs))
-        target_locs = sorted(lindex.filter(target_locs))
+        source_locs = lindex.filter(source_locs)
+        target_locs = lindex.filter(target_locs)
+    # Shallowest first, on the inferred path too: between two vertices of one
+    # type the first location emits, and that must be the outer one, not
+    # whichever was recorded first. Locations of one depth keep their order.
+    source_locs = sorted(source_locs)
+    target_locs = sorted(target_locs)
 
     source_locs, target_locs = _filter_source_target_lindexes(
         derivation, source_locs, target_locs
@@ -441,7 +446,7 @@ def render_weights(
             vertex_sample = [
                 doc
                 for doc in vertex_sample
-                if all(doc[q] == v in doc for q, v in w.filter.items())
+                if all(q in doc and doc[q] == v for q, v in w.filter.items())
             ]
         if vertex_sample:
             for doc in vertex_sample:

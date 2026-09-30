@@ -195,3 +195,103 @@ class TestErrors:
         caster.process_batch = spy  # ty: ignore[invalid-assignment]
         with pytest.raises(RuntimeError, match="fetch exploded"):
             asyncio.run(caster.process_data_source(data_source=_ExplodingSource()))
+
+
+class _AcknowledgedSource(_NBatchSource):
+    """Records what the caster tells the source about its batches."""
+
+    def __init__(self, n_batches: int) -> None:
+        super().__init__(n_batches)
+        self._acknowledged: list[int] = []
+        self._closed = 0
+
+    @property
+    def acknowledged(self) -> list[int]:
+        return self._acknowledged
+
+    @property
+    def closed(self) -> int:
+        return self._closed
+
+    def acknowledge(self, batch_index: int) -> None:
+        self._acknowledged.append(batch_index)
+
+    def close(self) -> None:
+        self._closed += 1
+
+
+#: A target, as far as the batch gate looks at one.
+_TARGET = SimpleNamespace(connection_type="neo4j", bulk_load=None)
+
+
+def _process(caster: Caster, source: _AcknowledgedSource, spy, target=_TARGET) -> None:
+    caster.process_batch = spy
+    asyncio.run(
+        caster.process_data_source(data_source=source, conn_conf=target)  # ty: ignore[invalid-argument-type]
+    )
+
+
+class TestAcknowledgement:
+    """A source hears about a batch once it is written, and is closed at the end."""
+
+    def test_every_written_batch_is_acknowledged(self) -> None:
+        source = _AcknowledgedSource(5)
+        _process(_caster(), source, _BatchSpy())
+        assert sorted(source.acknowledged) == [0, 1, 2, 3, 4]
+        assert source.closed == 1
+
+    def test_serial_processing_acknowledges_in_order(self) -> None:
+        source = _AcknowledgedSource(4)
+        _process(_caster(max_in_flight_batches=1), source, _BatchSpy())
+        assert source.acknowledged == [0, 1, 2, 3]
+
+    def test_a_batch_is_acknowledged_only_after_its_write_returns(self) -> None:
+        source = _AcknowledgedSource(3)
+        seen: list[tuple[int, list[int]]] = []
+
+        async def _write(batch, resource_name=None, conn_conf=None):
+            del resource_name, conn_conf
+            await asyncio.sleep(0.01)
+            seen.append((batch[0]["id"], list(source.acknowledged)))
+
+        _process(_caster(max_in_flight_batches=1), source, _write)
+        assert seen == [(0, []), (1, [0]), (2, [0, 1])]
+
+    def test_a_failed_batch_is_not_acknowledged(self) -> None:
+        source = _AcknowledgedSource(6)
+        caster = _caster(max_in_flight_batches=1)
+        with pytest.raises(ConnectionError):
+            _process(caster, source, _BatchSpy(fail_on_call=3))
+        assert source.acknowledged == [0, 1]
+        assert source.closed == 1
+
+    def test_a_dry_run_acknowledges_nothing(self) -> None:
+        source = _AcknowledgedSource(3)
+        _process(_caster(dry=True), source, _BatchSpy())
+        assert source.acknowledged == []
+        assert source.closed == 1
+
+    def test_casting_without_a_target_acknowledges_nothing(self) -> None:
+        source = _AcknowledgedSource(3)
+        _process(_caster(), source, _BatchSpy(), target=None)
+        assert source.acknowledged == []
+        assert source.closed == 1
+
+    def test_a_bulk_session_acknowledges_after_it_is_loaded(self) -> None:
+        source = _AcknowledgedSource(3)
+        caster = _caster()
+        caster._bulk_coordinator._session_id = "session"
+        _process(caster, source, _BatchSpy())
+        assert (source.acknowledged, source.closed) == ([], 0)
+
+        asyncio.run(caster._release_staged_sources(loaded=True))
+        assert (sorted(source.acknowledged), source.closed) == ([0, 1, 2], 1)
+
+    def test_a_bulk_session_that_fails_to_load_acknowledges_nothing(self) -> None:
+        source = _AcknowledgedSource(3)
+        caster = _caster()
+        caster._bulk_coordinator._session_id = "session"
+        _process(caster, source, _BatchSpy())
+
+        asyncio.run(caster._release_staged_sources(loaded=False))
+        assert (source.acknowledged, source.closed) == ([], 1)

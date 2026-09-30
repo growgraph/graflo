@@ -65,6 +65,21 @@ def _weight_attributes(weight: Weight, doc: dict[str, Any]) -> dict[str, Any]:
     return attributes
 
 
+def _document_edges(item: dict[Any, list], edge: Edge) -> list[tuple]:
+    """The ``(source, target, attributes)`` triples of *edge* one document produced.
+
+    A document keys its edges by the relation it resolved, so an *edge* that
+    names none covers every relation between its endpoints.
+    """
+    triples: list[tuple] = []
+    for key, docs in item.items():
+        if not isinstance(key, tuple) or key[:2] != (edge.source, edge.target):
+            continue
+        if edge.relation is None or key[2] == edge.relation:
+            triples.extend(docs)
+    return triples
+
+
 class DBWriter:
     """Push :class:`GraphContainer` data to the target graph database.
 
@@ -113,6 +128,7 @@ class DBWriter:
         self._semaphore_loop: asyncio.AbstractEventLoop | None = None
         self._collection_locks: dict[str, asyncio.Lock] = {}
         self._collection_locks_loop: asyncio.AbstractEventLoop | None = None
+        self._reported_undeclared_edges: set[tuple] = set()
 
     # ------------------------------------------------------------------
     # Public API
@@ -399,44 +415,88 @@ class DBWriter:
     async def _enrich_extra_weights(
         self, gc: GraphContainer, conn_conf: DBConfig, resource
     ) -> None:
-        """Fetch extra-weight vertex data from the DB and attach to edges."""
+        """Copy stored vertex fields onto the edges of the documents that name the vertex.
+
+        For each ``extra_weights`` rule, the weight vertex a document produced
+        is read back from the database, and its fields become attributes of
+        that document's edges. A document that produced several takes the first
+        one the database holds; one that produced none, or none the database
+        holds, keeps its edges as cast.
+        """
+        rules = [
+            (entry.edge, weight)
+            for entry in resource.config.extra_weights
+            for weight in entry.vertex_weights
+        ]
+        if self.dry or not rules:
+            return
+        vc = self._db_aware_for(conn_conf).vertex_config
+
+        def _sync() -> None:
+            with ConnectionManager(connection_config=conn_conf) as db:
+                for edge, weight in rules:
+                    if weight.name not in vc.vertex_set:
+                        logger.error(f"{weight.name} not a valid vertex")
+                        continue
+                    self._enrich_edges_from_stored_vertex(
+                        db, gc, conn_conf, edge=edge, weight=weight
+                    )
+
+        await asyncio.to_thread(_sync)
+
+    def _enrich_edges_from_stored_vertex(
+        self,
+        db: Any,
+        gc: GraphContainer,
+        conn_conf: DBConfig,
+        *,
+        edge: Edge,
+        weight: Weight,
+    ) -> None:
+        """Apply one ``extra_weights`` rule to every document of *gc*."""
+        name = weight.name
+        source_fields = _weight_source_fields(weight)
+        if name is None or not source_fields:
+            return
         vc = self._db_aware_for(conn_conf).vertex_config
         keys = self._keys_for(conn_conf)
 
-        def _sync():
-            with ConnectionManager(connection_config=conn_conf) as db:
-                for entry in resource.config.extra_weights:
-                    edge = entry.edge
-                    if not entry.vertex_weights:
-                        continue
-                    for weight in entry.vertex_weights:
-                        if weight.name not in vc.vertex_set:
-                            logger.error(f"{weight.name} not a valid vertex")
-                            continue
-                        index_fields = vc.identity_fields(weight.name)
-                        if self.dry or weight.name not in gc.vertices:
-                            continue
-                        weights_per_item = db.fetch_present_documents(
-                            class_name=vc.vertex_dbname(weight.name),
-                            batch=keys.vertex_docs(
-                                weight.name, gc.vertices[weight.name]
-                            ),
-                            match_keys=keys.vertex_fields(weight.name, index_fields),
-                            keep_keys=keys.vertex_fields(
-                                weight.name, _weight_source_fields(weight)
-                            ),
-                        )
-                        for j, item in enumerate(gc.linear):
-                            attributes = _weight_attributes(
-                                weight,
-                                keys.logical_vertex_doc(
-                                    weight.name, weights_per_item[j][0]
-                                ),
-                            )
-                            for ee in item[edge.edge_id]:
-                                ee.update(attributes)
+        # One lookup for the batch; `owners` says which document asked for each key.
+        key_docs: list[dict[str, Any]] = []
+        owners: list[int] = []
+        pending: dict[int, list[tuple]] = {}
+        for position, item in enumerate(gc.linear):
+            triples = _document_edges(item, edge)
+            if not triples:
+                continue
+            pending[position] = triples
+            for doc in item.get(name, ()):
+                key_docs.append(doc)
+                owners.append(position)
+        if not key_docs:
+            return
 
-        await asyncio.to_thread(_sync)
+        resolved = db.resolve_vertices(
+            vc.vertex_dbname(name),
+            keys.vertex_docs(name, key_docs),
+            tuple(keys.vertex_fields(name, vc.identity_fields(name))),
+            tuple(keys.vertex_fields(name, source_fields)),
+        )
+        for index in sorted(resolved):
+            matches = resolved[index]
+            if not matches:
+                continue
+            # Popped, so a document's first stored vertex is the one it takes.
+            triples = pending.pop(owners[index], None)
+            if triples is None:
+                continue
+            attributes = _weight_attributes(
+                weight, keys.logical_vertex_doc(name, matches[0])
+            )
+            for triple in triples:
+                # The attribute dict is the one `gc.edges` holds, so the edge
+                # write sees it.
+                triple[2].update(attributes)
 
     # ------------------------------------------------------------------
     # Edges
@@ -481,6 +541,7 @@ class DBWriter:
         async def _push_one(edge_id: tuple, docs: list) -> None:
             edge = _schema_edge_for(edge_id)
             if edge is None:
+                self._report_undeclared_edge(edge_id, len(docs))
                 return
             async with AsyncExitStack() as stack:
                 # Cypher relationship MERGE has the same concurrent
@@ -561,6 +622,19 @@ class DBWriter:
 
         await asyncio.gather(
             *[_push_one(edge_id, docs) for edge_id, docs in gc.edges.items()]
+        )
+
+    def _report_undeclared_edge(self, edge_id: tuple, count: int) -> None:
+        """Say, once per edge id, that its edges are not written."""
+        if edge_id in self._reported_undeclared_edges:
+            return
+        self._reported_undeclared_edges.add(edge_id)
+        logger.warning(
+            "Edge %s is not written: the schema does not declare it (%s in this "
+            "batch; reported once). Declare the edge, or name the declared "
+            "relation on the step that produces it.",
+            edge_id,
+            count,
         )
 
     def _endpoint_match_lookup(self, resource: Any | None) -> Any:

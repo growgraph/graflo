@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Any
 
 from graflo.architecture.contract.ingestion.steps import EdgeActorConfig, EdgeLinkConfig
@@ -28,6 +29,12 @@ from graflo.onto import PRIMARY_IDENTITY_SELECTOR
 from .base import Actor, ActorInitContext
 
 logger = logging.getLogger(__name__)
+
+# Serializes the check-create-register of an edge named per document. Cast
+# workers share one runtime, so two documents naming the same new edge would
+# otherwise both create it. Module-level for the reason the vertex router's
+# lock is: actors are deep-copied, and a held lock cannot cross a copy or pickle.
+_EDGE_REGISTRATION_LOCK = threading.Lock()
 
 
 def _link_to_edge_actor_config(link: EdgeLinkConfig) -> EdgeActorConfig:
@@ -160,6 +167,13 @@ class EdgeActor(Actor):
     def relation_field(self) -> str | None:
         """Alias for tooling (e.g. plot labels)."""
         return self.derivation.relation_field
+
+    @property
+    def is_dynamic(self) -> bool:
+        """Whether this step names its edges per document, and so registers them mid-cast."""
+        if self._link_actors:
+            return any(link.is_dynamic for link in self._link_actors)
+        return self._source_slot_key is not None or self._target_slot_key is not None
 
     @classmethod
     def from_config(cls, config: EdgeActorConfig) -> EdgeActor:
@@ -404,8 +418,18 @@ class EdgeActor(Actor):
         self, source: str, target: str, relation: str | None
     ) -> Edge | None:
         key = (source, target, relation)
-        if key in self._edge_cache:
-            return self._edge_cache[key]
+        cached = self._edge_cache.get(key)
+        if cached is not None:
+            return cached
+        with _EDGE_REGISTRATION_LOCK:
+            return self._create_edge_locked(key)
+
+    def _create_edge_locked(self, key: tuple[str, str, str | None]) -> Edge | None:
+        """Create and register the edge for *key*; the registration lock is held."""
+        source, target, relation = key
+        cached = self._edge_cache.get(key)
+        if cached is not None:
+            return cached
         # Skip if this (source, target, relation) was not pre-declared.
         if (
             self._strict_edge_types

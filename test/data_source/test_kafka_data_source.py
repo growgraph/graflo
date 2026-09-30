@@ -159,6 +159,7 @@ def test_kafka_datasource_consumes_json_messages() -> None:
         )
     )
     batches = list(source.iter_batches(batch_size=2, limit=5))
+    source.close()
     flat = [row for batch in batches for row in batch]
     assert len(flat) == 5
     assert all(row["pipeline"] == "test" for row in flat)
@@ -194,7 +195,61 @@ def test_kafka_datasource_respects_limit() -> None:
     flat = [
         row for batch in source.iter_batches(batch_size=100, limit=3) for row in batch
     ]
+    source.close()
     assert len(flat) == 3
+
+
+def _group_reader(topic: str, group_id: str) -> KafkaDataSource:
+    return KafkaDataSource(
+        config=KafkaConfig(
+            bootstrap_servers=KAFKA_BOOTSTRAP,
+            topics=[topic],
+            group_id=group_id,
+            auto_offset_reset="earliest",
+            idle_ms=3000,
+            max_wait_ms=20000,
+        )
+    )
+
+
+def _read_all(source: KafkaDataSource, *, acknowledge: list[int]) -> list[int]:
+    batches = list(source.iter_batches(batch_size=2))
+    for index in acknowledge:
+        source.acknowledge(index)
+    source.close()
+    return [row["n"] for batch in batches for row in batch]
+
+
+@pytest.mark.kafka
+def test_kafka_batches_read_but_not_acknowledged_are_read_again() -> None:
+    _require_confluent_kafka()
+    _wait_for_kafka(KAFKA_BOOTSTRAP)
+
+    topic = f"graflo.test.noack.{uuid.uuid4().hex[:12]}"
+    group_id = f"graflo-noack-{uuid.uuid4().hex[:8]}"
+    _produce_json(topic, [{"n": i} for i in range(4)], bootstrap=KAFKA_BOOTSTRAP)
+
+    first = _read_all(_group_reader(topic, group_id), acknowledge=[])
+    second = _read_all(_group_reader(topic, group_id), acknowledge=[])
+
+    assert first == second == [0, 1, 2, 3]
+
+
+@pytest.mark.kafka
+def test_kafka_acknowledged_batches_are_not_read_again() -> None:
+    _require_confluent_kafka()
+    _wait_for_kafka(KAFKA_BOOTSTRAP)
+
+    topic = f"graflo.test.ack.{uuid.uuid4().hex[:12]}"
+    group_id = f"graflo-ack-{uuid.uuid4().hex[:8]}"
+    _produce_json(topic, [{"n": i} for i in range(4)], bootstrap=KAFKA_BOOTSTRAP)
+
+    # Only the first batch was written; the second is owed to the next reader.
+    first = _read_all(_group_reader(topic, group_id), acknowledge=[0])
+    second = _read_all(_group_reader(topic, group_id), acknowledge=[0])
+
+    assert first == [0, 1, 2, 3]
+    assert second == [2, 3]
 
 
 @pytest.mark.kafka

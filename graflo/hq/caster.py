@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
+from collections.abc import Callable, Coroutine
 from pathlib import Path
 from typing import Any, cast
 
@@ -75,6 +76,10 @@ class Caster:
         # One writer per run: the db-aware schema projection is resolved once and
         # its semaphore bounds DB operations across all in-flight batches.
         self._db_writer: DBWriter | None = None
+        # Batches appended to a bulk session are in the target only once the
+        # session is loaded; their sources hear about them, and are closed, then.
+        self._staged_batches: list[tuple[AbstractDataSource, int]] = []
+        self._staged_sources: list[AbstractDataSource] = []
 
     async def _ensure_bulk_session(self, conn_conf: DBConfig) -> str | None:
         return await self._bulk_coordinator.ensure_session(conn_conf)
@@ -164,12 +169,28 @@ class Caster:
         conn_conf: None | DBConfig = None,
     ):
         actual_resource_name = resource_name or data_source.resource_name
+        try:
+            await self._drain_data_source(
+                data_source, resource_name=actual_resource_name, conn_conf=conn_conf
+            )
+        except BaseException:
+            await self._close_source(data_source, quiet=True)
+            raise
+        await self._close_source(data_source)
 
-        in_flight = self._effective_in_flight(actual_resource_name, conn_conf)
+    async def _drain_data_source(
+        self,
+        data_source: AbstractDataSource,
+        *,
+        resource_name: str | None,
+        conn_conf: DBConfig | None,
+    ) -> None:
+        """Cast and write every batch of *data_source*, acknowledging each once written."""
+        in_flight = self._effective_in_flight(resource_name, conn_conf)
 
         limit = self.ingestion_params.max_items
         batch_prefetch = self.ingestion_params.batch_prefetch
-        queue: asyncio.Queue[list[dict] | object] = asyncio.Queue(
+        queue: asyncio.Queue[tuple[int, list[dict]] | object] = asyncio.Queue(
             maxsize=batch_prefetch
         )
         sentinel = object()
@@ -188,17 +209,30 @@ class Caster:
 
         async def _produce_batches() -> None:
             nonlocal fetch_error
+            index = 0
             try:
                 while True:
                     item = await asyncio.to_thread(_next_batch_or_sentinel)
-                    await queue.put(item)
                     if item is sentinel:
+                        await queue.put(sentinel)
                         return
+                    # Numbered in the order the source yielded them, which is
+                    # how the source is told which one was written.
+                    await queue.put((index, item))
+                    index += 1
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
                 fetch_error = exc
                 await queue.put(sentinel)
+
+        async def _write_batch(index: int, batch: list[dict]) -> None:
+            await self.process_batch(
+                batch,
+                resource_name=resource_name,
+                conn_conf=conn_conf,
+            )
+            self._batch_written(data_source, index, conn_conf)
 
         producer_task = asyncio.create_task(_produce_batches())
         process_error: Exception | None = None
@@ -208,19 +242,13 @@ class Caster:
                     item = await queue.get()
                     if item is sentinel:
                         break
-                    batch = cast(list[dict], item)
-                    await self.process_batch(
-                        batch,
-                        resource_name=actual_resource_name,
-                        conn_conf=conn_conf,
-                    )
+                    await _write_batch(*cast(tuple[int, list[dict]], item))
             else:
                 await self._process_batches_pipelined(
                     queue,
                     sentinel,
                     in_flight=in_flight,
-                    resource_name=actual_resource_name,
-                    conn_conf=conn_conf,
+                    handle=_write_batch,
                 )
         except Exception as exc:
             process_error = exc
@@ -235,6 +263,63 @@ class Caster:
 
         if fetch_error is not None:
             raise fetch_error
+
+    def _batch_written(
+        self,
+        data_source: AbstractDataSource,
+        index: int,
+        conn_conf: DBConfig | None,
+    ) -> None:
+        """Tell *data_source* that batch *index* is in the target.
+
+        Nothing is said when nothing was written (no target, a dry run). A
+        batch appended to a bulk session is only staged: it is acknowledged
+        when the session is loaded.
+        """
+        if conn_conf is None or self.ingestion_params.dry:
+            return
+        if self._bulk_coordinator.active:
+            self._staged_batches.append((data_source, index))
+        else:
+            data_source.acknowledge(index)
+
+    async def _close_source(
+        self, data_source: AbstractDataSource, *, quiet: bool = False
+    ) -> None:
+        """Close *data_source*, or leave it for the bulk session that holds its batches.
+
+        *quiet* logs a failure to close instead of raising, for the path where
+        another error is already on its way out.
+        """
+        if self._bulk_coordinator.active:
+            self._staged_sources.append(data_source)
+            return
+        await self._close_source_now(data_source, quiet=quiet)
+
+    @staticmethod
+    async def _close_source_now(
+        data_source: AbstractDataSource, *, quiet: bool
+    ) -> None:
+        try:
+            await asyncio.to_thread(data_source.close)
+        except Exception:
+            if not quiet:
+                raise
+            logger.warning("Closing a data source failed", exc_info=True)
+
+    async def _release_staged_sources(self, *, loaded: bool) -> None:
+        """Settle the sources whose batches went into a bulk session.
+
+        The session's load is what writes those batches, so they are
+        acknowledged only when it succeeded. The sources are closed either way.
+        """
+        batches, self._staged_batches = self._staged_batches, []
+        sources, self._staged_sources = self._staged_sources, []
+        if loaded:
+            for data_source, index in batches:
+                data_source.acknowledge(index)
+        for data_source in sources:
+            await self._close_source_now(data_source, quiet=not loaded)
 
     def _gate_resource(
         self, resource_name: str | None, conn_conf: DBConfig | None
@@ -273,10 +358,9 @@ class Caster:
         sentinel: object,
         *,
         in_flight: int,
-        resource_name: str | None,
-        conn_conf: DBConfig | None,
+        handle: Callable[[int, list[dict]], Coroutine[Any, Any, None]],
     ) -> None:
-        """Process batches with up to *in_flight* cast+write tasks concurrent.
+        """Run *handle* on each numbered batch, up to *in_flight* at a time.
 
         Casting of batch N+1 overlaps the DB write of batch N. Error contract
         matches the serial loop: the first exception (by completion order)
@@ -307,14 +391,8 @@ class Caster:
                 if item is sentinel:
                     sem.release()
                     break
-                batch = cast(list[dict], item)
-                task = asyncio.create_task(
-                    self.process_batch(
-                        batch,
-                        resource_name=resource_name,
-                        conn_conf=conn_conf,
-                    )
-                )
+                index, batch = cast(tuple[int, list[dict]], item)
+                task = asyncio.create_task(handle(index, batch))
                 pending.add(task)
                 task.add_done_callback(_on_done)
 
@@ -530,7 +608,12 @@ class Caster:
                     )
             logger.info(f"Processing took {klepsidra.elapsed:.1f} sec")
         finally:
-            await self._finalize_bulk_session(conn_conf)
+            try:
+                await self._finalize_bulk_session(conn_conf)
+            except BaseException:
+                await self._release_staged_sources(loaded=False)
+                raise
+            await self._release_staged_sources(loaded=True)
             # The cast pool outlives individual batches on purpose; the run is where
             # it stops.
             self._document_caster.close()
