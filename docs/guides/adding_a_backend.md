@@ -132,8 +132,8 @@ shape; watch for it the first time you run the traversal suites.
    marker to `OPT_IN_MARKS` in `test/db/backends.py`, register it under
    `markers` in `pytest.ini`, and add a `--run-<name>` option and an entry in
    the skip map of `pytest_collection_modifyitems` in `test/conftest.py`. The
-   skip matches on `item.keywords`, which include parametrize ids, so a test
-   parametrized with an id equal to the marker name is skipped too.
+   skip applies to tests that carry the marker, so a parameter may share its
+   name.
 3. Add `test/db/<name>s/` with a `conftest.py` that supplies a config fixture
    and isolates each test, plus at least one test that runs `define_schema`
    and `ingest`.

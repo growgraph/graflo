@@ -123,7 +123,19 @@ Per-engine compose files, ports, and env notes are in [`docker/README.md`](https
 uv run pytest test
 ```
 
-NebulaGraph tests are gated behind `pytest --run-nebula`. CI intentionally skips the database suite.
+TigerGraph, NebulaGraph and Kafka tests are gated behind `--run-tigergraph`, `--run-nebula` and `--run-kafka`.
+
+The suites under `test/db`, `test/data_source` and `test/object_storage` need the containers. The rest runs in-process, and CI runs exactly that part on every pull request:
+
+```bash
+uv run pytest test --ignore=test/db --ignore=test/data_source --ignore=test/object_storage
+```
+
+CI does not run the database suites, so run them locally before a change to a backend.
+
+### uv version
+
+`pyproject.toml` sets `required-version` for uv, and the workflows pin the same line. A different uv minor rewrites `uv.lock` with identical content, so change both together.
 
 ## Pull Request Process
 

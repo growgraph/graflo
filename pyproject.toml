@@ -66,7 +66,7 @@ docs = [
   "properdocs>=1.6.7"
 ]
 plot = [
-  "pygraphviz>=1.14"
+  "pygraphviz>=2.0,<3"
 ]
 
 [project.scripts]
@@ -114,3 +114,8 @@ ignore = [
   "TRY004",
   "TRY203"
 ]
+
+[tool.uv]
+# One uv line for every contributor and for CI: a different minor rewrites uv.lock
+# wholesale with identical content. Bump this together with the workflow pins.
+required-version = ">=0.12.21,<0.13"

@@ -60,8 +60,15 @@ removes the extras you leave out:
 uv sync --extra dev --extra docs --extra plot
 ```
 
-The `plot` extra needs the Graphviz system libraries first, for example
-`apt install graphviz graphviz-dev` on Debian and Ubuntu.
+The `plot` extra needs no system Graphviz: the `pygraphviz` wheels include it.
+A slim container image also needs a few shared libraries and a font
+(`libglib2.0-0t64` on Debian 13 and Ubuntu 24.04):
+
+```bash
+apt-get install -y --no-install-recommends \
+    libexpat1 libglib2.0-0 libx11-6 libxext6 libxrender1 \
+    fontconfig fonts-dejavu-core
+```
 
 ## Check the installation
 

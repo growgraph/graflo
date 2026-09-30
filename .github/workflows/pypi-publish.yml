@@ -26,7 +26,7 @@ jobs:
         -   name: Install uv
             uses: astral-sh/setup-uv@v7
             with:
-                version: "0.9.28"
+                version: "0.12.21"
         # Publishing a version nobody tagged lets the release tag and the PyPI
         # version drift apart unnoticed, so refuse to build on a mismatch.
         -   name: Verify tag matches pyproject version

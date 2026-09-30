@@ -89,7 +89,9 @@ def pytest_collection_modifyitems(config, items):
             continue
         skip = pytest.mark.skip(reason=reason)
         for item in items:
-            if marker_name in item.keywords:
+            # Not `marker_name in item.keywords`: keywords also hold parametrize
+            # ids, so an unmarked test with a parameter named `nebula` was skipped.
+            if item.get_closest_marker(marker_name) is not None:
                 item.add_marker(skip)
 
 

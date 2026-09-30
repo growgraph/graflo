@@ -8,7 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A `tests` workflow.** Every pull request runs the suites that need no database container:
+  everything outside `test/db`, `test/data_source` and `test/object_storage`.
+
 ### Changed
+
+- **uv is pinned to one release line.** `pyproject.toml` sets `[tool.uv] required-version`, and
+  the workflows pin a release within it. A different uv minor rewrote `uv.lock` wholesale with
+  identical content.
+
+- **The `plot` extra requires `pygraphviz>=2.0,<3`**, whose wheels include Graphviz; no system
+  Graphviz is needed.
 
 - **The documentation site is built with ProperDocs.** The `docs` extra depends on `properdocs`
   instead of `mkdocs`, the configuration file is `properdocs.yml`, and the commands are
@@ -31,6 +43,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   file.
 - **The docs workflow did not run on changes under `examples/`**, although the example pages are
   generated from the example READMEs.
+- **The opt-in test gate skipped unmarked tests.** A test whose parameter id equalled a gated
+  marker name (`nebula`, `tigergraph`, `kafka`, `performance`, `bulk_e2e`) was skipped without the
+  matching `--run-*` option even when it carried no such marker. The gate now reads the marker.
 
 ## [1.14.1]
 

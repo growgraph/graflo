@@ -25,9 +25,9 @@ _UNSAFE = re.compile(r"[^A-Za-z0-9_]")
 #: Pointing at a missing extra is more use than the ImportError networkx
 #: raises from three frames down.
 _NO_PYGRAPHVIZ = (
-    "drawing needs pygraphviz and a system Graphviz: install the extra with "
-    "`uv add 'graflo[plot]'` (or `pip install 'graflo[plot]'`) and the "
-    "binaries with e.g. `apt install graphviz graphviz-dev`"
+    "drawing needs pygraphviz: install the extra with `uv add 'graflo[plot]'` "
+    "(or `pip install 'graflo[plot]'`). A slim container image also needs the "
+    "system libraries listed in the installation guide"
 )
 
 
