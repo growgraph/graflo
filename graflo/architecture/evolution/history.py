@@ -321,6 +321,32 @@ def checkout(
     return current
 
 
+def checkout_parent(
+    base: GraphManifest, history: History, commit_id: str, *, verify: bool = True
+) -> GraphManifest:
+    """The manifest *commit_id*'s operations were applied to.
+
+    That is its first parent's manifest, or *base* for a root commit. An
+    operation's inverse is computed against this state, not the one after it.
+
+    Raises:
+        CommitError: An unknown commit, a replay that did not reproduce a
+            recorded tree, or a root whose recorded starting tree is not *base*.
+    """
+    commit = history.require(commit_id)
+    if commit.parents:
+        return checkout(base, history, commit.parents[0], verify=verify)
+    if verify and commit.tree_before is not None:
+        actual = manifest_hash(base)
+        if actual != commit.tree_before:
+            raise CommitError(
+                f"root commit '{commit.id}' starts from tree "
+                f"{commit.tree_before[:12]} but the manifest hashes "
+                f"{actual[:12]}; this base is not that artifact"
+            )
+    return base
+
+
 def _first_parent_root(history: History, commit_id: str) -> str | None:
     """The root the first-parent walk from *commit_id* starts at."""
     path = history.first_parent_path(commit_id)

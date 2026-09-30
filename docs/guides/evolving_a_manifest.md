@@ -355,11 +355,20 @@ hash; `checkout` rebuilds the manifest at any commit, which is the reliable way
 back.
 
 `graflo commit --from-manifest maintenance.yaml --to-manifest machines.yaml`
-records a change between two files instead, deriving the ops itself. It refuses
-this change: no op expresses the `target_match` that step 4 added to the work
-orders pipeline, so the derived ops would not reproduce `machines.yaml`. Record
-a change set you wrote with `build_commit`, as above; use `graflo commit` for
-changes made by editing the file. See
+records a change between two files instead, deriving the ops itself. The differ
+does not guess renames, so without help it reads this change as `Asset` removed
+and `Machine` added, which on a database drops every asset. Name the rename in
+a hints file and pass it with `--hints hints.yaml`:
+
+```yaml
+vertices:
+  Asset: Machine
+```
+
+The derived ops then rename the type and rewrite the work orders pipeline whole
+(`replace_resources`), rather than repeating the five ops above. Record a change
+set you wrote with `build_commit` when you want your own ops kept; use
+`graflo commit` for changes made by editing the file. See
 [Deriving ops from two manifests](../concepts/schema/manifest_evolution.md#deriving-ops-from-two-manifests).
 
 ## What you should see

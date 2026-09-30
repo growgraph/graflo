@@ -65,6 +65,7 @@ from .ops import (
     RenameVerticesOp,
     ReplaceEdgeIdentitiesOp,
     ReplaceIdentityOp,
+    ReplaceResourcesOp,
     RetargetEdgesOp,
     RetractEdgeInversesOp,
     SanitizeOp,
@@ -118,6 +119,7 @@ _INGESTION_APPLY_EXPORTS = frozenset(
         "apply_add_resources",
         "apply_ensure_extracted_fields",
         "apply_remove_resources",
+        "apply_replace_resources",
         "apply_set_inverse_emission",
     }
 )
@@ -279,6 +281,7 @@ _HISTORY_EXPORTS = frozenset(
         "FileCommitStore",
         "History",
         "checkout",
+        "checkout_parent",
         "verify_history",
     }
 )
@@ -393,6 +396,7 @@ __all__ = [
     "RenameVerticesOp",
     "ReplaceEdgeIdentitiesOp",
     "ReplaceIdentityOp",
+    "ReplaceResourcesOp",
     "RetargetEdgesOp",
     "RetractEdgeInversesOp",
     "RevisionOp",
@@ -441,6 +445,7 @@ __all__ = [
     "apply_rename_vertices",
     "apply_replace_edge_identities",
     "apply_replace_identity",
+    "apply_replace_resources",
     "apply_retarget_edges",
     "apply_retract_edge_inverses",
     "apply_sanitize",
@@ -463,6 +468,7 @@ __all__ = [
     "canonical_payload",
     "canonicalize_ops",
     "checkout",
+    "checkout_parent",
     "clusters_to_side_maps",
     "compose_canonical_maps",
     "compute_commit_id",

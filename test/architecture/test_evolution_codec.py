@@ -124,6 +124,9 @@ OP_PAYLOADS: dict[str, dict] = {
         "resources": [{"name": "crm", "pipeline": [{"vertex": "party"}]}]
     },
     "remove_resources": {"names": ["crm"]},
+    "replace_resources": {
+        "resources": [{"name": "crm", "pipeline": [{"vertex": "party"}]}]
+    },
     "project_manifest": {"keep_vertices": ["party"]},
     "replace_identity": {
         "replacements": {"party": {"to": {"mode": "natural", "identity": ["email"]}}}
@@ -484,8 +487,8 @@ class TestUnionCoverage:
             if name.endswith("Op")
             and hasattr(getattr(ops_module, name), "model_fields")
         }
-        assert len(exported) == 45
-        assert len(_union_members()) == 44  # 45 minus the binary merge op
+        assert len(exported) == 46
+        assert len(_union_members()) == 45  # 46 minus the binary merge op
 
 
 class TestRoundTrip:

@@ -178,7 +178,8 @@ hand, or recreate the schema and ingest again with
 ### History
 
 A successful real run records the revision, the backend, a hash of the target
-schema, the operations applied and the time in `.graflo/migrations.json`,
+schema, the operations applied (each with its target and old and new values)
+and the time in `.graflo/migrations.json`,
 relative to the directory you run the command from (`--store-path` changes
 it). The record makes `apply` repeatable:
 

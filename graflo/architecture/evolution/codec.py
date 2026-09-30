@@ -54,6 +54,7 @@ from .ops import (
     RenameVerticesOp,
     ReplaceEdgeIdentitiesOp,
     ReplaceIdentityOp,
+    ReplaceResourcesOp,
     RetargetEdgesOp,
     RetractEdgeInversesOp,
     SanitizeOp,
@@ -76,6 +77,7 @@ RevisionOp = Annotated[
     | EnsureExtractedFieldsOp
     | AddResourcesOp
     | RemoveResourcesOp
+    | ReplaceResourcesOp
     | AddVerticesOp
     | AddEdgesOp
     | RetargetEdgesOp

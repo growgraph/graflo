@@ -132,7 +132,7 @@ class MigrationExecutor:
             revision=revision,
             schema_hash=schema_hash,
             backend=db_type.value,
-            operations=[str(op.op_type) for op in plan.operations],
+            operations=list(plan.operations),
             reversible=all(op.reversible for op in plan.operations),
         )
         self.store.add_record(record)

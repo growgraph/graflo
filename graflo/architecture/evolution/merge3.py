@@ -312,7 +312,7 @@ def op_slots(op: ManifestOp) -> set[Slot]:
     elif isinstance(op, ops.RenameResourcesOp):
         for old, new in op.renames.items():
             slots |= {_resource_slot(old), _resource_slot(new)}
-    elif isinstance(op, ops.AddResourcesOp):
+    elif isinstance(op, (ops.AddResourcesOp, ops.ReplaceResourcesOp)):
         slots |= {_resource_slot(resource.name) for resource in op.resources}
     elif isinstance(op, ops.RemoveResourcesOp):
         slots |= {_resource_slot(name) for name in op.names}
@@ -477,6 +477,26 @@ def op_reads(op: ManifestOp, base: GraphManifest | None = None) -> set[Slot]:
             for index in indexes:
                 reads |= {_field_slot(vertex, field) for field in index.fields}
 
+    # ── ingestion ───────────────────────────────────────────────────────────
+    elif isinstance(op, (ops.AddResourcesOp, ops.ReplaceResourcesOp)):
+        for resource in op.resources:
+            reads |= _pipeline_reads(resource)
+
+    return reads
+
+
+def _pipeline_reads(resource: Any) -> set[Slot]:
+    """The vertices a resource names and the fixed relations its edge steps write.
+
+    Fields a pipeline reads are not listed: a vertex removed or renamed on the
+    other side is caught, a property removed from under a pipeline is not.
+    """
+    from graflo.architecture.contract.ingestion.steps.ref import iter_edge_steps
+
+    reads = {_vertex_slot(name) for name in resource.collect_vertex_names()}
+    for view in iter_edge_steps(list(resource.pipeline)):
+        for relation in view.relations_written() or set():
+            reads.add(_relation_slot(relation))
     return reads
 
 

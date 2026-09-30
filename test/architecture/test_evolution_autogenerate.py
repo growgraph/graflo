@@ -23,6 +23,7 @@ from graflo.architecture.evolution.codec import ops_from_yaml, ops_to_yaml_str
 from graflo.architecture.evolution.hashing import manifest_hash
 
 PARTY = {"name": "party", "properties": ["id", "name"], "identity": ["id"]}
+BY_EMAIL = {"name": "party", "properties": ["name", "email"], "identity": ["email"]}
 ORDER = {"name": "order", "properties": ["oid", "total"], "identity": ["oid"]}
 PLACES = {"source": "party", "target": "order", "relation": "places"}
 
@@ -128,7 +129,7 @@ class TestReplayInvariant:
     def test_moving_to_a_funnel_identity_replays(self) -> None:
         funnelled = {
             "name": "party",
-            "properties": ["id", "name", "email"],
+            "properties": ["name", "email"],
             "identity_funnel": {
                 "branches": [
                     {"id": "email", "fields": ["email"]},
@@ -137,9 +138,18 @@ class TestReplayInvariant:
             },
         }
         ops = _assert_replays(
-            _manifest([{**PARTY, "properties": ["id", "name", "email"]}]),
+            _manifest([BY_EMAIL]),
             _manifest([funnelled]),
         )
+        assert [op.op for op in ops] == ["replace_identity"]
+
+    def test_moving_to_a_hash_identity_replays(self) -> None:
+        hashed = {
+            "name": "party",
+            "properties": ["name", "email"],
+            "hash_identity_properties": ["name"],
+        }
+        ops = _assert_replays(_manifest([BY_EMAIL]), _manifest([hashed]))
         assert [op.op for op in ops] == ["replace_identity"]
 
     def test_adding_an_index_replays(self) -> None:
@@ -477,7 +487,7 @@ class TestVerification:
         assert [op.op for op in ops] == ["remove_resources"]
         assert ops[0].names == ["extra"]
 
-    def test_a_pipeline_edit_is_reported_not_approximated(self) -> None:
+    def test_a_pipeline_edit_replaces_the_resource_whole(self) -> None:
         base = _manifest(
             [PARTY, ORDER],
             resources=[{"name": "src", "pipeline": [{"vertex": "party"}]}],
@@ -488,8 +498,9 @@ class TestVerification:
                 {"name": "src", "pipeline": [{"vertex": "party"}, {"vertex": "order"}]}
             ],
         )
-        _, warnings = diff_manifests(base, target)
-        assert any("resource 'src' differs" in w for w in warnings)
+        ops = _assert_replays(base, target)
+        assert [op.op for op in ops] == ["replace_resources"]
+        assert [r.name for r in ops[0].resources] == ["src"]
 
     def test_a_resource_rename_hint_replays(self) -> None:
         base = _manifest(
@@ -540,16 +551,6 @@ class TestSerializableOutput:
         pytest.param(
             [{"name": "party", "properties": ["id", "name"], "blank": True}],
             id="to-blank",
-        ),
-        pytest.param(
-            [
-                {
-                    "name": "party",
-                    "properties": ["id", "name"],
-                    "hash_identity_properties": ["name"],
-                }
-            ],
-            id="to-hash",
         ),
     ],
 )

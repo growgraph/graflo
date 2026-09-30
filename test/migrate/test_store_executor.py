@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -150,3 +151,66 @@ def test_executor_hash_mismatch_on_existing_revision(tmp_path: Path):
             conn_conf=_arango_config(),
             dry_run=True,
         )
+
+
+class _RecordingEmitter:
+    def supports(self, operation: MigrationOperation) -> bool:
+        return True
+
+    def execute(self, conn, operation: MigrationOperation, *, target_schema) -> str:
+        return f"applied {operation.op_type}"
+
+
+class _NoConnection:
+    def __init__(self, **_kwargs) -> None:
+        pass
+
+    def __enter__(self) -> object:
+        return object()
+
+    def __exit__(self, *_exc) -> None:
+        return None
+
+
+def test_an_applied_migration_records_its_operations_in_full(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from graflo.migrate import executor as executor_module
+    from graflo.onto import DBType
+
+    monkeypatch.setattr(executor_module, "ConnectionManager", _NoConnection)
+    store = FileMigrationStore(tmp_path / "migrations.json")
+    executor = MigrationExecutor(store=store)
+    executor._emitters[DBType.ARANGO] = cast(Any, _RecordingEmitter())
+    operation = MigrationOperation(
+        op_type=OperationType.ADD_VERTEX_FIELD,
+        target="vertex:person:field:age",
+        new_value={"name": "age", "type": "INT"},
+        risk=RiskLevel.LOW,
+    )
+    schema = _schema()
+
+    executor.execute_plan(
+        revision="0003",
+        schema_hash=schema_hash(schema),
+        target_schema=schema,
+        plan=MigrationPlan(operations=[operation]),
+        conn_conf=_arango_config(),
+        dry_run=False,
+    )
+
+    (record,) = FileMigrationStore(tmp_path / "migrations.json").history()
+    assert record.operations == [operation]
+
+
+def test_a_record_holding_bare_operation_types_still_loads(tmp_path: Path):
+    path = tmp_path / "migrations.json"
+    path.write_text(
+        '{"records": [{"revision": "0001", "schema_hash": "abc", '
+        '"backend": "arango", "operations": ["ADD_VERTEX"]}]}',
+        encoding="utf-8",
+    )
+
+    (record,) = FileMigrationStore(path).history()
+
+    assert record.operations == [OperationType.ADD_VERTEX]

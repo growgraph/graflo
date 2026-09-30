@@ -111,7 +111,8 @@ A declared inverse is a second name for reading a relation backwards, such as
 | Op | What it does | Undo |
 |---|---|---|
 | `add_resources` | Adds resources, with any named transforms their steps use. | yes, unless it registered a transform the manifest did not hold |
-| `remove_resources` | Removes resources and the bindings entries that wire them. | yes, unless bindings wired them |
+| `remove_resources` | Removes resources and the bindings that served only them: their `resource_connector` entries, and each connector left serving no resource, with its `connector_connection` entry. | yes, unless bindings wired them |
+| `replace_resources` | Replaces the definitions of existing resources, keeping their positions and bindings. Any edit to a pipeline is written this way. | yes, unless it registered a transform the manifest did not hold |
 | `rename_resources` | Renames resources and every bindings reference to them. | yes |
 | `add_resource_transforms` | Appends transform steps to resources, at the root or at a nested level (`at`). | no |
 | `ensure_extracted_fields` | Makes a vertex router keep named fields that its `keep_fields` or `extraction_scope` would drop. | no |
@@ -254,10 +255,13 @@ wrong turns a change that keeps data into one that drops it. Without the hint
 above, the diff removes `Asset` and adds `Machine`. `RenameHints` takes
 `vertices`, `relations`, `resources`, `vertex_properties` and `edge_properties`.
 
-`warnings` lists what the ops could not express. A pipeline edit other than
-appended transform steps has no op, for example; when that happens, replaying
-the ops does not reproduce the target, and the last warning says so. A change
-set with warnings is incomplete, and `graflo commit` refuses to record it.
+`warnings` lists what the ops could not express, such as one of a relation's
+edges gaining a property its siblings lack; when that happens, replaying the ops
+does not reproduce the target, and the last warning says so. A change set with
+warnings is incomplete, and `graflo commit` refuses to record it. An edited
+pipeline is written as `replace_resources`, unless the only edit is transform
+steps appended at the end (`add_resource_transforms`) or the trimming that a
+removal already does.
 
 The ops come in an order in which each one's preconditions hold: renames first,
 then additions, then changes, then removals.
@@ -395,7 +399,13 @@ around_machines = apply_evolution(
 With `keep_vertices` alone, the listed types are kept together with the edges
 among them, and a listed type left with no edge is dropped. `keep_edges` lists
 exact `(source, target, relation)` edges to keep. `keep_resources` narrows the
-resources too.
+resources too, and connectors left serving no resource are removed with their
+`connector_connection` entries.
+
+A resource whose pipeline names both kept and removed types is trimmed to the
+kept part and keeps reading its source; the projection logs a warning naming
+each one. `partial_resources: drop` removes those resources instead, keeping
+only the resources the projection leaves whole.
 
 `depth` turns `keep_vertices` into starting points and keeps every type within
 that many edges of one of them, with every edge among the kept types:

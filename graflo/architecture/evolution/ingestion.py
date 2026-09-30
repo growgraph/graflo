@@ -37,6 +37,7 @@ from .ops import (
     AddResourceTransformsOp,
     EnsureExtractedFieldsOp,
     RemoveResourcesOp,
+    ReplaceResourcesOp,
     SetInverseEmissionOp,
 )
 
@@ -68,7 +69,7 @@ def apply_add_resources(manifest: GraphManifest, op: AddResourcesOp) -> None:
 
 def apply_remove_resources(manifest: GraphManifest, op: RemoveResourcesOp) -> None:
     """Drop resources and the ``resource_connector`` entries that wired them."""
-    from .apply import _filter_bindings_for_resources
+    from .apply import prune_bindings_for_resources
 
     im = manifest.ingestion_model
     if im is None:
@@ -85,7 +86,35 @@ def apply_remove_resources(manifest: GraphManifest, op: RemoveResourcesOp) -> No
         if resource.get("name") not in removed
     ]
     manifest.ingestion_model = IngestionModel.model_validate(payload)
-    _filter_bindings_for_resources(manifest, existing - removed)
+    prune_bindings_for_resources(manifest, existing - removed)
+
+
+def apply_replace_resources(manifest: GraphManifest, op: ReplaceResourcesOp) -> None:
+    """Swap resource definitions in place, keeping their positions and bindings.
+
+    Raises when a named resource does not exist: replacing is not adding, and
+    a replace that quietly added would hide a rename on the other side.
+    """
+    im = manifest.ingestion_model
+    if im is None:
+        raise ValueError("replace_resources requires ingestion_model")
+    existing = {resource.name for resource in im.resources}
+    unknown = sorted({resource.name for resource in op.resources} - existing)
+    if unknown:
+        raise ValueError(f"replace_resources: unknown resources: {unknown}")
+    by_name = {
+        resource.name: resource.to_dict(skip_defaults=False)
+        for resource in op.resources
+    }
+    payload = im.to_dict(skip_defaults=False)
+    payload["resources"] = [
+        by_name.get(resource.get("name"), resource)
+        for resource in payload.get("resources", [])
+    ]
+    if op.transforms:
+        registry = _union_transforms(list(im.transforms), list(op.transforms))
+        payload["transforms"] = [t.to_dict(skip_defaults=False) for t in registry]
+    manifest.ingestion_model = IngestionModel.model_validate(payload)
 
 
 def _union_transforms(

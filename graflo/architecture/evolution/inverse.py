@@ -60,6 +60,7 @@ from .ops import (
     RenameVerticesOp,
     ReplaceEdgeIdentitiesOp,
     ReplaceIdentityOp,
+    ReplaceResourcesOp,
     RetargetEdgesOp,
     RetractEdgeInversesOp,
     SetBindingsOp,
@@ -839,7 +840,8 @@ def _invert_remove_resources(
 ) -> ManifestOp | None:
     """Restore the removed resources -- unless bindings wired them.
 
-    Removal also prunes the ``resource_connector`` entries naming the resource,
+    Removal also prunes the bindings that served the resource -- its
+    ``resource_connector`` entries and a connector bound by ``resource_name`` --
     and no op restores those, so a wired resource has no single-op inverse.
     """
     if manifest.ingestion_model is None:
@@ -848,12 +850,39 @@ def _invert_remove_resources(
     if any(name not in by_name for name in op.names):
         return None
     removed = set(op.names)
-    if manifest.bindings is not None and any(
-        _bound_resource(entry) in removed
-        for entry in manifest.bindings.resource_connector
+    if manifest.bindings is not None and (
+        any(
+            _bound_resource(entry) in removed
+            for entry in manifest.bindings.resource_connector
+        )
+        or any(
+            connector.resource_name in removed
+            for connector in manifest.bindings.connectors
+        )
     ):
         return None
     return AddResourcesOp(resources=[by_name[name] for name in op.names])
+
+
+def _invert_replace_resources(
+    op: ReplaceResourcesOp, manifest: GraphManifest
+) -> ManifestOp | None:
+    """Put back the definitions the op replaced -- unless it registered transforms.
+
+    A transform the op registered stays registered after the definitions are
+    put back, and no op withdraws one, as for ``add_resources``.
+    """
+    if manifest.ingestion_model is None:
+        return None
+    by_name = {r.name: r for r in manifest.ingestion_model.resources}
+    if any(resource.name not in by_name for resource in op.resources):
+        return None
+    held = {t.name for t in manifest.ingestion_model.transforms}
+    if any(t.name not in held for t in op.transforms):
+        return None
+    return ReplaceResourcesOp(
+        resources=[by_name[resource.name] for resource in op.resources]
+    )
 
 
 def _bound_resource(entry: Any) -> str | None:
@@ -917,6 +946,7 @@ _HANDLERS: dict[str, Any] = {
     "replace_edge_identities": _invert_replace_edge_identities,
     "add_resources": _invert_add_resources,
     "remove_resources": _invert_remove_resources,
+    "replace_resources": _invert_replace_resources,
 }
 
 

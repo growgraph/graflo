@@ -46,6 +46,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with; a backend overrides it where it reads its graph another way.
 - **`graflo.db.resolve.present_documents` and `absent_documents`** implement
   `fetch_present_documents` and `keep_absent_documents` over `fetch_docs`.
+- **`replace_resources`**, an op that replaces the definitions of existing resources in place,
+  keeping their positions and bindings. `diff_manifests` writes any pipeline edit with it, so a
+  merge that re-points a resource's edge steps, or a hand-edited pipeline, can be recorded.
+- **`ProjectManifestOp.partial_resources`**: `trim` (default) keeps a resource the projection
+  shortens and logs a warning naming it; `drop` removes it.
+- **`checkout_parent(base, history, commit_id)`**: the manifest a commit was applied to.
 
 ### Changed
 
@@ -98,6 +104,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   three.
 - **Traversal reads each backend's edge endpoints under that backend's own names**, and leaves
   them out of the edge properties.
+- **Removing a resource removes the bindings that served only it**: connectors left serving no
+  resource go with their `connector_connection` entries, whether the resource was removed by
+  `remove_resources`, by `remove_vertices`, or by a projection. A shared connector stays.
+- **`build_revert_commit` takes `before=`**, the manifest the reverted commit was applied to, and
+  computes each inverse against it.
+- **A vertex keyed by a hash or a funnel may not declare a property `id`**, the field its
+  synthetic key is written to; loading one is refused, as is `replace_identity` onto a hash or a
+  funnel for a vertex that declares one. A record carrying its own `id` kept it and bypassed the
+  digest.
+- **Three-way merge reads resource pipelines.** A resource added or replaced on one side reads the
+  types and relations its pipeline names, so the other side removing or renaming one is a
+  conflict.
+- **`graflo log` names the verb that joins its heads**: `graflo merge3` for heads that share an
+  ancestor, `graflo merge` for unrelated lineages.
+- **`MigrationRecord.operations` holds the operations applied**, with their targets and values.
+  A record written earlier loads with each operation's type only.
 
 - **uv is pinned to one release line.** `pyproject.toml` sets `[tool.uv] required-version`, and
   the workflows pin a release within it. A different uv minor rewrote `uv.lock` wholesale with
@@ -212,6 +234,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `kind`**, which collided with an argument of the evaluation.
 - **Memgraph edge indexes indexed nothing.** They were issued as `CREATE INDEX ON :<type>(field)`,
   a label index; they are now `CREATE EDGE INDEX`.
+- **`graflo revert` failed on every commit.** Inverses were computed against the head instead of
+  the manifest the commit was applied to.
+- **`diff_manifests` removed a resource twice** when removing a vertex had already removed it,
+  so the derived ops did not apply.
+- **Removing an edge dropped every edge step written flat** (`type: edge` at the step's top
+  level) and missed a matching one written without `type`; removing a relation left an empty
+  step behind.
+- **`diff_manifests` declared a synthetic key as a property** before the identity change that
+  creates it.
 
 ## [1.14.1]
 

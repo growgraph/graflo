@@ -844,3 +844,32 @@ def test_preview_notes_a_demoted_key_is_now_a_lookup() -> None:
     per_member = _preview(["x_id", "y_id"])
     assert per_member.outcome.status == "merged"
     assert not [f for f in per_member.findings if f.kind == "lookup_demotion"]
+
+
+def test_a_merge_that_pins_a_left_reference_is_recordable() -> None:
+    """The pinned left pipeline is an edit a merge commit has to express."""
+    from graflo.architecture.evolution.merge3 import build_merge_recipe
+    from graflo.architecture.evolution.merge_commit import build_merge_commit
+
+    left, right = _side_a(), _side_b()
+    op = MergeManifestsOp(
+        vertex_equivalences=[
+            VertexEquivalence(
+                left="X", right="Y", into="Z", identity=_derived_identity()
+            )
+        ],
+        canonical_maps={"left": CanonicalMap(vertices={"Ap": "Zp"})},
+        allow_self_relations=True,
+    )
+    merged = merge_manifests(left, right, op, bump_version=False)
+    assert collect_endpoint_selectors(_pipeline(merged, "r_ap")) == [("Z", "by_x_id")]
+
+    entry = build_merge_commit(
+        left,
+        merged,
+        parents=["a" * 12, "b" * 12],
+        recipe=build_merge_recipe(left, right, op),
+        right=right,
+    )
+
+    assert "replace_resources" in [o.op for o in entry.ops]

@@ -143,11 +143,12 @@ case. The record of how the merge was resolved is stored beside it as a recipe.
 
 History is append-only, so undoing a change moves forward:
 `build_revert_commit` (`graflo revert`) records a new commit that applies the
-inverses. Inversion is exact or it fails: an op with no inverse, or one whose
-inverse needs data the current manifest no longer holds, raises rather than
-producing a manifest that only resembles the earlier one. When the base
-manifest is available, checking out the parent commit is always exact and is
-the better tool.
+inverses. Each inverse is computed against the manifest its op was applied to,
+which `checkout_parent` rebuilds from the base, and the inverses are then
+applied to the head. Inversion is exact or it fails: a commit holding an op
+with no inverse is refused, and so is one whose inverses no longer apply to the
+head because a later commit changed what they touch. Checking out the parent
+commit is always exact.
 
 | Reversible | Irreversible |
 |---|---|
@@ -246,6 +247,7 @@ apply. So an op also has a read set (`op_reads`):
 | ops addressed by relation: edge properties, `remove_edges`, `rename_relations`, `merge_edges`, the inverse ops | the types that relation connects in the base; the op names only the relation |
 | `replace_identity`, `add_secondary_identities` | the fields they key on, and those fields' types |
 | `add_vertex_indexes`; edge index and identity ops | the fields they index or key on |
+| `add_resources`, `replace_resources` | the types the pipeline names and the relations its edge steps write; not the fields it reads |
 
 A read is disturbed by a write at or above it, never below: an edge onto `line`
 conflicts with removing or renaming `line`, and merges with a new property on
@@ -255,7 +257,7 @@ reported at the written slot with both ops attached, and is resolved like any
 other. `ops_independent(a, b, base)` is the test the merge and its tests share.
 
 A change that no op expresses, such as one of a relation's edges gaining a
-property its siblings lack, or an edited pipeline, cannot be merged at all: the
+property its siblings lack, cannot be merged at all: the
 merge is built from each side's ops, so the result would lack it.
 `merge_three_way` raises `MergeError` naming what is left over rather than
 return a result that looks clean and is incomplete.
@@ -367,8 +369,9 @@ is different: it plans and applies changes to a database.
 - A commit history changes manifests only. Applying it to a live database is
   not part of version control; `graflo migrate-schema` plans database changes
   and applies additive ones.
-- A change no op expresses, such as an edited pipeline step, cannot be recorded
-  from a diff or merged three ways; both refuse and name it.
+- A change no op expresses, such as one of a relation's edges gaining a
+  property its siblings lack, cannot be recorded from a diff or merged three
+  ways; both refuse and name it.
 
 ## Further reading
 
