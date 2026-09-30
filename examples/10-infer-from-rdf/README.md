@@ -80,12 +80,13 @@ The script saves the schema to [`generated-manifest.yaml`](generated-manifest.ya
 core_schema:
     edge_config:
         edges:
-        -   relation: authorOf
+        -   relation: affiliatedWith
             source: Researcher
-            target: Publication
-        # ... affiliatedWith, cites
+            target: Institution
+        # ... authorOf, cites
     vertex_config:
         vertices:
+        # ... Institution, Publication
         -   identity:
             -   _uri
             name: Researcher
@@ -94,18 +95,24 @@ core_schema:
             -   name: _uri
             -   name: fullName
             -   name: orcid
-        # ... Publication, Institution
 ```
 
 - Each vertex type gets two properties besides the datatype properties: `_uri`,
   the full IRI of the instance (`http://example.org/alice`), which is its
   identity, and `_key`, the last part of the IRI (`alice`).
 - Each object property becomes an edge from its `rdfs:domain` to its
-  `rdfs:range`, named after the property.
+  `rdfs:range`, named after the property. A property with several ranges gives
+  one edge per range, and each object is linked under the classes it has:
+  the connector lists the property in `typed_objects`, and the source adds a
+  field `<property>@<Class>` holding the objects of that class.
+- Anonymous classes (`owl:unionOf` and the like) are skipped. Two classes with
+  the same local name would share a vertex type, so inference refuses them.
 
 The resource for `Researcher` makes a `Researcher` vertex, then reads the IRI in
 `authorOf` into a `Publication` vertex and adds the `authorOf` edge; the same
-for `affiliatedWith`.
+for `affiliatedWith`. A researcher with several `authorOf` papers gets one edge
+per paper. Classes, properties and edges are listed in IRI order, so inferring
+again from the same ontology gives the same file.
 
 ### 3. Read the instances of each class from the data file
 
@@ -161,6 +168,13 @@ The database holds:
 - When the ontology and the instances are in one file,
   `engine.create_bindings_from_rdf(path)` builds these connectors for you, all
   reading that file.
+- A blank node (`[ ex:value 3 ; ex:unit "nm" ]`) has no IRI, so it is keyed on
+  its content: `_uri` is `_:` followed by a digest of its triples, the same on
+  every read. Reading the file again updates the same vertices.
+- IRIs joined by `owl:sameAs` are read as one instance under the smallest IRI,
+  with the others listed in a `_same_as` field; declare `_same_as` on the vertex
+  to store it. `SparqlConnector(..., same_as="keep")` reads the statements as an
+  ordinary `sameAs` field instead.
 
 ## What to read next
 

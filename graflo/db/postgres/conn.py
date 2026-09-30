@@ -20,6 +20,7 @@ Example:
 """
 
 import logging
+from collections.abc import Collection
 from typing import Any
 
 import psycopg2
@@ -770,6 +771,7 @@ class PostgresConnection(PostgresTargetWriteMixin, Connection):
         self,
         schema_name: str | None = None,
         include_raw_tables: bool = False,
+        entity_tables: Collection[str] | None = None,
     ) -> SchemaIntrospectionResult:
         """Classify the schema into vertex-like and edge-like tables."""
         return sql_introspect.introspect_schema(
@@ -777,4 +779,5 @@ class PostgresConnection(PostgresTargetWriteMixin, Connection):
             schema_name,
             include_raw_tables,
             default_schema=self._default_schema(),
+            entity_tables=entity_tables,
         )

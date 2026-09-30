@@ -232,9 +232,10 @@ def test_an_edge_type_is_followed_only_from_the_end_the_direction_names() -> Non
 
 
 class _Stored(_TigerGraphLike):
-    """Answers every read of ``employed_by`` with one stored edge, p1 -> c1."""
+    """Answers every read of ``employed_by`` with one stored edge, p1 -> c1, as a
+    PostgreSQL edge row."""
 
-    flavor = DBType.NEO4J
+    flavor = DBType.POSTGRES
 
     def fetch_edges(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
         self.calls.append({"direction": kwargs.get("direction")})
@@ -256,11 +257,11 @@ def test_a_declared_inverse_that_stores_nothing_reads_the_forward_edge_backwards
 
     # Outgoing `employs` from a company is the stored `employed_by` arriving at it.
     assert [call["direction"] for call in conn.calls] == [EdgeDirection.IN]
-    # Reported as the reading that was asked for, endpoints in that order.
+    # Reported as the reading that was asked for, endpoints in that order; the
+    # stored endpoint columns are not properties.
     assert container.edges == {
         ("company", "person", "employs"): [
-            {"source_id": "p1", "target_id": "c1", "since": 2020}
-            | {"source": "c1", "target": "p1"}
+            {"since": 2020, "source": "c1", "target": "p1"}
         ]
     }
 

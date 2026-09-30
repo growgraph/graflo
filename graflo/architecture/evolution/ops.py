@@ -1772,6 +1772,36 @@ class RemoveResourcesOp(ConfigBaseModel):
     )
 
 
+class ReplaceResourcesOp(ConfigBaseModel):
+    """Replace the definitions of existing resources, matched by name.
+
+    Each resource keeps its position in ``ingestion_model.resources`` and its
+    bindings; only its definition changes. This is how an edited pipeline is
+    expressed, since a pipeline is an ordered program no finer op can patch.
+    """
+
+    op: Literal["replace_resources"] = "replace_resources"
+    resources: list[ResourceConfig] = PydanticField(
+        ...,
+        description="Full new definitions; each name must already exist.",
+        min_length=1,
+    )
+    transforms: list[ProtoTransform] = PydanticField(
+        default_factory=list,
+        description=(
+            "Named transforms the new definitions reference via ``call.use``, "
+            "registered as ``add_resources`` registers them."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _validate_unique_names(self) -> ReplaceResourcesOp:
+        names = [resource.name for resource in self.resources]
+        if len(names) != len(set(names)):
+            raise ValueError("replace_resources entries must be unique by name")
+        return self
+
+
 class ProjectManifestOp(ConfigBaseModel):
     """Project a manifest to a vertex/edge subgraph with consistent cascade.
 
@@ -1844,6 +1874,15 @@ class ProjectManifestOp(ConfigBaseModel):
     strict: bool = PydanticField(
         default=True,
         description="When True, unknown vertex/edge selectors raise ``ValueError``.",
+    )
+    partial_resources: Literal["trim", "drop"] = PydanticField(
+        default="trim",
+        description=(
+            "A resource whose pipeline the projection shortens: ``trim`` keeps "
+            "what survives and logs a warning naming each one; ``drop`` removes "
+            "it with the bindings that served it, keeping only resources the "
+            "projection leaves whole."
+        ),
     )
 
     @model_validator(mode="after")
@@ -2666,6 +2705,7 @@ ManifestOp = Annotated[
     | EnsureExtractedFieldsOp
     | AddResourcesOp
     | RemoveResourcesOp
+    | ReplaceResourcesOp
     | AddVerticesOp
     | AddEdgesOp
     | RetargetEdgesOp
@@ -2723,6 +2763,7 @@ INGESTION_REWRITING_OPS: frozenset[str] = frozenset(
         "add_resources",
         "canonicalize",
         "remove_resources",
+        "replace_resources",
         "ensure_extracted_fields",
         "merge_edges",
         "merge_vertices",

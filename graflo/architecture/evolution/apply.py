@@ -90,6 +90,7 @@ from .ops import (
     RenameVerticesOp,
     ReplaceEdgeIdentitiesOp,
     ReplaceIdentityOp,
+    ReplaceResourcesOp,
     RetargetEdgesOp,
     RetractEdgeInversesOp,
     SanitizeOp,
@@ -149,6 +150,7 @@ def _prune_ingestion_for_removed_vertices(
         edge_id = _edge_id_from_resource_spec(spec)
         return edge_id is not None and bool({edge_id[0], edge_id[1]} & removed)
 
+    had_resources = bool(im.resources)
     resources: list[Resource] = []
     for resource in im.resources:
         pipeline = rewrite_remove_vertices_in_pipeline(resource.pipeline, removed)
@@ -159,9 +161,6 @@ def _prune_ingestion_for_removed_vertices(
             continue
         payload = resource.to_dict(skip_defaults=False)
         payload["pipeline"] = pipeline
-        payload["merge_collections"] = [
-            c for c in resource.merge_collections if c not in removed
-        ]
         for key in ("infer_edge_only", "infer_edge_except", "extra_weights"):
             specs = payload.get(key)
             if isinstance(specs, list):
@@ -169,30 +168,59 @@ def _prune_ingestion_for_removed_vertices(
         resources.append(Resource.model_validate(payload))
     im.resources = resources
 
-    if not im.resources:
+    if had_resources and not im.resources:
         raise ValueError(
             "remove_vertices would leave ingestion_model.resources empty; aborting."
         )
 
 
-def _filter_bindings_for_resources(
-    manifest: GraphManifest, surviving: set[str]
-) -> None:
-    if manifest.bindings is None:
-        return
-    data = manifest.bindings.to_dict(skip_defaults=False)
-    rc = data.get("resource_connector") or []
-    filtered = []
-    for entry in rc:
-        if isinstance(entry, dict):
-            name = entry.get("resource")
-        else:
-            name = getattr(entry, "resource", None)
-        if name in surviving:
-            filtered.append(entry)
-    data["resource_connector"] = filtered
-    from graflo.architecture.contract.bindings import Bindings
+def prune_bindings_for_resources(manifest: GraphManifest, surviving: set[str]) -> None:
+    """Drop the bindings that served only resources outside *surviving*, in place.
 
+    ``resource_connector`` rows keep only surviving resources. A connector bound
+    to resources (by ``resource_name`` or by a row) and to none that survives is
+    dropped with its ``connector_connection`` rows; a connector shared with a
+    surviving resource, or bound to no resource at all, stays.
+    """
+    from graflo.architecture.contract.bindings import Bindings
+    from graflo.architecture.contract.bindings.core import ResourceConnectorBinding
+
+    bindings = manifest.bindings
+    if bindings is None:
+        return
+    rows = [
+        ResourceConnectorBinding.model_validate(row) if isinstance(row, dict) else row
+        for row in bindings.resource_connector
+    ]
+    bound: dict[str, set[str]] = {}
+    for connector in bindings.connectors:
+        if connector.resource_name is not None:
+            bound.setdefault(connector.hash, set()).add(connector.resource_name)
+    for row in rows:
+        for connector_hash in bindings.resolve_connector_refs_to_hashes(
+            [row.connector]
+        ):
+            bound.setdefault(connector_hash, set()).add(row.resource)
+    dropped = {
+        connector_hash
+        for connector_hash, resources in bound.items()
+        if not resources & surviving
+    }
+
+    data = bindings.to_dict(skip_defaults=False)
+    data["resource_connector"] = [
+        row.to_dict() for row in rows if row.resource in surviving
+    ]
+    data["connectors"] = [
+        connector.to_dict(skip_defaults=False)
+        for connector in bindings.connectors
+        if connector.hash not in dropped
+    ]
+    data["connector_connection"] = [
+        row.to_dict()
+        for row in bindings.connector_connection_bindings
+        if not bindings.resolve_connector_refs_to_hashes([row.connector]) & dropped
+    ]
     manifest.bindings = Bindings.model_validate(data)
 
 
@@ -233,7 +261,7 @@ def _apply_keep_resources(manifest: GraphManifest, allowed: set[str]) -> None:
     manifest.ingestion_model = IngestionModel.model_validate(
         manifest.ingestion_model.to_dict(skip_defaults=False)
     )
-    _filter_bindings_for_resources(manifest, allowed)
+    prune_bindings_for_resources(manifest, allowed)
     if not manifest.ingestion_model.resources:
         raise ValueError(
             "project_manifest would leave ingestion_model.resources empty; aborting."
@@ -293,7 +321,7 @@ def apply_remove_vertices(manifest: GraphManifest, op: RemoveVerticesOp) -> None
             manifest.ingestion_model.to_dict(skip_defaults=False)
         )
         surviving = {r.name for r in manifest.ingestion_model.resources}
-        _filter_bindings_for_resources(manifest, surviving)
+        prune_bindings_for_resources(manifest, surviving)
 
 
 def _build_merged_vertex_config(
@@ -353,7 +381,6 @@ def _rewrite_ingestion_for_merge(im: IngestionModel, mapping: dict[str, str]) ->
     for r in im.resources:
         d = r.to_dict(skip_defaults=False)
         d["pipeline"] = rewrite_vertex_names_in_pipeline(r.pipeline, mapping)
-        d["merge_collections"] = [mapping.get(c, c) for c in r.merge_collections]
         if d.get("infer_edge_only"):
             d["infer_edge_only"] = rewrite_vertex_names_in_value(
                 d["infer_edge_only"], mapping
@@ -708,9 +735,6 @@ def _rewrite_ingestion_for_canonicalize(
         pipeline = rewrite_vertex_names_in_pipeline(resource.pipeline, vertex_map)
         rewrite_entity_names_in_pipeline(pipeline, edges=relation_map)
         d["pipeline"] = pipeline
-        d["merge_collections"] = [
-            vertex_map.get(name, name) for name in resource.merge_collections
-        ]
         for key in ("infer_edge_only", "infer_edge_except", "extra_weights"):
             if d.get(key):
                 d[key] = _rewrite_relation_names_in_value(
@@ -1300,15 +1324,6 @@ def _apply_rename_entities(
                         edges=edge_map,
                     )
 
-                # `merge_collections` holds vertex names; `collect_vertex_names`
-                # counts them, so leaving them behind strands the reference.
-                merge_collections = resource.get("merge_collections")
-                if isinstance(merge_collections, list):
-                    resource["merge_collections"] = [
-                        vertex_map.get(name, name) if isinstance(name, str) else name
-                        for name in merge_collections
-                    ]
-
                 for spec_key in ("infer_edge_only", "infer_edge_except"):
                     specs = resource.get(spec_key)
                     if not isinstance(specs, list):
@@ -1661,7 +1676,18 @@ def apply_remove_edge_ids(
 
 
 def apply_project_manifest(manifest: GraphManifest, op: ProjectManifestOp) -> None:
-    """Project manifest to surviving vertices/edges with consistent cascade."""
+    """Project manifest to surviving vertices/edges with consistent cascade.
+
+    A resource the cascade shortened is kept trimmed, with a warning naming it,
+    or dropped under ``partial_resources="drop"``.
+    """
+    from .canonicalize import canonical_payload
+
+    before = (
+        {r.name: canonical_payload(r) for r in manifest.ingestion_model.resources}
+        if manifest.ingestion_model is not None
+        else {}
+    )
     plan = compute_projection(manifest, op)
     if plan.removed_edge_ids:
         apply_remove_edge_ids(manifest, plan.removed_edge_ids)
@@ -1670,8 +1696,27 @@ def apply_project_manifest(manifest: GraphManifest, op: ProjectManifestOp) -> No
             manifest,
             RemoveVerticesOp(names=sorted(plan.removed_vertices)),
         )
-    if op.keep_resources is not None:
-        _apply_keep_resources(manifest, set(op.keep_resources))
+    if manifest.ingestion_model is None:
+        return
+    present = [r.name for r in manifest.ingestion_model.resources]
+    allowed = set(op.keep_resources) if op.keep_resources is not None else set(present)
+    trimmed = sorted(
+        r.name
+        for r in manifest.ingestion_model.resources
+        if r.name in allowed
+        and r.name in before
+        and canonical_payload(r) != before[r.name]
+    )
+    if trimmed and op.partial_resources == "drop":
+        allowed -= set(trimmed)
+    elif trimmed:
+        logger.warning(
+            "project_manifest trimmed resources %s to the kept types; they still "
+            "read their sources. Set partial_resources='drop' to remove them.",
+            trimmed,
+        )
+    if allowed != set(present):
+        _apply_keep_resources(manifest, allowed)
 
 
 def apply_merge_edges(manifest: GraphManifest, op: MergeEdgesOp) -> None:
@@ -2238,6 +2283,10 @@ def _dispatch_op(manifest: GraphManifest, op: Any) -> None:
         from .ingestion import apply_remove_resources
 
         apply_remove_resources(manifest, op)
+    elif isinstance(op, ReplaceResourcesOp):
+        from .ingestion import apply_replace_resources
+
+        apply_replace_resources(manifest, op)
     else:
         raise TypeError(f"Unsupported evolution op: {type(op)!r}")
 

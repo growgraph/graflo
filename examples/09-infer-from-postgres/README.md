@@ -153,11 +153,14 @@ The database holds:
 
 The rules, in short:
 
-- A table without a primary key is skipped.
+- A table without a primary key is skipped, with a warning that names it.
 - A table becomes an edge when it has exactly two foreign keys, a primary key
-  of two or more columns, or a name that starts with `rel_`.
+  of two or more columns, or a name that starts with `rel_`, unless you name
+  it in `entity_tables`.
 - Any other table with a primary key and at least one column that is not a key
   becomes a vertex type.
+- A foreign key of a vertex table becomes an edge to the table it references.
+  This shop has none: its foreign keys are all in `purchases` and `follows`.
 
 The [SQL schema inference guide](../../docs/guides/sql_schema_inference.md)
 explains what happens when keys are missing and how to read databases other

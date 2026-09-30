@@ -292,8 +292,13 @@ def render_edge(
     target_locs = list(target_by_loc)
 
     if lindex is not None:
-        source_locs = sorted(lindex.filter(source_locs))
-        target_locs = sorted(lindex.filter(target_locs))
+        source_locs = lindex.filter(source_locs)
+        target_locs = lindex.filter(target_locs)
+    # Shallowest first, on the inferred path too: between two vertices of one
+    # type the first location emits, and that must be the outer one, not
+    # whichever was recorded first. Locations of one depth keep their order.
+    source_locs = sorted(source_locs)
+    target_locs = sorted(target_locs)
 
     source_locs, target_locs = _filter_source_target_lindexes(
         derivation, source_locs, target_locs
@@ -422,11 +427,17 @@ def render_weights(
     *,
     vertex_weights: list[Weight] | None = None,
 ) -> defaultdict[str | None, list]:
-    """Process and apply weights to edge documents."""
+    """Put the attributes of each weight entry's vertices on the record's edges.
+
+    An entry read from one vertex goes on every edge. An entry read from as many
+    vertices as a relation has edges pairs them by position; any other count
+    goes on every edge from the first vertex, with a warning.
+    """
     vertex_weights = vertex_weights or []
-    weights: list = []
+    entries: list[tuple[str, list[dict]]] = []
 
     for w in vertex_weights:
+        weights: list[dict] = []
         vertex = w.name
         if vertex is None or vertex not in vertex_config.vertex_set:
             continue
@@ -441,7 +452,7 @@ def render_weights(
             vertex_sample = [
                 doc
                 for doc in vertex_sample
-                if all(doc[q] == v in doc for q, v in w.filter.items())
+                if all(q in doc and doc[q] == v for q, v in w.filter.items())
             ]
         if vertex_sample:
             for doc in vertex_sample:
@@ -474,9 +485,41 @@ def render_weights(
                             f" a non existent vcollection {vertex}"
                         )
                 weights += [weight]
-    if weights:
+        if weights:
+            entries.append((vertex, weights))
+    if entries:
         for r, edocs in edges.items():
             edges[r] = [
-                (u, v, {**w, **weight}) for (u, v, w), weight in zip(edocs, weights)
+                (u, v, {**attrs, **_weight_for(edge, entries, index, len(edocs))})
+                for index, (u, v, attrs) in enumerate(edocs)
             ]
     return edges
+
+
+#: Weight/edge count mismatches already reported, so each is logged once.
+_reported_weight_mismatches: set[tuple[Any, ...]] = set()
+
+
+def _weight_for(
+    edge: Edge, entries: list[tuple[str, list[dict]]], index: int, count: int
+) -> dict:
+    """The weight attributes of edge *index* out of *count*, over every entry."""
+    merged: dict = {}
+    for vertex, weights in entries:
+        if len(weights) == count:
+            merged.update(weights[index])
+            continue
+        if len(weights) > 1:
+            key = (edge.edge_id, vertex, len(weights), count)
+            if key not in _reported_weight_mismatches:
+                _reported_weight_mismatches.add(key)
+                logger.warning(
+                    "edge %s: %d '%s' weight vertices for %d edges; every edge "
+                    "takes the first",
+                    edge.edge_id,
+                    len(weights),
+                    vertex,
+                    count,
+                )
+        merged.update(weights[0])
+    return merged

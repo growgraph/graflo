@@ -11,9 +11,14 @@ target-DB-specific renames are applied a posteriori via
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 from graflo.architecture.contract.ingestion.resource import Resource
+from graflo.architecture.contract.ingestion.steps.references import (
+    subject_with_references,
+)
+from graflo.architecture.onto_sql import ReferenceEdgeInfo
 from graflo.architecture.schema.vertex import VertexConfig
 from graflo.db.sql.inference_utils import (
     detect_separator,
@@ -48,24 +53,30 @@ class PostgresResourceMapper:
         self,
         table_name: str,
         vertex_name: str,
+        reference_edges: Sequence[ReferenceEdgeInfo] = (),
     ) -> Resource:
         """Create a Resource for a vertex table.
 
-        The resulting pipeline is a single ``{"vertex": vertex_name}`` step.
-        Field renames driven by reserved-word sanitization are added later by
-        :class:`graflo.hq.sanitizer.Sanitizer`.
+        The pipeline is a single ``{"vertex": vertex_name}`` step, followed for
+        each of *reference_edges* by the vertex the row refers to and the edge
+        to it. Field renames driven by reserved-word sanitization are added
+        later by :class:`graflo.hq.sanitizer.Sanitizer`.
 
         Args:
             table_name: Name of the PostgreSQL table
             vertex_name: Name of the vertex type (typically same as table_name)
+            reference_edges: Edges stated by the table's own foreign keys
 
         Returns:
             Resource: Resource configured to ingest vertex data
         """
-        apply: list[dict[str, Any]] = [{"vertex": vertex_name}]
+        references = [
+            (edge.target_table, edge.relation, edge.columns) for edge in reference_edges
+        ]
         resource = Resource(
             name=table_name,
-            pipeline=apply,
+            pipeline=subject_with_references(vertex_name, references),
+            infer_edges=not references,
         )
 
         logger.debug(
@@ -264,7 +275,16 @@ class PostgresResourceMapper:
         for table_info in vertex_tables:
             table_name = table_info.name
             vertex_name = table_name
-            resource = self.create_vertex_resource(table_name, vertex_name)
+            # Only the references the schema declares an edge for.
+            reference_edges = [
+                edge
+                for edge in introspection_result.reference_edges
+                if edge.source_table == table_name
+                and (edge.source_table, edge.target_table, edge.relation) in edge_config
+            ]
+            resource = self.create_vertex_resource(
+                table_name, vertex_name, reference_edges
+            )
             resources.append(resource)
 
         edge_tables = introspection_result.edge_tables

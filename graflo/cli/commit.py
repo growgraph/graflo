@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from itertools import combinations
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +43,7 @@ from graflo.architecture.evolution.history import (
     FileCommitStore,
     History,
     checkout,
+    checkout_parent,
     verify_history,
 )
 from graflo.architecture.evolution.merge3 import (
@@ -226,10 +228,25 @@ def log_cmd(store: Path, graph: bool) -> None:
             )
 
     if len(heads) > 1:
-        click.echo(
-            f"\nhistory has {len(heads)} heads -- it has forked. "
-            "Use `graflo merge3` to reconcile them."
+        click.echo("\n" + _heads_hint(history, sorted(heads)))
+
+
+def _heads_hint(history: Any, heads: list[str]) -> str:
+    """Name the verb that joins *heads*: ``merge3`` needs a common ancestor."""
+    pairs = list(combinations(heads, 2))
+    forked = sum(find_merge_base(history, a, b) is not None for a, b in pairs)
+    count = f"history has {len(heads)} heads"
+    if forked == len(pairs):
+        return f"{count} -- it has forked. Use `graflo merge3` to reconcile them."
+    if forked == 0:
+        return (
+            f"{count} from unrelated lineages. Use `graflo merge` to join them "
+            "by declared equivalence."
         )
+    return (
+        f"{count}: reconcile the ones that share an ancestor with `graflo merge3`, "
+        "and join unrelated lineages with `graflo merge`."
+    )
 
 
 # ── verify ──────────────────────────────────────────────────────────────────
@@ -527,6 +544,7 @@ def revert_cmd(
         entry = build_revert_commit(
             current,
             target,
+            before=checkout_parent(base_manifest, history, target.id),
             parents=[head.id],
             label=label,
             created_at=datetime.now(UTC).isoformat(),

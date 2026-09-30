@@ -169,23 +169,21 @@ Inside `evolution/merge3.py` and `plot/merge3.py`, a bare "merge" is the
 three-way merge; everywhere else it is the union. The qualifier is spelled out
 where the two would otherwise look alike: the commit kind (`merge` and
 `merge3`), the CLI verb (`graflo merge` and `graflo merge3`), and `MergePreview`
-and `Merge3Preview`. Names in `merge3.py` that
-predate the qualifier (`merge_three_way`, `find_merge_base`, `MergeResult`,
-`MergeConflict`, `re_merge`, `merged_hash`) keep a bare "merge".
+and `Merge3Preview`. Some names in `merge3.py` keep a bare "merge"
+(`merge_three_way`, `find_merge_base`, `MergeResult`, `MergeConflict`,
+`re_merge`, `merged_hash`).
 
-### History of the names
+### Merge, compose and aliases
 
-The generic model-management operators this design follows use Merge for two
-models plus correspondences, and Compose for two mappings. GraFlo first spelled
-them the other way round: `merge_manifests` was `compose_manifests`, and
-`compose_canonical_maps` was `merge_canonical_maps`. After the swap, `compose`
-names one thing in the package, `compose_canonical_maps`.
+The names follow the generic model-management operators: Merge takes two
+models plus correspondences, and Compose takes two mappings. `compose` names
+one thing in the package, `compose_canonical_maps`.
 
-The `name_conflict` value `union_right` was spelled `fuse_right` before "fuse"
-was reserved for records; the old spelling is still accepted as input.
-`allow_observation_fusion` accepts `allow_row_fusion`, and several ops accept
-older field names (`vertices` for `renames` on `rename_vertices`, for example);
-each alias is listed in the field's description.
+Some inputs accept a second spelling: the `name_conflict` value `fuse_right`
+reads as `union_right`, `allow_observation_fusion` accepts `allow_row_fusion`,
+and several ops accept other field names (`vertices` for `renames` on
+`rename_vertices`, for example). Each alias is listed in the field's
+description.
 
 ## How the preview stays complete
 

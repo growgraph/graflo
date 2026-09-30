@@ -56,11 +56,37 @@ Other methods have a default that you override for a capability or for speed:
   `UnsupportedBulkLoad`, and ingestion then writes record by record.
 - `introspect_graph_schema`, `fetch_all_docs` and `fetch_all_edges` raise
   `NotImplementedError`. Implement them together with the matching capability
-  flag below.
+  flag below. `export_graph_container` reads the whole graph through the last
+  two; override it where a store reads its graph another way.
+- `delete_vertices` and `delete_edges` raise `NotImplementedError`. Implement
+  them together with `supports_instance_delete`; `delete_vertices` must remove
+  the edges that touch a removed vertex.
 
 If your store speaks Cypher, reuse `graflo/db/cypher/`: escaping,
-relationship merge, direction handling, traversal queries and a shared
-sampling introspection.
+relationship merge, direction handling, traversal queries, delete statements
+and a shared sampling introspection. On any store,
+`graflo.db.resolve.present_documents` and `absent_documents` implement
+`fetch_present_documents` and `keep_absent_documents` over `fetch_docs`.
+
+#### Values in queries
+
+A filter value or an id a read is given does not go into query text when your
+driver binds parameters. Render filters with a
+`graflo.filter.onto.BoundParams` for your flavor, pass it as `params=` to
+every filter of one query, and hand its `values` to the driver:
+
+```python
+params = BoundParams(ExpressionFlavor.CYPHER)
+where = parse_filter_expression(filters)(doc_name="n", kind=params.kind, params=params)
+self.execute(f"MATCH (n:{label}) WHERE {where} RETURN n", **params.values)
+```
+
+`BoundParams` writes `@name` for AQL, `$name` for Cypher and `%(name)s` for
+PostgreSQL. nGQL and GSQL filters are written as literals: strings escaped,
+dates quoted, and a value with no safe literal (a control character other than
+newline, carriage return or tab, a non-finite number, an object of another
+type) refused. If your flavor binds parameters, add its placeholder to
+`BoundParams`.
 
 #### Capability flags
 
@@ -76,6 +102,7 @@ class MyConnection(Connection):
     supports_schema_introspection = True  # a real introspect_graph_schema
     schema_introspection_is_sampled = False  # False only with a real catalog
     supports_schema_ddl = False  # True only with a migration emitter (step 3)
+    supports_instance_delete = True  # delete_vertices and delete_edges
 ```
 
 An introspector that samples records must leave `property_types` empty and
@@ -90,7 +117,7 @@ recovered schema.
 | 1 | `graflo/onto.py`: a `DBType` member | The flavor itself |
 | 2 | `graflo/onto.py`: `DB_TYPE_TO_EXPRESSION_FLAVOR` | `Connection.expression_flavor()` raises `KeyError` without it |
 | 3 | `graflo/architecture/schema/edge_direction.py`: `REVERSE_TRAVERSAL_COST` | `reverse_traversal_cost()` raises `KeyError` without it |
-| 4 | `graflo/db/field_type_support.py`: `_LIST_NATIVE_DBS` | Say whether `LIST` is native; if it is not, DDL raises `UnsupportedFieldTypeError` for list properties |
+| 4 | `graflo/db/field_type_support.py`: `_LIST_NATIVE_DBS` and `_INDEX_KINDS_BUILT` | Say whether `LIST` is native, and which index kinds beyond a plain index your DDL builds; DDL refuses the rest with `UnsupportedFieldTypeError` or `UnsupportedIndexKindError` |
 | 5 | `graflo/connections/onto.py`: a `DBConfig` subclass with `from_docker_env` | The config, and the test wiring |
 | 6 | `graflo/connections/onto.py`: `TARGET_DATABASES` | `ConnectionManager` refuses to open a flavor that is not listed as a target |
 | 7 | `graflo/connections/mapping.py`: `DB_TYPE_MAPPING` | Flavor to config class, used by `DBConfig.from_dict` |
@@ -110,16 +137,20 @@ match your write path exactly. A mismatch does not raise: the anchor resolves
 to an address that exists nowhere, and traversal returns an empty result that
 looks like a vertex without neighbors.
 
+The address carries no vertex type: `fetch_edges` receives the type beside
+it. A store whose ids are unique across types only when they name the type
+adds it there. NebulaGraph does: a VID is `<tag>::<identity values>`, because
+two tags written under one VID would be one vertex sharing its edges.
+
 #### Edge rows in traversal
 
-`graflo/db/traversal.py` reads the endpoints of an edge row from the first
-column it recognizes: `_from`, `source_id`, `src`, `_src`, `from`, `from_id`
-or `_from_key` for the source, and the matching names for the target (listed
-in `_SOURCE_KEYS` and `_TARGET_KEYS`). If your `fetch_edges` returns
-endpoints under another name, those rows are dropped from every traversal,
-again without an error. Return one of the accepted names, or add yours to the
-two tuples. `normalize_edge_row` logs a warning once per unrecognized row
-shape; watch for it the first time you run the traversal suites.
+`graflo/db/traversal.py` reads the endpoints of an edge row from the pair of
+columns `EDGE_ROW_ENDPOINT_KEYS` names for your flavor, or from a
+`(start, properties, end)` triple as the Cypher backends return. Add your
+flavor's pair there. A row without them is dropped from every traversal,
+again without an error; `normalize_edge_row` logs a warning once per
+unrecognized row shape, so watch for it the first time you run the traversal
+suites.
 
 ### 4. Wire up the tests
 
@@ -132,8 +163,8 @@ shape; watch for it the first time you run the traversal suites.
    marker to `OPT_IN_MARKS` in `test/db/backends.py`, register it under
    `markers` in `pytest.ini`, and add a `--run-<name>` option and an entry in
    the skip map of `pytest_collection_modifyitems` in `test/conftest.py`. The
-   skip matches on `item.keywords`, which include parametrize ids, so a test
-   parametrized with an id equal to the marker name is skipped too.
+   skip applies to tests that carry the marker, so a parameter may share its
+   name.
 3. Add `test/db/<name>s/` with a `conftest.py` that supplies a config fixture
    and isolates each test, plus at least one test that runs `define_schema`
    and `ingest`.

@@ -128,7 +128,6 @@ samples, each 80% of the rows, on which the key stayed unique.
 `ingest.py` prints:
 
 ```text
-graflo_backend target does not support concurrent writers; forcing max_concurrent_db_ops=1.
 product   150 records, 150 distinct identities (product_code, org)
 supplier  120 records, 120 distinct identities (supplier_code)
 ```

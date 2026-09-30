@@ -481,3 +481,63 @@ def test_resource_tolerate_transform_errors_defaults_true() -> None:
         }
     )
     assert resource.tolerate_transform_errors is True
+
+
+def test_resource_refuses_merge_collections() -> None:
+    with pytest.raises(ValueError, match="merge_collections is not implemented"):
+        Resource.from_dict(
+            {"name": "r", "pipeline": [{"vertex": "a"}], "merge_collections": ["a"]}
+        )
+
+
+def test_resource_accepts_empty_merge_collections() -> None:
+    resource = Resource.from_dict(
+        {"name": "r", "pipeline": [{"vertex": "a"}], "merge_collections": []}
+    )
+    assert resource.collect_vertex_names() == {"a"}
+
+
+def _work_runtime(pipeline: list[dict[str, Any]]) -> ResourceRuntime:
+    vertex_config = VertexConfig.from_dict(
+        {"vertices": [{"name": "work", "properties": ["id"], "identity": ["id"]}]}
+    )
+    edge_config = EdgeConfig.from_dict(
+        {"edges": [{"source": "work", "target": "work", "relation": "cites"}]}
+    )
+    return _runtime({"name": "works", "pipeline": pipeline}, vertex_config, edge_config)
+
+
+def _cites(runtime: ResourceRuntime, doc: dict[str, Any]) -> list[tuple[str, str]]:
+    edges = runtime(doc)[("work", "work", "cites")]
+    return [(source["id"], target["id"]) for source, target, _ in edges]
+
+
+def test_inferred_edge_between_nested_same_type_vertices_starts_at_the_outer_one():
+    runtime = _work_runtime(
+        [
+            {"vertex": "work"},
+            {"key": "referenced_works", "pipeline": [{"vertex": "work"}]},
+        ]
+    )
+
+    cites = _cites(
+        runtime, {"id": "w0", "referenced_works": [{"id": "w1"}, {"id": "w2"}]}
+    )
+
+    assert cites == [("w0", "w1"), ("w0", "w2")]
+
+
+def test_inferred_edge_direction_does_not_depend_on_step_order():
+    # The nested step runs first, so the outer vertex is recorded last.
+    runtime = _work_runtime(
+        [
+            {"key": "referenced_works", "pipeline": [{"vertex": "work"}]},
+            {"vertex": "work"},
+        ]
+    )
+
+    cites = _cites(
+        runtime, {"id": "w0", "referenced_works": [{"id": "w1"}, {"id": "w2"}]}
+    )
+
+    assert cites == [("w0", "w1"), ("w0", "w2")]

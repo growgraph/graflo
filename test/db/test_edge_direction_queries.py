@@ -68,38 +68,48 @@ def test_cypher_rel_pattern_honours_variable_name() -> None:
 
 
 def test_arango_out_anchors_on_from() -> None:
-    clause = _arango_edge_anchor_clause("person/1", EdgeDirection.OUT, None, None)
-    assert clause == "e._from == 'person/1'"
+    bind_vars: dict = {}
+    clause = _arango_edge_anchor_clause(
+        "person/1", EdgeDirection.OUT, None, None, bind_vars
+    )
+    assert clause == "e._from == @anchor"
+    assert bind_vars == {"anchor": "person/1"}
 
 
 def test_arango_in_anchors_on_to() -> None:
-    clause = _arango_edge_anchor_clause("person/1", EdgeDirection.IN, None, None)
-    assert clause == "e._to == 'person/1'"
+    clause = _arango_edge_anchor_clause("person/1", EdgeDirection.IN, None, None, {})
+    assert clause == "e._to == @anchor"
 
 
 def test_arango_any_matches_either_orientation() -> None:
-    clause = _arango_edge_anchor_clause("person/1", EdgeDirection.ANY, None, None)
-    assert clause == "(e._from == 'person/1') || (e._to == 'person/1')"
+    clause = _arango_edge_anchor_clause("person/1", EdgeDirection.ANY, None, None, {})
+    assert clause == "(e._from == @anchor) || (e._to == @anchor)"
 
 
 def test_arango_endpoint_filters_follow_the_anchor() -> None:
     """Under ANY, `to_id` constrains whichever end is not the anchor."""
+    bind_vars: dict = {}
     clause = _arango_edge_anchor_clause(
-        "person/1", EdgeDirection.ANY, "company", "company/9"
+        "person/1", EdgeDirection.ANY, "company", "company/9", bind_vars
     )
     assert clause == (
-        "(e._from == 'person/1' && e._to LIKE 'company/%' && e._to == 'company/9')"
+        "(e._from == @anchor && STARTS_WITH(e._to, @far_prefix) && e._to == @far)"
         " || "
-        "(e._to == 'person/1' && e._from LIKE 'company/%' && e._from == 'company/9')"
+        "(e._to == @anchor && STARTS_WITH(e._from, @far_prefix) && e._from == @far)"
     )
+    assert bind_vars == {
+        "anchor": "person/1",
+        "far_prefix": "company/",
+        "far": "company/9",
+    }
 
 
 def test_arango_in_puts_endpoint_filter_on_from() -> None:
     clause = _arango_edge_anchor_clause(
-        "person/1", EdgeDirection.IN, "company", "company/9"
+        "person/1", EdgeDirection.IN, "company", "company/9", {}
     )
     assert clause == (
-        "e._to == 'person/1' && e._from LIKE 'company/%' && e._from == 'company/9'"
+        "e._to == @anchor && STARTS_WITH(e._from, @far_prefix) && e._from == @far"
     )
 
 

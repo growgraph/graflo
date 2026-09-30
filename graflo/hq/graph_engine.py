@@ -9,7 +9,7 @@ import asyncio
 import inspect
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from graflo.architecture.contract.bindings import Bindings
 from graflo.architecture.contract.ingestion import IngestionModel
@@ -26,6 +26,7 @@ from graflo.connections.provider import (
     InMemoryConnectionProvider,
     SparqlGeneralizedConnConfig,
 )
+from graflo.data_source.registry import DataSourceRegistry
 from graflo.db.conn import ConnectionCapability
 from graflo.db.manager import ConnectionManager
 from graflo.db.postgres.conn import PostgresConnection
@@ -120,16 +121,20 @@ class GraphEngine:
         postgres_config: PostgresConfig,
         schema_name: str | None = None,
         include_raw_tables: bool = True,
+        entity_tables: list[str] | None = None,
     ) -> SchemaIntrospectionResult:
         """Introspect PostgreSQL schema and return a serializable result.
 
         Args:
             postgres_config: PostgresConfig instance
             schema_name: Schema name to introspect (defaults to config schema_name or 'public')
+            entity_tables: Tables that are entities whatever their shape; a
+                table with two foreign keys is otherwise read as a relationship.
 
         Returns:
             SchemaIntrospectionResult: Introspection result (vertex_tables, edge_tables,
-                raw_tables, schema_name) suitable for serialization.
+                raw_tables, schema_name, reference_edges, skipped_tables) suitable
+                for serialization.
         """
         with PostgresConnection(postgres_config) as postgres_conn:
             inferencer = SQLInferenceManager(
@@ -139,6 +144,7 @@ class GraphEngine:
             return inferencer.introspect(
                 schema_name=schema_name,
                 include_raw_tables=include_raw_tables,
+                entity_tables=entity_tables,
             )
 
     def sample_resources(
@@ -197,6 +203,7 @@ class GraphEngine:
         schema_name: str | None = None,
         fuzzy_threshold: float = 0.8,
         discard_disconnected_vertices: bool = False,
+        entity_tables: list[str] | None = None,
     ) -> GraphManifest:
         """Infer a GraphManifest from PostgreSQL database.
 
@@ -206,6 +213,8 @@ class GraphEngine:
             fuzzy_threshold: Similarity threshold for fuzzy matching (0.0 to 1.0, default 0.8)
             discard_disconnected_vertices: If True, remove vertices that do not take part in
                 any relation (and resources/actors that reference them). Default False.
+            entity_tables: Tables that are entities whatever their shape; a
+                table with two foreign keys is otherwise read as a relationship.
 
         Returns:
             GraphManifest: Inferred manifest with schema, ingestion model, and bindings.
@@ -216,7 +225,9 @@ class GraphEngine:
                 target_db_flavor=self.target_db_flavor,
                 fuzzy_threshold=fuzzy_threshold,
             )
-            artifacts = inferencer.infer_artifacts(schema_name=schema_name)
+            artifacts = inferencer.infer_artifacts(
+                schema_name=schema_name, entity_tables=entity_tables
+            )
             schema, ingestion_model = artifacts.schema, artifacts.ingestion_model
             bindings, provider = (
                 self.resource_mapper.create_bindings_with_provider_from_introspection(
@@ -471,6 +482,7 @@ class GraphEngine:
         ingestion_params: IngestionParams | None = None,
         connection_provider: ConnectionProvider | None = None,
         graph_target_namespace: str | None = None,
+        data_source_registry: DataSourceRegistry | None = None,
     ) -> None:
         """Ingest data into the graph database.
 
@@ -484,6 +496,8 @@ class GraphEngine:
                 If None, uses default IngestionParams()
             graph_target_namespace: Same semantics as ``define_schema``; use when
                 calling ``ingest`` without a prior ``define_schema`` on this config.
+            data_source_registry: Sources to read, by resource, instead of the
+                ones the manifest's bindings declare.
         """
         schema = manifest.require_schema()
         ingestion_model = manifest.require_ingestion_model()
@@ -513,6 +527,7 @@ class GraphEngine:
             bindings=bindings or Bindings(),
             ingestion_params=ingestion_params,
             connection_provider=connection_provider or self.connection_provider,
+            data_source_registry=data_source_registry,
         )
 
     # ------------------------------------------------------------------
@@ -633,7 +648,7 @@ class GraphEngine:
             schema = conn.introspect_graph_schema(
                 schema_name=schema_name, sample_limit=sample_limit
             )
-            data = self._export_graph_container(conn, schema, limit=data_limit)
+            data = conn.export_graph_container(schema, limit=data_limit)
         finally:
             conn.close()
         return schema, data
@@ -669,9 +684,7 @@ class GraphEngine:
     ) -> Schema:
         """Infer a graflo Schema from a graph database source.
 
-        Requires only introspection. This used to demand bulk-export support and
-        so reached three backends; it now reaches every backend that can
-        describe itself, which is all eight.
+        Requires only schema introspection, which every backend provides.
         """
         conn = ConnectionManager.open_read_connection(
             source_config, require=ConnectionCapability.SCHEMA_INTROSPECTION
@@ -722,6 +735,52 @@ class GraphEngine:
         finally:
             conn.close()
         return compare_live_schema(schema, observed, db_flavor=flavor, sampled=sampled)
+
+    def delete_vertices(
+        self,
+        target_db_config: DBConfig,
+        schema: Schema,
+        vertex: str,
+        key_docs: list[dict[str, Any]],
+    ) -> None:
+        """Remove vertices of type *vertex*, with every edge incident to them.
+
+        Args:
+            target_db_config: The database to remove them from.
+            schema: The schema the graph was written with.
+            vertex: Logical vertex type name.
+            key_docs: One document per vertex, carrying its identity fields
+                under logical names. A document missing one removes nothing.
+
+        Raises:
+            ValueError: If the target does not support deleting vertices, as
+                the file backend, which is append-only, does not.
+        """
+        writer = DBWriter(schema=schema, ingestion_model=IngestionModel(resources=[]))
+        writer.delete_vertices(target_db_config, vertex, key_docs)
+
+    def delete_edges(
+        self,
+        target_db_config: DBConfig,
+        schema: Schema,
+        edge_id: tuple[str, str, str | None],
+        endpoints: list[tuple[dict[str, Any], dict[str, Any]]],
+    ) -> None:
+        """Remove the edges *edge_id* between the given endpoint pairs.
+
+        Args:
+            target_db_config: The database to remove them from.
+            schema: The schema the graph was written with.
+            edge_id: Logical ``(source, target, relation)`` of a declared edge.
+            endpoints: ``(source, target)`` documents carrying each vertex's
+                identity fields under logical names.
+
+        Raises:
+            ValueError: If the target does not support deleting edges, or the
+                schema does not declare *edge_id*.
+        """
+        writer = DBWriter(schema=schema, ingestion_model=IngestionModel(resources=[]))
+        writer.delete_edges(target_db_config, edge_id, endpoints)
 
     def export_graph(
         self,
@@ -783,38 +842,3 @@ class GraphEngine:
         ingestion_model.finish_init(schema.core_schema)
         writer = DBWriter(schema=schema, ingestion_model=ingestion_model)
         asyncio.run(writer.write(gc=data, conn_conf=target_config, resource_name=None))
-
-    @staticmethod
-    def _export_graph_container(
-        conn,
-        schema: Schema,
-        *,
-        limit: int | None = None,
-    ) -> GraphContainer:
-        """Build a GraphContainer by reading all vertices and edges from *conn*."""
-        vertices: dict[str, list] = {}
-        edges: dict[tuple[str, str, str | None], list] = {}
-        vc = schema.core_schema.vertex_config
-
-        for vertex in vc.vertices:
-            docs = conn.fetch_all_docs(vertex.name, limit=limit)
-            if docs:
-                vertices[vertex.name] = docs
-
-        for edge in schema.core_schema.edge_config.values():
-            # Backends that store endpoints as a single identity value (rather
-            # than a resolvable document reference) need to be told which field
-            # that value belongs to, so the exported endpoint doc is keyed the
-            # way DBWriter resolves it.
-            edge_docs = conn.fetch_all_edges(
-                edge.source,
-                edge.target,
-                edge.relation,
-                match_keys_source=tuple(vc.identity_fields(edge.source)),
-                match_keys_target=tuple(vc.identity_fields(edge.target)),
-                limit=limit,
-            )
-            if edge_docs:
-                edges[edge.edge_id] = edge_docs
-
-        return GraphContainer(vertices=vertices, edges=edges, linear=[])

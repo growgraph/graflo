@@ -392,7 +392,7 @@ def test_apply_evolution_rejects_compose_op() -> None:
         apply_evolution(m, [MergeManifestsOp()], bump_version=False)
 
 
-# ── canonical near-collisions (CORE-MERGE-001) ──────────────────────────────
+# ── canonical near-collisions ───────────────────────────────────────────────
 #
 # Merge matched vertices and edges by raw name, so an overlay authored as
 # `order_line` beside a core `OrderLine` merged into two unrelated types with
@@ -1722,7 +1722,7 @@ class TestComposedProfileFold:
 
 
 def test_union_right_unions_the_right_model_rather_than_dropping_it() -> None:
-    """CORE-MERGE-001's failure class: the right ``order_line`` used to be skipped.
+    """The right ``order_line`` used to be skipped.
 
     Adopting the left spelling made the right vertex share a name with the
     union, and the union skipped any right vertex whose name it had seen --

@@ -104,8 +104,12 @@ ConnectionManager.flavors_supporting(ConnectionCapability.SCHEMA_INTROSPECTION)
 
 On a PostgreSQL target each vertex type becomes a table. Each edge type
 becomes a table named `{source}_{target}_{relation}_edges` (`relates` when the
-edge has no relation) with `source_id` and `target_id` columns, one column per
-edge property, and an `id` key so that parallel edges can coexist.
+edge has no relation) with the endpoint columns, one column per edge property,
+and an `id` key so that parallel edges can coexist. An endpoint whose vertex
+type has one identity field is stored in `source_id` or `target_id`. One with
+a composite identity is stored in a column per field, `source__<field>` or
+`target__<field>`; edge queries (`graph_neighbors`) refuse such a table,
+because they address a vertex by one value.
 
 ## The file backend
 
@@ -131,6 +135,10 @@ empty (`person____department`). When a name contains characters other than
 letters, digits and underscores, `INDEX.json` uses a JSON array of the edge
 key instead and the chunk file gets an encoded name. `INDEX.json` also records
 the GraFlo version, the creation time and a hash of the schema.
+
+Several writers, in one process or in several, can write one directory at the
+same time. Each claims its own chunk files and adds them to `INDEX.json` while
+holding a lock on the file `.lock` in the directory.
 
 The config is `GraFloBackendConfig` from `graflo.connections`:
 
@@ -167,11 +175,9 @@ step 3 of the migration runs for that flavor: `schema.yaml` records the stored
 names, and chunk files and records use them. A directory written this way
 records how the graph would be stored in that database.
 
-Such a directory cannot be read back as a source when the hint renamed
-anything: `export_graph` and `migrate_graph` look the chunks up by the logical
-names and find no records for the renamed types. Leave the hint unset on a
-directory you plan to load with `migrate_graph`; the migration adapts the
-names for its target anyway.
+Reading such a directory back, with `export_graph`, `migrate_graph` or
+`GraFloBackendReader.load_graph_container()`, returns the records under the
+names of its `schema.yaml`.
 
 ## Limits
 
@@ -184,7 +190,8 @@ names for its target anyway.
 - A sampled schema is a lower bound: it lists what the sample showed. Raise
   `sample_limit` when types have rare properties, or check the result of
   `infer_schema_from_graph` before you migrate.
-- The file backend appends instead of merging records, as described above.
+- The file backend appends instead of merging records, as described above,
+  and cannot [remove vertices or edges](deleting_instances.md).
 - `GraFloBackendConfig.from_docker_env()` raises `NotImplementedError`: a
   file backend has no container, so give it an `output_dir`.
 - Edge keys are tuples `(source, target, relation)` in Python. In JSON output

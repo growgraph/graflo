@@ -33,6 +33,11 @@ class BulkSessionCoordinator:
         self._session_id: str | None = None
         self._begin_lock = asyncio.Lock()
 
+    @property
+    def active(self) -> bool:
+        """Whether a session is open: batches are staged, not yet in the target."""
+        return self._session_id is not None
+
     def _stored_for(self, conn_conf: DBConfig) -> Schema:
         if self._stored_schema is None:
             self._stored_schema = physical_schema(

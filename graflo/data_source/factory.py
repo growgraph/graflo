@@ -33,6 +33,12 @@ class DataSourceFactory:
     def _guess_file_type(filename: Path) -> ChunkerType:
         return ChunkerFactory._guess_chunker_type(filename)
 
+    @staticmethod
+    def _default_sep(filename: Path) -> str:
+        """The separator a table file's extension implies: a tab for ``.tsv``."""
+        suffixes = [suffix.lower() for suffix in filename.suffixes]
+        return "\t" if ".tsv" in suffixes else ","
+
     @classmethod
     def create_file_data_source(
         cls,
@@ -67,7 +73,9 @@ class DataSourceFactory:
         if file_type_enum == ChunkerType.JSONL:
             return JsonlFileDataSource(path=path, encoding=encoding)
         if file_type_enum == ChunkerType.TABLE:
-            return TableFileDataSource(path=path, encoding=encoding, sep=sep or ",")
+            return TableFileDataSource(
+                path=path, encoding=encoding, sep=sep or cls._default_sep(path)
+            )
         if file_type_enum == ChunkerType.PARQUET:
             return ParquetFileDataSource(path=path)
         raise ValueError(f"Unsupported file type: {file_type_enum}")

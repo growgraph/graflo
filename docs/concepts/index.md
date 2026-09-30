@@ -108,7 +108,7 @@ by name, so the same resource can read a file today and a table tomorrow.
 
 | Connector | Reads | Manifest inferred from the source | Page |
 |---|---|---|---|
-| `FileConnector` | CSV, JSON, JSON Lines and Parquet files whose names match a regex under a directory | no | [Ingest CSV files](../examples/csv-two-resources/index.md) (1) |
+| `FileConnector` | CSV, TSV, JSON, JSON Lines and Parquet files whose names match a regex under a directory | no | [Ingest CSV files](../examples/csv-two-resources/index.md) (1) |
 | `TableConnector` | one SQL table, optionally filtered or joined into a view | yes, from primary and foreign keys | [Table filters and views](connectors/table_views.md) |
 | `SparqlConnector` | the instances of one RDF class, from an RDF file (Turtle, RDF/XML, N-Triples, N3, JSON-LD and others) or a SPARQL endpoint | yes, from an OWL or RDFS ontology | [A graph from an ontology and RDF data](../examples/infer-from-rdf/index.md) (10) |
 | `APIConnector` | a REST endpoint, with offset, page or cursor pagination | no | [API connector](connectors/api_connector.md) |
@@ -118,7 +118,8 @@ From Python you can also pass records that are already in memory, a list of
 dicts or a DataFrame, through an in-memory data source instead of a
 connector. Where the manifest can be inferred,
 GraFlo writes a draft for you to edit. From a SQL database, entity tables
-become vertex types and link tables (two foreign keys) become edges; see
+become vertex types, and link tables (two foreign keys) and the foreign keys of
+entity tables become edges; see
 [inferring a graph from a SQL database](../guides/sql_schema_inference.md).
 From an ontology, each `owl:Class` becomes a vertex type, each
 `owl:ObjectProperty` an edge type and each `owl:DatatypeProperty` a property;
@@ -207,6 +208,7 @@ each term one short definition and links to the page that explains it.
 | Page | Question it answers |
 |---|---|
 | [Graph export and migration](operations/graph_export_migration.md) | How do I copy a whole graph out of a database, onto disk or into another database? |
+| [Removing vertices and edges](operations/deleting_instances.md) | How do I take vertices or edges out of a graph by their identity? |
 | [Object storage](operations/object_storage.md) | How do I stage files in S3 for a TigerGraph bulk load? |
 | [Schema migration](operations/migration_and_practices.md) | How do I apply a changed schema to a database that already holds data? |
 

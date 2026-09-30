@@ -127,6 +127,10 @@ class ResourceRuntime:
         )
         logger.debug("total resource actor count : %s", self._root.count())
         self._root.finish_init(init_ctx=init_ctx)
+        self._has_dynamic_edge_steps = any(
+            isinstance(actor, EdgeActor) and actor.is_dynamic
+            for actor in self._root.collect_actors()
+        )
 
         if dynamic_edge_feedback:
             self._propagate_dynamic_edges(edge_config, vertex_config=vertex_config)
@@ -166,6 +170,17 @@ class ResourceRuntime:
     @property
     def type_casters(self) -> dict[str, Callable[..., Any]]:
         return self._type_casters
+
+    @property
+    def has_dynamic_edge_steps(self) -> bool:
+        """Whether a step names its edges per document.
+
+        Such a step registers each new edge on this runtime's edge config while
+        documents are cast, which later documents then see. A copy of the
+        runtime in a worker process would keep its own registrations, so the
+        resource is cast in process.
+        """
+        return self._has_dynamic_edge_steps
 
     def collect_vertex_names(self) -> set[str]:
         """Vertex types this resource can produce.

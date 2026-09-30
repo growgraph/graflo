@@ -92,6 +92,12 @@ class MigrationRecord(BaseModel):
     revision: str
     schema_hash: str
     backend: str
-    operations: list[str] = Field(default_factory=list)
+    operations: list[MigrationOperation | OperationType] = Field(
+        default_factory=list,
+        description=(
+            "The operations applied, in order. Records written before full "
+            "operations were stored hold only each operation's type."
+        ),
+    )
     reversible: bool = True
     applied_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())

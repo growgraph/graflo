@@ -18,7 +18,7 @@ from graflo.architecture.evolution.sanitize import (
     materialize_physical_schema,
     with_physical_names,
 )
-from graflo.architecture.graph_types import GraphContainer, Weight
+from graflo.architecture.graph_types import EdgeId, GraphContainer, Weight
 from graflo.architecture.schema import EdgeRuntime, Schema, SchemaDBAware
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.identity_digest import (
@@ -30,6 +30,7 @@ from graflo.architecture.schema.identity_uuid import (
 )
 from graflo.architecture.schema.physical_keys import PhysicalKeys
 from graflo.connections.onto import DBConfig
+from graflo.db.conn import ConnectionCapability
 from graflo.db.manager import ConnectionManager
 from graflo.hq.endpoint_resolve import resolve_edge_endpoints
 from graflo.onto import DBType
@@ -65,6 +66,21 @@ def _weight_attributes(weight: Weight, doc: dict[str, Any]) -> dict[str, Any]:
     return attributes
 
 
+def _document_edges(item: dict[Any, list], edge: Edge) -> list[tuple]:
+    """The ``(source, target, attributes)`` triples of *edge* one document produced.
+
+    A document keys its edges by the relation it resolved, so an *edge* that
+    names none covers every relation between its endpoints.
+    """
+    triples: list[tuple] = []
+    for key, docs in item.items():
+        if not isinstance(key, tuple) or key[:2] != (edge.source, edge.target):
+            continue
+        if edge.relation is None or key[2] == edge.relation:
+            triples.extend(docs)
+    return triples
+
+
 class DBWriter:
     """Push :class:`GraphContainer` data to the target graph database.
 
@@ -91,6 +107,7 @@ class DBWriter:
         schema: Schema configuration providing vertex/edge metadata.
         dry: When ``True`` no database mutations are performed.
         max_concurrent: Upper bound on concurrent DB operations (semaphore size).
+            A file-backend target is written by one operation at a time.
     """
 
     def __init__(
@@ -111,8 +128,10 @@ class DBWriter:
         self._keys: PhysicalKeys | None = None
         self._semaphore: asyncio.Semaphore | None = None
         self._semaphore_loop: asyncio.AbstractEventLoop | None = None
+        self._semaphore_bound: int | None = None
         self._collection_locks: dict[str, asyncio.Lock] = {}
         self._collection_locks_loop: asyncio.AbstractEventLoop | None = None
+        self._reported_undeclared_edges: set[tuple] = set()
 
     # ------------------------------------------------------------------
     # Public API
@@ -174,6 +193,77 @@ class DBWriter:
         if resource is not None:
             await self._enrich_extra_weights(gc, conn_conf, resource)
         await self._push_edges(gc, conn_conf, resource)
+
+    def delete_vertices(
+        self, conn_conf: DBConfig, vertex: str, key_docs: list[dict[str, Any]]
+    ) -> None:
+        """Remove vertices of *vertex*, with every edge incident to them.
+
+        *key_docs* carry the vertex's identity fields, under logical names; a
+        document missing one removes nothing. Nothing is removed in a dry run.
+
+        Raises:
+            ValueError: If the target does not support deleting vertices.
+        """
+        ConnectionManager.require(conn_conf, ConnectionCapability.INSTANCE_DELETE)
+        if self.dry:
+            return
+        vc = self._db_aware_for(conn_conf).vertex_config
+        keys = self._keys_for(conn_conf)
+        match_keys = tuple(keys.vertex_fields(vertex, vc.identity_fields(vertex)))
+        with ConnectionManager(connection_config=conn_conf) as db:
+            db.delete_vertices(
+                vc.vertex_dbname(vertex), keys.vertex_docs(vertex, key_docs), match_keys
+            )
+
+    def delete_edges(
+        self,
+        conn_conf: DBConfig,
+        edge_id: EdgeId,
+        endpoints: list[tuple[dict[str, Any], dict[str, Any]]],
+    ) -> None:
+        """Remove the edges *edge_id* between the given ``(source, target)`` pairs.
+
+        Endpoints carry their vertices' identity fields, under logical names.
+        Nothing is removed in a dry run.
+
+        Raises:
+            ValueError: If the target does not support deleting edges, or the
+                schema does not declare *edge_id*.
+        """
+        ConnectionManager.require(conn_conf, ConnectionCapability.INSTANCE_DELETE)
+        core_ec = self.schema.core_schema.edge_config
+        if edge_id not in core_ec:
+            raise ValueError(f"Edge {edge_id} is not declared in the schema")
+        if self.dry:
+            return
+        schema_db = self._db_aware_for(conn_conf)
+        vc = schema_db.vertex_config
+        keys = self._keys_for(conn_conf)
+        edge = core_ec.edge_for(edge_id)
+        runtime = schema_db.edge_config.runtime(edge)
+        _, relation_name = self._project_edge_docs_for_db(
+            docs=[],
+            relation=edge.relation,
+            runtime=runtime,
+            conn_type=conn_conf.connection_type,
+        )
+        source_keys = vc.identity_fields(edge.source)
+        target_keys = vc.identity_fields(edge.target)
+        stored = [
+            (keys.vertex_doc(edge.source, source), keys.vertex_doc(edge.target, target))
+            for source, target in endpoints
+        ]
+        with ConnectionManager(connection_config=conn_conf) as db:
+            db.delete_edges(
+                vc.vertex_dbname(edge.source),
+                vc.vertex_dbname(edge.target),
+                relation_name,
+                stored,
+                tuple(keys.vertex_fields(edge.source, source_keys)),
+                tuple(keys.vertex_fields(edge.target, target_keys)),
+                collection_name=runtime.storage_name(),
+            )
 
     def _validate_bulk_resource(self, resource_name: str | None) -> None:
         if resource_name is None:
@@ -399,44 +489,88 @@ class DBWriter:
     async def _enrich_extra_weights(
         self, gc: GraphContainer, conn_conf: DBConfig, resource
     ) -> None:
-        """Fetch extra-weight vertex data from the DB and attach to edges."""
+        """Copy stored vertex fields onto the edges of the documents that name the vertex.
+
+        For each ``extra_weights`` rule, the weight vertex a document produced
+        is read back from the database, and its fields become attributes of
+        that document's edges. A document that produced several takes the first
+        one the database holds; one that produced none, or none the database
+        holds, keeps its edges as cast.
+        """
+        rules = [
+            (entry.edge, weight)
+            for entry in resource.config.extra_weights
+            for weight in entry.vertex_weights
+        ]
+        if self.dry or not rules:
+            return
+        vc = self._db_aware_for(conn_conf).vertex_config
+
+        def _sync() -> None:
+            with ConnectionManager(connection_config=conn_conf) as db:
+                for edge, weight in rules:
+                    if weight.name not in vc.vertex_set:
+                        logger.error(f"{weight.name} not a valid vertex")
+                        continue
+                    self._enrich_edges_from_stored_vertex(
+                        db, gc, conn_conf, edge=edge, weight=weight
+                    )
+
+        await asyncio.to_thread(_sync)
+
+    def _enrich_edges_from_stored_vertex(
+        self,
+        db: Any,
+        gc: GraphContainer,
+        conn_conf: DBConfig,
+        *,
+        edge: Edge,
+        weight: Weight,
+    ) -> None:
+        """Apply one ``extra_weights`` rule to every document of *gc*."""
+        name = weight.name
+        source_fields = _weight_source_fields(weight)
+        if name is None or not source_fields:
+            return
         vc = self._db_aware_for(conn_conf).vertex_config
         keys = self._keys_for(conn_conf)
 
-        def _sync():
-            with ConnectionManager(connection_config=conn_conf) as db:
-                for entry in resource.config.extra_weights:
-                    edge = entry.edge
-                    if not entry.vertex_weights:
-                        continue
-                    for weight in entry.vertex_weights:
-                        if weight.name not in vc.vertex_set:
-                            logger.error(f"{weight.name} not a valid vertex")
-                            continue
-                        index_fields = vc.identity_fields(weight.name)
-                        if self.dry or weight.name not in gc.vertices:
-                            continue
-                        weights_per_item = db.fetch_present_documents(
-                            class_name=vc.vertex_dbname(weight.name),
-                            batch=keys.vertex_docs(
-                                weight.name, gc.vertices[weight.name]
-                            ),
-                            match_keys=keys.vertex_fields(weight.name, index_fields),
-                            keep_keys=keys.vertex_fields(
-                                weight.name, _weight_source_fields(weight)
-                            ),
-                        )
-                        for j, item in enumerate(gc.linear):
-                            attributes = _weight_attributes(
-                                weight,
-                                keys.logical_vertex_doc(
-                                    weight.name, weights_per_item[j][0]
-                                ),
-                            )
-                            for ee in item[edge.edge_id]:
-                                ee.update(attributes)
+        # One lookup for the batch; `owners` says which document asked for each key.
+        key_docs: list[dict[str, Any]] = []
+        owners: list[int] = []
+        pending: dict[int, list[tuple]] = {}
+        for position, item in enumerate(gc.linear):
+            triples = _document_edges(item, edge)
+            if not triples:
+                continue
+            pending[position] = triples
+            for doc in item.get(name, ()):
+                key_docs.append(doc)
+                owners.append(position)
+        if not key_docs:
+            return
 
-        await asyncio.to_thread(_sync)
+        resolved = db.resolve_vertices(
+            vc.vertex_dbname(name),
+            keys.vertex_docs(name, key_docs),
+            tuple(keys.vertex_fields(name, vc.identity_fields(name))),
+            tuple(keys.vertex_fields(name, source_fields)),
+        )
+        for index in sorted(resolved):
+            matches = resolved[index]
+            if not matches:
+                continue
+            # Popped, so a document's first stored vertex is the one it takes.
+            triples = pending.pop(owners[index], None)
+            if triples is None:
+                continue
+            attributes = _weight_attributes(
+                weight, keys.logical_vertex_doc(name, matches[0])
+            )
+            for triple in triples:
+                # The attribute dict is the one `gc.edges` holds, so the edge
+                # write sees it.
+                triple[2].update(attributes)
 
     # ------------------------------------------------------------------
     # Edges
@@ -481,6 +615,7 @@ class DBWriter:
         async def _push_one(edge_id: tuple, docs: list) -> None:
             edge = _schema_edge_for(edge_id)
             if edge is None:
+                self._report_undeclared_edge(edge_id, len(docs))
                 return
             async with AsyncExitStack() as stack:
                 # Cypher relationship MERGE has the same concurrent
@@ -563,6 +698,19 @@ class DBWriter:
             *[_push_one(edge_id, docs) for edge_id, docs in gc.edges.items()]
         )
 
+    def _report_undeclared_edge(self, edge_id: tuple, count: int) -> None:
+        """Say, once per edge id, that its edges are not written."""
+        if edge_id in self._reported_undeclared_edges:
+            return
+        self._reported_undeclared_edges.add(edge_id)
+        logger.warning(
+            "Edge %s is not written: the schema does not declare it (%s in this "
+            "batch; reported once). Declare the edge, or name the declared "
+            "relation on the step that produces it.",
+            edge_id,
+            count,
+        )
+
     def _endpoint_match_lookup(self, resource: Any | None) -> Any:
         """Return a lookup for a resource's endpoint identity selections.
 
@@ -641,16 +789,22 @@ class DBWriter:
             logger.debug("Edge %s endpoint resolution: %s", edge_id, stats.summary())
         return resolved
 
-    def _db_semaphore(self) -> asyncio.Semaphore:
+    def _db_semaphore(self, conn_conf: DBConfig) -> asyncio.Semaphore:
         """Shared semaphore so ``max_concurrent`` bounds the whole run.
 
         Created lazily per event loop: a writer reused across separate
         ``asyncio.run`` calls must not carry a semaphore bound to a closed loop.
         """
         loop = asyncio.get_running_loop()
-        if self._semaphore is None or self._semaphore_loop is not loop:
-            self._semaphore = asyncio.Semaphore(self.max_concurrent)
+        bound = self.max_concurrent
+        if (
+            self._semaphore is None
+            or self._semaphore_loop is not loop
+            or self._semaphore_bound != bound
+        ):
+            self._semaphore = asyncio.Semaphore(bound)
             self._semaphore_loop = loop
+            self._semaphore_bound = bound
         return self._semaphore
 
     async def _acquire_write_slot(
@@ -660,7 +814,7 @@ class DBWriter:
         itself (Cypher MERGE has no cross-transaction atomicity), a
         per-collection lock so the same collection is written by one batch at a
         time while distinct collections still proceed in parallel."""
-        await stack.enter_async_context(self._db_semaphore())
+        await stack.enter_async_context(self._db_semaphore(conn_conf))
         if conn_conf.connection_type in _CONCURRENT_UPSERT_SAFE_FLAVORS:
             return
         loop = asyncio.get_running_loop()

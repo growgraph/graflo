@@ -152,10 +152,15 @@ class ResourceSampler:
         # that happened to hold exactly ``max_docs`` from one that was truncated.
         probe = self.max_docs + 1
         docs: list[dict[str, Any]] = []
-        for batch in data_source.iter_batches(batch_size=probe, limit=probe):
-            docs.extend(batch)
-            if len(docs) >= probe:
-                break
+        try:
+            for batch in data_source.iter_batches(batch_size=probe, limit=probe):
+                docs.extend(batch)
+                if len(docs) >= probe:
+                    break
+        finally:
+            # Closed without acknowledging: a sample must not move the position
+            # an ingest reads from.
+            data_source.close()
         return self._normalize_docs(docs)
 
     # ------------------------------------------------------------------

@@ -10,8 +10,40 @@ from typing import Any
 
 from graflo.architecture.backend.index import GraFloIndex
 from graflo.architecture.backend.layout import GraFloLayout
-from graflo.architecture.graph_types import GraphContainer
+from graflo.architecture.graph_types import EdgeId, GraphContainer
 from graflo.architecture.schema.document import Schema
+from graflo.architecture.schema.physical_keys import PhysicalKeys
+from graflo.onto import DBType
+
+
+def stored_schema(schema: Schema) -> Schema:
+    """*schema* with every stored name filled in, as the writer used them."""
+    from graflo.architecture.evolution.sanitize import with_physical_names
+
+    return with_physical_names(schema, DBType.GRAFLO_BACKEND)
+
+
+def vertex_chunk_key(schema: Schema, vertex: str) -> str:
+    """The name the chunks of *vertex* are stored under: its storage name.
+
+    It is the name a writer passes the connection, so a directory written for
+    a target that renames things is read back under the same name.
+    """
+    return stored_schema(schema).db_profile.vertex_storage_name(vertex)
+
+
+def edge_chunk_key(schema: Schema, edge_id: EdgeId) -> EdgeId:
+    """The key the chunks of the edge *edge_id* are stored under.
+
+    The storage names of both endpoints and the logical relation, which is
+    what a writer passes the connection.
+    """
+    source, target, relation = edge_id
+    return (
+        vertex_chunk_key(schema, source),
+        vertex_chunk_key(schema, target),
+        relation,
+    )
 
 
 class GraFloBackendReader:
@@ -92,25 +124,38 @@ class GraFloBackendReader:
             if batch:
                 yield batch
 
-    def load_graph_container(self) -> GraphContainer:
+    def load_graph_container(self, *, limit: int | None = None) -> GraphContainer:
+        """The whole graph, keyed by the logical names of ``schema.yaml``.
+
+        Args:
+            limit: At most this many records per vertex type and per edge.
+        """
         schema = self.read_schema()
+        keys = PhysicalKeys(stored_schema(schema).db_profile)
         vertices: dict[str, list] = {}
-        edges: dict[tuple[str, str, str | None], list] = {}
+        edges: dict[EdgeId, list] = {}
 
         for vertex in schema.core_schema.vertex_config.vertices:
             docs: list[dict[str, Any]] = []
-            for batch in self.iter_vertex_batches(vertex.name):
-                docs.extend(batch)
+            for batch in self.iter_vertex_batches(
+                vertex_chunk_key(schema, vertex.name), limit=limit
+            ):
+                docs.extend(keys.logical_vertex_doc(vertex.name, doc) for doc in batch)
             if docs:
                 vertices[vertex.name] = docs
 
         for edge in schema.core_schema.edge_config.values():
             edge_docs: list[list[Any]] = []
-            edge_key = edge.edge_id
-            for batch in self.iter_edge_batches(edge_key):
-                edge_docs.extend(batch)
+            for batch in self.iter_edge_batches(
+                edge_chunk_key(schema, edge.edge_id), limit=limit
+            ):
+                edge_docs.extend(
+                    keys.logical_edge_triples(
+                        edge.edge_id, edge.source, edge.target, batch
+                    )
+                )
             if edge_docs:
-                edges[edge_key] = edge_docs
+                edges[edge.edge_id] = edge_docs
 
         return GraphContainer(vertices=vertices, edges=edges, linear=[])
 

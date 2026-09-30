@@ -22,7 +22,7 @@ from graflo.data_source.rdf import (
     SparqlSourceConfig,
 )
 
-DATA_DIR = Path(__file__).parent / "data"
+DATA_DIR = Path(__file__).parents[2] / "data" / "rdf"
 SAMPLE_DATA = DATA_DIR / "sample_data.ttl"
 
 

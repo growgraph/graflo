@@ -90,7 +90,8 @@ store under its own name, you see the name the target stores it under.
 The target holds one vertex type per source vertex type and one edge type per
 source edge type, with the same records. On a PostgreSQL target the vertex
 types are tables, and each edge type is a table named
-`{source}_{target}_{relation}_edges` with `source_id` and `target_id` columns.
+`{source}_{target}_{relation}_edges` with `source_id` and `target_id` columns,
+or a column per identity field for a vertex type with a composite identity.
 
 ## Options
 

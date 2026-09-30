@@ -143,18 +143,20 @@ case. The record of how the merge was resolved is stored beside it as a recipe.
 
 History is append-only, so undoing a change moves forward:
 `build_revert_commit` (`graflo revert`) records a new commit that applies the
-inverses. Inversion is exact or it fails: an op with no inverse, or one whose
-inverse needs data the current manifest no longer holds, raises rather than
-producing a manifest that only resembles the earlier one. When the base
-manifest is available, checking out the parent commit is always exact and is
-the better tool.
+inverses. Each inverse is computed against the manifest its op was applied to,
+passed as `before=`; `checkout_parent(base, history, commit_id)` rebuilds it
+from the base. The inverses are then applied to the head. Inversion is exact
+or it fails: a commit holding an op with no inverse is refused, and so is one
+whose inverses no longer apply to the head because a later commit changed what
+they touch. Checking out the parent commit is always exact.
 
 | Reversible | Irreversible |
 |---|---|
 | add and remove: vertices, edges, vertex and edge properties, indexes | `merge_vertices`, `merge_edges` |
 | rename: vertices, relations, resources, properties; `canonicalize` that only renames | `change_field_types`, `canonicalize` that merges |
 | `set_edge_directed`, `retarget_edges`, `add_inverse_edges`, `set_native_inverses`, `set_inverse_emission`; `declare_edge_inverses` and `retract_edge_inverses` | `sanitize`, `project_manifest` |
-| `replace_identity` (with `retire: keep`), secondary identities | `add_resource_transforms`, `ensure_extracted_fields`, `merge_manifests` |
+| `replace_identity` (with `retire: keep`), secondary identities, `replace_edge_identities` | `add_resource_transforms`, `ensure_extracted_fields`, `merge_manifests` |
+| add, remove and replace resources; `set_bindings`, `set_db_profile`; grounding and descriptions | |
 
 Whether an op can be undone depends on the op and on the manifest it met.
 `invert_op` applies its candidate inverse and offers it only when the result
@@ -167,6 +169,10 @@ has the content hash of the state before, so an inverse is exact or absent:
   disagreed about the property beforehand;
 - a property rename onto a name already taken folds two properties into one,
   and renaming back cannot make them two again;
+- a `remove_resources` of resources that bindings served has no inverse,
+  because the bindings removed with them are not restored; nor has an `add_resources`
+  or `replace_resources` that registered a transform the manifest did not hold,
+  because no op withdraws one;
 - an op the manifest refuses has no inverse, because nothing was done.
 
 A removed property is restored as the property it was, with its type,
@@ -243,9 +249,10 @@ apply. So an op also has a read set (`op_reads`):
 | Op | Reads |
 |---|---|
 | `add_edges`, `retarget_edges`, and every op addressed by edge triple | the endpoint types (old and new, for a retarget) |
-| ops addressed by relation: edge properties, `remove_edges`, `rename_relations`, `merge_edges`, the inverse ops | the types that relation connects in the base; the op names only the relation |
+| ops addressed by relation: edge properties, `remove_edges`, `rename_relations`, `merge_edges`, the inverse ops | the types that relation connects in the base, or, after a rename on the op's own side, the types the renamed relation connects; the op names only the relation |
 | `replace_identity`, `add_secondary_identities` | the fields they key on, and those fields' types |
 | `add_vertex_indexes`; edge index and identity ops | the fields they index or key on |
+| `add_resources`, `replace_resources` | the types the pipeline names, the relations its edge steps write, and the properties it maps from a named column (a vertex step's `from`, a router's `vertex_from_map`); not a property a step fills under its own name |
 
 A read is disturbed by a write at or above it, never below: an edge onto `line`
 conflicts with removing or renaming `line`, and merges with a new property on
@@ -255,7 +262,7 @@ reported at the written slot with both ops attached, and is resolved like any
 other. `ops_independent(a, b, base)` is the test the merge and its tests share.
 
 A change that no op expresses, such as one of a relation's edges gaining a
-property its siblings lack, or an edited pipeline, cannot be merged at all: the
+property its siblings lack, cannot be merged at all: the
 merge is built from each side's ops, so the result would lack it.
 `merge_three_way` raises `MergeError` naming what is left over rather than
 return a result that looks clean and is incomplete.
@@ -355,8 +362,10 @@ graflo merge A.yaml B.yaml -o AB.yaml -m "join"   # a union, recorded as a two-p
 refuses to store a change set that does not reproduce the target; `--hints`
 names renames the differ cannot infer. `graflo merge3` stops at conflicts
 unless `--take left` or `--take right` settles them; `--plot` draws where the
-two branches met. Commits live under `.graflo/commits` by default, one YAML
-file per commit (`--store` changes it). The store rebuilds the graph of commits
+two branches met. When the history has several heads, `graflo log` names the
+verb that joins them: `graflo merge3` for heads that share an ancestor,
+`graflo merge` for unrelated lineages. Commits live under `.graflo/commits` by
+default, one YAML file per commit (`--store` changes it). The store rebuilds the graph of commits
 from the recorded parent ids, not from the file names.
 
 These commands record and replay changes to a manifest. `graflo migrate-schema`
@@ -367,8 +376,9 @@ is different: it plans and applies changes to a database.
 - A commit history changes manifests only. Applying it to a live database is
   not part of version control; `graflo migrate-schema` plans database changes
   and applies additive ones.
-- A change no op expresses, such as an edited pipeline step, cannot be recorded
-  from a diff or merged three ways; both refuse and name it.
+- A change no op expresses, such as one of a relation's edges gaining a
+  property its siblings lack, cannot be recorded from a diff or merged three
+  ways; both refuse and name it.
 
 ## Further reading
 

@@ -18,10 +18,11 @@ import gzip
 import json
 import logging
 from os.path import join
+from typing import Any
 
 from arango import ArangoClient
 
-from graflo.filter.onto import FilterExpression
+from graflo.filter.onto import BoundParams, FilterExpression, render_conjunct
 from graflo.onto import ExpressionFlavor
 
 logger = logging.getLogger(__name__)
@@ -130,11 +131,12 @@ def fetch_fields_query(
     match_keys,
     keep_keys,
     filters: list | dict | FilterExpression | None = None,
-):
-    """Generate and execute a field-fetching AQL query.
+) -> tuple[str, dict[str, Any]]:
+    """Generate a field-fetching AQL query and its bind variables.
 
     This function generates an AQL query to fetch specific fields from documents
     that match the given criteria. It supports filtering and field projection.
+    The documents and the filter values travel as bind variables.
 
     Args:
         collection_name: Vertex/edge class name to query (ArangoDB collection name)
@@ -144,10 +146,10 @@ def fetch_fields_query(
         filters: Additional query filters
 
     Returns:
-        str: Generated AQL query string
+        The AQL query, and the bind variables to execute it with.
 
     Example:
-        >>> query = fetch_fields_query(
+        >>> query, bind_vars = fetch_fields_query(
         ...     "users",
         ...     [{"email": "user@example.com"}],
         ...     ["email"],
@@ -158,7 +160,8 @@ def fetch_fields_query(
     for i, doc in enumerate(docs_):
         doc.update({"__i": i})
 
-    docs_str = json.dumps(docs_)
+    bind_vars: dict[str, Any] = {"docs": docs_}
+    params = BoundParams(ExpressionFlavor.AQL)
 
     match_str = " &&".join([f" _cdoc['{key}'] == _doc['{key}']" for key in match_keys])
 
@@ -170,15 +173,19 @@ def fetch_fields_query(
             if isinstance(filters, FilterExpression)
             else FilterExpression.from_dict(filters)
         )
-        extrac_filter_clause = f" && {ff(doc_name='_cdoc', kind=ExpressionFlavor.AQL)}"
+        condition = render_conjunct(
+            ff, doc_name="_cdoc", kind=ExpressionFlavor.AQL, params=params
+        )
+        extrac_filter_clause = f" && {condition}"
     else:
         extrac_filter_clause = ""
 
     q0 = f"""
         FOR _cdoc in {collection_name}
-            FOR _doc in {docs_str}
+            FOR _doc in @docs
                 FILTER {match_str} {extrac_filter_clause}      
                 COLLECT i = _doc['__i'] into _group = _cdoc 
                 LET gp = (for _x in _group return {keep_clause})                                
                     RETURN {{'__i' : i, '_group': gp}}"""
-    return q0
+    bind_vars.update(params.values)
+    return q0, bind_vars

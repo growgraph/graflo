@@ -146,11 +146,13 @@ The message from the first example, sent with the key `SN-4471`, becomes:
 
 ## Offsets and consumer groups
 
-GraFlo commits the offsets of the consumer group itself; automatic commits are off. It commits after each batch of records it reads, so the next run with the same `group_id` starts after the last committed batch.
+GraFlo commits the offsets of the consumer group itself; automatic commits are off. It commits a batch of records once that batch is written to the target, so the next run with the same `group_id` starts after the last batch that reached the graph.
 
 A group with no committed offsets starts where `auto_offset_reset` says: `earliest` reads the topic from its oldest message, and `latest` reads only messages that arrive after the consumer joins. To read a topic again from the start, run with a new `group_id`.
 
-GraFlo commits a batch as soon as it asks for the next one, and it reads ahead of writing (see `batch_prefetch` in [Parallelism](../ingestion/parallelism.md)). A batch can therefore be committed before it is written to the database. If a run fails part way, messages whose offsets were committed can be missing from the graph; rerun with a new `group_id` to read them again.
+Delivery is at least once. A batch that was read and not written, because the run failed or was stopped, is read again by the next run; a batch written out of turn is committed only when every batch before it is written too. A database target upserts, so a record read twice is stored once; the [file backend](../glossary.md#file-backend) appends, so it stores the record twice. Three cases commit nothing: a dry run (`IngestionParams(dry=True)`), a sample taken with `GraphEngine.sample_resources`, and a native bulk load that fails before its data is loaded.
+
+`KafkaDataSource` used on its own follows the same rule: `iter_batches` commits nothing until you call `acknowledge(batch_index)` for a batch you have written, and `close()` commits what is acknowledged and leaves the group.
 
 ## Connector fields
 
@@ -211,7 +213,7 @@ provider.bind_from_bindings(bindings=bindings)
 - The connector only reads. GraFlo does not write to Kafka.
 - `KafkaConnConfig` has no fields for certificate files or a custom certificate authority.
 - An error reported by the broker while polling raises an exception and ends the ingestion.
-- A connector whose label has no registered configuration is skipped with a warning in the log; the other connectors run as usual.
+- A connector whose label has no registered configuration fails the run before anything is read, with a `ValueError` that names the resource and the connector. With `IngestionParams(strict_registry=False)` it is skipped with a warning in the log and the other connectors run as usual.
 
 ## What to read next
 

@@ -37,7 +37,8 @@ check cannot match the commit to your acceptance.
    ```bash
    uv sync --extra dev
    ```
-   Add `--extra docs` if you will build the documentation site locally.
+   Add `--extra docs` in the same command if you will build the documentation
+   site locally: `uv sync` removes the extras you leave out.
 4. Install pre-commit hooks:
    ```bash
    uv run pre-commit install
@@ -85,8 +86,8 @@ check cannot match the commit to your acceptance.
 To build and preview the docs site locally:
 
 ```bash
-uv sync --extra docs
-uv run mkdocs serve
+uv sync --extra dev --extra docs
+uv run properdocs serve
 ```
 
 If you edit the GraFlo meta-ontology (`graflo/rdf/ontology/graflo.ttl`), regenerate the interactive visualization and commit the updated assets:
@@ -123,7 +124,19 @@ Per-engine compose files, ports, and env notes are in [`docker/README.md`](https
 uv run pytest test
 ```
 
-NebulaGraph tests are gated behind `pytest --run-nebula`. CI intentionally skips the database suite.
+Tests marked `tigergraph`, `nebula`, `kafka`, `performance` or `bulk_e2e` are skipped unless you pass the matching option: `--run-tigergraph`, `--run-nebula`, `--run-kafka`, `--run-performance` or `--run-bulk-e2e`.
+
+The suites under `test/db`, `test/data_source` and `test/object_storage` need the containers. The rest runs in-process, and CI runs exactly that part on every pull request:
+
+```bash
+uv run pytest test --ignore=test/db --ignore=test/data_source --ignore=test/object_storage
+```
+
+CI does not run the database suites, so run them locally before a change to a backend.
+
+### uv version
+
+`pyproject.toml` sets `required-version` for uv, and the workflows pin the same line. A different uv minor rewrites `uv.lock` with identical content, so change both together.
 
 ## Pull Request Process
 

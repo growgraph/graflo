@@ -11,8 +11,9 @@ from decimal import Decimal
 from typing import Any
 
 from pydantic import Field, PrivateAttr
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, literal_column, select, text
 from sqlalchemy.engine import Engine, make_url
+from sqlalchemy.sql.expression import Executable
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.data_source.base import AbstractDataSource, DataSourceType
@@ -82,14 +83,29 @@ class SQLDataSource(AbstractDataSource):
                 row_dict[key] = float(value)
         return row_dict
 
+    def _statement(self, limit: int | None) -> Executable:
+        """The configured query, bounded to *limit* rows when one is given.
+
+        The bound is part of the statement, so the database plans for it and
+        stops there. The query becomes a derived table and the row limit is
+        compiled for the engine's dialect, which leaves the query text itself
+        untouched. A derived table needs distinct column names on some engines,
+        so a query that returns two columns of one name cannot be limited there.
+        """
+        if limit is None:
+            return text(self.config.query)
+        inner = text(self.config.query.strip().rstrip(";").rstrip())
+        source = inner.columns().subquery("graflo_source")
+        return select(literal_column("*")).select_from(source).limit(limit)
+
     def iter_batches(
         self, batch_size: int = 1000, limit: int | None = None
     ) -> Iterator[list[dict]]:
         """Iterate over SQL query results in batches.
 
         Executes the configured query once per call and reads via
-        ``fetchmany`` on a streaming result. Optional ``limit`` stops after
-        that many rows without adding LIMIT/OFFSET to the SQL text.
+        ``fetchmany`` on a streaming result. With ``limit``, the statement
+        itself is bounded to that many rows (see :meth:`_statement`).
 
         Args:
             batch_size: Target size of each yielded batch of row dicts
@@ -98,6 +114,10 @@ class SQLDataSource(AbstractDataSource):
 
         Yields:
             list[dict]: Batches of rows as dictionaries
+
+        Raises:
+            sqlalchemy.exc.SQLAlchemyError: When the query fails. A source that
+                cannot be read must not look like an empty one.
         """
         effective_batch = max(1, batch_size)
         engine = self._get_engine()
@@ -106,7 +126,7 @@ class SQLDataSource(AbstractDataSource):
         try:
             with engine.connect() as conn:
                 stream = conn.execution_options(stream_results=True)
-                result = stream.execute(text(self.config.query), self.config.params)
+                result = stream.execute(self._statement(limit), self.config.params)
                 try:
                     while True:
                         if limit is not None and total_items >= limit:
@@ -140,3 +160,4 @@ class SQLDataSource(AbstractDataSource):
 
         except Exception as e:
             logger.error("SQL query execution failed: %s", e)
+            raise

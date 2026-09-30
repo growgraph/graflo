@@ -89,7 +89,7 @@ By default `define_schema` creates the namespace when it is missing, then
 defines the vertex and edge types in it:
 
 ```python
-from graflo import GraphEngine
+from graflo import DBType, GraphEngine
 from graflo.connections import Neo4jConfig
 
 engine = GraphEngine(target_db_flavor=DBType.NEO4J)
@@ -140,15 +140,15 @@ existing schema: GraFlo defines the types in it.
 
 ## TigerGraph
 
-Vertex and edge types in TigerGraph are global to the server, and a graph
-lists the types it uses. This changes what `recreate_schema=True` does:
+Vertex and edge types in TigerGraph are global to the database instance, and
+a graph lists the types it uses. This changes what `recreate_schema=True` does:
 
 - With `create_namespace=True` (the default), GraFlo drops the graph, drops
   the types of the schema, creates the graph again and defines the types.
 - With `create_namespace=False`, GraFlo keeps the graph and drops only the
   types of the schema.
 
-In both cases a type that another graph on the server uses is kept, so that
+In both cases a type that another graph on the instance uses is kept, so that
 graph and its installed queries are not affected.
 
 ## Required privileges

@@ -26,6 +26,33 @@ _STEP_STRIP_KEYS = frozenset(
 )
 
 
+#: The model a recognised step is validated as, by its ``type``.
+_STEP_MODEL_NAMES = {
+    "transform": "TransformActorConfig",
+    "edge": "EdgeActorConfig",
+}
+
+
+def _broken_rules(err: ValidationError, model_name: str) -> str:
+    """What *model_name* objected to, in the validator's own words.
+
+    A step is validated against every step kind, so *err* also carries the
+    complaints of the kinds it is not; only *model_name*'s say what to change.
+    """
+    rules: dict[str, None] = {}
+    for error in err.errors():
+        loc = error["loc"]
+        if not loc or model_name not in str(loc[0]):
+            continue
+        message = str(error["msg"]).rstrip(".")
+        if error["type"] == "value_error":
+            rules[message.removeprefix("Value error, ")] = None
+            continue
+        path = ".".join(str(part) for part in loc[1:])
+        rules[f"`{path}`: {message}" if path else message] = None
+    return "; ".join(rules)
+
+
 def _raise_step_validation_error(data: dict[str, Any], err: ValidationError) -> Never:
     """Raise a concise, user-facing validation error for malformed actor steps."""
     keys = ", ".join(sorted(data.keys()))
@@ -44,21 +71,18 @@ def _raise_step_validation_error(data: dict[str, Any], err: ValidationError) -> 
             "Use `rename` (for field renaming) or `call` (for function transforms). "
             f"Step keys: [{keys}]."
         ) from err
-    if data.get("type") == "transform":
-        raise ValueError(
-            "Invalid transform step. Expected exactly one of `rename` or `call`. "
-            f"Step keys: [{keys}]."
-        ) from err
-    if data.get("type") == "edge":
-        # An edge step is recognised; what it broke is one of the step's own
-        # rules, and the rule's wording says what to change.
-        rules = "; ".join(
-            dict.fromkeys(
-                str(error["msg"]).removeprefix("Value error, ")
-                for error in err.errors()
-            )
-        )
-        raise ValueError(f"Invalid edge step: {rules} Step keys: [{keys}].") from err
+    step_type = data.get("type")
+    model_name = (
+        _STEP_MODEL_NAMES.get(step_type) if isinstance(step_type, str) else None
+    )
+    if model_name is not None:
+        # The step is recognised; what it broke is one of its own rules, and
+        # the rule's wording says what to change.
+        rules = _broken_rules(err, model_name)
+        if rules:
+            raise ValueError(
+                f"Invalid {step_type} step: {rules}. Step keys: [{keys}]."
+            ) from err
     raise ValueError(
         "Invalid actor step configuration. "
         "Supported step forms include `vertex`, `transform`, `edge`, `descend`, "

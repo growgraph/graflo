@@ -1,0 +1,366 @@
+/* Palette. The header is GrowGraph ink, so the mark's white disc and burnt
+   orange stand out against it; orange carries links, accents and buttons.
+   Link colours meet WCAG AA against their background. */
+
+:root,
+[data-md-color-scheme="default"] {
+  --gg-ink: #293241;
+  --gg-ink-light: #3d4a5e;
+  --gg-ink-dark: #1d2430;
+  --gg-orange: #be5103;
+  /* Orange for marks that sit on the ink itself, where #be5103 is too faint. */
+  --gg-orange-on-ink: #f2a268;
+  --gg-mark: var(--gg-orange);
+  --gg-rule: rgba(41, 50, 65, 0.16);
+  --gg-tint: rgba(41, 50, 65, 0.06);
+
+  --md-primary-fg-color: var(--gg-ink);
+  --md-primary-fg-color--light: var(--gg-ink-light);
+  --md-primary-fg-color--dark: var(--gg-ink-dark);
+  --md-primary-bg-color: #ffffff;
+  --md-primary-bg-color--light: rgba(255, 255, 255, 0.72);
+  --md-accent-fg-color: var(--gg-orange);
+  --md-accent-fg-color--transparent: rgba(190, 81, 3, 0.1);
+  --md-typeset-a-color: #a84802;
+  --md-code-bg-color: #f3f4f7;
+  --md-footer-bg-color: var(--gg-ink-dark);
+  --md-footer-bg-color--dark: #161b24;
+}
+
+/* Dark: Material's slate, hue-shifted toward the ink so the page and the
+   header belong to one family. */
+[data-md-color-scheme="slate"] {
+  --md-hue: 218;
+  --gg-mark: var(--gg-orange-on-ink);
+  --gg-rule: rgba(255, 255, 255, 0.16);
+  --gg-tint: rgba(255, 255, 255, 0.05);
+
+  --md-primary-fg-color: #1d2430;
+  --md-primary-fg-color--light: #293241;
+  --md-primary-fg-color--dark: #141922;
+  --md-accent-fg-color: #ffb27a;
+  --md-accent-fg-color--transparent: rgba(255, 178, 122, 0.1);
+  --md-typeset-a-color: #f2a268;
+  --md-footer-bg-color: #141922;
+  --md-footer-bg-color--dark: #0f131a;
+}
+
+/* Type. Headings take the wordmark's face; body and code come from
+   `theme.font`. Material sets h1 light and grey, which reads as a caption
+   next to a 600 heading face, so headings take the full text colour. */
+
+/* On `body`, not `:root`: that is where Material defines the family it falls
+   back to, and a variable referencing an undefined one resolves to nothing. */
+body {
+  --gg-heading-font: "Montserrat", var(--md-text-font-family), sans-serif;
+}
+
+.md-typeset h1,
+.md-typeset h2,
+.md-typeset h3,
+.md-typeset h4,
+.md-header__title,
+.md-tabs__link,
+.md-nav__title {
+  font-family: var(--gg-heading-font);
+}
+
+.md-typeset h1,
+.md-typeset h2,
+.md-typeset h3,
+.md-typeset h4 {
+  color: var(--md-default-fg-color);
+  font-weight: 600;
+  letter-spacing: -0.012em;
+}
+
+.md-typeset h1 {
+  font-size: 1.9em;
+  line-height: 1.2;
+}
+
+.md-typeset h2 {
+  font-size: 1.4em;
+  line-height: 1.3;
+  margin-top: 2em;
+}
+
+.md-typeset h3 {
+  font-size: 1.12em;
+  line-height: 1.35;
+}
+
+.md-typeset h4 {
+  font-size: 1em;
+}
+
+/* A heading that is an identifier stays in the code face at heading weight. */
+.md-typeset h1 code,
+.md-typeset h2 code,
+.md-typeset h3 code,
+.md-typeset h4 code {
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.md-header__title {
+  font-weight: 600;
+}
+
+/* Header and tabs. */
+
+.md-header__button.md-logo img {
+  height: 1.7rem;
+  width: 1.7rem;
+}
+
+.md-tabs__link {
+  font-size: 0.68rem;
+  font-weight: 600;
+}
+
+.md-tabs__item--active .md-tabs__link {
+  box-shadow: inset 0 -0.12rem 0 var(--gg-orange-on-ink);
+}
+
+/* Buttons in the mark's orange rather than the header ink. */
+
+.md-typeset .md-button {
+  border-color: var(--md-typeset-a-color);
+  border-radius: 0.2rem;
+  color: var(--md-typeset-a-color);
+  font-family: var(--gg-heading-font);
+  font-weight: 600;
+}
+
+.md-typeset .md-button--primary,
+.md-typeset .md-button:focus,
+.md-typeset .md-button:hover {
+  background-color: var(--gg-orange);
+  border-color: var(--gg-orange);
+  color: #ffffff;
+}
+
+/* Tables carry most of the reference content: a tinted header row, figures
+   that line up, and cells that do not break an identifier mid-word. */
+
+.md-typeset table:not([class]) {
+  border-color: var(--gg-rule);
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.md-typeset table:not([class]) th {
+  background-color: var(--gg-tint);
+  font-family: var(--gg-heading-font);
+  font-weight: 600;
+  padding: 0.7em 1em;
+}
+
+.md-typeset table:not([class]) td {
+  border-top-color: var(--gg-rule);
+  padding: 0.6em 1em;
+}
+
+.md-typeset table:not([class]) code {
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+/* Code. */
+
+.md-typeset code {
+  border-radius: 0.15rem;
+}
+
+.md-typeset pre > code {
+  border-radius: 0.2rem;
+}
+
+/* API reference: indent each object's body under a rule, so nesting is
+   visible on pages that hold a module, its classes and their members. */
+
+.md-typeset .doc-contents:not(.first) {
+  border-left: 0.1rem solid var(--gg-rule);
+  padding-left: 0.9rem;
+}
+
+.md-typeset .doc-heading {
+  margin-top: 1.6em;
+}
+
+/* An object heading is a whole signature, often several lines of it; at
+   heading weight it reads as a block of bold. */
+.md-typeset .doc-heading code {
+  font-size: 0.9em;
+  font-weight: 400;
+}
+
+.md-typeset h5.doc-heading,
+.md-typeset .doc-contents h5 {
+  color: var(--md-default-fg-color--light);
+  font-family: var(--gg-heading-font);
+  font-weight: 600;
+  text-transform: none;
+}
+
+.md-typeset details.quote {
+  border-color: var(--gg-rule);
+}
+
+/* Landing page. */
+
+.gf-hero {
+  align-items: center;
+  display: grid;
+  gap: 1.5rem 3rem;
+  grid-template-columns: minmax(0, 1fr);
+  margin: 0.5rem 0 3rem;
+}
+
+@media screen and (min-width: 60em) {
+  .gf-hero {
+    grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+    margin-top: 1.5rem;
+  }
+}
+
+.md-typeset .gf-hero h1 {
+  font-size: 3.2em;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1;
+  margin: 0 0 0.45em;
+}
+
+.md-typeset .gf-hero p {
+  max-width: 34em;
+}
+
+.md-typeset .gf-hero .gf-lead {
+  font-size: 1.3em;
+  line-height: 1.4;
+}
+
+.md-typeset .gf-hero .highlight {
+  max-width: 22em;
+}
+
+.md-typeset .gf-hero .md-button {
+  margin: 0.4rem 0.5rem 0 0;
+}
+
+/* Sources, the manifest and the targets, drawn the way the mark is drawn:
+   open circles joined by edges. */
+
+.md-typeset .gf-flow {
+  margin: 0 auto;
+  max-width: 30rem;
+  width: 100%;
+}
+
+.gf-flow svg {
+  display: block;
+  height: auto;
+  width: 100%;
+}
+
+.gf-flow .gf-flow__edge {
+  fill: none;
+  stroke: var(--md-default-fg-color--lighter);
+  stroke-width: 1.25;
+}
+
+.gf-flow .gf-flow__node {
+  fill: var(--md-default-bg-color);
+  stroke: var(--gg-mark);
+  stroke-width: 2.5;
+}
+
+.gf-flow .gf-flow__hub {
+  stroke-width: 3.5;
+}
+
+.gf-flow text {
+  fill: var(--md-default-fg-color);
+  font-family: var(--md-text-font-family);
+  font-size: 13px;
+}
+
+.gf-flow .gf-flow__hub-label {
+  font-family: var(--gg-heading-font);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+/* Three things the library does, as ruled columns. */
+
+.gf-columns {
+  display: grid;
+  gap: 1.5rem 2.5rem;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@media screen and (min-width: 60em) {
+  .gf-columns {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.gf-columns > div {
+  border-top: 0.12rem solid var(--gg-mark);
+  padding-top: 0.2rem;
+}
+
+.md-typeset .gf-columns h3 {
+  margin-top: 0.8em;
+}
+
+/* The example manifest: prose in a narrow column beside the code it
+   describes, so neither runs the full width of the page. */
+
+.gf-taste {
+  display: grid;
+  gap: 0 2.5rem;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@media screen and (min-width: 60em) {
+  .gf-taste {
+    grid-template-columns: minmax(0, 0.8fr) minmax(0, 2.2fr);
+  }
+
+  .md-typeset .gf-taste > div > :first-child,
+  .md-typeset .gf-taste pre {
+    margin-top: 0;
+  }
+
+  .gf-taste > div {
+    margin-bottom: 1.2rem;
+  }
+}
+
+/* The landing page has no sidebar to edit from, and the edit button would
+   sit on top of the hero. */
+.md-content__inner:has(.gf-hero) > .md-content__button {
+  display: none;
+}
+
+/* Entry-point cards. */
+
+@media screen and (min-width: 60em) {
+  .md-typeset .grid.cards.gf-next {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+.md-typeset .grid.cards > ul > li {
+  border-color: var(--gg-rule);
+  border-radius: 0.2rem;
+}
+
+.md-typeset .grid.cards > ul > li:focus-within,
+.md-typeset .grid.cards > ul > li:hover {
+  border-color: var(--gg-mark);
+  box-shadow: none;
+}

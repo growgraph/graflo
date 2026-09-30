@@ -29,7 +29,8 @@ description in one reviewable file rather than spread across load scripts.
 - **Change the description over time, with a recorded history.** Renaming a
   type, combining two types or changing a property type is a typed operation.
   Operations are recorded as commits (`graflo commit`, `log`, `checkout`,
-  `verify`) that you can replay, check and, for most operations, undo. Two
+  `verify`, `revert`) that you can replay, check and, for most operations,
+  undo. Two
   branches of changes to one manifest are reconciled with a three-way merge
   (`graflo merge3`), and two manifests written by different teams are combined
   into one with a union (`graflo merge`).
@@ -107,9 +108,9 @@ Optional extras (see the
 [Installation](https://growgraph.github.io/graflo/getting_started/installation/) guide):
 
 - `dev`: pytest and its plugins, hypothesis, ty, pre-commit
-- `docs`: the MkDocs stack for building the documentation site
+- `docs`: ProperDocs and its plugins, for building the documentation site
 - `plot`: `pygraphviz` for `graflo plot-manifest` and the `--plot` figures of
-  `graflo merge` and `graflo merge3`; install system Graphviz first
+  `graflo merge` and `graflo merge3`
 
 ```bash
 pip install "graflo[dev,docs,plot]"
@@ -149,6 +150,13 @@ uv run pytest test
 
 TigerGraph, NebulaGraph and Kafka tests are skipped unless you pass
 `--run-tigergraph`, `--run-nebula` or `--run-kafka`.
+
+The suites that need no database run without the containers, and CI runs them
+on every pull request:
+
+```shell
+uv run pytest test --ignore=test/db --ignore=test/data_source --ignore=test/object_storage
+```
 
 ## License
 

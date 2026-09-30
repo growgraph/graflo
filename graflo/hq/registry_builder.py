@@ -32,7 +32,7 @@ from graflo.connections.provider import (
 from graflo.data_source.factory import DataSourceFactory
 from graflo.data_source.registry import DataSourceRegistry
 from graflo.data_source.sql import SQLConfig, SQLDataSource
-from graflo.filter.sql import datetime_range_where_sql
+from graflo.filter.sql import datetime_range_filter
 
 if TYPE_CHECKING:
     from graflo.architecture.contract.bindings import Bindings
@@ -68,6 +68,11 @@ class RegistryBuilder:
 
         For each ingestion resource, registers every bound connector (same
         resource may have multiple physical sources).
+
+        A source that cannot be built -- no connector bound, no connection
+        configuration registered, a registration error -- is logged and
+        skipped; with *strict* the build raises once every resource has been
+        tried, listing them all.
         """
         registry = DataSourceRegistry()
         provider = connection_provider or EmptyConnectionProvider()
@@ -121,9 +126,9 @@ class RegistryBuilder:
                             f"Failed to register FILE source for resource "
                             f"'{resource_name}' (connector '{cref}'): {e}"
                         )
+                        if not strict:
+                            logger.warning("%s, skipping", msg)
                         failures.append(msg)
-                        if strict:
-                            continue
 
                 elif kind == BoundSourceKind.SQL_TABLE:
                     if not isinstance(connector, TableConnector):
@@ -148,9 +153,9 @@ class RegistryBuilder:
                             f"Failed to register SQL source for resource "
                             f"'{resource_name}' (connector '{cref}'): {e}"
                         )
+                        if not strict:
+                            logger.warning("%s, skipping", msg)
                         failures.append(msg)
-                        if strict:
-                            continue
 
                 elif kind == BoundSourceKind.SPARQL:
                     if not isinstance(connector, SparqlConnector):
@@ -175,9 +180,9 @@ class RegistryBuilder:
                             f"Failed to register SPARQL source for resource "
                             f"'{resource_name}' (connector '{cref}'): {e}"
                         )
+                        if not strict:
+                            logger.warning("%s, skipping", msg)
                         failures.append(msg)
-                        if strict:
-                            continue
 
                 elif kind == BoundSourceKind.API:
                     if not isinstance(connector, APIConnector):
@@ -201,9 +206,9 @@ class RegistryBuilder:
                             f"Failed to register API source for resource "
                             f"'{resource_name}' (connector '{cref}'): {e}"
                         )
+                        if not strict:
+                            logger.warning("%s, skipping", msg)
                         failures.append(msg)
-                        if strict:
-                            continue
 
                 elif kind == BoundSourceKind.KAFKA:
                     if not isinstance(connector, KafkaConnector):
@@ -226,9 +231,9 @@ class RegistryBuilder:
                             f"Failed to register Kafka source for resource "
                             f"'{resource_name}' (connector '{cref}'): {e}"
                         )
+                        if not strict:
+                            logger.warning("%s, skipping", msg)
                         failures.append(msg)
-                        if strict:
-                            continue
 
                 else:
                     msg = (
@@ -300,8 +305,11 @@ class RegistryBuilder:
         )
         logger.info(f"For resource name {resource_name} {len(files)} files were found")
 
+        encoding = self.ingestion_model.fetch_resource_config(resource_name).encoding
         for file_path in files:
-            file_source = DataSourceFactory.create_file_data_source(path=file_path)
+            file_source = DataSourceFactory.create_file_data_source(
+                path=file_path, encoding=encoding
+            )
             registry.register(file_source, resource_name=resource_name)
 
     # ------------------------------------------------------------------
@@ -345,10 +353,10 @@ class RegistryBuilder:
                 resource_name, connector
             )
         if postgres_config is None:
-            logger.warning(
-                f"PostgreSQL table '{resource_name}' has no connection config, skipping"
+            raise ValueError(
+                f"no PostgreSQL connection configuration for table "
+                f"'{connector.table_name}'"
             )
-            return
 
         table_name = connector.table_name
         schema_name = connector.schema_name
@@ -364,32 +372,28 @@ class RegistryBuilder:
                     vertex_config=self.schema.core_schema.vertex_config,
                 )
 
+            # The run's date range is one more condition on the connector's
+            # query: it applies whether the column comes from the connector or
+            # from the run, beside any window the connector declares itself.
             date_column = connector.date_field or ingestion_params.datetime_column
-            if (
-                ingestion_params.datetime_after or ingestion_params.datetime_before
-            ) and date_column:
-                # Handled below via build_query + appended WHERE.
-                pass
-            elif ingestion_params.datetime_after or ingestion_params.datetime_before:
-                logger.warning(
-                    "datetime_after/datetime_before set but no date column: "
-                    "set TableConnector.date_field or IngestionParams.datetime_column for resource %s",
-                    resource_name,
-                )
+            run_filters = []
+            if ingestion_params.datetime_after or ingestion_params.datetime_before:
+                if date_column:
+                    date_range = datetime_range_filter(
+                        ingestion_params.datetime_after,
+                        ingestion_params.datetime_before,
+                        date_column,
+                    )
+                    if date_range is not None:
+                        run_filters.append(date_range)
+                else:
+                    logger.warning(
+                        "datetime_after/datetime_before set but no date column: "
+                        "set TableConnector.date_field or IngestionParams.datetime_column for resource %s",
+                        resource_name,
+                    )
 
-            query = connector.build_query(effective_schema)
-
-            if date_column and date_column != connector.date_field:
-                dt_where = datetime_range_where_sql(
-                    ingestion_params.datetime_after,
-                    ingestion_params.datetime_before,
-                    date_column,
-                )
-                if dt_where:
-                    if " WHERE " in query:
-                        query += f" AND {dt_where}"
-                    else:
-                        query += f" WHERE {dt_where}"
+            query = connector.build_query(effective_schema, extra_filters=run_filters)
 
             connection_string = postgres_config.to_sqlalchemy_connection_string()
 
@@ -436,6 +440,9 @@ class RegistryBuilder:
         * **File mode** (``connector.rdf_file`` is set): creates an
           :class:`RdfFileDataSource` that parses a local RDF file.
         """
+        if not connector.endpoint_url and not connector.rdf_file:
+            raise ValueError("SparqlConnector has neither endpoint_url nor rdf_file")
+
         try:
             if connector.endpoint_url:
                 from graflo.data_source.rdf import (
@@ -469,7 +476,11 @@ class RegistryBuilder:
                     password=password,
                     page_size=ingestion_params.batch_size,
                 )
-                sparql_source = SparqlEndpointDataSource(config=source_config)
+                sparql_source = SparqlEndpointDataSource(
+                    config=source_config,
+                    same_as=connector.same_as,
+                    typed_objects=connector.typed_objects,
+                )
                 registry.register(sparql_source, resource_name=resource_name)
 
                 logger.info(
@@ -486,6 +497,8 @@ class RegistryBuilder:
                 rdf_source = RdfFileDataSource(
                     path=connector.rdf_file,
                     rdf_class=connector.rdf_class,
+                    same_as=connector.same_as,
+                    typed_objects=connector.typed_objects,
                 )
                 registry.register(rdf_source, resource_name=resource_name)
 
@@ -494,13 +507,6 @@ class RegistryBuilder:
                     "mapped to resource '%s'",
                     connector.rdf_class,
                     connector.rdf_file,
-                    resource_name,
-                )
-
-            else:
-                logger.warning(
-                    "SparqlConnector for resource '%s' has neither endpoint_url nor "
-                    "rdf_file set, skipping",
                     resource_name,
                 )
 
@@ -530,11 +536,10 @@ class RegistryBuilder:
             else None
         )
         if not isinstance(generalized, ApiGeneralizedConnConfig):
-            logger.warning(
-                "API connector for resource '%s' has no RestApiConnConfig, skipping",
-                resource_name,
+            raise ValueError(
+                "no REST API connection configuration is registered for the "
+                "connector's conn_proxy"
             )
-            return
 
         runtime = generalized.config
         # The connector's declared page size is what the endpoint accepts; the
@@ -569,19 +574,18 @@ class RegistryBuilder:
         connection_provider: ConnectionProvider,
     ) -> None:
         """Register Kafka topic data sources for a resource."""
-        from graflo.data_source.kafka import KafkaDataSource
-
         generalized = (
             connection_provider.get_generalized_conn_config(connector)
             if hasattr(connection_provider, "get_generalized_conn_config")
             else None
         )
         if not isinstance(generalized, KafkaGeneralizedConnConfig):
-            logger.warning(
-                "Kafka connector for resource '%s' has no KafkaConnConfig, skipping",
-                resource_name,
+            raise ValueError(
+                "no Kafka connection configuration is registered for the "
+                "connector's conn_proxy"
             )
-            return
+
+        from graflo.data_source.kafka import KafkaDataSource
 
         kafka_config = connector.build_kafka_config(conn=generalized.config)
         kafka_source = KafkaDataSource(config=kafka_config)

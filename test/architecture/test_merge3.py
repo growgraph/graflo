@@ -112,7 +112,7 @@ def test_sanitize_touches_only_the_profile() -> None:
 
 
 def test_a_vertex_slot_is_convention_independent() -> None:
-    """The fold of CORE-MERGE-001 into merge.
+    """Slots key on the canonical name.
 
     Without this, one side's `order_line` and the other's `OrderLine` occupy
     different slots, merge cleanly, and produce a schema holding both as
@@ -815,3 +815,135 @@ def test_two_branches_retyping_one_field_conflict() -> None:
     assert merged is None
     assert len(result.conflicts) == 1
     assert result.conflicts[0].slot_key[-1] == "type"
+
+
+# ── pipelines read what they name ───────────────────────────────────────────
+
+
+def _with_resources(
+    manifest: GraphManifest, resources: dict[str, list]
+) -> GraphManifest:
+    payload = manifest.to_dict(skip_defaults=False)
+    payload["ingestion_model"] = {
+        "resources": [
+            {"name": name, "pipeline": pipeline} for name, pipeline in resources.items()
+        ]
+    }
+    out = GraphManifest.from_config(payload)
+    out.finish_init()
+    return out
+
+
+def test_a_resource_reads_the_vertices_and_relations_its_pipeline_names() -> None:
+    op = ops_module.AddResourcesOp(
+        resources=[
+            {
+                "name": "links",
+                "pipeline": [
+                    {"vertex": "person"},
+                    {"vertex": "company"},
+                    {"edge": {"from": "person", "to": "company", "relation": "knows"}},
+                ],
+            }
+        ]
+    )
+    replace = ops_module.ReplaceResourcesOp(resources=op.resources)
+
+    expected = {
+        merge3._vertex_slot("person"),
+        merge3._vertex_slot("company"),
+        merge3._relation_slot("knows"),
+    }
+    assert op_reads(op) == expected
+    assert op_reads(replace) == expected
+    assert op_slots(replace) == {merge3._resource_slot("links")}
+
+
+def test_adding_a_resource_conflicts_with_removing_a_vertex_it_casts() -> None:
+    base = _with_resources(
+        _people_and_companies([KNOWS]), {"people": [{"vertex": "person"}]}
+    )
+    added = _with_resources(
+        _people_and_companies([KNOWS]),
+        {"people": [{"vertex": "person"}], "companies": [{"vertex": "company"}]},
+    )
+    removed = _with_resources(
+        _manifest([_vertex("person", ["id"], ["id"])]),
+        {"people": [{"vertex": "person"}]},
+    )
+
+    merged, result = merge_three_way(base, added, removed)
+
+    assert merged is None
+    assert merge3._vertex_slot("company") in {tuple(c.slot) for c in result.conflicts}
+
+
+def test_editing_a_pipeline_conflicts_with_removing_a_vertex_it_now_casts() -> None:
+    base = _with_resources(
+        _people_and_companies([KNOWS]),
+        {"people": [{"vertex": "person"}], "companies": [{"vertex": "company"}]},
+    )
+    edited = _with_resources(
+        _people_and_companies([KNOWS]),
+        {
+            "people": [{"vertex": "person"}, {"vertex": "company"}],
+            "companies": [{"vertex": "company"}],
+        },
+    )
+    removed = _with_resources(
+        _manifest([_vertex("person", ["id"], ["id"])]),
+        {"people": [{"vertex": "person"}]},
+    )
+
+    merged, result = merge_three_way(base, edited, removed)
+
+    assert merged is None
+    assert merge3._vertex_slot("company") in {tuple(c.slot) for c in result.conflicts}
+
+
+def test_an_edit_to_a_relation_this_side_renamed_reads_its_endpoints() -> None:
+    """The base knows the relation by its old name; the side's own rename says so."""
+    base = _people_and_companies([{**KNOWS, "relation": "employs"}])
+    left_ops: list[ManifestOp] = [
+        ops_module.RenameRelationsOp(renames={"employs": "hires"}),
+        ops_module.AddEdgePropertiesOp(additions={"hires": ["since"]}),
+    ]
+    right_ops: list[ManifestOp] = [
+        ops_module.RenameVerticesOp(renames={"company": "firm"})
+    ]
+
+    found = merge3._dependencies(left_ops, right_ops, base)
+
+    assert len(found) == 2
+
+
+def test_a_resource_reads_the_fields_it_maps() -> None:
+    op = ops_module.AddResourcesOp(
+        resources=[
+            {
+                "name": "people",
+                "pipeline": [{"vertex": "person", "from": {"email": "mail"}}],
+            }
+        ]
+    )
+
+    assert merge3._field_slot("person", "email") in op_reads(op)
+
+
+def test_adding_a_resource_conflicts_with_removing_a_field_it_maps() -> None:
+    base = _with_resources(_person(["id", "email"]), {"people": [{"vertex": "person"}]})
+    added = _with_resources(
+        _person(["id", "email"]),
+        {
+            "people": [{"vertex": "person"}],
+            "mail": [{"vertex": "person", "from": {"id": "id", "email": "mail"}}],
+        },
+    )
+    trimmed = _with_resources(_person(["id"]), {"people": [{"vertex": "person"}]})
+
+    merged, result = merge_three_way(base, added, trimmed)
+
+    assert merged is None
+    assert merge3._field_slot("person", "email") in {
+        tuple(c.slot) for c in result.conflicts
+    }

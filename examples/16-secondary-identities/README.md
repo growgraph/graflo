@@ -122,7 +122,6 @@ matched more than one vertex (`ambiguous=1`), and three rows produced four
 edges:
 
 ```text
-graflo_backend target does not support concurrent writers; forcing max_concurrent_db_ops=1.
 Edge ('instrument', 'issuer', 'issuedBy') endpoint resolution (policy=all): endpoints=source+target documents=3 written=4 dropped=0 unresolvable=0 unmatched=0 ambiguous=1
 Wrote artifacts/csv-backend
 ```

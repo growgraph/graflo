@@ -73,8 +73,11 @@ engine.ingest(manifest=manifest, target_db_config=conn_conf, ingestion_params=pa
 ```
 
 `cast_executor` takes `auto` (the default), `inline` (always in the main
-process), `process` (always in worker processes) or `thread`, which is kept
-for compatibility and rarely helps. The `graflo ingest` command sets
+process), `process` (always in worker processes) or `thread` (threads in the
+main process), which rarely helps. A resource with an edge step that takes an
+endpoint from a role (`source_role`, `target_role`) is cast in the main
+process whatever you set: such a step adds edge types while it casts, and a
+worker process would keep them to itself. The `graflo ingest` command sets
 `--batch-size` and `--n-cores`; the other settings are available from Python
 only.
 
@@ -87,12 +90,11 @@ settings above have no effect on that resource.
 
 | Configuration | Why order matters |
 |---|---|
-| `IngestionParams(dynamic_edges=True)` | Casting a record may add an edge type that changes how later records are cast (see below) |
+| `IngestionParams(dynamic_edges=True)` | Edge types found while casting are recorded in the casting process, so the resource is cast in one process, in order (see below) |
 | Blank vertices (`blank: true`) produced by the resource | Edges to blank vertices are matched to them by position within a batch |
 | `extra_weights` on the resource | Edge properties are read from the database between the vertex and edge writes of each batch |
 | Edge steps with `source_match` or `target_match` | Endpoints are found in the database, so a later batch's edges must not overtake an earlier batch's vertices |
 | A target with native bulk load enabled (TigerGraph) | Batches are appended to one ordered bulk load |
-| The GraFlo file backend as target | The file backend accepts one writer at a time |
 
 Within each batch, the database writes (`max_concurrent_db_ops`) and the read
 ahead (`batch_prefetch`) stay concurrent even for these resources.
@@ -100,11 +102,12 @@ ahead (`batch_prefetch`) stay concurrent even for these resources.
 ## `dynamic_edges` discovers edges in order
 
 With `IngestionParams(dynamic_edges=True)`, GraFlo adds edge types that the
-schema does not declare as it finds them in the data. That is a feedback
-loop: record 500 may add an edge type that changes what record 501 produces.
-Records processed out of order would give a different graph, so GraFlo casts
-the whole resource in order, in the main process: `cast_executor` and
-`n_cores` have no effect, and batches and data sources run one at a time.
+schema does not declare as it finds them in the data, and writes their edges.
+The types are recorded in the process that casts the records, so GraFlo casts
+the whole resource in the main process: `cast_executor` and `n_cores` have no
+effect, and batches and data sources run one at a time. A type one record
+adds is not inferred for other records; each record gets the edges its own
+steps name, plus those inferred from the declared ones.
 
 When throughput matters, use `dynamic_edges` to discover edges, not to load:
 
@@ -120,8 +123,9 @@ When throughput matters, use `dynamic_edges` to discover edges, not to load:
     concurrent transactions: two writers merging the same key could both
     create it. GraFlo therefore writes each vertex type and each relation
     through one connection at a time on those databases, while different
-    types still write in parallel. PostgreSQL, ArangoDB, TigerGraph and
-    NebulaGraph accept fully concurrent writes.
+    types still write in parallel. The file backend is written the same
+    way. PostgreSQL, ArangoDB, TigerGraph and NebulaGraph accept fully
+    concurrent writes.
 
 ## What to read next
 

@@ -11,11 +11,12 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 from collections.abc import Iterator
 from typing import Any, Literal
 
-from pydantic import Field
+from pydantic import Field, PrivateAttr
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.connections.sources import KafkaSecurityProtocol
@@ -69,13 +70,68 @@ class KafkaConfig(ConfigBaseModel):
 
 def _import_confluent_kafka():
     try:
-        from confluent_kafka import Consumer, KafkaError, KafkaException
+        from confluent_kafka import (
+            Consumer,
+            KafkaError,
+            KafkaException,
+            TopicPartition,
+        )
     except ImportError as e:
         raise ImportError(
             "Kafka support requires confluent-kafka. "
             "Install package dependencies (e.g. uv sync) so confluent-kafka is available."
         ) from e
-    return Consumer, KafkaError, KafkaException
+    return Consumer, KafkaError, KafkaException, TopicPartition
+
+
+#: Next offset to read on each ``(topic, partition)``.
+Positions = dict[tuple[str, int], int]
+
+
+class _OffsetLedger:
+    """Which offsets may be committed, given the batches acknowledged so far.
+
+    Each yielded batch is recorded with the positions reached when it was
+    yielded, on every partition read up to then. Offsets are handed out for the
+    longest run of acknowledged batches from the first one: committing past a
+    batch that was not written would skip it after a restart.
+
+    Used from the polling thread and from whoever acknowledges; every
+    operation is a single container operation or reads state only it advances.
+    """
+
+    def __init__(self) -> None:
+        self._positions: list[Positions] = []
+        self._acknowledged: set[int] = set()
+        self._committed = -1
+
+    def record(self, positions: Positions) -> int:
+        """Record a yielded batch; returns its index."""
+        self._positions.append(dict(positions))
+        return len(self._positions) - 1
+
+    def acknowledge(self, batch_index: int) -> None:
+        if not 0 <= batch_index < len(self._positions):
+            raise ValueError(
+                f"batch {batch_index} was not yielded; "
+                f"{len(self._positions)} batch(es) were"
+            )
+        self._acknowledged.add(batch_index)
+
+    def take_committable(self) -> Positions | None:
+        """Positions to commit now, or ``None`` when there is nothing new."""
+        last = self._committed
+        while last + 1 in self._acknowledged:
+            last += 1
+        if last == self._committed:
+            return None
+        self._committed = last
+        return dict(self._positions[last])
+
+    @property
+    def awaiting(self) -> bool:
+        """Whether a yielded batch has not been committed yet."""
+        return self._committed < len(self._positions) - 1
 
 
 def decode_kafka_json_value(raw: bytes | str | None) -> dict[str, Any] | None:
@@ -150,27 +206,75 @@ def _message_to_doc(
 
 
 class KafkaDataSource(AbstractDataSource):
-    """Data source that consumes JSON messages from Kafka topics."""
+    """Data source that consumes JSON messages from Kafka topics.
+
+    Delivery is at least once: an offset is committed only for a batch the
+    caller acknowledged, so a batch that was read and not written is read
+    again by the next run.
+    """
 
     config: KafkaConfig
     source_type: DataSourceType = DataSourceType.KAFKA
+
+    _consumer: Any = PrivateAttr(default=None)
+    _ledger: _OffsetLedger = PrivateAttr(default_factory=_OffsetLedger)
+    # Held around every use of the consumer, so `close` never meets a poll.
+    _consumer_lock: Any = PrivateAttr(default_factory=threading.Lock)
+
+    def acknowledge(self, batch_index: int) -> None:
+        """Mark a batch as written. Its offsets are committed with the next poll,
+        or by :meth:`close`, once every earlier batch is acknowledged too."""
+        self._ledger.acknowledge(batch_index)
+
+    def close(self) -> None:
+        """Commit the acknowledged batches and leave the consumer group.
+
+        Ends a read in progress: the iterator stops at its next poll.
+        """
+        with self._consumer_lock:
+            consumer = self._consumer
+            if consumer is None:
+                return
+            self._consumer = None
+            try:
+                self._commit_acknowledged(consumer)
+            finally:
+                consumer.close()
+
+    def _commit_acknowledged(self, consumer: Any) -> None:
+        positions = self._ledger.take_committable()
+        if not positions:
+            return
+        _, _, _, TopicPartition = _import_confluent_kafka()
+        consumer.commit(
+            offsets=[
+                TopicPartition(topic, partition, offset)
+                for (topic, partition), offset in sorted(positions.items())
+            ],
+            asynchronous=False,
+        )
 
     def iter_batches(
         self, batch_size: int = 1000, limit: int | None = None
     ) -> Iterator[list[dict]]:
         """Poll Kafka until limit, idle timeout, or max wait is reached.
 
-        A batch's offsets are committed when the next batch is requested. With
-        read-ahead (``batch_prefetch``) that can happen before the batch is
-        written, so a crash may lose records rather than repeat them.
-        Non-JSON-object payloads are skipped with a warning.
+        Offsets are committed only for acknowledged batches
+        (:meth:`acknowledge`); reading alone commits nothing. Call
+        :meth:`close` when done. Non-JSON-object payloads are skipped with a
+        warning.
         """
         if batch_size < 1:
             raise ValueError("batch_size must be >= 1")
 
-        Consumer, KafkaError, KafkaException = _import_confluent_kafka()
+        Consumer, KafkaError, KafkaException, _ = _import_confluent_kafka()
+        self.close()
         consumer = Consumer(self.config.to_consumer_config())
         consumer.subscribe(list(self.config.topics))
+        ledger = _OffsetLedger()
+        self._ledger = ledger
+        self._consumer = consumer
+        positions: Positions = {}
 
         batch: list[dict] = []
         total = 0
@@ -200,11 +304,16 @@ class KafkaDataSource(AbstractDataSource):
                 if limit is not None and total >= limit:
                     break
 
-                try:
-                    msg = consumer.poll(poll_timeout_s)
-                except KafkaException as e:
-                    logger.error("Kafka poll failed: %s", e)
-                    raise
+                with self._consumer_lock:
+                    if self._consumer is not consumer:
+                        # Closed from outside: nothing more to read or commit.
+                        return
+                    self._commit_acknowledged(consumer)
+                    try:
+                        msg = consumer.poll(poll_timeout_s)
+                    except KafkaException as e:
+                        logger.error("Kafka poll failed: %s", e)
+                        raise
 
                 if msg is None:
                     continue
@@ -216,6 +325,8 @@ class KafkaDataSource(AbstractDataSource):
                     raise KafkaException(err)
 
                 last_message_at = time.monotonic()
+                # Before decoding: a skipped message is consumed too.
+                positions[msg.topic(), msg.partition()] = msg.offset() + 1
                 doc = _message_to_doc(
                     msg,
                     row_annotations=self.config.row_annotations,
@@ -235,15 +346,18 @@ class KafkaDataSource(AbstractDataSource):
                 total += 1
 
                 if len(batch) >= batch_size or (limit is not None and total >= limit):
+                    ledger.record(positions)
                     yield batch
-                    consumer.commit(asynchronous=False)
                     batch = []
 
                 if limit is not None and total >= limit:
                     break
 
             if batch:
+                ledger.record(positions)
                 yield batch
-                consumer.commit(asynchronous=False)
         finally:
-            consumer.close()
+            # A batch still waiting for its acknowledgement keeps the consumer
+            # open: `close` commits it. Otherwise nothing is left to do with it.
+            if self._consumer is consumer and not ledger.awaiting:
+                self.close()

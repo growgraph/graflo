@@ -43,7 +43,7 @@ class FileMigrationStore:
     def add_record(self, record: MigrationRecord) -> None:
         payload = self._read()
         records = payload.get("records", [])
-        records.append(record.model_dump())
+        records.append(record.model_dump(mode="json"))
         payload["records"] = records
         self._write(payload)
 

@@ -127,7 +127,6 @@ every run.
 `ingest.py` prints:
 
 ```text
-graflo_backend target does not support concurrent writers; forcing max_concurrent_db_ops=1.
 Cast dropped 1 'party' document(s) with no value for its identity ['id']. Mark the step lookup_only if the resource only references this vertex.
 party: 7 records, 6 distinct ids
 ```

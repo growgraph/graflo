@@ -4,18 +4,22 @@ from __future__ import annotations
 
 import gzip
 import json
+import os
 import shutil
+import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from types import TracebackType
-from typing import Any, Self
+from typing import IO, Any, Self
 
 from graflo.architecture.backend.index import (
     CollectionEntry,
     GraFloIndex,
     backend_schema_hash,
 )
-from graflo.architecture.backend.layout import GraFloLayout
+from graflo.architecture.backend.layout import LOCK_FILENAME, GraFloLayout
 from graflo.architecture.schema.document import Schema
 
 
@@ -26,8 +30,61 @@ def _graflo_package_version() -> str:
         return "unknown"
 
 
+@contextmanager
+def directory_lock(root: Path) -> Iterator[None]:
+    """Hold an exclusive lock on the backend directory *root*, across processes.
+
+    Writers take it only to publish their chunks into ``INDEX.json``; chunk
+    files themselves are claimed by exclusive creation and need no lock.
+    """
+    root.mkdir(parents=True, exist_ok=True)
+    with open(root / LOCK_FILENAME, "a+b") as handle:
+        if sys.platform == "win32":
+            import msvcrt
+
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+            try:
+                yield
+            finally:
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _read_index(path: Path) -> GraFloIndex | None:
+    if not path.exists():
+        return None
+    with open(path, encoding="utf-8") as fin:
+        return GraFloIndex.model_validate(json.load(fin))
+
+
+def _merge_entry(
+    published: CollectionEntry | None, chunks: list[str], records: int
+) -> CollectionEntry:
+    """*published* plus the chunks and records one writer has not published yet."""
+    listed = list(published.chunks) if published is not None else []
+    count = published.record_count if published is not None else 0
+    return CollectionEntry(
+        chunks=[*listed, *(c for c in chunks if c not in listed)],
+        record_count=count + records,
+    )
+
+
 class _CollectionWriter:
-    """Accumulate records for one vertex type or edge collection."""
+    """Accumulate records for one vertex type or edge collection.
+
+    Chunk files are numbered from the index read at open, and a number another
+    writer took since is skipped: a chunk file is created exclusively, so two
+    writers never share one.
+    """
 
     def __init__(
         self,
@@ -46,8 +103,10 @@ class _CollectionWriter:
         self._edge_key = edge_key
         self._buffer: list[dict[str, Any] | list[Any]] = []
         self._chunk_index = len(existing.chunks) if existing is not None else 0
-        self._record_count = existing.record_count if existing is not None else 0
-        self._chunks = list(existing.chunks) if existing is not None else []
+        # Chunks and records written since the last publish into the index.
+        self._chunks: list[str] = []
+        self._record_count = 0
+        self._raw: IO[bytes] | None = None
         self._file_obj: gzip.GzipFile | None = None
 
     def push_many(self, records: list[dict[str, Any]] | list[list[Any]]) -> None:
@@ -59,8 +118,13 @@ class _CollectionWriter:
         if len(self._buffer) >= self._chunk_size:
             self._flush()
 
-    def snapshot(self) -> CollectionEntry:
-        return CollectionEntry(chunks=self._chunks, record_count=self._record_count)
+    def unpublished(self) -> tuple[list[str], int]:
+        """Chunks and records written since the last :meth:`published`."""
+        return list(self._chunks), self._record_count
+
+    def published(self) -> None:
+        self._chunks = []
+        self._record_count = 0
 
     def flush(self) -> None:
         self._flush()
@@ -80,30 +144,47 @@ class _CollectionWriter:
     def _open_chunk(self) -> None:
         if self._file_obj is not None:
             return
-        if self._vertex_type is not None:
-            path = self._layout.vertex_chunk_path(self._vertex_type, self._chunk_index)
-            relative = self._layout.relative_vertex_chunk(
-                self._vertex_type, self._chunk_index
-            )
-        else:
-            assert self._edge_key is not None
-            path = self._layout.edge_chunk_path(self._edge_key, self._chunk_index)
-            relative = self._layout.relative_edge_chunk(
-                self._edge_key, self._chunk_index
-            )
-        path.parent.mkdir(parents=True, exist_ok=True)
-        self._file_obj = gzip.open(path, "wb")  # noqa: SIM115
+        while True:
+            if self._vertex_type is not None:
+                path = self._layout.vertex_chunk_path(
+                    self._vertex_type, self._chunk_index
+                )
+                relative = self._layout.relative_vertex_chunk(
+                    self._vertex_type, self._chunk_index
+                )
+            else:
+                assert self._edge_key is not None
+                path = self._layout.edge_chunk_path(self._edge_key, self._chunk_index)
+                relative = self._layout.relative_edge_chunk(
+                    self._edge_key, self._chunk_index
+                )
+            self._chunk_index += 1
+            path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                raw = open(path, "xb")  # noqa: SIM115
+            except FileExistsError:
+                continue
+            break
+        self._raw = raw
+        self._file_obj = gzip.GzipFile(fileobj=raw, mode="wb")
         self._chunks.append(relative)
-        self._chunk_index += 1
 
     def _close_file(self) -> None:
         if self._file_obj is not None:
             self._file_obj.close()
             self._file_obj = None
+        if self._raw is not None:
+            self._raw.close()
+            self._raw = None
 
 
 class GraFloBackendWriter:
-    """Write schema and chunked graph data to a GraFlo backend directory."""
+    """Write schema and chunked graph data to a GraFlo backend directory.
+
+    Several writers, in one process or several, may write one directory at
+    once: :meth:`flush_index` adds this writer's chunks to the index on disk
+    under :func:`directory_lock`, rather than replacing it.
+    """
 
     def __init__(
         self,
@@ -119,10 +200,8 @@ class GraFloBackendWriter:
         self._index: GraFloIndex | None = None
         self._vertex_writers: dict[str, _CollectionWriter] = {}
         self._edge_writers: dict[tuple[str, str, str | None], _CollectionWriter] = {}
-        if resume and self._layout.index_path.exists():
-            with open(self._layout.index_path, encoding="utf-8") as fin:
-                payload = json.load(fin)
-            self._index = GraFloIndex.model_validate(payload)
+        if resume:
+            self._index = _read_index(self._layout.index_path)
 
     def __enter__(self) -> Self:
         self._layout.ensure_dirs()
@@ -143,11 +222,12 @@ class GraFloBackendWriter:
 
     def reset_data(self) -> None:
         """Remove data chunks and index while keeping schema if present."""
-        for path in (self._layout.vertices_dir, self._layout.edges_dir):
-            if path.exists():
-                shutil.rmtree(path)
-        if self._layout.index_path.exists():
-            self._layout.index_path.unlink()
+        with directory_lock(self._layout.root):
+            for path in (self._layout.vertices_dir, self._layout.edges_dir):
+                if path.exists():
+                    shutil.rmtree(path)
+            if self._layout.index_path.exists():
+                self._layout.index_path.unlink()
         self._index = None
         self._vertex_writers = {}
         self._edge_writers = {}
@@ -199,23 +279,36 @@ class GraFloBackendWriter:
         for writer in self._edge_writers.values():
             writer.flush()
 
-        vertices = self._collect_vertex_entries()
-        edges = self._collect_edge_entries()
-        index = GraFloIndex(
-            graflo_version=_graflo_package_version(),
-            schema_hash=backend_schema_hash(self._schema),
-            vertices=vertices,
-            edges=edges,
-        )
-        with open(self._layout.index_path, "w", encoding="utf-8") as fout:
-            fout.write(
-                json.dumps(
-                    index.model_dump(mode="json", by_alias=True, exclude_none=True),
-                    indent=2,
-                    sort_keys=True,
-                )
-                + "\n"
+        with directory_lock(self._layout.root):
+            on_disk = _read_index(self._layout.index_path)
+            vertices = dict(on_disk.vertices) if on_disk is not None else {}
+            for name, writer in self._vertex_writers.items():
+                vertices[name] = _merge_entry(vertices.get(name), *writer.unpublished())
+            edges = dict(on_disk.edges) if on_disk is not None else {}
+            for edge_key, writer in self._edge_writers.items():
+                name = GraFloLayout.edge_key_to_index_name(edge_key)
+                edges[name] = _merge_entry(edges.get(name), *writer.unpublished())
+            index = GraFloIndex(
+                graflo_version=_graflo_package_version(),
+                schema_hash=backend_schema_hash(self._schema),
+                vertices=vertices,
+                edges=edges,
             )
+            staged = self._layout.index_path.with_name(
+                f"{self._layout.index_path.name}.{os.getpid()}.tmp"
+            )
+            with open(staged, "w", encoding="utf-8") as fout:
+                fout.write(
+                    json.dumps(
+                        index.model_dump(mode="json", by_alias=True, exclude_none=True),
+                        indent=2,
+                        sort_keys=True,
+                    )
+                    + "\n"
+                )
+            os.replace(staged, self._layout.index_path)
+        for writer in (*self._vertex_writers.values(), *self._edge_writers.values()):
+            writer.published()
         self._index = index
         return index
 
@@ -239,16 +332,3 @@ class GraFloBackendWriter:
             edge_key=edge_key,
             existing=existing,
         )
-
-    def _collect_vertex_entries(self) -> dict[str, CollectionEntry]:
-        entries = dict(self._index.vertices) if self._index is not None else {}
-        for name, writer in self._vertex_writers.items():
-            entries[name] = writer.snapshot()
-        return entries
-
-    def _collect_edge_entries(self) -> dict[str, CollectionEntry]:
-        entries = dict(self._index.edges) if self._index is not None else {}
-        for edge_key, writer in self._edge_writers.items():
-            index_name = GraFloLayout.edge_key_to_index_name(edge_key)
-            entries[index_name] = writer.snapshot()
-        return entries

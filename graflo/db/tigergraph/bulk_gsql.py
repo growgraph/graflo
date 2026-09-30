@@ -11,7 +11,6 @@ from graflo.architecture.schema.db_aware import EdgeConfigDBAware, SchemaDBAware
 from graflo.architecture.schema.edge import Edge
 from graflo.connections.onto import (
     TigergraphBulkLoadConfig,
-    TigergraphBulkLoadJobOptions,
 )
 from graflo.db.tigergraph.bulk_csv import edge_column_order, vertex_column_order
 from graflo.onto import DBType
@@ -191,14 +190,3 @@ def build_create_and_run_loading_job(
             body_lines.append(f"DROP DATA_SOURCE {ds_name}")
 
     return "\n".join(body_lines) + "\n"
-
-
-def build_run_loading_job_only(
-    *,
-    job_name: str,
-    opts: TigergraphBulkLoadJobOptions,
-) -> str:
-    return (
-        f"RUN LOADING JOB {job_name} "
-        f"USING CONCURRENCY={opts.concurrency}, BATCH_SIZE={opts.batch_size}\n"
-    )

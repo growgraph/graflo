@@ -44,12 +44,15 @@ from graflo.connections.onto import ArangoConfig
 from graflo.db.arango.query import fetch_fields_query
 from graflo.db.arango.util import render_filters
 from graflo.db.conn import (
+    DEFAULT_DELETE_CHUNK_SIZE,
     Connection,
     NamespaceNotFoundError,
     SchemaExistsError,
     consume_insert_edges_kwargs,
+    deletable_docs,
+    deletable_endpoints,
 )
-from graflo.db.field_type_support import assert_schema_field_types_supported
+from graflo.db.field_type_support import assert_schema_supported
 from graflo.db.graph_introspection import (
     GraphEdgeIntrospection,
     GraphIntrospectionResult,
@@ -59,8 +62,8 @@ from graflo.db.graph_introspection import (
     strip_internal_properties,
 )
 from graflo.db.util import get_data_from_cursor, json_serializer
-from graflo.filter.onto import FilterExpression
-from graflo.onto import AggregationType, DBType
+from graflo.filter.onto import BoundParams, FilterExpression
+from graflo.onto import AggregationType, DBType, ExpressionFlavor
 from graflo.util.transform import pick_unique_dict
 
 logger = logging.getLogger(__name__)
@@ -127,20 +130,28 @@ def _arango_edge_anchor_clause(
     direction: EdgeDirection,
     to_type: str | None,
     to_vertex_id: str | None,
+    bind_vars: dict[str, Any],
 ) -> str:
     """Build the AQL FILTER anchoring an edge read on one vertex.
 
     Endpoint filters follow the anchor to the *opposite* end, so ``to_type`` /
     ``to_vertex_id`` keep meaning "the other endpoint" in every direction. The
     edge index covers ``_from`` and ``_to``, so no branch is more expensive.
+    The ids go into *bind_vars*, never into the query text.
     """
+    bind_vars["anchor"] = anchor_vertex_id
+    if to_type:
+        bind_vars["far_prefix"] = f"{to_type}/"
+    if to_vertex_id is not None:
+        bind_vars["far"] = to_vertex_id
 
     def _branch(anchor_field: str, other_field: str) -> str:
-        parts = [f"e.{anchor_field} == '{anchor_vertex_id}'"]
+        parts = [f"e.{anchor_field} == @anchor"]
         if to_type:
-            parts.append(f"e.{other_field} LIKE '{to_type}/%'")
+            # Not LIKE: `_` in a collection name is a LIKE wildcard.
+            parts.append(f"STARTS_WITH(e.{other_field}, @far_prefix)")
         if to_vertex_id is not None:
-            parts.append(f"e.{other_field} == '{to_vertex_id}'")
+            parts.append(f"e.{other_field} == @far")
         return " && ".join(parts)
 
     if direction is EdgeDirection.OUT:
@@ -178,6 +189,60 @@ def _arango_safe_collection_name(name: str) -> str:
     return name
 
 
+def _aql_attribute(name: str) -> str:
+    """A backtick-quoted AQL attribute name."""
+    return "`" + name.replace("`", "") + "`"
+
+
+def arango_remove_documents_query(collection: str, match_keys: Sequence[str]) -> str:
+    """AQL removing the documents that match a row of ``@rows``; returns their ``_id``."""
+    condition = " AND ".join(
+        f"doc.{_aql_attribute(key)} == row.{_aql_attribute(key)}" for key in match_keys
+    )
+    return (
+        f"FOR row IN @rows FOR doc IN {collection} FILTER {condition} "
+        f"REMOVE doc IN {collection} RETURN OLD._id"
+    )
+
+
+def arango_remove_incident_edges_query(edge_collection: str) -> str:
+    """AQL removing the edges of *edge_collection* with an endpoint in ``@ids``."""
+    return (
+        f"FOR e IN {edge_collection} FILTER e._from IN @ids OR e._to IN @ids "
+        f"REMOVE e IN {edge_collection}"
+    )
+
+
+def arango_remove_edges_query(
+    edge_collection: str,
+    source_collection: str,
+    target_collection: str,
+    source_keys: Sequence[str],
+    target_keys: Sequence[str],
+    *,
+    with_relation: bool,
+) -> str:
+    """AQL removing the edges between the endpoint pairs of ``@rows``.
+
+    A row is ``{"s": source keys, "t": target keys}``. With *with_relation*,
+    only edges whose ``relation`` is ``@relation``.
+    """
+    source = " AND ".join(
+        f"s.{_aql_attribute(k)} == row.s.{_aql_attribute(k)}" for k in source_keys
+    )
+    target = " AND ".join(
+        f"t.{_aql_attribute(k)} == row.t.{_aql_attribute(k)}" for k in target_keys
+    )
+    relation = " AND e.relation == @relation" if with_relation else ""
+    return (
+        f"FOR row IN @rows "
+        f"FOR s IN {source_collection} FILTER {source} "
+        f"FOR t IN {target_collection} FILTER {target} "
+        f"FOR e IN {edge_collection} FILTER e._from == s._id AND e._to == t._id{relation} "
+        f"REMOVE e IN {edge_collection}"
+    )
+
+
 class ArangoConnection(Connection):
     """ArangoDB-specific implementation of the Connection interface.
 
@@ -191,6 +256,7 @@ class ArangoConnection(Connection):
     """
 
     flavor = DBType.ARANGO
+    supports_instance_delete = True
     supports_graph_export = True
     # A migration emitter is registered for this backend
     # (graflo/migrate/executor.py); the other six have none.
@@ -300,17 +366,20 @@ class ArangoConnection(Connection):
             )
             raise
 
-    def execute(self, query: str, **kwargs: Any) -> Any:
+    def execute(
+        self, query: str, bind_vars: dict[str, Any] | None = None, **kwargs: Any
+    ) -> Any:
         """Execute an AQL query.
 
         Args:
             query: AQL query string to execute
+            bind_vars: Values the query names as ``@name``
             **kwargs: Additional query parameters
 
         Returns:
             Cursor: ArangoDB cursor for the query results
         """
-        cursor = self.conn.aql.execute(query)
+        cursor = self.conn.aql.execute(query, bind_vars=bind_vars or None)
         return cursor
 
     def close(self) -> None:
@@ -458,7 +527,7 @@ class ArangoConnection(Connection):
         Args:
             schema: Schema containing collection definitions
         """
-        assert_schema_field_types_supported(self.flavor, schema)
+        assert_schema_supported(self.flavor, schema)
         self.define_vertex_classes(schema)
         self.define_edge_classes(
             list(schema.core_schema.edge_config.values()), schema=schema
@@ -1015,6 +1084,90 @@ class ArangoConnection(Connection):
         """
         return query0
 
+    def _edge_collection_names(self) -> list[str]:
+        """Every non-system edge collection of the database."""
+        names: list[str] = []
+        collections = self.conn.collections()
+        if not isinstance(collections, list):
+            return names
+        for collection in collections:
+            if not isinstance(collection, dict):
+                continue
+            name = collection.get("name")
+            if (
+                isinstance(name, str)
+                and not name.startswith("_")
+                and _arango_collection_kind(collection.get("type")) == "edge"
+            ):
+                names.append(name)
+        return names
+
+    def delete_vertices(
+        self,
+        class_name: str,
+        key_docs: list[dict[str, Any]],
+        match_keys: tuple[str, ...],
+        *,
+        chunk_size: int = DEFAULT_DELETE_CHUNK_SIZE,
+    ) -> None:
+        """Remove documents and every edge, in any edge collection, that touches them."""
+        rows = deletable_docs(key_docs, match_keys)
+        if not rows:
+            return
+        edge_collections = self._edge_collection_names()
+        collection = _arango_safe_collection_name(class_name)
+        for start in range(0, len(rows), chunk_size):
+            removed = list(
+                get_data_from_cursor(
+                    self.conn.aql.execute(
+                        arango_remove_documents_query(collection, match_keys),
+                        bind_vars={"rows": rows[start : start + chunk_size]},
+                    )
+                )
+            )
+            if not removed:
+                continue
+            for edges in edge_collections:
+                self.conn.aql.execute(
+                    arango_remove_incident_edges_query(
+                        _arango_safe_collection_name(edges)
+                    ),
+                    bind_vars={"ids": removed},
+                )
+
+    def delete_edges(
+        self,
+        source_class: str,
+        target_class: str,
+        relation_name: str | None,
+        endpoints: list[tuple[dict[str, Any], dict[str, Any]]],
+        match_keys_source: tuple[str, ...],
+        match_keys_target: tuple[str, ...],
+        *,
+        collection_name: str | None = None,
+        chunk_size: int = DEFAULT_DELETE_CHUNK_SIZE,
+    ) -> None:
+        """Remove edges between endpoint pairs, located by their keys."""
+        pairs = deletable_endpoints(endpoints, match_keys_source, match_keys_target)
+        if not pairs:
+            return
+        query = arango_remove_edges_query(
+            _arango_safe_collection_name(
+                collection_name or f"{source_class}_{target_class}_edges"
+            ),
+            _arango_safe_collection_name(source_class),
+            _arango_safe_collection_name(target_class),
+            match_keys_source,
+            match_keys_target,
+            with_relation=relation_name is not None,
+        )
+        rows = [{"s": source, "t": target} for source, target in pairs]
+        for start in range(0, len(rows), chunk_size):
+            bind_vars: dict[str, Any] = {"rows": rows[start : start + chunk_size]}
+            if relation_name is not None:
+                bind_vars["relation"] = relation_name
+            self.conn.aql.execute(query, bind_vars=bind_vars)
+
     def fetch_present_documents(
         self,
         batch: list[dict[str, Any]],
@@ -1038,7 +1191,7 @@ class ArangoConnection(Connection):
             list | dict: Documents that exist in the database, either as a
                 flat list or a dictionary mapping batch indices to documents
         """
-        q0 = fetch_fields_query(
+        q0, bind_vars = fetch_fields_query(
             collection_name=class_name,
             docs=batch,
             match_keys=match_keys,
@@ -1046,7 +1199,7 @@ class ArangoConnection(Connection):
             filters=filters,
         )
         # {"__i": i, "_group": [doc]}
-        cursor = self.execute(q0)
+        cursor = self.execute(q0, bind_vars=bind_vars)
 
         if flatten:
             rdata = []
@@ -1083,7 +1236,8 @@ class ArangoConnection(Connection):
         Returns:
             list: Fetched documents
         """
-        filter_clause = render_filters(filters, doc_name="d")
+        params = BoundParams(ExpressionFlavor.AQL)
+        filter_clause = render_filters(filters, doc_name="d", params=params)
 
         if return_keys is None:
             if unset_keys is None:
@@ -1109,7 +1263,7 @@ class ArangoConnection(Connection):
             f"  {limit_clause}"
             f"  RETURN {return_clause}"
         )
-        cursor = self.execute(q)
+        cursor = self.execute(q, bind_vars=params.values)
         return get_data_from_cursor(cursor)
 
     def fetch_edges(
@@ -1163,25 +1317,29 @@ class ArangoConnection(Connection):
             # This is a simplified version - in practice you might want to list all edge collections
             raise ValueError("edge_type is required for ArangoDB edge fetching")
 
-        filter_clause = render_filters(filters, doc_name="e")
+        params = BoundParams(ExpressionFlavor.AQL)
+        # Already a `FILTER ...` clause, or empty.
+        filter_clause = render_filters(filters, doc_name="e", params=params)
 
         to_vertex_id: str | None = None
         if to_id and to_type:
             to_vertex_id = to_id if to_id.startswith(to_type) else f"{to_type}/{to_id}"
 
+        bind_vars: dict[str, Any] = {}
         anchor_clause = _arango_edge_anchor_clause(
-            from_vertex_id, direction, to_type, to_vertex_id
+            from_vertex_id, direction, to_type, to_vertex_id, bind_vars
         )
+        bind_vars.update(params.values)
 
         query = f"""
             FOR e IN {edge_collection}
                 FILTER {anchor_clause}
-                {f"FILTER {filter_clause}" if filter_clause else ""}
+                {filter_clause}
                 {f"LIMIT {limit}" if limit else ""}
                 RETURN e
         """
 
-        cursor = self.execute(query)
+        cursor = self.execute(query, bind_vars=bind_vars)
         result = list(get_data_from_cursor(cursor))
 
         # Apply projection
@@ -1216,7 +1374,8 @@ class ArangoConnection(Connection):
         Returns:
             list: Aggregation results
         """
-        filter_clause = render_filters(filters, doc_name="doc")
+        params = BoundParams(ExpressionFlavor.AQL)
+        filter_clause = render_filters(filters, doc_name="doc", params=params)
 
         if (
             aggregated_field is not None
@@ -1249,7 +1408,7 @@ class ArangoConnection(Connection):
                     {collect_clause}
                     RETURN {return_clause}"""
 
-        cursor = self.execute(q)
+        cursor = self.execute(q, bind_vars=params.values)
         data = get_data_from_cursor(cursor)
         return data
 

@@ -119,17 +119,17 @@ def test_escape_combined():
 
 
 def test_make_vid_single_key():
-    assert make_vid({"name": "Alice"}, ["name"]) == "Alice"
+    assert make_vid("Person", {"name": "Alice"}, ["name"]) == "Person::Alice"
 
 
 def test_make_vid_composite():
-    vid = make_vid({"a": "x", "b": "y"}, ["a", "b"])
-    assert vid == "x::y"
+    vid = make_vid("Pair", {"a": "x", "b": "y"}, ["a", "b"])
+    assert vid == "Pair::x::y"
 
 
 def test_make_vid_missing_key():
-    vid = make_vid({"a": "x"}, ["a", "missing"])
-    assert vid == "x::"
+    vid = make_vid("Pair", {"a": "x"}, ["a", "missing"])
+    assert vid == "Pair::x::"
 
 
 # ── Filter rendering (nGQL) ──────────────────────────────────────────────

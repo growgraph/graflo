@@ -6,6 +6,141 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.15.0]
+
+### Breaking
+
+- **Indexes are not unique by default.** `Index.unique` defaults to `false`; add `unique: true`
+  where repeated values must be rejected. Identity indexes stay unique.
+- **A NebulaGraph VID starts with its tag**: `<tag>::<identity values>`. Re-write spaces written
+  by earlier versions.
+- **A PostgreSQL edge table stores every identity field of a composite endpoint**, as
+  `source__<field>` / `target__<field>` columns. Re-write such edge tables; a one-field identity
+  keeps `source_id` / `target_id`.
+- **`KafkaDataSource` commits only acknowledged batches.** Code that reads it directly calls
+  `acknowledge(batch_index)` and `close()`.
+- **Stricter manifests.** Refused at load: a filter entry with an unknown key, no operator or
+  several logical operators; a SQL condition with no `field`; `time_filter` on a
+  `FileConnector` (`date_field` is removed); a non-empty `merge_collections`; an edge step with
+  no `relation` where several are declared; a `fulltext` index on a target other than ArangoDB;
+  TigerGraph `run_mode: run_only`; a hash- or funnel-keyed vertex that declares a property `id`
+  and no `identity`.
+- **Unbuildable sources fail the run** under `strict_registry` (the default): an API or Kafka
+  connector without a connection configuration, a table connector without a PostgreSQL one, a
+  SPARQL connector without `endpoint_url` or `rdf_file`.
+- **A failed SQL query or API request raises** instead of ending the source early.
+- **`<PREFIX>SCHEMA_NAME` is read from the environment**; an unprefixed `SCHEMA` or
+  `SCHEMA_NAME` is not.
+- **`graflo ingest` has no `--source-path`.**
+- **`build_revert_commit` takes `before=`**, the manifest the reverted commit was applied to.
+
+### Added
+
+- `GraphEngine.delete_vertices` and `delete_edges`: remove vertices with their edges, or edges,
+  by identity. Every backend but the file backend (`ConnectionCapability.INSTANCE_DELETE`).
+- `graflo.filter.BoundParams`: renders filter values as driver placeholders (`@f0` in AQL, `$f0`
+  in Cypher, `%(f0)s` in SQL) and collects the values.
+- `FilterExpression.matches(doc)` evaluates a filter in Python; `graflo.filter.onto.render_conjunct`
+  renders one as an operand of `AND`.
+- `TableConnector.build_query(extra_filters=...)`, `graflo.filter.sql.datetime_range_filter` and
+  `SelectSpec.effective_base_alias()`.
+- `GraphEngine.ingest(data_source_registry=...)`, also on `Caster.ingest`: the sources to read,
+  by resource.
+- `AbstractDataSource.acknowledge(batch_index)` and `close()`, called by the ingest once a batch
+  is written and when the source is done.
+- `SparqlConnector.same_as` (`collapse` | `keep`) and `SparqlConnector.typed_objects`, also on the
+  RDF data sources.
+- SQL schema inference: `entity_tables`, and `SchemaIntrospectionResult.skipped_tables` and
+  `.reference_edges`.
+- Manifest ops: `replace_resources`, which `diff_manifests` emits for a pipeline edit;
+  `ProjectManifestOp.partial_resources` (`trim` | `drop`); `checkout_parent(base, history,
+  commit_id)`.
+- `aggregate` on the file backend.
+- `Connection.export_graph_container`, and `graflo.db.resolve.present_documents` /
+  `absent_documents` for backends built on `fetch_docs`.
+- A warning naming each edge the writer drops because the schema does not declare it.
+- A `tests` workflow that runs the suites needing no database on every pull request.
+
+### Changed
+
+- Several writers can write one file-backend directory at once, in one process or several;
+  `INDEX.json` is updated under a lock on `.lock`.
+- A `.tsv` file is read with a tab separator unless `sep` is given.
+- `429` is in an API connector's default `retry_status_forcelist`.
+- SQL schema inference makes a foreign key of an entity table an edge, and logs every table it
+  leaves out, with the reason.
+- RDF schema inference gives the subject and the objects of each property their own role, skips
+  anonymous classes, refuses two classes sharing a local name, and orders its output by IRI.
+- An edge step with no `relation` takes the one declared between its endpoints.
+- A vertex weight goes on every edge its step writes for the record.
+- A resource whose edge step takes an endpoint from a role is cast in-process, not in worker
+  processes.
+- Removing a resource removes the connectors that served only it.
+- Three-way merge reads resource pipelines and the fields they map, so an edit on one side to
+  what the other side's pipeline uses is a conflict.
+- `graflo log` names the verb that joins its heads: `merge3` or `merge`.
+- `MigrationRecord.operations` holds the operations applied; earlier records still load.
+- Neo4j, Memgraph and FalkorDB answer `fetch_present_documents` by batch position, and
+  `insert_return_batch` raises on all three.
+- Traversal reads edge endpoints under each backend's own names and leaves them out of the edge
+  properties.
+- uv is pinned with `[tool.uv] required-version`. The `plot` extra requires `pygraphviz>=2.0,<3`,
+  whose wheels bundle Graphviz.
+- The docs are built with ProperDocs (`properdocs.yml`, `properdocs build` / `serve`), with a new
+  theme and landing page, and API reference pages titled by module name.
+
+### Fixed
+
+- `OR` beside another condition is parenthesised wherever conditions are joined with `AND`, in
+  SQL sources and in every backend's edge lookups.
+- `IN` lists every member in SQL and is always a list in AQL, Cypher, nGQL and GSQL. A TigerGraph
+  REST filter refuses `IN`.
+- A `select` view without joins no longer qualifies conditions with an undeclared alias, and a
+  nested `AND` / `OR` survives qualification under joins.
+- A run's date range applies when the connector names its date column.
+- `max_items` bounds the SQL query, not only the rows read.
+- The CSV reader handles quoted newlines and separators other than a comma, header included.
+- `Resource.encoding` is used when reading files.
+- A Python operator spelling (`operator: __eq__`) is no longer written into queries; a literal
+  boolean or date renders in the target's syntax.
+- ArangoDB `fetch_edges` with `filters` sent `FILTER FILTER`, and matched a far-end type with a
+  `LIKE` that read `_` as a wildcard.
+- NebulaGraph `fetch_present_documents` escapes the VID.
+- A filter on a document with a field named `kind` failed.
+- `Neo4jConfig` completes `bolt://` and `neo4j://` URIs with the Bolt port, 7687 by default.
+- An API connector with no credentials sent an empty `Authorization: Bearer` header.
+- `graflo ingest` failed at start-up, and with `--data-source-config-path` wrote with the default
+  flavor.
+- Kafka offsets were committed before their batch was written. Delivery is now at least once.
+- An inferred edge between two vertices of one type could start at the nested vertex.
+- A vertex weight's `filter` tested field names and raised `KeyError`; a vertex weight dropped the
+  edges beyond its number of weight vertices; `extra_weights` with `vertex_weights` raised on the
+  first batch.
+- Two cast threads could register the same new edge twice, or fail assembling a record while the
+  other registered one; an edge type registered for one record was inferred for the records after
+  it.
+- A multi-valued RDF object property dropped the record; an inferred RDF resource linked the
+  wrong vertices; an object of a property with several ranges was linked under every range.
+- A blank node got a new key on every read.
+- A file backend written with `target_flavor_hint` read back empty, and a walk over it found no
+  edges.
+- Memgraph edge indexes were created as label indexes.
+- PostgreSQL endpoints sharing their first identity field were one endpoint.
+- `graflo revert` failed on every commit.
+- `diff_manifests` removed a resource twice, and declared a synthetic key before the identity
+  change that creates it.
+- Removing an edge missed edge steps written flat or without `type`, and left empty steps behind.
+- An invalid `transform` step reported the wrong rule, and an invalid `edge` step listed the other
+  step kinds' complaints.
+- API reference edit links, the docs workflow on `examples/` changes, and the opt-in test gate,
+  which skipped unmarked tests whose parameter id matched a marker name.
+
+### Security
+
+- Filter values reach ArangoDB, Neo4j, Memgraph, FalkorDB and PostgreSQL as bound parameters in
+  `fetch_docs`, `fetch_edges`, `aggregate` and the lookups built on them. NebulaGraph and
+  TigerGraph keep literals and refuse a value with no safe literal form.
+
 ## [1.14.1]
 
 ### Added
@@ -959,7 +1094,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Compose matches type names by canonical form**, closing `CORE-MERGE-001`. Composition matched vertices and relations by *raw name*, so a manifest authored as `order_line` combined with one authored as `OrderLine` produced two unrelated types with the source data split between them and nothing raising. Names now collide both exactly and when they key alike under `canonical_key`, and the existing `name_conflict` policy decides what happens.
+- **Compose matches type names by canonical form.** Composition matched vertices and relations by *raw name*, so a manifest authored as `order_line` combined with one authored as `OrderLine` produced two unrelated types with the source data split between them and nothing raising. Names now collide both exactly and when they key alike under `canonical_key`, and the existing `name_conflict` policy decides what happens.
 
   **Reusing that policy rather than adding a flag is the point.** An exact collision has always raised under the default `name_conflict="error"`, and exact equality is the *stronger* evidence that two types are one concept — so a weaker signal must not trigger a more aggressive action. `error` raises `ComposeNameConflictError` naming both spellings and the three ways out; `prefix_right` keeps them apart explicitly; and a new `fuse_right` adopts the left spelling, rewriting the right side's *pipelines* as well as its schema.
 
@@ -995,7 +1130,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   Dispatch is on the op *class*, not its `op` literal, so a type checker catches a field read against the wrong op model and a renamed literal cannot fall through to the catch-all. A test asserts every member of the union resolves to a real slot.
 
-  **`CORE-MERGE-001` is folded in**: slots key on `canonical_key`, so one side's `order_line` and the other's `OrderLine` occupy the same slot and *conflict* rather than silently becoming two unrelated types with the data split between them.
+  **Slots key on `canonical_key`**, so one side's `order_line` and the other's `OrderLine` occupy the same slot and *conflict* rather than silently becoming two unrelated types with the data split between them.
 
 - **Tracked merges.** `MergeRecipe` records how a merge was resolved, content-addressed with resolutions hashed in slot order so the same decisions always address the same recipe. `re_merge` replays those decisions when the left side advances and surfaces only genuinely new conflicts; a recorded resolution whose slot no longer conflicts is *reported as unused*, never force-applied — re-applying a stale decision to an uncontested slot is how a re-merge quietly reverts someone's work.
 
@@ -1166,7 +1301,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   `property_case` carries an obligation the other two do not. **A property name binds to a key in the source document**, so any value other than `preserve` requires emitting the rename that `NamingConvention.rename_map()` computes; without it the schema declares `customerEmail` while the document still holds `customer_email`, and the column populates with nothing, silently.
 
-- **Conversion and cross-convention identity** — `convert()` restyles an identifier without being told its current style (`split_words` recovers the words from any of them, so conversion cannot be told the wrong origin), and `canonical_key()` / `same_concept()` decide whether two names denote one concept. **Merges must compare on those**: composition matches by name, so a PascalCase manifest merged with a snake_case one otherwise yields `Customer` and `customer` as unrelated types with the data split between them and nothing raising. Recorded as `CORE-MERGE-001` for graflo's own compose ops.
+- **Conversion and cross-convention identity** — `convert()` restyles an identifier without being told its current style (`split_words` recovers the words from any of them, so conversion cannot be told the wrong origin), and `canonical_key()` / `same_concept()` decide whether two names denote one concept. **Merges must compare on those**: composition matches by name, so a PascalCase manifest merged with a snake_case one otherwise yields `Customer` and `customer` as unrelated types with the data split between them and nothing raising.
 
 ### Changed
 
@@ -1176,7 +1311,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Ontology 1.4.0 → 1.5.0.** `gf:NamingConvention`, `gf:NameCase` with six individuals, `gf:hasNamingConvention`, `gf:vertexCase`, `gf:relationCase`, `gf:propertyCase`, `gf:singularVertexNames`, plus JSON-LD context terms and a round-trip test. Unlike `gf:semanticIri` these carry `rdfs:domain`: that property is domain-free because it attaches at four points and no single domain is true of it, while the naming block attaches at exactly one — and the domain is what lets the docs viz reach `gf:NamingConvention` rather than leaving it outside every derived block.
 
-  A parametrised test asserts every `NameCase` member has an individual and survives the round trip, because `add_enum_individual` emits *nothing* for an unmapped value — the mechanism by which `FieldType.UUID` and `LIST` came to be dropped unnoticed (`CORE-RDF-001`).
+  A parametrised test asserts every `NameCase` member has an individual and survives the round trip, because `add_enum_individual` emits *nothing* for an unmapped value — the mechanism by which `FieldType.UUID` and `LIST` came to be dropped unnoticed.
 
 ## [1.10.5]
 

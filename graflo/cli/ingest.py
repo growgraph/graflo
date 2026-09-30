@@ -4,26 +4,21 @@ This module provides a CLI tool for ingesting data into graph databases. It supp
 batch processing, parallel execution, and various data formats. The tool can handle
 both initial database setup and incremental data ingestion.
 
-Key Features:
-    - Configurable batch processing
-    - Multi-core and multi-threaded execution
-    - Support for custom resource connectors
-    - Database initialization and cleanup options
-    - Flexible file discovery and processing
+The sources are the ones the manifest's bindings declare (or the bindings file
+given with ``--resource-connector-config-path``); a file connector's relative
+``sub_path`` is resolved against the working directory.
+``--data-source-config-path`` lists the sources to read instead.
 
 Example:
     $ uv run ingest \\
         --db-config-path config/db.yaml \\
-        --schema-path config/schema.yaml \\
-        --source-path data/ \\
+        --schema-path config/manifest.yaml \\
         --batch-size 5000 \\
         --n-cores 4
 """
 
-import asyncio
-import logging.config
+import logging
 import pathlib
-from os.path import dirname, join, realpath
 
 import click
 from suthing import FileHandle
@@ -31,12 +26,10 @@ from suthing import FileHandle
 from graflo.architecture.contract.bindings import Bindings
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.connections.onto import DBConfig
-from graflo.connections.provider import EmptyConnectionProvider
 from graflo.data_source.factory import DataSourceFactory
 from graflo.data_source.registry import DataSourceRegistry
 from graflo.hq.graph_engine import GraphEngine
 from graflo.hq.ingestion_parameters import IngestionParams
-from graflo.onto import DBType
 
 logger = logging.getLogger(__name__)
 
@@ -51,12 +44,6 @@ logger = logging.getLogger(__name__)
     "--schema-path",
     type=click.Path(exists=True, path_type=pathlib.Path),
     required=True,
-)
-@click.option(
-    "--source-path",
-    type=click.Path(exists=True, path_type=pathlib.Path),
-    required=False,
-    help="Path to source data directory (required if not using --data-source-config-path)",
 )
 @click.option(
     "--resource-connector-config-path",
@@ -75,7 +62,10 @@ logger = logging.getLogger(__name__)
     "--data-source-config-path",
     type=click.Path(exists=True, path_type=pathlib.Path),
     default=None,
-    help="Path to data source configuration file (supports API, SQL, file sources)",
+    help=(
+        "Sources to read instead of the ones the bindings declare: a file with a "
+        "`data_sources` list of file or SQL sources, each naming its resource."
+    ),
 )
 @click.option("--limit-files", type=int, default=None)
 @click.option(
@@ -111,7 +101,6 @@ logger = logging.getLogger(__name__)
 def ingest(
     db_config_path,
     schema_path,
-    source_path,
     limit_files,
     batch_size,
     n_cores,
@@ -131,40 +120,40 @@ def ingest(
 
     Args:
         db_config_path: Path to database configuration file
-        schema_path: Path to schema configuration file
-        source_path: Path to source data directory
+        schema_path: Path to the manifest
         limit_files: Optional limit on number of files to process
         batch_size: Number of source items to group per batch (default: IngestionParams.batch_size)
         n_cores: Degree of parallelism for casting (default: 1)
         fresh_start: Whether to wipe existing database before ingestion
         init_only: Whether to only initialize the database without ingestion
         resource_connector_config_path: Optional path to resource connector configuration
+        data_source_config_path: Optional path to a list of sources to read
+            instead of the bound ones
 
     Example:
         $ uv run ingest \\
             --db-config-path config/db.yaml \\
-            --schema-path config/schema.yaml \\
-            --source-path data/ \\
+            --schema-path config/manifest.yaml \\
             --batch-size 5000 \\
             --n-cores 4 \\
             --fresh-start
     """
-    cdir = dirname(realpath(__file__))
-
-    logging.config.fileConfig(
-        join(cdir, "../logging.conf"), disable_existing_loggers=False
-    )
-
     logging.basicConfig(level=logging.INFO)
 
     manifest = GraphManifest.from_config(FileHandle.load(schema_path))
     manifest.finish_init()
-    schema = manifest.require_schema()
-    ingestion_model = manifest.require_ingestion_model()
+    # Both blocks are needed; say so before the database is touched.
+    manifest.require_schema()
+    manifest.require_ingestion_model()
 
     # Load config from file
     config_data = FileHandle.load(db_config_path)
     conn_conf = DBConfig.from_dict(config_data)
+    if not conn_conf.can_be_target():
+        raise click.UsageError(
+            f"--db-config-path names a {conn_conf.connection_type.value} connection, "
+            "which cannot be a target."
+        )
 
     if resource_connector_config_path is not None:
         bindings = Bindings.from_dict(FileHandle.load(resource_connector_config_path))
@@ -173,21 +162,7 @@ def ingest(
     else:
         bindings = Bindings()
 
-    # Determine DB type from connection config
-    db_type = conn_conf.connection_type
-    # Ensure it's a graph database (target database)
-    if db_type not in (
-        DBType.ARANGO,
-        DBType.NEO4J,
-        DBType.TIGERGRAPH,
-        DBType.FALKORDB,
-        DBType.MEMGRAPH,
-        DBType.NEBULA,
-    ):
-        db_type = DBType.ARANGO  # Default to ARANGO for non-graph databases
-
-    # Create GraphEngine for the full workflow
-    engine = GraphEngine(target_db_flavor=db_type)
+    engine = GraphEngine(target_db_flavor=conn_conf.connection_type)
 
     # Create ingestion params with CLI arguments
     ingestion_params = IngestionParams(
@@ -210,15 +185,8 @@ def ingest(
         if init_only:
             return
 
-    # Validate that either source_path or data_source_config_path is provided
-    if data_source_config_path is None and source_path is None:
-        raise click.UsageError(
-            "Either --source-path or --data-source-config-path must be provided"
-        )
-
-    # Check if data source config is provided (for API, SQL, etc.)
+    registry: DataSourceRegistry | None = None
     if data_source_config_path is not None:
-        # Load data source configuration
         data_source_config = FileHandle.load(data_source_config_path)
         registry = DataSourceRegistry()
 
@@ -242,33 +210,14 @@ def ingest(
                 )
                 registry.register(data_source, resource_name=resource_name)
 
-        # For data source registry, we need to use Caster directly
-        # since GraphEngine.ingest() uses bindings, not registry
-        from graflo.hq.caster import Caster
-
-        caster = Caster(
-            schema=schema,
-            ingestion_model=ingestion_model,
-            ingestion_params=ingestion_params,
-        )
-        asyncio.run(
-            caster.ingest_data_sources(
-                data_source_registry=registry,
-                conn_conf=conn_conf,
-                ingestion_params=ingestion_params,
-                bindings=bindings,
-                connection_provider=EmptyConnectionProvider(),
-            )
-        )
-    else:
-        # Fall back to file-based ingestion using GraphEngine
-        ingest_manifest = manifest.model_copy(update={"bindings": bindings})
-        ingest_manifest.finish_init()
-        engine.ingest(
-            manifest=ingest_manifest,
-            target_db_config=conn_conf,
-            ingestion_params=ingestion_params,
-        )
+    ingest_manifest = manifest.model_copy(update={"bindings": bindings})
+    ingest_manifest.finish_init()
+    engine.ingest(
+        manifest=ingest_manifest,
+        target_db_config=conn_conf,
+        ingestion_params=ingestion_params,
+        data_source_registry=registry,
+    )
 
 
 if __name__ == "__main__":

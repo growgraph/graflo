@@ -152,10 +152,7 @@ All options live on `TigergraphBulkLoadConfig`:
 | `batch_size` | `50000` | `BATCH_SIZE` of `RUN LOADING JOB` |
 | `job_name_prefix` | `graflo_bulk` | The job is named `<prefix>_<session id>` |
 | `drop_job_after_run` | `True` | Drop the job, and the S3 data source, after a successful run |
-| `run_mode` | `create_and_run` | `run_only` runs an existing job instead of creating one |
-
-Leave `run_mode` at `create_and_run`. The job name contains the session id,
-which is new on every run, so a job for `run_only` to find does not exist.
+| `run_mode` | `create_and_run` | The job is created, then run; the only value accepted |
 
 ## Emulating S3 in development
 

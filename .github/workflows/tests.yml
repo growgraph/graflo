@@ -1,0 +1,38 @@
+name: tests
+
+on:
+    pull_request:
+    push:
+        branches: [main]
+
+concurrency:
+    group: tests-${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: true
+
+permissions:
+    contents: read
+
+jobs:
+    offline:
+        runs-on: ubuntu-latest
+        steps:
+        -   uses: actions/checkout@v5
+
+        -   name: Install uv
+            uses: astral-sh/setup-uv@v7
+            with:
+                version: "0.12.21"
+                python-version: "3.11"
+                enable-cache: true
+
+        -   name: Install dependencies (dev and plot)
+            run: uv sync --locked --extra dev --extra plot
+
+        # test/db, test/data_source and test/object_storage need database
+        # containers. Everything else runs in-process.
+        -   name: Run the container-free suites
+            run: >-
+                uv run pytest test
+                --ignore=test/db
+                --ignore=test/data_source
+                --ignore=test/object_storage

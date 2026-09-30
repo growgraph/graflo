@@ -90,14 +90,22 @@ from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import VertexConfig
 from graflo.connections.onto import MemgraphConfig
 from graflo.db.conn import (
+    DEFAULT_DELETE_CHUNK_SIZE,
     Connection,
     SchemaExistsError,
     consume_insert_edges_kwargs,
 )
 from graflo.db.cypher import cypher_rel_pattern, rel_merge_props_map_from_row_props
-from graflo.db.field_type_support import assert_schema_field_types_supported
+from graflo.db.cypher.delete import delete_nodes, delete_relationships
+from graflo.db.field_type_support import assert_schema_supported
 from graflo.db.graph_introspection import GraphSchemaInferencer
-from graflo.filter.onto import FilterExpression, parse_filter_expression
+from graflo.db.resolve import absent_documents, present_documents
+from graflo.filter.onto import (
+    BoundParams,
+    FilterExpression,
+    parse_filter_expression,
+    render_conjunct,
+)
 from graflo.onto import AggregationType, DBType
 
 logger = logging.getLogger(__name__)
@@ -165,6 +173,15 @@ class QueryResult:
         return iter(self.result_set)
 
 
+def edge_property_index_query(relation: str, field: str) -> str:
+    """Memgraph DDL for an index on *field* of edges of type *relation*.
+
+    ``CREATE INDEX ON :X(f)`` is a *label* index: for a relationship type it
+    indexes nothing. Edge types take ``CREATE EDGE INDEX``.
+    """
+    return f"CREATE EDGE INDEX ON :{relation}({field})"
+
+
 class MemgraphConnection(Connection):
     """Memgraph connector implementing the graflo Connection interface.
 
@@ -206,6 +223,7 @@ class MemgraphConnection(Connection):
     """
 
     flavor = DBType.MEMGRAPH
+    supports_instance_delete = True
     supports_schema_introspection = True
 
     # Type annotations for instance attributes.
@@ -501,7 +519,7 @@ class MemgraphConnection(Connection):
             if db_vertex:
                 identity_fields = db_vertex.identity_fields(label)
                 if identity_fields:
-                    identity_idx = Index(fields=identity_fields)
+                    identity_idx = Index(fields=identity_fields, unique=True)
                     seen = {tuple(ix.fields) for ix in index_list}
                     if tuple(identity_idx.fields) not in seen:
                         index_list = [identity_idx, *index_list]
@@ -525,10 +543,7 @@ class MemgraphConnection(Connection):
                             )
 
     def define_edge_indexes(self, edges: list[Edge], schema: Schema | None = None):
-        """Create indexes for edge types.
-
-        Memgraph doesn't support relationship property indexes in the same way,
-        so this creates indices on the relationship properties if defined.
+        """Create an edge-type property index for each declared edge index field.
 
         Parameters
         ----------
@@ -548,8 +563,7 @@ class MemgraphConnection(Connection):
             for idx in index_list:
                 for field in idx.fields:
                     try:
-                        # Create index on relationship type
-                        query = f"CREATE INDEX ON :{edge.relation}({field})"
+                        query = edge_property_index_query(edge.relation, field)
                         cursor = self.conn.cursor()
                         cursor.execute(query)
                         cursor.close()
@@ -562,7 +576,7 @@ class MemgraphConnection(Connection):
                                 f"Index on {edge.relation}.{field} already exists"
                             )
                         else:
-                            logger.debug(
+                            logger.warning(
                                 f"Could not create index on {edge.relation}.{field}: {e}"
                             )
 
@@ -640,7 +654,7 @@ class MemgraphConnection(Connection):
         create_namespace: bool = True,
     ) -> None:
         """Validate graph state; Memgraph schema is implicit (labels on write)."""
-        assert_schema_field_types_supported(self.flavor, schema)
+        assert_schema_supported(self.flavor, schema)
         self.report_edge_direction_support(schema)
         if self._node_count() > 0 and not recreate:
             raise SchemaExistsError(
@@ -980,9 +994,10 @@ class MemgraphConnection(Connection):
 
         q = f"MATCH (n:{class_name})"
 
+        params = BoundParams(self.expression_flavor())
         if filters is not None:
-            ff = FilterExpression.from_dict(filters)
-            filter_str = ff(doc_name="n", kind=self.expression_flavor())
+            ff = parse_filter_expression(filters)
+            filter_str = ff(doc_name="n", kind=params.kind, params=params)
             q += f" WHERE {filter_str}"
 
         # Handle projection
@@ -996,7 +1011,7 @@ class MemgraphConnection(Connection):
             q += f" LIMIT {limit}"
 
         cursor = self.conn.cursor()
-        cursor.execute(q)
+        cursor.execute(q, params.values)
         results = []
 
         if return_keys:
@@ -1075,10 +1090,12 @@ class MemgraphConnection(Connection):
             where_clauses.append("t.id = $to_id")
 
         # Add relationship property filters
+        bound = BoundParams(self.expression_flavor())
         if filters is not None:
-            ff = FilterExpression.from_dict(filters)
-            filter_str = ff(doc_name="r", kind=self.expression_flavor())
-            where_clauses.append(str(filter_str))
+            ff = parse_filter_expression(filters)
+            where_clauses.append(
+                render_conjunct(ff, doc_name="r", kind=bound.kind, params=bound)
+            )
 
         if where_clauses:
             q += f" WHERE {' AND '.join(where_clauses)}"
@@ -1108,7 +1125,7 @@ class MemgraphConnection(Connection):
             q += f" LIMIT {limit}"
 
         # Execute query with parameters
-        params: dict[str, Any] = {"from_id": from_id}
+        params: dict[str, Any] = {"from_id": from_id, **bound.values}
         if to_id:
             params["to_id"] = to_id
 
@@ -1284,9 +1301,10 @@ class MemgraphConnection(Connection):
 
         # Build filter clause
         filter_clause = ""
+        params = BoundParams(self.expression_flavor())
         if filters is not None:
             ff = parse_filter_expression(filters)
-            filter_str = ff(doc_name="n", kind=self.expression_flavor())
+            filter_str = ff(doc_name="n", kind=params.kind, params=params)
             filter_clause = f" WHERE {filter_str}"
 
         q = f"MATCH (n:{class_name}){filter_clause}"
@@ -1295,7 +1313,7 @@ class MemgraphConnection(Connection):
             if discriminant:
                 q += f" RETURN n.{discriminant} AS key, count(*) AS count"
                 cursor = self.conn.cursor()
-                cursor.execute(q)
+                cursor.execute(q, params.values)
                 rows = cursor.fetchall()
                 cursor.close()
                 return {row[0]: row[1] for row in rows}
@@ -1313,7 +1331,7 @@ class MemgraphConnection(Connection):
             raise ValueError(f"Unsupported aggregation type: {aggregation_function}")
 
         cursor = self.conn.cursor()
-        cursor.execute(q)
+        cursor.execute(q, params.values)
         rows = cursor.fetchall()
         cursor.close()
 
@@ -1332,31 +1350,61 @@ class MemgraphConnection(Connection):
         schema : Schema
             Schema containing collection definitions
         """
-        assert_schema_field_types_supported(self.flavor, schema)
+        assert_schema_supported(self.flavor, schema)
 
     def insert_return_batch(
         self, docs: list[dict[str, Any]], class_name: str
     ) -> list[dict[str, Any]] | str:
-        """Insert nodes and return their properties.
+        """Not supported: nodes are written with :meth:`upsert_docs_batch`.
 
-        Parameters
-        ----------
-        docs : list[dict]
-            Documents to insert
-        class_name : str
-            Label to insert into
-
-        Returns
-        -------
-        list[dict] | str
-            Inserted documents with their properties, or query string
-
-        Raises
-        ------
-        NotImplementedError
-            This method is not fully implemented for Memgraph
+        Raises:
+            NotImplementedError: Always.
         """
-        raise NotImplementedError("insert_return_batch is not implemented for Memgraph")
+        raise NotImplementedError(
+            f"insert_return_batch is not supported by {type(self).__name__}; "
+            "write nodes with upsert_docs_batch and read them back with fetch_docs"
+        )
+
+    def delete_vertices(
+        self,
+        class_name: str,
+        key_docs: list[dict[str, Any]],
+        match_keys: tuple[str, ...],
+        *,
+        chunk_size: int = DEFAULT_DELETE_CHUNK_SIZE,
+    ) -> None:
+        """Remove nodes with ``DETACH DELETE``, which removes their relationships too."""
+        delete_nodes(
+            lambda query, rows: self.execute(query, data=rows),
+            class_name,
+            key_docs,
+            match_keys,
+            chunk_size,
+        )
+
+    def delete_edges(
+        self,
+        source_class: str,
+        target_class: str,
+        relation_name: str | None,
+        endpoints: list[tuple[dict[str, Any], dict[str, Any]]],
+        match_keys_source: tuple[str, ...],
+        match_keys_target: tuple[str, ...],
+        *,
+        collection_name: str | None = None,
+        chunk_size: int = DEFAULT_DELETE_CHUNK_SIZE,
+    ) -> None:
+        """Remove the relationships of one type between the given node pairs."""
+        delete_relationships(
+            lambda query, rows: self.execute(query, data=rows),
+            source_class,
+            target_class,
+            relation_name,
+            endpoints,
+            match_keys_source,
+            match_keys_target,
+            chunk_size,
+        )
 
     def fetch_present_documents(
         self,
@@ -1366,66 +1414,17 @@ class MemgraphConnection(Connection):
         keep_keys: list[str] | tuple[str, ...] | None = None,
         flatten: bool = False,
         filters: list[Any] | dict[str, Any] | None = None,
-    ) -> list[dict[str, Any]]:
-        """Fetch nodes that exist in the database.
+    ) -> list[dict[str, Any]] | dict[int, list[dict[str, Any]]]:
+        """Stored nodes matching *batch*, by batch position; see :func:`present_documents`.
 
-        Parameters
-        ----------
-        batch : list[dict]
-            Batch of documents to check
-        class_name : str
-            Label to check in
-        match_keys : list[str]
-            Keys to match nodes
-        keep_keys : list[str]
-            Keys to keep in result
-        flatten : bool
-            Unused in Memgraph
-        filters : list | dict, optional
-            Additional query filters
-
-        Returns
-        -------
-        list[dict]
-            Documents that exist in the database
+        With *flatten*, a list of the matches in batch order.
         """
-        if not batch:
-            return []
-
-        if self.conn is None:
-            raise RuntimeError("Connection is closed")
-        results = []
-
-        for doc in batch:
-            # Build match conditions
-            match_conditions = " AND ".join([f"n.{key} = ${key}" for key in match_keys])
-            params = {key: doc.get(key) for key in match_keys}
-
-            # Build return clause with keep_keys
-            if keep_keys:
-                return_clause = ", ".join([f"n.{k} AS {k}" for k in keep_keys])
-            else:
-                return_clause = "n"
-
-            q = f"MATCH (n:{class_name}) WHERE {match_conditions} RETURN {return_clause} LIMIT 1"
-
-            cursor = self.conn.cursor()
-            cursor.execute(q, params)
-            rows = cursor.fetchall()
-            cursor.close()
-
-            if rows:
-                if keep_keys:
-                    result = {keep_keys[i]: rows[0][i] for i in range(len(keep_keys))}
-                else:
-                    node = rows[0][0]
-                    if hasattr(node, "properties"):
-                        result = dict(node.properties)
-                    else:
-                        result = node
-                results.append(result)
-
-        return results
+        present = present_documents(
+            self, batch, class_name, match_keys, keep_keys=keep_keys, filters=filters
+        )
+        if flatten:
+            return [present[position][0] for position in sorted(present)]
+        return present
 
     def keep_absent_documents(
         self,
@@ -1435,48 +1434,7 @@ class MemgraphConnection(Connection):
         keep_keys: list[str] | tuple[str, ...] | None = None,
         filters: list[Any] | dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
-        """Keep documents that don't exist in the database.
-
-        Parameters
-        ----------
-        batch : list[dict]
-            Batch of documents to check
-        class_name : str
-            Label to check in
-        match_keys : list[str]
-            Keys to match nodes
-        keep_keys : list[str]
-            Keys to keep in result
-        filters : list | dict, optional
-            Additional query filters
-
-        Returns
-        -------
-        list[dict]
-            Documents that don't exist in the database
-        """
-        if not batch:
-            return []
-
-        # Find documents that exist
-        present_docs = self.fetch_present_documents(
-            batch, class_name, match_keys, match_keys, filters=filters
+        """The documents of *batch* with no stored node; see :func:`absent_documents`."""
+        return absent_documents(
+            self, batch, class_name, match_keys, keep_keys=keep_keys, filters=filters
         )
-
-        # Create a set of present document keys for efficient lookup
-        present_keys = set()
-        for doc in present_docs:
-            key_tuple = tuple(doc.get(k) for k in match_keys)
-            present_keys.add(key_tuple)
-
-        # Keep documents that don't exist
-        absent = []
-        for doc in batch:
-            key_tuple = tuple(doc.get(k) for k in match_keys)
-            if key_tuple not in present_keys:
-                if keep_keys:
-                    absent.append({k: doc.get(k) for k in keep_keys})
-                else:
-                    absent.append(doc)
-
-        return absent

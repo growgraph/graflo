@@ -433,6 +433,7 @@ def build_revert_commit(
     current: GraphManifest,
     commit: Commit,
     *,
+    before: GraphManifest,
     parents: list[str],
     label: str | None = None,
     created_at: str | None = None,
@@ -444,52 +445,41 @@ def build_revert_commit(
     was recorded. Everything downstream -- replay, verification, the DAG -- then
     needs no notion of rewinding at all.
 
-    Inversion is exact or it fails. An op with no total inverse, or one whose
-    inverse needs data the current manifest no longer holds (restoring a removed
-    vertex, say), raises rather than producing a manifest that merely *resembles*
-    the earlier state. When the base manifest is available, checking out the
-    parent commit is always exact and is the better tool.
+    Each inverse is derived against the state its op was applied to, rebuilt
+    from *before*, and is exact or absent: an op with no inverse refuses the
+    revert rather than produce a manifest that merely resembles the earlier
+    state. The inverses are then applied to *current*; a later commit that
+    changed what they touch makes that fail, and the revert is refused.
 
     Args:
-        current: The manifest to apply the reverting ops to.
+        current: The manifest to apply the reverting ops to, normally the head.
         commit: The commit being undone.
+        before: The manifest *commit* was applied to (see
+            :func:`~graflo.architecture.evolution.history.checkout_parent`).
         parents: Parent commit ids for the new commit -- normally the head.
         label: Short human-readable name.
         created_at: ISO-8601 timestamp.
 
     Raises:
-        CommitError: The commit is not invertible from *current* alone.
+        CommitError: *before* is not *commit*'s starting tree, an operation has
+            no inverse, or the inverses do not apply to *current*.
     """
-    from .inverse import invert_op, irreversible_reason
+    from .hashing import manifest_hash
+    from .inverse import invert_ops
 
-    blockers = [
-        f"{op.op} ({irreversible_reason(op)})"
-        for op in commit.ops
-        if irreversible_reason(op) is not None
-    ]
+    if commit.tree_before is not None and manifest_hash(before) != commit.tree_before:
+        raise CommitError(
+            f"commit '{commit.short()}' starts from tree {commit.tree_before[:12]}, "
+            f"not from the manifest given as its pre-state "
+            f"({manifest_hash(before)[:12]})"
+        )
+    inverses, blockers = invert_ops(list(commit.ops), manifest=before)
     if blockers:
         raise CommitError(
-            f"commit '{commit.short()}' cannot be reverted -- these operations "
-            "are irreversible: " + "; ".join(blockers) + ". Check out the parent "
-            "commit from the base manifest instead."
+            f"commit '{commit.short()}' cannot be reverted -- "
+            + "; ".join(blockers)
+            + ". Check out its parent instead."
         )
-
-    # Walking backwards: the running manifest is the state *after* each op,
-    # which is all that exists without a base.
-    inverses: list[ManifestOp] = []
-    probe = current
-    from .apply import apply_evolution
-
-    for op in reversed(list(commit.ops)):
-        inverse = invert_op(op, manifest=probe)
-        if inverse is None:
-            raise CommitError(
-                f"operation '{op.op}' in commit '{commit.short()}' cannot be "
-                "inverted from the current manifest alone -- the data it would "
-                "restore is no longer present. Check out from the base instead."
-            )
-        inverses.append(inverse)
-        probe = apply_evolution(probe, [inverse], bump_version=False, finish_init=False)
 
     return build_commit(
         current,

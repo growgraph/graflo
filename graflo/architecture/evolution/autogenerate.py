@@ -79,6 +79,7 @@ from .ops import (
     RenameVertexPropertiesOp,
     RenameVerticesOp,
     ReplaceIdentityOp,
+    ReplaceResourcesOp,
     RetractEdgeInversesOp,
     SetBindingsOp,
     SetDbProfileOp,
@@ -174,6 +175,7 @@ def diff_manifests(
     hints = hints or RenameHints()
     warnings: list[str] = []
     ops: list[ManifestOp] = []
+    original = base
 
     rename_ops = _rename_ops(hints)
     renamed = _apply_renames(base, rename_ops)
@@ -201,9 +203,20 @@ def diff_manifests(
         # A profile replacement carries the indexes too, so emitting both would
         # be redundant and order-sensitive.
         ops += _index_ops(base, target, hints)
-    ops += _resource_ops(base, target, hints, warnings)
-    ops += _removal_ops(base, target, hints)
-    ops += _block_ops(base, target, profile_replaced=profile_replaced)
+    edited: list[str] = []
+    resource_ops, pending_transforms = _resource_ops(
+        base, target, hints, warnings, edited
+    )
+    ops += resource_ops
+    removals = _removal_ops(base, target, hints)
+    ops += _replacement_ops(
+        original, ops, removals, target, edited, pending_transforms, warnings
+    )
+    ops += removals
+    # The removal cascades prune bindings, so whether the target's block still
+    # has to be set is read off the manifest the ops so far produce.
+    replayed = _apply_quietly(original, ops) if ops else original
+    ops += _block_ops(replayed or base, target, profile_replaced=profile_replaced)
 
     _warn_unexpressed(base, target, warnings, hints)
     return ops, warnings
@@ -262,12 +275,20 @@ def _apply_renames(
     """
     if not rename_ops:
         return None
+    return _apply_quietly(base, rename_ops)
+
+
+def _apply_quietly(base: GraphManifest, ops: list[ManifestOp]) -> GraphManifest | None:
+    """*base* with *ops* applied, or ``None`` when they fail.
+
+    A failure is left for verification to report.
+    """
     from .apply import apply_evolution
 
     try:
-        return apply_evolution(base, rename_ops, bump_version=False, finish_init=False)
+        return apply_evolution(base, ops, bump_version=False, finish_init=False)
     except Exception:
-        logger.debug("rename hints do not apply to the base", exc_info=True)
+        logger.debug("derived operations do not apply to the base", exc_info=True)
         return None
 
 
@@ -436,11 +457,22 @@ def _vertex_property_ops(
             continue
         old_fields = {f.name: f for f in old_vertex.properties}
         new_fields = {f.name: f for f in new_vertex.properties}
+        # A synthetic key the target gains comes with its identity: the
+        # identity stage's `replace_identity` adds it, and adding it earlier
+        # would declare it on a natural vertex, where it is a data column.
+        synthetic = (
+            set(new_vertex.identity)
+            if new_vertex.identity_mode != "natural"
+            and old_vertex.identity_mode == "natural"
+            else set()
+        )
 
         # A gained field is emitted as authored, so its type and grounding
         # replay with it rather than being dropped to a bare name.
         gained = [
-            _field_entry(new_fields[f]) for f in new_fields if f not in old_fields
+            _field_entry(new_fields[f])
+            for f in new_fields
+            if f not in old_fields and f not in synthetic
         ]
         lost = [f for f in old_fields if f not in new_fields]
         if gained:
@@ -676,18 +708,24 @@ def _canonical_registry(transforms: Any) -> list[Any]:
 
 
 def _resource_ops(
-    base: GraphManifest, target: GraphManifest, hints: RenameHints, warnings: list[str]
-) -> list[ManifestOp]:
-    """Added resources, plus a report for edits no op expresses.
+    base: GraphManifest,
+    target: GraphManifest,
+    hints: RenameHints,
+    warnings: list[str],
+    edited: list[str],
+) -> tuple[list[ManifestOp], list[Any]]:
+    """Added resources and appended transforms, plus ``(ops, pending transforms)``.
 
-    A resource's pipeline is an ordered program, and the only op that edits one
-    (``add_resource_transforms``) appends; a changed pipeline is reported
-    rather than approximated. Removed resources are emitted by the removal
-    stage so earlier ops still find them.
+    A pipeline that only gains trailing root transforms is
+    ``add_resource_transforms``. Any other edit is collected in *edited* for
+    :func:`_replacement_ops`, which decides it against what the removal
+    cascades already produce; the transforms returned second are the new
+    registry entries only such a replacement can carry. Removed resources are
+    emitted by the removal stage.
     """
     base_ingestion, target_ingestion = base.ingestion_model, target.ingestion_model
     if target_ingestion is None:
-        return []
+        return [], []
     base_resources = (
         {hints.resources.get(r.name, r.name): r for r in base_ingestion.resources}
         if base_ingestion is not None
@@ -713,19 +751,16 @@ def _resource_ops(
             continue
         steps = _appended_root_transforms(old, resource)
         if steps is None:
-            warnings.append(
-                f"resource {resource.name!r} differs; no op expresses a pipeline "
-                "edit beyond add_resource_transforms"
-            )
+            edited.append(resource.name)
         else:
             appended[resource.name] = steps
-    # Transforms new to the registry ride on the op that adds the resources
-    # using them. Anything else -- a removed or redefined transform, or a new
-    # one no added resource brings -- has no op and is reported.
+    # Transforms new to the registry ride on the op that adds or edits the
+    # resources using them. Anything else -- a removed or redefined transform,
+    # or a new one no such op brings -- has no op and is reported.
     base_transforms = list(base_ingestion.transforms) if base_ingestion else []
     base_names = {t.name for t in base_transforms}
     registered = [t for t in target_ingestion.transforms if t.name not in base_names]
-    carried = registered if (added or appended) else []
+    carried = registered if (added or appended or edited) else []
     if _canonical_registry([*base_transforms, *carried]) != _canonical_registry(
         target_ingestion.transforms
     ):
@@ -752,7 +787,57 @@ def _resource_ops(
     flagged, _cleared = _emission_flag_changes(base, target, hints)
     if flagged:
         ops.append(SetInverseEmissionOp(steps=flagged))
-    return ops
+    return ops, [] if (appended or added) else carried
+
+
+def _replacement_ops(
+    original: GraphManifest,
+    earlier: list[ManifestOp],
+    removals: list[ManifestOp],
+    target: GraphManifest,
+    edited: list[str],
+    transforms: list[Any],
+    warnings: list[str],
+) -> list[ManifestOp]:
+    """``replace_resources`` for the edited resources the removals do not produce.
+
+    A removal trims every pipeline naming what it removes, so a resource the
+    target holds in exactly that trimmed form needs no op of its own. The rest
+    are replaced whole, ahead of the removals: a target definition names
+    nothing that is removed, so no cascade touches it afterwards.
+    """
+    target_ingestion = target.ingestion_model
+    if not edited or target_ingestion is None:
+        if transforms:
+            warnings.append(
+                "the transform registry differs; no op expresses registry edits "
+                "beyond add_resource_transforms"
+            )
+        return []
+    probe = _apply_quietly(original, [*earlier, *removals])
+    produced = (
+        {r.name: r for r in probe.ingestion_model.resources}
+        if probe is not None and probe.ingestion_model is not None
+        else {}
+    )
+    wanted = set(edited)
+    replaced = [
+        resource
+        for resource in target_ingestion.resources
+        if resource.name in wanted
+        and (
+            resource.name not in produced
+            or _resource_body(produced[resource.name]) != _resource_body(resource)
+        )
+    ]
+    if not replaced:
+        if transforms:
+            warnings.append(
+                "the transform registry differs; no op expresses registry edits "
+                "beyond add_resource_transforms"
+            )
+        return []
+    return [ReplaceResourcesOp(resources=replaced, transforms=transforms)]
 
 
 def _without_emission(resource: ResourceConfig) -> ResourceConfig:
@@ -1002,8 +1087,22 @@ def _edge_index_ops(
 def _removal_ops(
     base: GraphManifest, target: GraphManifest, hints: RenameHints
 ) -> list[ManifestOp]:
-    """Removals run last so earlier ops still address the elements they need."""
+    """Removals run last so earlier ops still address the elements they need.
+
+    Resources go first: removing a vertex drops a resource its pipeline no
+    longer names, so a resource removed after it would be removed twice.
+    """
     ops: list[ManifestOp] = []
+
+    base_ingestion, target_ingestion = base.ingestion_model, target.ingestion_model
+    if base_ingestion is not None and target_ingestion is not None:
+        target_names = {r.name for r in target_ingestion.resources}
+        gone_resources = sorted(
+            {hints.resources.get(r.name, r.name) for r in base_ingestion.resources}
+            - target_names
+        )
+        if gone_resources:
+            ops.append(RemoveResourcesOp(names=gone_resources))
 
     base_edges = _edges_after_renames(base, hints)
     target_edges = _edges(target)
@@ -1033,16 +1132,6 @@ def _removal_ops(
     gone_vertices = sorted(set(base_vertices) - set(_vertices(target)))
     if gone_vertices:
         ops.append(RemoveVerticesOp(names=gone_vertices))
-
-    base_ingestion, target_ingestion = base.ingestion_model, target.ingestion_model
-    if base_ingestion is not None and target_ingestion is not None:
-        target_names = {r.name for r in target_ingestion.resources}
-        gone_resources = sorted(
-            {hints.resources.get(r.name, r.name) for r in base_ingestion.resources}
-            - target_names
-        )
-        if gone_resources:
-            ops.append(RemoveResourcesOp(names=gone_resources))
     return ops
 
 

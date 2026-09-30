@@ -115,14 +115,15 @@ The same graph as example 09:
 ## What goes wrong
 
 **The label has no settings.** If `define_and_ingest` gets no provider, or one
-without `shop_db`, GraFlo cannot reach the tables. It logs a warning per table
-and writes no records from them:
+without `shop_db`, GraFlo cannot reach the tables. The run stops before it
+reads anything:
 
 ```text
-PostgreSQL table 'users' has no connection config, skipping
-PostgreSQL table 'products' has no connection config, skipping
-PostgreSQL table 'purchases' has no connection config, skipping
-PostgreSQL table 'follows' has no connection config, skipping
+ValueError: Registry build failed in strict mode:
+- Failed to register SQL source for resource 'users' (connector 'users'): no PostgreSQL connection configuration for table 'users'
+- Failed to register SQL source for resource 'products' (connector 'products'): no PostgreSQL connection configuration for table 'products'
+- Failed to register SQL source for resource 'purchases' (connector 'purchases'): no PostgreSQL connection configuration for table 'purchases'
+- Failed to register SQL source for resource 'follows' (connector 'follows'): no PostgreSQL connection configuration for table 'follows'
 ```
 
 ## Also possible

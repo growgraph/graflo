@@ -4,18 +4,26 @@ from __future__ import annotations
 
 import logging
 import shutil
-from typing import Any
+from collections import Counter
+from typing import Any, cast
 
 from graflo.architecture.backend import GraFloBackendReader, GraFloBackendWriter
 from graflo.architecture.backend.layout import GraFloLayout
+from graflo.architecture.backend.reader import (
+    edge_chunk_key,
+    stored_schema,
+    vertex_chunk_key,
+)
 from graflo.architecture.graph_types import EdgeDirection, GraphContainer
 from graflo.architecture.schema.document import Schema
 from graflo.architecture.schema.edge import Edge
+from graflo.architecture.schema.physical_keys import PhysicalKeys
 from graflo.architecture.schema.vertex import VertexConfig
 from graflo.connections.graflo_backend import GraFloBackendConfig
 from graflo.db.conn import Connection, NamespaceNotFoundError, SchemaExistsError
+from graflo.db.traversal import edge_query_name
 from graflo.filter.onto import FilterExpression, parse_filter_expression
-from graflo.onto import AggregationType, DBType, ExpressionFlavor
+from graflo.onto import AggregationType, DBType
 
 logger = logging.getLogger(__name__)
 
@@ -195,7 +203,7 @@ class GraFloBackendConnection(Connection):
             if predicate is None:
                 return True
             try:
-                return bool(predicate(kind=ExpressionFlavor.PYTHON, **doc))
+                return predicate.matches(doc)
             except Exception:
                 # A document missing a filtered field simply does not match.
                 return False
@@ -270,9 +278,7 @@ class GraFloBackendConnection(Connection):
 
         if filters is not None:
             expression = parse_filter_expression(filters)
-            matched = [
-                row for row in matched if expression(row, kind=ExpressionFlavor.PYTHON)
-            ]
+            matched = [row for row in matched if expression.matches(row)]
         if return_keys or unset_keys:
             keep = set(return_keys) if return_keys else None
             drop = set(unset_keys) if unset_keys else set()
@@ -287,7 +293,7 @@ class GraFloBackendConnection(Connection):
         return matched
 
     def _edge_index(self) -> dict[str, list[dict[str, Any]]]:
-        """Storage edge name -> flat edge rows, built once per connection.
+        """Edge query name -> flat edge rows, built once per connection.
 
         Rows carry ``_from_key`` / ``_to_key`` so both orientations are
         answerable from one pass over the chunked files.
@@ -297,16 +303,25 @@ class GraFloBackendConnection(Connection):
 
         schema = self._reader.read_schema()
         db_aware = schema.resolve_db_aware(self.flavor)
+        keys = PhysicalKeys(stored_schema(schema).db_profile)
         index: dict[str, list[dict[str, Any]]] = {}
         total = 0
         for edge in schema.core_schema.edge_config.edges:
-            storage = db_aware.edge_config.runtime(edge).storage_name()
-            if storage is None:
+            # Keyed by the name a walk asks for the edge by.
+            name = edge_query_name(db_aware, edge, self.flavor)
+            if name is None:
                 continue
-            rows = index.setdefault(storage, [])
-            source_identity = db_aware.vertex_config.identity_fields(edge.source)
-            target_identity = db_aware.vertex_config.identity_fields(edge.target)
-            for batch in self._reader.iter_edge_batches(edge.edge_id):
+            rows = index.setdefault(name, [])
+            # Stored records carry stored property names.
+            source_identity = keys.vertex_fields(
+                edge.source, db_aware.vertex_config.identity_fields(edge.source)
+            )
+            target_identity = keys.vertex_fields(
+                edge.target, db_aware.vertex_config.identity_fields(edge.target)
+            )
+            for batch in self._reader.iter_edge_batches(
+                edge_chunk_key(schema, edge.edge_id)
+            ):
                 for record in batch:
                     if not isinstance(record, list) or len(record) < 2:
                         continue
@@ -370,9 +385,42 @@ class GraFloBackendConnection(Connection):
         aggregated_field: str | None = None,
         filters: FilterExpression | list[Any] | dict[str, Any] | None = None,
     ) -> int | float | list[dict[str, Any]] | dict[str, int | float] | None:
-        raise NotImplementedError(
-            "GraFlo file backend does not support aggregate queries"
-        )
+        """Aggregate over the documents of a vertex type, read in full.
+
+        Returns what the Cypher backends return: an ungrouped COUNT an int, a
+        COUNT grouped by *discriminant* ``{value: count}``, MAX / MIN / AVERAGE
+        a scalar or ``None``, SORTED_UNIQUE a list. Documents without
+        *aggregated_field* are left out.
+
+        Raises:
+            ValueError: If *aggregated_field* is missing where it is required.
+        """
+        docs = self.fetch_docs(class_name, filters=cast(Any, filters))
+        if aggregation_function == AggregationType.COUNT:
+            if discriminant:
+                return cast(
+                    dict[str, int | float],
+                    dict(Counter(doc.get(discriminant) for doc in docs)),
+                )
+            return len(docs)
+        if not aggregated_field:
+            raise ValueError(f"aggregated_field is required for {aggregation_function}")
+        values = [
+            doc[aggregated_field]
+            for doc in docs
+            if doc.get(aggregated_field) is not None
+        ]
+        if aggregation_function == AggregationType.SORTED_UNIQUE:
+            return sorted(set(values))
+        if not values:
+            return None
+        if aggregation_function == AggregationType.MAX:
+            return max(values)
+        if aggregation_function == AggregationType.MIN:
+            return min(values)
+        if aggregation_function == AggregationType.AVERAGE:
+            return sum(values) / len(values)
+        raise ValueError(f"Unsupported aggregation type: {aggregation_function}")
 
     def keep_absent_documents(
         self,
@@ -442,7 +490,22 @@ class GraFloBackendConnection(Connection):
     def bulk_load_append(
         self, session_id: str, gc: GraphContainer, schema: Schema
     ) -> None:
+        # Stored under the keys the per-batch writes use, so one reader finds both.
+        written = self._reader.read_schema()
         for vertex_type, vertex_docs in gc.vertices.items():
-            self._writer.write_vertex_batch(vertex_type, vertex_docs)
+            self._writer.write_vertex_batch(
+                vertex_chunk_key(written, vertex_type), vertex_docs
+            )
         for edge_key, edge_docs in gc.edges.items():
-            self._writer.write_edge_batch(edge_key, edge_docs)
+            self._writer.write_edge_batch(edge_chunk_key(written, edge_key), edge_docs)
+
+    def export_graph_container(
+        self, schema: Schema, *, limit: int | None = None
+    ) -> GraphContainer:
+        """The graph as :meth:`GraFloBackendReader.load_graph_container` reads it.
+
+        Keyed by the logical names of ``schema.yaml``, which is also the schema
+        :meth:`introspect_graph_schema` returns.
+        """
+        self._sync_for_read()
+        return self._reader.load_graph_container(limit=limit)

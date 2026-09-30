@@ -74,9 +74,7 @@ class TestBindingsYamlFilters:
 """
         )
         q = _table_connector(bindings).build_query("public")
-        assert " OR " in q
-        assert '"a" = 1' in q
-        assert '"b" = 2' in q
+        assert q == 'SELECT * FROM "public"."events" WHERE ("a" = 1 OR "b" = 2)'
 
     def test_operator_deps_or_regression(self) -> None:
         bindings = _bindings_yaml(
@@ -94,7 +92,7 @@ class TestBindingsYamlFilters:
 """
         )
         q = _table_connector(bindings).build_query("public")
-        assert " OR " in q
+        assert q == 'SELECT * FROM "public"."events" WHERE ("a" = 1 OR "b" = 2)'
 
     def test_invalid_shorthand_fails_at_bindings_load(self) -> None:
         with pytest.raises(ValueError, match="filters"):
@@ -153,9 +151,7 @@ class TestBindingsYamlFilters:
 """
         )
         q = _table_connector(bindings).build_query("public")
-        assert '"a" = 1' in q
-        assert '"b" = 2' in q
-        assert " AND " in q
+        assert q == 'SELECT * FROM "public"."events" WHERE "a" = 1 AND "b" = 2'
 
 
 class TestFilterExpressionSqlRendering:
@@ -210,4 +206,4 @@ class TestSelectSpecWhereAfterParserUnify:
         )
         tp = TableConnector(table_name="t", view=view)
         q = tp.build_query("public")
-        assert " OR " in q
+        assert q == 'SELECT * FROM "public"."t" WHERE ("a" = 1 OR "b" = 2)'

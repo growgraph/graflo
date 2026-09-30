@@ -16,17 +16,19 @@ from graflo.filter.onto import (
 from graflo.onto import ExpressionFlavor
 
 
-def datetime_range_where_sql(
+def datetime_range_filter(
     datetime_after: str | None,
     datetime_before: str | None,
     date_column: str,
-) -> str:
-    """Build SQL WHERE fragment for [datetime_after, datetime_before) via FilterExpression.
+) -> FilterExpression | None:
+    """The half-open range [datetime_after, datetime_before) on *date_column*.
 
-    Returns empty string if both bounds are None; otherwise uses column with >= and <.
+    Returns ``None`` when neither bound is given. The result is an ordinary
+    filter, so a connector qualifies and joins it like its declared ones
+    (``TableConnector.build_query(extra_filters=...)``).
     """
     if not datetime_after and not datetime_before:
-        return ""
+        return None
     parts: list[FilterExpression] = []
     if datetime_after is not None:
         parts.append(
@@ -47,10 +49,24 @@ def datetime_range_where_sql(
             )
         )
     if len(parts) == 1:
-        return cast(str, parts[0](kind=ExpressionFlavor.SQL))
-    expr = FilterExpression(
+        return parts[0]
+    return FilterExpression(
         kind="composite",
         operator=LogicalOperator.AND,
         deps=parts,
     )
+
+
+def datetime_range_where_sql(
+    datetime_after: str | None,
+    datetime_before: str | None,
+    date_column: str,
+) -> str:
+    """Build SQL WHERE fragment for [datetime_after, datetime_before) via FilterExpression.
+
+    Returns empty string if both bounds are None; otherwise uses column with >= and <.
+    """
+    expr = datetime_range_filter(datetime_after, datetime_before, date_column)
+    if expr is None:
+        return ""
     return cast(str, expr(kind=ExpressionFlavor.SQL))

@@ -43,7 +43,7 @@ The extras add tooling only; they do not switch ingestion features on or off.
 | Extra | What it adds |
 |-------|--------------|
 | `dev` | Tests and checks: `pytest` and its plugins, `hypothesis`, `ty`, `pre-commit` |
-| `docs` | Building this site: MkDocs and its plugins |
+| `docs` | Building this site: ProperDocs and its plugins |
 | `plot` | `pygraphviz`, which draws the diagrams of `graflo plot-manifest` and the `--plot` figures of `graflo merge` and `graflo merge3` |
 
 With pip, name the extras you want:
@@ -60,8 +60,7 @@ removes the extras you leave out:
 uv sync --extra dev --extra docs --extra plot
 ```
 
-The `plot` extra needs the Graphviz system libraries first, for example
-`apt install graphviz graphviz-dev` on Debian and Ubuntu.
+The `plot` extra needs no system Graphviz: the `pygraphviz` wheels include it.
 
 ## Check the installation
 
@@ -70,7 +69,7 @@ graflo --version
 ```
 
 ```text
-graflo, version 1.14.0
+graflo, version 1.15.0
 ```
 
 The version you see is the one you installed. In a clone, run it as

@@ -22,7 +22,7 @@ import pytest
 from graflo.architecture.contract import GraphManifest
 from graflo.architecture.evolution import apply_evolution
 from graflo.architecture.evolution.autogenerate import diff_manifests_verified
-from graflo.architecture.evolution.commit import CommitError, build_root_commit
+from graflo.architecture.evolution.commit import build_root_commit
 from graflo.architecture.evolution.hashing import manifest_hash
 from graflo.architecture.evolution.history import History, checkout
 from graflo.architecture.evolution.inverse import invert_op
@@ -283,15 +283,24 @@ class TestMergeCommitRelabel:
         replayed = checkout(left, History(commits=[*roots, entry]), entry.id)
         assert manifest_hash(replayed) == manifest_hash(merged)
 
-    def test_without_the_right_side_the_fold_is_not_recordable(self) -> None:
-        """The relabel is resolved against both inputs; a plain diff cannot see it."""
+    def test_without_the_right_side_the_fold_records_as_a_drop_and_an_add(
+        self,
+    ) -> None:
+        """The relabel is resolved against both inputs; a plain diff cannot see it.
+
+        It sees the class leave and another arrive, the way it reads any rename
+        it is given no hint for.
+        """
         left, right, op = self._sides()
         merged = merge_manifests(left, right, op, bump_version=False)
 
-        with pytest.raises(CommitError):
-            build_merge_commit(
-                left,
-                merged,
-                parents=["a" * 12, "b" * 12],
-                recipe=build_merge_recipe(left, right, op),
-            )
+        entry = build_merge_commit(
+            left,
+            merged,
+            parents=["a" * 12, "b" * 12],
+            recipe=build_merge_recipe(left, right, op),
+        )
+
+        kinds = [o.op for o in entry.ops]
+        assert "canonicalize" not in kinds
+        assert {"add_vertices", "remove_vertices"} <= set(kinds)

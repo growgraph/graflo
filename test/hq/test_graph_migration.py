@@ -9,7 +9,7 @@ from graflo.architecture.schema import CoreSchema, GraphMetadata, Schema
 from graflo.architecture.schema.edge import Edge, EdgeConfig
 from graflo.architecture.schema.vertex import Field, Vertex, VertexConfig
 from graflo.connections.onto import DBConfig
-from graflo.db.conn import ConnectionCapability
+from graflo.db.conn import Connection, ConnectionCapability
 from graflo.hq.graph_engine import GraphEngine
 from graflo.onto import DBType
 
@@ -32,7 +32,7 @@ def _sample_schema() -> Schema:
     )
 
 
-def test_export_graph_container_builds_vertices_and_edges() -> None:
+def test_the_default_export_reads_every_vertex_type_and_edge() -> None:
     schema = _sample_schema()
     schema.core_schema.edge_config = EdgeConfig(
         edges=[
@@ -45,7 +45,7 @@ def test_export_graph_container_builds_vertices_and_edges() -> None:
         [{"id": "1"}, {"id": "2"}, {"since": 2020}],
     ]
 
-    gc = GraphEngine._export_graph_container(conn, schema)
+    gc = Connection.export_graph_container(conn, schema)
 
     assert isinstance(gc, GraphContainer)
     assert gc.vertices["person"][0]["name"] == "Alice"

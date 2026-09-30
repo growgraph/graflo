@@ -146,8 +146,7 @@ after example 01.
 ## Also possible
 
 - Name the database you will load the files into when you write them, with
-  `target_flavor_hint` on `GraFloBackendConfig`. Leave it unset on a directory
-  you plan to read back with `migrate_graph`; see
+  `target_flavor_hint` on `GraFloBackendConfig`; see
   [Writing for a known target](../../docs/concepts/operations/graph_export_migration.md#writing-for-a-known-target).
 - `GraphEngine.export_graph` returns the schema and the records as Python
   objects and writes nothing.

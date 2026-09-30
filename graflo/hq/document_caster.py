@@ -510,8 +510,10 @@ class DocumentCaster:
         Dynamic edge feedback registers new edges on the shared ``edge_config``
         *during* casting. In a worker process those registrations would be invisible
         to the parent's db-aware projection, so that configuration stays in-process.
+        So does a resource with a step that names its edges per document: each
+        worker would register them on its own copy of the runtime.
         """
-        if params.dynamic_edges:
+        if params.dynamic_edges or runtime.has_dynamic_edge_steps:
             return None
         with self._cache_lock:
             if runtime.name in self._spec_cache:

@@ -56,7 +56,6 @@ def test_file_connector_basic():
     )
     assert pattern.regex == r".*\.csv$"
     assert pattern.time_filter is None
-    assert pattern.date_field is None
 
 
 def test_file_connector_rejects_unknown_time_keys() -> None:
@@ -71,21 +70,18 @@ def test_file_connector_rejects_unknown_time_keys() -> None:
         )
 
 
-def test_file_connector_time_filter() -> None:
-    pattern = FileConnector(
-        regex=r".*\.csv$",
-        sub_path=pathlib.Path("./data"),
-        time_filter=ColumnTimeFilter(
-            column="dt",
-            start="2020-10-10",
-            start_inclusive=False,
-        ),
-    )
-    assert pattern.date_field == "dt"
-    assert pattern.time_filter is not None
-    assert pattern.time_filter.column == "dt"
-    assert pattern.time_filter.start == "2020-10-10"
-    assert pattern.time_filter.start_inclusive is False
+def test_file_connector_rejects_time_filter() -> None:
+    """A file is read whole, so a window that would be ignored is refused."""
+    with pytest.raises(ValidationError, match="time_filter is not implemented"):
+        FileConnector(
+            regex=r".*\.csv$",
+            sub_path=pathlib.Path("./data"),
+            time_filter=ColumnTimeFilter(
+                column="dt",
+                start="2020-10-10",
+                start_inclusive=False,
+            ),
+        )
 
 
 def test_table_connector_basic():
@@ -262,12 +258,9 @@ def test_table_connector_sql_query_building():
     expected_where = "\"dt\" > '2020-10-10'"
     assert where_clause == expected_where
 
-    base_query = 'SELECT * FROM "public"."events"'
-    full_query = f"{base_query} WHERE {where_clause}"
-
-    assert "WHERE" in full_query
-    assert "> '2020-10-10'" in full_query
-    assert '"dt"' in full_query
+    assert table_connector.build_query() == (
+        'SELECT * FROM "public"."events" WHERE "dt" > \'2020-10-10\''
+    )
 
     pattern_no_date = TableConnector(
         table_name="users",
@@ -275,9 +268,7 @@ def test_table_connector_sql_query_building():
     )
     where_clause_no_date = pattern_no_date.build_where_clause()
     assert where_clause_no_date == ""
-
-    query_no_date = 'SELECT * FROM "public"."users"'
-    assert "WHERE" not in query_no_date
+    assert pattern_no_date.build_query() == 'SELECT * FROM "public"."users"'
 
 
 def test_table_connector_date_range_sql():

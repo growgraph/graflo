@@ -125,6 +125,31 @@ class PhysicalKeys:
             )
         return out
 
+    def logical_edge_triples(
+        self,
+        edge_id: EdgeId,
+        source: str,
+        target: str,
+        triples: list[Any],
+    ) -> list[Any]:
+        """Triples read back from the database, keyed by logical names."""
+        back = _invert(self._edge.get(edge_id, {}))
+        if not back and source not in self._vertex and target not in self._vertex:
+            return triples
+        out: list[Any] = []
+        for triple in triples:
+            source_doc, target_doc, *rest = triple
+            weights = rest[0] if rest else {}
+            out.append(
+                [
+                    self.logical_vertex_doc(source, source_doc),
+                    self.logical_vertex_doc(target, target_doc),
+                    _rekey(weights, back) if isinstance(weights, dict) else weights,
+                    *rest[1:],
+                ]
+            )
+        return out
+
     # -- whole containers -------------------------------------------------
 
     def container(self, gc: GraphContainer, edge_config: EdgeConfig) -> GraphContainer:

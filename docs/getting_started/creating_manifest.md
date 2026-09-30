@@ -10,7 +10,9 @@ and what a labeled property graph is.
 
 A manifest has three blocks. Each is optional, but at least one must be
 present: a file can carry only a `schema`, or only `bindings`, and the rest
-can be supplied in Python. This is the manifest of the quick start:
+can be supplied in Python. An optional top-level `metadata` block names and
+describes the manifest as a whole; it is not part of the manifest's content
+hash. This is the manifest of the quick start:
 
 ```yaml
 schema:
@@ -235,7 +237,7 @@ and the records through the manifest's bindings:
 
 ```bash
 graflo ingest --db-config-path db.yaml --schema-path manifest.yaml \
-    --source-path . --fresh-start true
+    --fresh-start true
 ```
 
 File connectors resolve `sub_path` against the directory you run the command
@@ -257,6 +259,10 @@ API and Kafka sources cannot be listed this way: declare them in the
 manifest's bindings and supply their credentials with a connection provider,
 as described in [API connector](../concepts/connectors/api_connector.md) and
 [Kafka connector](../concepts/connectors/kafka_connector.md).
+
+From Python, pass a `DataSourceRegistry` to `GraphEngine.ingest` as
+`data_source_registry=`; its sources are read instead of the ones the bindings
+declare.
 
 ## Writing tips
 

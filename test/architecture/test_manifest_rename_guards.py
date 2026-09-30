@@ -190,7 +190,6 @@ class TestReferencesThatUsedToBeLeftBehind:
         return [
             {
                 "name": "r",
-                "merge_collections": ["a"],
                 "apply": [
                     {"vertex": "a"},
                     {"vertex": "b"},
@@ -206,14 +205,13 @@ class TestReferencesThatUsedToBeLeftBehind:
             }
         ]
 
-    def test_rename_rewrites_merge_collections_and_vertex_weights(self) -> None:
+    def test_rename_rewrites_vertex_weights(self) -> None:
         out = apply_evolution(
             _manifest(resources=self._resource_with_all_reference_kinds()),
             [RenameVerticesOp(renames={"a": "agent"})],
             bump_version=False,
         )
         resource = out.ingestion_model.resources[0]
-        assert resource.merge_collections == ["agent"]
         assert "a" not in resource.collect_vertex_names()
         assert resource.collect_vertex_names() == {"agent", "b"}
 

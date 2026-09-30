@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from typing import Any
 
 from graflo.architecture.graph_types import AssemblyContext, EdgeId, LocationIndex
@@ -237,6 +237,7 @@ def assemble_edges(
     target_db_flavor: DBType | None = None,
     edge_derivation: EdgeDerivationRegistry | None = None,
     inverse_pairs: Mapping[str, str] | None = None,
+    inferable: Collection[EdgeId] | None = None,
 ) -> None:
     """Assemble all edge documents after extraction finishes.
 
@@ -244,6 +245,9 @@ def assemble_edges(
         inverse_pairs: ``{relation: declared inverse}`` for paired relations,
             symmetric ones excluded. Computed from ``edge_config`` when omitted;
             a caller assembling many documents passes it once.
+        inferable: The edges inference may write; every edge of
+            ``edge_config`` when omitted. An edge a step registers per document
+            is left out, so one record's edge type is not inferred for another.
     """
     if infer_edge_only is None:
         infer_edge_only = set()
@@ -285,9 +289,13 @@ def assemble_edges(
         return
 
     populated = {v for v, dd in ctx.acc_vertex.items() if any(dd.values())}
-    for edge_id, edge in edge_config.items():
+    # A snapshot: another cast worker may register an edge on this config while
+    # this document is assembled.
+    for edge_id, edge in list(edge_config.items()):
         s, t, _ = edge_id
         if (s, t) in explicit_pairs or s not in populated or t not in populated:
+            continue
+        if inferable is not None and edge_id not in inferable:
             continue
         if not _is_inference_allowed(
             edge_id,

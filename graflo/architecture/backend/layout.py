@@ -13,6 +13,7 @@ from graflo.architecture.graph_types.identifiers import (
 
 INDEX_FILENAME = "INDEX.json"
 SCHEMA_FILENAME = "schema.yaml"
+LOCK_FILENAME = ".lock"
 VERTICES_DIR = "vertices"
 EDGES_DIR = "edges"
 CHUNK_SUFFIX = ".jsonl.gz"

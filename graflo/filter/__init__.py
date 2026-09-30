@@ -8,6 +8,7 @@ Key Components:
     - ComparisonOperator: Comparison operations (==, !=, >, <, etc.)
     - FilterExpression: Filter expression (leaf or composite logical formulae)
     - parse_filter_expression: Unified YAML/JSON loader (Bindings, SelectSpec, graph DB)
+    - BoundParams: Values a rendered filter names by placeholder, for the driver to bind
 
 SQL notes:
     - IF_THEN (IMPLICATION) renders as ``(NOT antecedent OR consequent)``.
@@ -26,19 +27,23 @@ Example:
 from __future__ import annotations
 
 from .onto import (
+    BoundParams,
     ComparisonOperator,
     FilterExpression,
     LogicalOperator,
     parse_filter_expression,
+    render_conjunct,
 )
 from .select import ALL_BASE_COLUMNS, JoinClause, SelectSpec
 
 __all__ = [
     "ALL_BASE_COLUMNS",
+    "BoundParams",
     "ComparisonOperator",
     "FilterExpression",
     "JoinClause",
     "LogicalOperator",
     "SelectSpec",
     "parse_filter_expression",
+    "render_conjunct",
 ]

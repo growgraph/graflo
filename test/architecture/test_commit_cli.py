@@ -201,7 +201,119 @@ def test_the_log_reports_a_forked_history(workspace) -> None:
     result = _run("log", "--store", workspace["store"])
     assert result.exit_code == 0
     assert "2 heads" in result.output
-    assert "graflo merge" in result.output
+    # Two roots share no ancestor commit, so `merge3` would refuse them.
+    assert "`graflo merge`" in result.output
+    assert "merge3" not in result.output
+    assert "forked" not in result.output
+
+
+def test_the_log_names_merge3_for_heads_that_forked(workspace) -> None:
+    from graflo.architecture.contract.manifest import GraphManifest
+    from graflo.architecture.evolution.apply import apply_evolution
+    from graflo.architecture.evolution.commit import build_commit
+    from graflo.architecture.evolution.history import FileCommitStore, History
+    from graflo.architecture.evolution.ops import AddVertexPropertiesOp
+
+    base = GraphManifest.from_dict(BASE_MANIFEST)
+    root_op = AddVertexPropertiesOp(additions={"person": ["name"]})
+    root = build_commit(base, [root_op], label="add name")
+    after_root = apply_evolution(base, [root_op], bump_version=False)
+    left = build_commit(
+        after_root,
+        [AddVertexPropertiesOp(additions={"person": ["age"]})],
+        parents=[root.id],
+        label="add age",
+    )
+    right = build_commit(
+        after_root,
+        [AddVertexPropertiesOp(additions={"person": ["email"]})],
+        parents=[root.id],
+        label="add email",
+    )
+    FileCommitStore(workspace["store"]).save(History(commits=[root, left, right]))
+
+    result = _run("log", "--store", workspace["store"])
+
+    assert result.exit_code == 0
+    assert "forked" in result.output
+    assert "`graflo merge3`" in result.output
+
+
+# ── revert ──────────────────────────────────────────────────────────────────
+
+
+def _head_id(workspace) -> str:
+    from graflo.architecture.evolution.history import FileCommitStore
+
+    (head,) = FileCommitStore(workspace["store"]).load().heads()
+    return head.id
+
+
+def _revert(workspace, commit_id: str) -> Result:
+    return _run(
+        "revert",
+        commit_id,
+        "--base",
+        workspace["v1"],
+        "--store",
+        workspace["store"],
+        "--output-path",
+        workspace["out"],
+    )
+
+
+def test_reverting_an_added_property_removes_it(workspace) -> None:
+    assert _record(workspace, "age", "add age").exit_code == 0
+
+    result = _revert(workspace, _head_id(workspace))
+
+    assert result.exit_code == 0, result.output
+    assert _property_names(workspace["out"]) == ["id"]
+
+
+def test_reverting_a_re_key_restores_the_old_key(workspace, tmp_path) -> None:
+    from graflo.architecture.contract.manifest import GraphManifest
+
+    with_email = _with_property("email")
+    rekeyed = copy.deepcopy(with_email)
+    rekeyed["schema"]["graph"]["vertex_config"]["vertices"][0]["identity"] = ["email"]
+    workspace["v1"] = _write(tmp_path / "v1-email.yaml", with_email)
+    workspace["rekeyed"] = _write(tmp_path / "rekeyed.yaml", rekeyed)
+    assert _record(workspace, "rekeyed", "key by email").exit_code == 0
+
+    result = _revert(workspace, _head_id(workspace))
+
+    assert result.exit_code == 0, result.output
+    reverted = GraphManifest.from_dict(yaml.safe_load(workspace["out"].read_text()))
+    vertex = reverted.require_schema().core_schema.vertex_config.vertices[0]
+    assert vertex.identity == ["id"]
+
+
+def test_reverting_an_older_commit_keeps_the_newer_one(workspace, tmp_path) -> None:
+    both = _with_property("age")
+    both["schema"]["graph"]["vertex_config"]["vertices"][0]["properties"].append(
+        {"name": "email"}
+    )
+    workspace["both"] = _write(tmp_path / "both.yaml", both)
+    assert _record(workspace, "age", "add age").exit_code == 0
+    first = _head_id(workspace)
+    second = _run(
+        "commit",
+        "--from-manifest",
+        workspace["age"],
+        "--to-manifest",
+        workspace["both"],
+        "-m",
+        "add email",
+        "--store",
+        workspace["store"],
+    )
+    assert second.exit_code == 0, second.output
+
+    result = _revert(workspace, first)
+
+    assert result.exit_code == 0, result.output
+    assert _property_names(workspace["out"]) == ["id", "email"]
 
 
 # ── verify and checkout ─────────────────────────────────────────────────────

@@ -5,6 +5,10 @@ When a Resource's pipeline contains an EdgeActor whose ``derivation`` declares
 have known table connectors, this module can auto-generate JoinClauses and
 IS_NOT_NULL filters on the edge resource's table connector so that the
 resulting SQL fetches fully resolved rows.
+
+An edge step whose match tokens are roles of ``vertex`` steps in the same
+pipeline is left alone: those tokens pair vertices of one record and name no
+column.
 """
 
 from __future__ import annotations
@@ -14,7 +18,11 @@ from typing import TYPE_CHECKING
 
 from graflo.architecture.contract.bindings import TableConnector
 from graflo.architecture.contract.ingestion.resource import ResourceConfig
-from graflo.architecture.pipeline.runtime.actor import ActorWrapper, EdgeActor
+from graflo.architecture.pipeline.runtime.actor import (
+    ActorWrapper,
+    EdgeActor,
+    VertexActor,
+)
 from graflo.architecture.pipeline.runtime.resource import ResourceRuntime
 from graflo.filter.onto import ComparisonOperator, FilterExpression
 from graflo.filter.select import JoinClause
@@ -56,9 +64,16 @@ def enrich_edge_connector_with_joins(
     if connector.joins:
         return
 
-    edge_actors = _collect_edge_actors(_actor_root_for_joins(resource))
+    actors = _actor_root_for_joins(resource).collect_actors()
+    edge_actors = [actor for actor in actors if isinstance(actor, EdgeActor)]
     if not edge_actors:
         return
+    # A match token that names the role of a vertex step pairs vertices of one
+    # record; it names no column to join on. (A router's role defaults to its
+    # type column, which is joined on.)
+    roles = {
+        actor.role for actor in actors if isinstance(actor, VertexActor) and actor.role
+    }
 
     new_joins: list[JoinClause] = []
     new_filters: list[FilterExpression] = []
@@ -67,6 +82,8 @@ def enrich_edge_connector_with_joins(
         edge = ea.edge
         der = ea.derivation
         if not der.match_source or not der.match_target:
+            continue
+        if der.match_source in roles or der.match_target in roles:
             continue
         # Dynamic EdgeActors (source_type_field set) resolve types while processing
         # documents; static vertex type info is not available for JOIN generation.
@@ -140,15 +157,6 @@ def _actor_root_for_joins(resource: ResourceRuntime | ResourceConfig) -> ActorWr
     if isinstance(resource, ResourceRuntime):
         return resource.root
     return ActorWrapper(*resource.pipeline)
-
-
-def _collect_edge_actors(wrapper: ActorWrapper) -> list[EdgeActor]:
-    """Recursively collect all EdgeActors from an ActorWrapper tree."""
-    result: list[EdgeActor] = []
-    for actor in wrapper.collect_actors():
-        if isinstance(actor, EdgeActor):
-            result.append(actor)
-    return result
 
 
 def _vertex_table_info(

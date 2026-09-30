@@ -16,12 +16,15 @@ from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import FieldType, VertexConfig
 from graflo.connections.onto import NebulaConfig
 from graflo.db.conn import (
+    DEFAULT_DELETE_CHUNK_SIZE,
     Connection,
     NamespaceNotFoundError,
     SchemaExistsError,
     consume_insert_edges_kwargs,
+    deletable_docs,
+    deletable_endpoints,
 )
-from graflo.db.field_type_support import assert_schema_field_types_supported
+from graflo.db.field_type_support import assert_schema_supported
 from graflo.db.nebula.adapter import (
     NebulaClientAdapter,
     NebulaResultSet,
@@ -43,14 +46,18 @@ from graflo.db.nebula.query import (
     insert_edges_ngql,
 )
 from graflo.db.nebula.util import (
+    escape_nebula_string,
     field_type_from_nebula,
     is_nebula_string_field,
+    key_of_vid,
     make_vid,
     render_filters_cypher,
     render_filters_ngql,
+    tag_vid,
+    vertex_key,
     wait_for_space_ready,
 )
-from graflo.filter.onto import FilterExpression
+from graflo.filter.onto import FilterExpression, render_conjunct
 from graflo.onto import AggregationType, DBType, ExpressionFlavor
 
 logger = logging.getLogger(__name__)
@@ -75,6 +82,8 @@ class NebulaConnection(Connection):
     # endpoint tags on an edge type, so those must be observed on real edges.
     # Half-sampled is still sampled: an edge type with no stored edges is lost.
     schema_introspection_is_sampled: ClassVar[bool] = True
+    # A VID names its tag (`util.tag_vid`), so removing one removes one vertex.
+    supports_instance_delete: ClassVar[bool] = True
 
     def __init__(self, config: NebulaConfig):
         super().__init__()
@@ -292,7 +301,7 @@ class NebulaConnection(Connection):
     # ------------------------------------------------------------------
 
     def define_schema(self, schema: Schema) -> None:
-        assert_schema_field_types_supported(self.flavor, schema)
+        assert_schema_supported(self.flavor, schema)
         self.define_vertex_classes(schema)
         edges = list(schema.core_schema.edge_config.values())
         self.define_edge_classes(edges)
@@ -369,7 +378,9 @@ class NebulaConnection(Connection):
             # Nebula requires TAG indexes for LOOKUP and many property-filtered MATCH
             # plans. Keep identity index creation implicit so schemas without
             # explicit database_features remain queryable/clearable.
-            identity_idx = Index(fields=vertex_config.identity_fields(vname))
+            identity_idx = Index(
+                fields=vertex_config.identity_fields(vname), unique=True
+            )
             all_indexes = [identity_idx, *index_list]
 
             seen: set[tuple[str, ...]] = set()
@@ -667,8 +678,8 @@ class NebulaConnection(Connection):
                 else {}
             )
 
-            src_vid = make_vid(src_doc, list(match_keys_source))
-            dst_vid = make_vid(dst_doc, list(match_keys_target))
+            src_vid = make_vid(source_class, src_doc, match_keys_source)
+            dst_vid = make_vid(target_class, dst_doc, match_keys_target)
             edge_tuples.append((src_vid, dst_vid, props))
 
         if dry or not edge_tuples:
@@ -693,6 +704,53 @@ class NebulaConnection(Connection):
         raise NotImplementedError(
             "insert_return_batch is not implemented for NebulaGraph"
         )
+
+    def delete_vertices(
+        self,
+        class_name: str,
+        key_docs: list[dict[str, Any]],
+        match_keys: tuple[str, ...],
+        *,
+        chunk_size: int = DEFAULT_DELETE_CHUNK_SIZE,
+    ) -> None:
+        """Remove vertices of one tag by VID, ``WITH EDGE`` removing their edges."""
+        vids = [
+            f'"{escape_nebula_string(make_vid(class_name, doc, match_keys))}"'
+            for doc in deletable_docs(key_docs, match_keys)
+        ]
+        for start in range(0, len(vids), chunk_size):
+            chunk = ", ".join(vids[start : start + chunk_size])
+            self._execute(f"DELETE VERTEX {chunk} WITH EDGE")
+
+    def delete_edges(
+        self,
+        source_class: str,
+        target_class: str,
+        relation_name: str | None,
+        endpoints: list[tuple[dict[str, Any], dict[str, Any]]],
+        match_keys_source: tuple[str, ...],
+        match_keys_target: tuple[str, ...],
+        *,
+        collection_name: str | None = None,
+        chunk_size: int = DEFAULT_DELETE_CHUNK_SIZE,
+    ) -> None:
+        """Remove edges of one type between VID pairs.
+
+        Every edge GraFlo writes has rank 0, the rank ``DELETE EDGE`` removes
+        when none is given.
+        """
+        if relation_name is None:
+            raise ValueError("NebulaGraph delete_edges requires the edge type")
+        pairs = [
+            f'"{escape_nebula_string(make_vid(source_class, s, match_keys_source))}"'
+            f'->"{escape_nebula_string(make_vid(target_class, t, match_keys_target))}"'
+            for s, t in deletable_endpoints(
+                endpoints, match_keys_source, match_keys_target
+            )
+        ]
+        for start in range(0, len(pairs), chunk_size):
+            chunk = ", ".join(pairs[start : start + chunk_size])
+            self._execute(f"DELETE EDGE `{relation_name}` {chunk}")
 
     # ------------------------------------------------------------------
     # Fetch operations
@@ -871,10 +929,9 @@ class NebulaConnection(Connection):
     def vertex_address(
         self, doc: dict[str, Any], identity_fields: Sequence[str]
     ) -> str | None:
-        """Compose the VID exactly as the write path does.
+        """Every identity value joined as the write path joins them, without the tag.
 
-        Nebula addresses a vertex by VID, and :func:`make_vid` joins *all*
-        identity-field values with ``::``. Falling back to the base
+        :meth:`fetch_edges` adds the tag it is given. Falling back to the base
         implementation would address a composite-identity vertex by its first
         field alone — a VID that exists nowhere, so every edge query anchored
         on it returns empty instead of raising.
@@ -882,7 +939,7 @@ class NebulaConnection(Connection):
         keys = list(identity_fields)
         if not keys or any(doc.get(k) is None for k in keys):
             return None
-        return make_vid(doc, keys)
+        return vertex_key(doc, keys)
 
     def fetch_edges(
         self,
@@ -900,8 +957,11 @@ class NebulaConnection(Connection):
     ) -> list[dict[str, Any]]:
         """Fetch edges incident to one vertex via ``GO``.
 
-        Nebula keeps an out-key and an in-key per edge, so ``IN`` / ``ANY`` are
-        as cheap as ``OUT`` once ``REVERSELY`` / ``BIDIRECT`` is asked for.
+        *from_id* and *to_id* are addresses (:meth:`vertex_address`), and
+        ``_src`` / ``_dst`` in the rows are too: the tag is added and removed
+        here. Nebula keeps an out-key and an in-key per edge, so ``IN`` /
+        ``ANY`` are as cheap as ``OUT`` once ``REVERSELY`` / ``BIDIRECT`` is
+        asked for.
         """
         fc = ""
         if filters is not None:
@@ -909,14 +969,16 @@ class NebulaConnection(Connection):
                 ff = FilterExpression.from_dict(filters)
             else:
                 ff = filters
-            fc = str(ff(doc_name="e", kind=self._expression_flavor()))
+            # Joined with the far-end predicate by AND in the query builder.
+            fc = render_conjunct(ff, doc_name="e", kind=self._expression_flavor())
 
         q = fetch_edges_ngql(
             from_type,
-            from_id,
+            tag_vid(from_type, from_id),
             edge_type=edge_type,
             to_tag=to_type,
-            to_vid=to_id,
+            to_vid=tag_vid(to_type, to_id) if to_type and to_id else None,
+            to_key=to_id if to_id and not to_type else None,
             filter_clause=fc,
             limit=limit,
             direction=direction,
@@ -928,8 +990,8 @@ class NebulaConnection(Connection):
         for row in rows:
             entry = row.get("props", row)
             if isinstance(entry, dict):
-                entry["_src"] = row.get("src", "")
-                entry["_dst"] = row.get("dst", "")
+                entry["_src"] = key_of_vid(str(row.get("src", "")))
+                entry["_dst"] = key_of_vid(str(row.get("dst", "")))
                 entry["_type"] = row.get("edge_type", "")
             if return_keys and isinstance(entry, dict):
                 entry = {k: entry.get(k) for k in return_keys}
@@ -954,10 +1016,10 @@ class NebulaConnection(Connection):
 
         results: list[dict[str, Any]] = []
         for doc in batch:
-            vid = make_vid(doc, list(match_keys))
+            vid = make_vid(class_name, doc, match_keys)
             try:
                 rs = self._execute(
-                    f'FETCH PROP ON `{class_name}` "{vid}" '
+                    f'FETCH PROP ON `{class_name}` "{escape_nebula_string(vid)}" '
                     f"YIELD properties(vertex) AS props"
                 )
                 rows = rs.rows_as_dicts()

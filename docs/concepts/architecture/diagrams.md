@@ -12,9 +12,10 @@ what. You do not need them to write a manifest; for that, see
 manifest or a schema for you (`infer_manifest` from PostgreSQL,
 `infer_schema_from_rdf` from an ontology, `infer_schema_from_graph` from a
 graph database), `define_schema` creates the schema in the target, `ingest`
-and `define_and_ingest` load data, `export_graph` reads a whole graph back
-out, and `migrate_graph` moves one to another database. For each call it
-creates the objects its arrows point to.
+and `define_and_ingest` load data, `delete_vertices` and `delete_edges`
+remove data by identity, `export_graph` reads a whole graph back out, and
+`migrate_graph` moves one to another database. For each call it creates the
+objects its arrows point to.
 
 ```mermaid
 classDiagram
@@ -32,6 +33,8 @@ classDiagram
         +ingest(manifest, target_db_config, ingestion_params)
         +define_and_ingest(manifest, target_db_config, ingestion_params)
         +diff_live_schema(conn_conf, schema) LiveSchemaDrift
+        +delete_vertices(target_db_config, schema, vertex, key_docs)
+        +delete_edges(target_db_config, schema, edge_id, endpoints)
         +export_graph(source_config) GraFloOutput
         +migrate_graph(source_config, target_config)
     }
@@ -255,6 +258,8 @@ classDiagram
         <<abstract>>
         +resource_name: str?
         +iter_batches(batch_size, limit)
+        +acknowledge(batch_index)
+        +close()
     }
 
     class GraphContainer {
@@ -279,7 +284,10 @@ classDiagram
 `SQLDataSource`, `RdfFileDataSource`, `SparqlEndpointDataSource`,
 `APIDataSource`, `KafkaDataSource`, and `InMemoryDataSource` for Python
 objects. Each is registered under the name of the resource it feeds, so a
-resource does not know what kind of source it reads.
+resource does not know what kind of source it reads. The ingest calls
+`acknowledge` for each batch once it is written and `close` when the source is
+done; `KafkaDataSource` commits its offsets there, and the other sources do
+nothing.
 
 ## What to read next
 

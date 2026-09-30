@@ -172,3 +172,198 @@ def test_max_concurrent_bounds_concurrent_write_calls(monkeypatch):
 
     asyncio.run(_two_concurrent_writes())
     assert state["high_water"] == 1
+
+
+def _high_water_of_concurrent_writes(
+    monkeypatch, conn_conf, max_concurrent: int
+) -> int:
+    schema = _build_schema()
+    writer = DBWriter(
+        schema=schema,
+        ingestion_model=_build_ingestion_model(schema),
+        max_concurrent=max_concurrent,
+    )
+    state = {"active": 0, "high_water": 0}
+
+    class _SlowDB(_FakeDB):
+        def upsert_docs_batch(self, docs, class_name, match_keys, **kwargs):
+            import time
+
+            state["active"] += 1
+            state["high_water"] = max(state["high_water"], state["active"])
+            time.sleep(0.02)
+            state["active"] -= 1
+
+    class _SlowConnectionManager(_FakeConnectionManager):
+        db = _SlowDB()
+
+    monkeypatch.setattr("graflo.hq.db_writer.ConnectionManager", _SlowConnectionManager)
+
+    async def _writes() -> None:
+        await asyncio.gather(
+            *(
+                # Two vertex types, so no per-collection lock serializes them.
+                writer._push_vertices(
+                    GraphContainer(
+                        vertices={"target_v": [{"id": str(n)}], "blank_v": [{}]},
+                        edges={},
+                        linear=[],
+                    ),
+                    conn_conf,
+                )
+                for n in range(2)
+            )
+        )
+
+    asyncio.run(_writes())
+    return state["high_water"]
+
+
+def test_the_file_backend_keeps_its_concurrency(monkeypatch, tmp_path):
+    from graflo.connections.graflo_backend import GraFloBackendConfig
+
+    conn_conf = GraFloBackendConfig(output_dir=tmp_path)
+
+    assert _high_water_of_concurrent_writes(monkeypatch, conn_conf, 4) > 1
+
+
+def test_other_targets_keep_their_concurrency(monkeypatch):
+    conn_conf = ArangoConfig(uri="http://localhost:8529", username="root", password="x")
+
+    assert _high_water_of_concurrent_writes(monkeypatch, conn_conf, 4) > 1
+
+
+# -- extra weights: stored vertex fields copied onto a document's edges ---------
+
+
+def _employment_schema() -> Schema:
+    return Schema.model_validate(
+        {
+            "metadata": {"name": "hr"},
+            "core_schema": {
+                "vertex_config": {
+                    "vertices": [
+                        {"name": "person", "properties": ["id"], "identity": ["id"]},
+                        {"name": "org", "properties": ["id"], "identity": ["id"]},
+                        {
+                            "name": "contract",
+                            "properties": ["id", "grade"],
+                            "identity": ["id"],
+                        },
+                    ]
+                },
+                "edge_config": {
+                    "edges": [
+                        {"source": "person", "target": "org", "relation": "works_at"}
+                    ]
+                },
+            },
+            "db_profile": {"db_flavor": "neo4j"},
+        }
+    )
+
+
+def _employment_model(schema: Schema) -> IngestionModel:
+    model = IngestionModel.model_validate(
+        {
+            "resources": [
+                {
+                    "name": "employments",
+                    "pipeline": [
+                        {"vertex": "person", "from": {"id": "person"}},
+                        {"vertex": "org", "from": {"id": "org"}},
+                        {"vertex": "contract", "from": {"id": "contract"}},
+                        {
+                            "edge": {
+                                "from": "person",
+                                "to": "org",
+                                "relation": "works_at",
+                            }
+                        },
+                    ],
+                    "extra_weights": [
+                        {
+                            "edge": {
+                                "source": "person",
+                                "target": "org",
+                                "relation": "works_at",
+                            },
+                            "vertex_weights": [
+                                {"name": "contract", "fields": ["grade"]}
+                            ],
+                        }
+                    ],
+                    "infer_edges": False,
+                }
+            ],
+            "transforms": [],
+        }
+    )
+    model.finish_init(schema.core_schema)
+    return model
+
+
+class _StoredContracts:
+    """A database that holds contracts, with the grades another resource wrote."""
+
+    stored = {"c1": {"id": "c1", "grade": "A"}, "c2": {"id": "c2", "grade": "B"}}
+
+    def resolve_vertices(self, class_name, key_docs, match_keys, return_keys):
+        assert (class_name, tuple(match_keys)) == ("contract", ("id",))
+        return {
+            index: [{key: self.stored[doc["id"]][key] for key in return_keys}]
+            for index, doc in enumerate(key_docs)
+            if doc.get("id") in self.stored
+        }
+
+
+def test_extra_weights_reach_the_edges_of_the_document_they_belong_to(monkeypatch):
+    schema = _employment_schema()
+    model = _employment_model(schema)
+    runtime = model.fetch_resource("employments")
+    writer = DBWriter(schema=schema, ingestion_model=model)
+
+    class _Manager(_FakeConnectionManager):
+        db = _StoredContracts()
+
+    monkeypatch.setattr("graflo.hq.db_writer.ConnectionManager", _Manager)
+    conn_conf = Neo4jConfig(uri="bolt://localhost:7687", username="u", password="p")
+
+    # The second row has no contract, so contracts and rows do not line up by
+    # position; the third names one the database does not hold.
+    gc = GraphContainer.from_docs_list(
+        [
+            runtime({"person": "p1", "org": "o1", "contract": "c2"}),
+            runtime({"person": "p2", "org": "o1"}),
+            runtime({"person": "p3", "org": "o2", "contract": "c9"}),
+            runtime({"person": "p4", "org": "o2", "contract": "c1"}),
+        ]
+    )
+
+    asyncio.run(writer._enrich_extra_weights(gc, conn_conf, runtime))
+
+    grades = {
+        source["id"]: weight.get("contract@grade")
+        for source, _, weight in gc.edges[("person", "org", "works_at")]
+    }
+    assert grades == {"p1": "B", "p2": None, "p3": None, "p4": "A"}
+
+
+def test_an_edge_the_schema_does_not_declare_is_reported_once(caplog):
+    schema = _employment_schema()
+    writer = DBWriter(schema=schema, ingestion_model=_employment_model(schema))
+    conn_conf = Neo4jConfig(uri="bolt://localhost:7687", username="u", password="p")
+    undeclared = ("org", "person", "employs")
+
+    def _gc() -> GraphContainer:
+        return GraphContainer(
+            edges={undeclared: [({"id": "o1"}, {"id": "p1"}, {})]}, linear=[]
+        )
+
+    with caplog.at_level("WARNING", logger="graflo.hq.db_writer"):
+        asyncio.run(writer._push_edges(_gc(), conn_conf))
+        asyncio.run(writer._push_edges(_gc(), conn_conf))
+
+    reports = [r for r in caplog.records if "does not declare" in r.getMessage()]
+    assert len(reports) == 1
+    assert str(undeclared) in reports[0].getMessage()

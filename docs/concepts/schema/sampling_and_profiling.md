@@ -44,7 +44,7 @@ source_name: sample-source
 warning. A file GraFlo cannot read at all, such as a `README.md`, is skipped the
 same way.
 
-`sample_resources` takes four kinds of source and returns a `SourceSample`
+`sample_resources` takes three kinds of source and returns a `SourceSample`
 holding one `ResourceSample` per file or table:
 
 - A file path, a directory path, or a list of file paths. JSON, JSON Lines, CSV

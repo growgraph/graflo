@@ -89,10 +89,10 @@ LIST_ORDER: dict[tuple[str, str], ListOrder] = {
     # its own order, which the sort does not touch.
     ("Edge", "identities"): SORTED,
     # ── Identity: preserved, deliberately ───────────────────────────────────
-    # `Vertex.identity` order is load-bearing at two confirmed sites: a
-    # backend's `vertex_address` resolves an endpoint through the *first*
-    # identity field present, and PostgreSQL's edge FK is `identity_fields[0]`
-    # (CORE-PG-002). Composite primary-key column order is significant besides.
+    # `Vertex.identity` order is load-bearing: a backend's `vertex_address`
+    # resolves an endpoint through the *first* identity field present, a
+    # NebulaGraph VID joins the values in order, and composite primary-key and
+    # edge-table endpoint columns follow it.
     ("Vertex", "identity"): PRESERVED,
     # `identity_digest._digest` dumps its payload with `sort_keys=True`, so
     # reordering these two does *not* change the digest they feed -- they could
@@ -169,6 +169,7 @@ LIST_ORDER: dict[tuple[str, str], ListOrder] = {
     # Membership sets on a connector.
     ("KafkaConnector", "topics"): SORTED,
     ("APIConnector", "retry_status_forcelist"): SORTED,
+    ("SparqlConnector", "typed_objects"): SORTED,
     # SQL shape: join order and projection order are both meaning.
     ("TableConnector", "joins"): PRESERVED,
     ("TableConnector", "select_columns"): PRESERVED,

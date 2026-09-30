@@ -2,8 +2,8 @@
 
 Every backend raises ``SchemaExistsError`` from that call once the target holds
 data, which is what protects a first write from clobbering a populated graph.
-It is also why migration currently cannot run against any real database
-(``CORE-MIGRATE-001``): the emitters route their DDL through the same call, so
+It is also why migration currently cannot run against any populated database:
+the emitters route their DDL through the same call, so
 they inherit a guard meant for a different job.
 
 Pinning the behaviour here is what keeps the eventual fix honest. Migration has

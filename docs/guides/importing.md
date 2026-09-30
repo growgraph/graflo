@@ -14,11 +14,12 @@ In an application or a script, import from the top-level package:
 from graflo import GraphEngine, GraphManifest, IngestionParams, Schema
 ```
 
-Every package's `__init__` is lazy (PEP 562): `import graflo` loads no
-subpackage, and a name is imported the first time you use it. The cost is
-typing: a static type checker sees names from a lazy package as `Any`. In a
-library, or wherever precise types matter, import from the module that
-defines the name:
+`graflo` and its main subpackages (`graflo.architecture`,
+`graflo.connections`, `graflo.data_source`, `graflo.db`, `graflo.hq`) are
+lazy (PEP 562): `import graflo` loads no subpackage, and a name is imported
+the first time you use it. The cost is typing: a static type checker sees
+names from a lazy package as `Any`. In a library, or wherever precise types
+matter, import from the module that defines the name:
 
 ```python
 from graflo.architecture.contract.manifest import GraphManifest

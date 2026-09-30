@@ -637,7 +637,18 @@ def _edge_pair(
 
 def _union_cases() -> dict[str, tuple[GraphManifest, GraphManifest, MergeManifestsOp]]:
     """One case per rule ``merge_core`` and ``union_field_lists`` refuse on."""
+    shared_left, shared_right, union_op = _edge_pair(
+        {"source": "A", "target": "X", "relation": "r"},
+        {"source": "B", "target": "Y", "relation": "r"},
+    )
     return {
+        # A relation name both sides use, no equivalence for it, and clusters
+        # that merge both endpoints: refused as a relation name collision.
+        "relation-name-collision": (
+            shared_left,
+            shared_right,
+            union_op.model_copy(update={"name_conflict": "error"}),
+        ),
         "blank-x-assigned": _pair(
             _natural("A", blank=True), _natural("B", assigned=True)
         ),

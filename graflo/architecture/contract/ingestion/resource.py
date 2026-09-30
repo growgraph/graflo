@@ -327,10 +327,8 @@ class ResourceConfig(ConfigBaseModel):
     merge_collections: list[str] = PydanticField(
         default_factory=list,
         description=(
-            "Collection names whose documents fuse when written to the graph -- "
-            "several observations becoming one node, not two type declarations "
-            "becoming one. Named `merge_` because it is an authored contract key; "
-            "the vocabulary calls this sense `fuse`."
+            "Not implemented: nothing reads it, so a non-empty value is refused. "
+            "Documents of one vertex fuse by identity without it."
         ),
     )
     extra_weights: list[ResourceExtraWeightEntry] = PydanticField(
@@ -392,12 +390,16 @@ class ResourceConfig(ConfigBaseModel):
             raise ValueError(
                 "Resource infer_edge_only and infer_edge_except are mutually exclusive."
             )
+        if self.merge_collections:
+            raise ValueError(
+                "merge_collections is not implemented: nothing reads it. Documents "
+                "of one vertex fuse by identity without it; remove the key."
+            )
         return self
 
     def collect_vertex_names(self) -> set[str]:
         """Vertex types referenced by this resource (pipeline and related config)."""
         names = collect_vertex_names_from_pipeline(self.pipeline)
-        names.update(self.merge_collections)
         for spec in self.infer_edge_only:
             names.add(spec.source)
             names.add(spec.target)

@@ -280,7 +280,10 @@ Two rules explain most results:
   between their types (`infer_edges`, on by default). The `edge` step above
   is only needed when the relation comes from the record, when a record
   should get only some of the relations the schema declares between two
-  types, or when the edge needs options such as `vertex_weights`.
+  types, or when the edge needs options such as `vertex_weights`. Between two
+  vertices of the same type, the inferred edge starts at the outer one: a
+  record and the records nested in it give edges from the record to each
+  nested one.
 
 ### The `vertex` step
 
@@ -345,6 +348,12 @@ The relation, one of:
   (see the [relation from key example](../../examples/json-relation-from-key/index.md)
   (4)).
 
+A step that names no relation takes the one the schema declares between its
+two types. When the schema declares several, the manifest is refused at load
+and the step must name one. An edge whose `(source, target, relation)` the
+schema does not declare is not written; the writer logs a warning that names
+it, once per run.
+
 Payload and selection:
 
 - `properties`: more edge properties, added to the schema edge. Like the ones
@@ -352,7 +361,10 @@ Payload and selection:
 - `vertex_weights`: `[{name: <vertex type>, fields: [...]}]` copies properties
   of an endpoint vertex onto the edge, under the name `<vertex type>@<field>`
   (see the [filters and weights example](../../examples/vertex-filters-and-weights/index.md)
-  (5)).
+  (5)). `filter: {<field>: <value>}` on an entry reads only the vertices whose
+  field has that value. Each entry goes on every edge the step writes for the
+  record. When an entry reads as many vertices as there are edges, they pair by
+  position; any other count takes the first vertex, with a warning.
 - `match_source` / `match_target` / `match`: only connect vertices reached
   under this key of a nested record. `exclude_source` / `exclude_target` skip
   vertices reached under it.
@@ -455,6 +467,7 @@ Set beside `name` and `pipeline`:
 | `fail_fast` | `false` | Fail the record when a transform's input fields are missing. By default a `rename` maps the fields that are present and a `call` writes nothing. |
 | `tolerate_transform_errors` | `true` | When a transform raises, set its output fields to `null`, record the failure, and continue with the record. See [document cast errors](../ingestion/doc_errors.md). |
 | `types` | empty | `{field: type}` conversions applied to top-level fields before the steps. The types are `int`, `float`, `str`, `bool`, `bytes`, `list`, `dict`, `tuple` and `set`; other names are ignored. |
+| `encoding` | `utf-8` | The character encoding the resource's files are read with: `utf-8` or `ISO-8859-1`. |
 | `extra_weights` | empty | Edge properties copied from endpoint vertices as stored in the database, read between the vertex and edge writes of each batch. The resource then runs serially; see [parallelism](../ingestion/parallelism.md). |
 
 ## Names in the target database
@@ -505,6 +518,14 @@ Beyond names, `db_profile` holds the target flavor (`db_flavor`, default
 `arango`), an optional `target_namespace`, secondary indexes (`vertex_indexes`,
 `edge_specs[].indexes`; see [backend indexes](../schema/backend_indexes.md)),
 `native_inverses`, and `default_property_values`.
+
+An `edge_specs` entry may carry a `purpose`: a second stored copy of the same
+edge, with its own `relation_name` and its own indexes (`indexes_mode` says
+whether they `inherit`, `append` to or `replace` those of the entry without a
+purpose). Only ArangoDB reads it, and only when the schema is defined: it
+creates one edge collection per purpose. Ingestion writes every edge to the
+entry without a purpose, so a purpose collection holds what you write to it
+yourself.
 
 TigerGraph stores a value for every attribute a vertex or edge type declares,
 including one a record does not supply. `default_property_values` sets that

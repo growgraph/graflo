@@ -138,7 +138,7 @@ class VertexConfigDBAware:
 
     def index(self, vertex_name: str) -> Index:
         """Get primary index for a vertex (DB layer needs Index for collection setup)."""
-        return Index(fields=self.identity_fields(vertex_name))
+        return Index(fields=self.identity_fields(vertex_name), unique=True)
 
     def identity_fields(self, vertex_name: str) -> list[str]:
         identity = self.logical.identity_fields(vertex_name)

@@ -14,7 +14,6 @@ from graflo.connections.onto import TigergraphBulkLoadConfig
 from graflo.db.tigergraph.bulk_csv import BulkCsvAppender
 from graflo.db.tigergraph.bulk_gsql import (
     build_create_and_run_loading_job,
-    build_run_loading_job_only,
 )
 from graflo.object_storage import upload_staged_csvs
 from graflo.onto import DBType
@@ -123,17 +122,14 @@ def bulk_load_finalize(
                 session_id=session_id,
                 s3_cfg=gen,
             )
-    if bulk_cfg.loading_job.run_mode == "run_only":
-        gsql = build_run_loading_job_only(job_name=job_name, opts=bulk_cfg.loading_job)
-    else:
-        gsql = build_create_and_run_loading_job(
-            graph_name=graph_name,
-            job_name=job_name,
-            schema_db=schema_db,
-            staged_files=staged,
-            bulk_cfg=bulk_cfg,
-            path_for_gsql=path_for_gsql,
-            tigergraph_s3_loader=tigergraph_s3_loader,
-            tigergraph_s3_data_source_name=f"gf_s3_{session_id}",
-        )
+    gsql = build_create_and_run_loading_job(
+        graph_name=graph_name,
+        job_name=job_name,
+        schema_db=schema_db,
+        staged_files=staged,
+        bulk_cfg=bulk_cfg,
+        path_for_gsql=path_for_gsql,
+        tigergraph_s3_loader=tigergraph_s3_loader,
+        tigergraph_s3_data_source_name=f"gf_s3_{session_id}",
+    )
     return str(conn._execute_gsql(gsql))

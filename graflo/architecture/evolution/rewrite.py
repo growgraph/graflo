@@ -1223,47 +1223,36 @@ def rewrite_remove_vertex_properties_in_pipeline(
     return [_rewrite_step(step) for step in pipeline if isinstance(step, dict)]
 
 
-def rewrite_remove_relations_in_pipeline(
-    pipeline: list[dict[str, Any]], removed_relations: set[str]
+def _drop_edge_payloads(
+    pipeline: list[dict[str, Any]],
+    removed: Callable[[dict[str, Any]], bool],
+    prune: Callable[[dict[str, Any]], None],
 ) -> list[dict[str, Any]]:
-    """Drop edge/create_edge steps (and links) targeting removed relations."""
-    if not removed_relations:
-        return deepcopy(pipeline)
+    """Drop the edge payloads *removed* selects, in every spelling, and *prune* the rest.
+
+    A step goes when every edge payload it carried is removed. Nested
+    ``descend`` pipelines are walked; a step that is not an edge is kept as is.
+    """
 
     def _rewrite_step(step: dict[str, Any]) -> dict[str, Any] | None:
         out = deepcopy(step)
-        edge_payload = out.get("edge")
-        if isinstance(edge_payload, dict):
-            relation = edge_payload.get("relation")
-            if relation in removed_relations:
-                out.pop("edge", None)
-            elif isinstance(edge_payload.get("relation_map"), dict):
-                edge_payload["relation_map"] = {
-                    k: v
-                    for k, v in edge_payload["relation_map"].items()
-                    if not (isinstance(v, str) and v in removed_relations)
-                }
-            links = edge_payload.get("links")
-            if isinstance(links, list):
-                edge_payload["links"] = [
-                    link
-                    for link in links
-                    if not (
-                        isinstance(link, dict)
-                        and link.get("relation") in removed_relations
-                    )
-                ]
-        create_edge_payload = out.get("create_edge")
-        if isinstance(create_edge_payload, dict):
-            relation = create_edge_payload.get("relation")
-            if relation in removed_relations:
-                out.pop("create_edge", None)
-            elif isinstance(create_edge_payload.get("relation_map"), dict):
-                create_edge_payload["relation_map"] = {
-                    k: v
-                    for k, v in create_edge_payload["relation_map"].items()
-                    if not (isinstance(v, str) and v in removed_relations)
-                }
+        payloads = edge_payloads(out)
+        if payloads and payloads[0] is out:
+            # The flat spelling: the step is its own payload.
+            if removed(out):
+                return None
+            prune(out)
+        elif payloads:
+            for key in ("edge", "create_edge"):
+                payload = out.get(key)
+                if not isinstance(payload, dict):
+                    continue
+                if removed(payload):
+                    out.pop(key)
+                else:
+                    prune(payload)
+            if "edge" not in out and "create_edge" not in out:
+                return None
         descend_payload = out.get("descend")
         if isinstance(descend_payload, dict) and isinstance(
             descend_payload.get("pipeline"), list
@@ -1277,9 +1266,7 @@ def rewrite_remove_relations_in_pipeline(
                 )
                 if nested is not None
             ]
-        if "edge" not in out and "create_edge" not in out and out.get("type") == "edge":
-            return None
-        return out
+        return out or None
 
     return [
         rewritten
@@ -1288,6 +1275,35 @@ def rewrite_remove_relations_in_pipeline(
         )
         if rewritten is not None
     ]
+
+
+def rewrite_remove_relations_in_pipeline(
+    pipeline: list[dict[str, Any]], removed_relations: set[str]
+) -> list[dict[str, Any]]:
+    """Drop edge/create_edge steps (and links) targeting removed relations."""
+    if not removed_relations:
+        return deepcopy(pipeline)
+
+    def _removed(payload: dict[str, Any]) -> bool:
+        return payload.get("relation") in removed_relations
+
+    def _prune(payload: dict[str, Any]) -> None:
+        relation_map = payload.get("relation_map")
+        if isinstance(relation_map, dict):
+            payload["relation_map"] = {
+                k: v
+                for k, v in relation_map.items()
+                if not (isinstance(v, str) and v in removed_relations)
+            }
+        links = payload.get("links")
+        if isinstance(links, list):
+            payload["links"] = [
+                link
+                for link in links
+                if not (isinstance(link, dict) and _removed(link))
+            ]
+
+    return _drop_edge_payloads(pipeline, _removed, _prune)
 
 
 def _payload_edge_id(payload: dict[str, Any]) -> tuple[str, str, str | None] | None:
@@ -1338,58 +1354,20 @@ def rewrite_remove_edge_ids_in_pipeline(
     if not removed_edge_ids:
         return deepcopy(pipeline)
 
-    def _rewrite_step(step: dict[str, Any]) -> dict[str, Any] | None:
-        out = deepcopy(step)
-        edge_payload = out.get("edge")
-        if isinstance(edge_payload, dict):
-            if _payload_targets_removed_edge(edge_payload, removed_edge_ids):
-                out.pop("edge", None)
-            else:
-                _prune_relation_map_for_removed_edge_ids(edge_payload, removed_edge_ids)
-                links = edge_payload.get("links")
-                if isinstance(links, list):
-                    edge_payload["links"] = [
-                        link
-                        for link in links
-                        if not (
-                            isinstance(link, dict)
-                            and _payload_targets_removed_edge(link, removed_edge_ids)
-                        )
-                    ]
-        create_edge_payload = out.get("create_edge")
-        if isinstance(create_edge_payload, dict):
-            if _payload_targets_removed_edge(create_edge_payload, removed_edge_ids):
-                out.pop("create_edge", None)
-            else:
-                _prune_relation_map_for_removed_edge_ids(
-                    create_edge_payload, removed_edge_ids
-                )
-        descend_payload = out.get("descend")
-        if isinstance(descend_payload, dict) and isinstance(
-            descend_payload.get("pipeline"), list
-        ):
-            descend_payload["pipeline"] = [
-                nested
-                for nested in (
-                    _rewrite_step(item)
-                    for item in descend_payload["pipeline"]
-                    if isinstance(item, dict)
-                )
-                if nested is not None
-            ]
-        if "edge" not in out and "create_edge" not in out and out.get("type") == "edge":
-            return None
-        if not out:
-            return None
-        return out
+    def _removed(payload: dict[str, Any]) -> bool:
+        return _payload_targets_removed_edge(payload, removed_edge_ids)
 
-    return [
-        rewritten
-        for rewritten in (
-            _rewrite_step(step) for step in pipeline if isinstance(step, dict)
-        )
-        if rewritten is not None
-    ]
+    def _prune(payload: dict[str, Any]) -> None:
+        _prune_relation_map_for_removed_edge_ids(payload, removed_edge_ids)
+        links = payload.get("links")
+        if isinstance(links, list):
+            payload["links"] = [
+                link
+                for link in links
+                if not (isinstance(link, dict) and _removed(link))
+            ]
+
+    return _drop_edge_payloads(pipeline, _removed, _prune)
 
 
 def _rewrite_edge_properties_payload(

@@ -392,7 +392,7 @@ def plot_merge_preview(
         The path written.
 
     Raises:
-        RuntimeError: pygraphviz or system Graphviz is not installed.
+        RuntimeError: pygraphviz is not installed or cannot be loaded.
         ValueError: The format is not one this can write.
     """
     graph = build_preview_graph(preview, max_rows=max_rows, legend=legend)

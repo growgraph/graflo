@@ -50,6 +50,23 @@ class EdgeTableInfo(BaseModel):
     relation: str | None = None
 
 
+class ReferenceEdgeInfo(BaseModel):
+    """An edge stated by a foreign key inside an entity table."""
+
+    source_table: str
+    target_table: str
+    relation: str
+    columns: dict[str, str]
+    """``{key column of the target: foreign-key column of the source}``."""
+
+
+class SkippedTableInfo(BaseModel):
+    """A table that is neither a vertex nor an edge of the inferred graph."""
+
+    name: str
+    reason: str
+
+
 class RawTableInfo(BaseModel):
     """Raw table metadata: all tables with columns, types, and constraint metadata."""
 
@@ -71,3 +88,5 @@ class SchemaIntrospectionResult(BaseModel):
     edge_tables: list[EdgeTableInfo]
     raw_tables: list[RawTableInfo]
     schema_name: str
+    reference_edges: list[ReferenceEdgeInfo] = []
+    skipped_tables: list[SkippedTableInfo] = []

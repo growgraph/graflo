@@ -40,7 +40,8 @@ manifest = engine.infer_manifest(pg_config, schema_name="public")
 `infer_manifest` reads the tables of the PostgreSQL schema `public` with their
 columns and keys, and returns a complete manifest:
 
-- a `schema` with a vertex type per entity table and an edge per link table;
+- a `schema` with a vertex type per entity table, an edge per link table and
+  an edge per foreign key of an entity table;
 - an `ingestion_model` with one [resource](../concepts/glossary.md#resource)
   per table;
 - `bindings` with one table connector per table, all under the connection
@@ -63,8 +64,9 @@ manifest.require_schema().metadata.name = "plant"
 
 `infer_manifest` also takes `discard_disconnected_vertices=True`, which drops
 vertex types that take part in no edge, with their resources and connectors,
-and `fuzzy_threshold` (default 0.8), how closely a column name must match a
-vertex type name when GraFlo maps a link table's key columns to its endpoints.
+`fuzzy_threshold` (default 0.8), how closely a column name must match a vertex
+type name when GraFlo maps a link table's key columns to its endpoints, and
+`entity_tables`, described in step 2.
 
 ### 2. Check the draft
 
@@ -85,20 +87,36 @@ GraFlo classifies each table by its keys, and a link table also by its name:
 | Primary key, not an edge, and at least one column that is neither a primary nor a foreign key | A vertex type. Its identity is the primary key; every column becomes a property |
 | Primary key and key columns only, not an edge | Nothing |
 
+A foreign key inside a vertex table that references the primary key of another
+vertex table becomes an edge too, from the row to the row it references. A
+`work_order` table whose `machine_id` column references `machine` gives an edge
+from `work_order` to `machine` named `machine`: the column without a trailing
+`_id`, or the referenced table's name for a key of several columns. The
+`work_order` resource writes one such edge per row whose `machine_id` is set.
+
+Each skipped table is logged as a warning with the reason. The reasons are
+also in the introspection result, from
+`engine.introspect(pg_config, schema_name="public").skipped_tables`.
+
 Check the draft for these cases, which inference gets wrong by construction:
 
-- **A foreign key inside an entity table does not become an edge.** A
-  `work_order` table with a `machine_serial` column that references `machine`
-  gives a `work_order` vertex type with a `machine_serial` property, and no
-  edge between work orders and machines. Add the edge in step 3.
 - **A table with exactly two foreign keys becomes an edge**, even when it
   describes a thing of its own. A `work_order` table that references both
   `machine` and `technician` becomes an edge from machine to technician; its
-  own primary key is dropped and its other columns become edge properties. If
-  it should be a vertex type, move it in step 3.
-- **A link table whose endpoints cannot be found is skipped** with a warning,
-  for example a `rel_` table without foreign keys whose name matches no vertex
-  type.
+  own primary key is dropped and its other columns become edge properties.
+  The schema cannot tell the two cases apart. If it should be a vertex type,
+  name it when you infer; its foreign keys then become edges from it:
+
+    ```python
+    manifest = engine.infer_manifest(
+        pg_config, schema_name="public", entity_tables=["work_order"]
+    )
+    ```
+
+- **A link table whose endpoints cannot be found is skipped**, for example a
+  `rel_` table without foreign keys whose name matches no vertex type.
+- **A foreign key that references a column other than the primary key is not
+  an edge**: a row is found by its primary key, and nothing else identifies it.
 
 Inference sees only what the database declares. That is the main limit on a
 denormalized schema: in a star schema, dimension keys are columns like
@@ -106,7 +124,7 @@ denormalized schema: in a star schema, dimension keys are columns like
 declare no foreign keys at all, and some SQLAlchemy dialects cannot report
 them, which GraFlo treats as none declared. GraFlo then falls back to matching
 table and column names, which finds some link tables and misses the rest, and
-it never finds a reference from an entity table. A database that declares no
+it finds no reference from an entity table. A database that declares no
 primary keys gives an empty draft, because every table is skipped. For such a
 source, add primary keys where you can, and treat the draft as a starting
 point: declare the missing vertex types and joins yourself in step 3.
@@ -151,9 +169,10 @@ manager.inferencer.type_mapper = PlantTypeMapper()
 
 ### 3. Add what inference cannot see
 
-Edit the saved manifest. To add the edge from a work order to the machine its
-`machine_serial` column references, declare the edge and let the `work_order`
-resource find the machine by that column:
+Edit the saved manifest. When the database declares no foreign key for a
+`machine_serial` column of `work_order`, add the edge from a work order to the
+machine that column names: declare the edge and let the `work_order` resource
+find the machine by that column:
 
 ```yaml
 schema:
@@ -176,8 +195,12 @@ ingestion_model:
 
 The second step reads `machine_serial` as the machine's `serial_number`.
 `lookup_only: true` uses it to find the machine for the edge without writing a
-machine vertex from the work order row. Keep the edges and resources the draft
-already has; the snippet shows only what to add.
+machine vertex from the work order row. This finds the machine when
+`serial_number` is its identity. When the machine is keyed on another column,
+declare `serial_number` as a secondary identity and select it on the edge; see
+[A source that knows only an alternative identifier](../concepts/schema/vertex_identity.md#a-source-that-knows-only-an-alternative-identifier).
+Keep the edges and resources the draft already has; the snippet shows only what
+to add.
 
 Load the edited manifest before you continue:
 
@@ -270,12 +293,12 @@ are not tested here.
 ## What you should see
 
 After step 1, the saved manifest lists a vertex type for each entity table,
-with the table's primary key as its identity, and an edge for each link table.
-Compare them with your list of tables: a table without a primary key is
-skipped without a message, while skipped link tables and unrecognized column
-types are logged as warnings. After step 4, the target database holds one
-vertex per row of each entity table and an edge per row of each link table,
-plus the edges you added.
+with the table's primary key as its identity, an edge for each link table, and
+an edge for each foreign key of an entity table. Every other table is named in
+a warning with the reason it was skipped, and so is each unrecognized column
+type. After step 4, the target database holds one vertex per row of each
+entity table, an edge per row of each link table, an edge per set foreign key
+of an entity table, plus the edges you added.
 
 ## What to read next
 

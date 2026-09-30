@@ -33,7 +33,7 @@ class TestIdentityModeIsVisible:
     def test_natural_to_hash_is_no_longer_an_empty_diff(self):
         new = {
             "name": "party",
-            "properties": ["id", "uid", "email"],
+            "properties": ["uid", "email"],
             "hash_identity_properties": ["email"],
         }
 
@@ -48,12 +48,12 @@ class TestIdentityModeIsVisible:
         """Both resolve to mode ``hash``, so only the funnel itself distinguishes them."""
         old = {
             "name": "party",
-            "properties": ["id", "email", "phone"],
+            "properties": ["email", "phone"],
             "hash_identity_properties": ["email"],
         }
         new = {
             "name": "party",
-            "properties": ["id", "email", "phone"],
+            "properties": ["email", "phone"],
             "identity_funnel": {"branches": [{"id": "email", "fields": ["email"]}]},
         }
 
@@ -65,7 +65,7 @@ class TestIdentityModeIsVisible:
         def _with_branches(branches: list[dict]) -> dict:
             return {
                 "name": "party",
-                "properties": ["id", "email", "phone"],
+                "properties": ["email", "phone"],
                 "identity_funnel": {"branches": branches},
             }
 
@@ -78,7 +78,7 @@ class TestIdentityModeIsVisible:
     def test_identical_funnel_is_an_empty_identity_diff(self):
         vertex = {
             "name": "party",
-            "properties": ["id", "email"],
+            "properties": ["email"],
             "identity_funnel": {"branches": [{"id": "email", "fields": ["email"]}]},
         }
 
@@ -89,12 +89,12 @@ class TestIdentityModeIsVisible:
     def test_hash_source_change_is_detected(self):
         old = {
             "name": "party",
-            "properties": ["id", "email", "phone"],
+            "properties": ["email", "phone"],
             "hash_identity_properties": ["email"],
         }
         new = {
             "name": "party",
-            "properties": ["id", "email", "phone"],
+            "properties": ["email", "phone"],
             "hash_identity_properties": ["email", "phone"],
         }
 
@@ -106,7 +106,7 @@ class TestIdentityModeIsVisible:
     def test_payload_carries_the_mode(self):
         new = {
             "name": "party",
-            "properties": ["id", "uid", "email"],
+            "properties": ["uid", "email"],
             "hash_identity_properties": ["email"],
         }
         ops = SchemaDiff(_schema(NATURAL), _schema(new)).operations()
@@ -122,7 +122,7 @@ class TestRekeyEmission:
     def test_mode_change_requires_a_rekey(self):
         new = {
             "name": "party",
-            "properties": ["id", "uid", "email"],
+            "properties": ["uid", "email"],
             "hash_identity_properties": ["email"],
         }
 

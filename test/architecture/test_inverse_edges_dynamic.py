@@ -377,8 +377,11 @@ class TestTheDifferReproducesARealization:
             apply_evolution(realized, backward, bump_version=False)
         ) == manifest_hash(base)
 
-    def test_a_flag_flip_next_to_an_inexpressible_edit_is_not_guessed_at(self) -> None:
-        """Positions only correspond when nothing else moved; otherwise the differ says so."""
+    def test_a_flag_flip_next_to_a_pipeline_edit_rides_on_the_replacement(
+        self,
+    ) -> None:
+        """Positions only correspond when nothing else moved; otherwise the resource
+        is replaced whole, flags included."""
         from graflo.architecture.evolution.autogenerate import diff_manifests
 
         base = self._declared([STATIC_STEP])
@@ -391,4 +394,5 @@ class TestTheDifferReproducesARealization:
 
         ops, warnings = diff_manifests(base, edited)
         assert "set_inverse_emission" not in [op.op for op in ops]
-        assert any("differs" in warning for warning in warnings)
+        assert "replace_resources" in [op.op for op in ops]
+        assert warnings == []

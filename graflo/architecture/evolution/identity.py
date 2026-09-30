@@ -284,6 +284,18 @@ def apply_replace_identity(manifest: GraphManifest, op: ReplaceIdentityOp) -> No
         else:
             required_properties = hash_properties
         _require_properties_exist(vertex, required_properties)
+        if (
+            spec.to.mode in ("hash", "funnel")
+            and vertex.identity_mode == "natural"
+            and SYNTHETIC_ID_FIELD in vertex.property_names
+        ):
+            # The digest is written to `id` only while it is empty, so a record
+            # carrying its own `id` would keep it and bypass the digest.
+            raise ValueError(
+                f"replace_identity: vertex '{vertex.name}' declares a property "
+                f"`{SYNTHETIC_ID_FIELD}`, which a {spec.to.mode} identity uses "
+                "for its synthetic key; rename the property first"
+            )
 
         old_identity = list(vertex.identity)
         retire = _resolve_retire_policy(

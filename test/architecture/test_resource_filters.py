@@ -288,8 +288,9 @@ class TestTableConnectorBuildQuery:
         )
         tp = TableConnector(table_name="users", view=view, filters=[filt])
         q = tp.build_query("public")
-        assert "WHERE" in q
-        assert "\"status\" = 'active'" in q
+        # The whole query: a join-less view declares no `base` alias, so the
+        # condition must not be qualified with one.
+        assert q == 'SELECT "id" FROM "public"."users" WHERE "status" = \'active\''
 
     def test_view_query_appends_connector_filters_to_existing_where(self):
         view = SelectSpec(
@@ -310,9 +311,10 @@ class TestTableConnectorBuildQuery:
         )
         tp = TableConnector(table_name="users", view=view, filters=[filt])
         q = tp.build_query("public")
-        assert "\"role\" = 'admin'" in q
-        assert "\"status\" = 'active'" in q
-        assert " AND " in q
+        assert q == (
+            'SELECT "id" FROM "public"."users" '
+            "WHERE \"role\" = 'admin' AND \"status\" = 'active'"
+        )
 
     def test_view_query_supports_dict_filter_entries(self):
         view = SelectSpec(
@@ -332,7 +334,7 @@ class TestTableConnectorBuildQuery:
             ],
         )
         q = tp.build_query("public")
-        assert "\"status\" = 'active'" in q
+        assert q == 'SELECT "id" FROM "public"."users" WHERE "status" = \'active\''
 
     def test_dict_filter_without_kind_model_validates_as_leaf(self):
         """Pushdown dicts from YAML often omit ``kind``; model_validate must infer leaf."""
@@ -380,8 +382,9 @@ class TestTableConnectorBuildQuery:
             ],
         )
         q = tp.build_query("public")
-        assert "base.\"created_at\" >= '2024-01-01'" in q
-        assert "base.\"status\" = 'active'" in q
+        assert q.endswith(
+            "WHERE base.\"created_at\" >= '2024-01-01' AND base.\"status\" = 'active'"
+        )
 
     def test_date_range_query_runs_on_sqlite_without_interval(self):
         fd, path = tempfile.mkstemp(suffix=".db")
