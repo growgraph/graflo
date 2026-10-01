@@ -10,6 +10,7 @@ a failure here means stored ids would no longer match.
 from __future__ import annotations
 
 from graflo.architecture.contract.bindings.connectors import FileConnector
+from graflo.architecture.evolution import hashing
 from graflo.architecture.evolution.commit import (
     compute_commit_id,
     compute_root_commit_id,
@@ -19,7 +20,10 @@ from graflo.architecture.evolution.merge3 import MergeRecipe
 from graflo.architecture.evolution.ops import AddVertexPropertiesOp
 
 
-def test_canonical_stable_hash_is_unchanged():
+def test_canonical_stable_hash_is_unchanged(monkeypatch):
+    # The canon version is part of the hashed bytes and moves by design; pin it
+    # so this checks the rendering and the digest only.
+    monkeypatch.setattr(hashing, "CANON_VERSION", "graflo/canon@3")
     assert (
         stable_hash({"b": [1, "é"], "a": None})
         == "8beaee9397badc3e31e198eb78acf82f2f272009deecfdf242a6502795760760"

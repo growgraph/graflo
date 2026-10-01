@@ -49,8 +49,9 @@ from typing import Any
 
 #: Mixed into the hashed bytes so a future change to this module's rules is
 #: explicit and collision-free rather than a silent reinterpretation of old
-#: hashes. Bump it whenever :data:`LIST_ORDER` or the sort rule changes.
-CANON_VERSION: str = "graflo/canon@3"
+#: hashes. Bump it whenever :data:`LIST_ORDER` or the sort rule changes, or a
+#: contract field's default does: the hashed payload leaves defaults out.
+CANON_VERSION: str = "graflo/canon@4"
 
 
 class ListOrder(str, Enum):

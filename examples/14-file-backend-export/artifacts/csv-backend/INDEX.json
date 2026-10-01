@@ -1,5 +1,5 @@
 {
-    "created_at": "2026-09-30T02:16:52.698239+00:00",
+    "created_at": "2026-10-01T18:27:25.570518+00:00",
     "edges": {
         "person____department": {
             "chunks": [
@@ -8,7 +8,7 @@
             "record_count": 3
         }
     },
-    "graflo_version": "1.14.0",
+    "graflo_version": "1.15.1",
     "schema_hash": "0bf16c2b61003ea014f4e71f41260086e98a12d81c93910ecad0d6eefa195388",
     "vertices": {
         "department": {

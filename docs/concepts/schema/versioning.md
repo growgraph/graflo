@@ -80,7 +80,7 @@ describes itself:
 metadata:
     provenance:
         content_hash: "…64 hex…"
-        canon: graflo/canon@3
+        canon: graflo/canon@4
         parents: [a3f9c21e4b70, 9e11d02c55aa]
         commit: c4d1e9a2b3f0
         merge_recipe: "…"
@@ -118,6 +118,10 @@ unchanged, since such a commit would record nothing.
 A commit id is derived from the ops and the order of the parents, so recording
 the same change set again yields the same id rather than a duplicate under a new
 name. `graflo rehash` recomputes every id when an op's serialization changes.
+A release that bumps `CANON_VERSION` moves every tree instead; `graflo rehash
+--base <manifest>` replays each lineage from its base and records the new trees,
+keeping every id (`rehash_trees` in Python). A history with several roots takes
+one `--base ROOT=PATH` per root.
 
 ### Forks are recorded
 

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 from collections import deque
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -390,6 +391,53 @@ def verify_history(base: GraphManifest, history: History) -> list[str]:
         except CommitError as exc:
             problems.append(f"head {head.short()}: {exc}")
     return problems
+
+
+def rehash_trees(
+    history: History, bases: Mapping[str, GraphManifest]
+) -> tuple[History, list[str]]:
+    """Recompute every recorded tree under the current canonical form.
+
+    A ``CANON_VERSION`` bump moves every content hash, so trees recorded under
+    the previous canon no longer verify. This replays each commit from the base
+    of its first-parent root and records the trees the replay produces. Ids are
+    kept: a commit id hashes ops and parents, not trees, and a naming root's id
+    stays the name its descendants already point at.
+
+    Args:
+        history: The commit DAG.
+        bases: The manifest each root starts from, keyed by root commit id. A
+            naming root's base is the manifest it names.
+
+    Returns:
+        The rewritten history, and the ids of the commits left as they were
+        because no base was given for their root.
+    """
+    from .apply import apply_evolution
+
+    produced: dict[str, GraphManifest] = {}
+    rebuilt: list[Commit] = []
+    skipped: list[str] = []
+    for commit in history.topological():
+        root = _first_parent_root(history, commit.id)
+        base = bases.get(root) if root is not None else None
+        if base is None:
+            skipped.append(commit.id)
+            rebuilt.append(commit)
+            continue
+        start = produced[commit.parents[0]] if commit.parents else base
+        if commit.ops:
+            after = apply_evolution(start, commit.ops, bump_version=False)
+            tree_before: str | None = manifest_hash(start)
+        else:
+            after, tree_before = start, None
+        produced[commit.id] = after
+        rebuilt.append(
+            commit.model_copy(
+                update={"tree": manifest_hash(after), "tree_before": tree_before}
+            )
+        )
+    return History(commits=rebuilt), skipped
 
 
 class FileCommitStore:

@@ -1,17 +1,17 @@
-
 abstract: >-
   Manifest-driven graph schema and ingestion for labeled property graphs:
-  define schemas in GraphManifest (YAML/Python), ingest from CSV/JSON/Parquet/SQL/RDF/SPARQL/API,
+  define schemas in GraphManifest (YAML/Python), ingest from CSV/JSON/Parquet/SQL/RDF/SPARQL/API/Kafka,
   infer from PostgreSQL 3NF or OWL/RDFS, apply schema migrations, and project to ArangoDB, Neo4j,
-  TigerGraph, FalkorDB, Memgraph, or NebulaGraph.
+  TigerGraph, FalkorDB, Memgraph, NebulaGraph, PostgreSQL, or the file backend.
 authors:
 - affiliation: GrowGraph
   family-names: Belikov
   given-names: Alexander
   orcid: https://orcid.org/0000-0002-5649-0913  
 cff-version: 1.2.0
-date-released: '2025-05-16'
+date-released: '2026-10-01'
 license: "Apache-2.0"
 message: If you use this software, please cite it using the metadata from this file.
 title: GraFlo — Graph Schema & Transformation Language (GSTL)
 type: software
+version: 1.15.0

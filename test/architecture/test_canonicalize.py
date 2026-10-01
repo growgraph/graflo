@@ -17,8 +17,10 @@ downstream of it. These tests pin it three ways --
 from __future__ import annotations
 
 import copy
+import enum
 import glob
 import json
+import os
 import pathlib
 import typing
 
@@ -35,6 +37,8 @@ from graflo.architecture.evolution.canonicalize import (
     canonical_payload,
 )
 from graflo.architecture.evolution.hashing import manifest_hash, schema_hash
+
+CANON_DEFAULTS = pathlib.Path(__file__).parent / "canon_defaults.json"
 
 EXAMPLES = sorted(
     glob.glob(
@@ -69,18 +73,29 @@ def _is_sequence(annotation: typing.Any) -> bool:
     )
 
 
-def _walk_contract() -> tuple[set[tuple[str, str]], set[tuple[str, str]]]:
-    """Sequence fields and typed-mapping fields reachable from GraphManifest."""
-    seen: set[type] = set()
-    sequences: set[tuple[str, str]] = set()
-    typed_mappings: set[tuple[str, str]] = set()
+def _contract_models() -> list[type[ConfigBaseModel]]:
+    """Every config model reachable from GraphManifest, in discovery order."""
+    seen: list[type[ConfigBaseModel]] = []
 
     def visit(model: typing.Any) -> None:
         if not (isinstance(model, type) and issubclass(model, ConfigBaseModel)):
             return
         if model in seen:
             return
-        seen.add(model)
+        seen.append(model)
+        for info in model.model_fields.values():
+            for concrete in _unwrap(info.annotation):
+                visit(concrete)
+
+    visit(GraphManifest)
+    return seen
+
+
+def _walk_contract() -> tuple[set[tuple[str, str]], set[tuple[str, str]]]:
+    """Sequence fields and typed-mapping fields reachable from GraphManifest."""
+    sequences: set[tuple[str, str]] = set()
+    typed_mappings: set[tuple[str, str]] = set()
+    for model in _contract_models():
         for name, info in model.model_fields.items():
             annotation = info.annotation
             if _is_sequence(annotation):
@@ -93,11 +108,39 @@ def _walk_contract() -> tuple[set[tuple[str, str]], set[tuple[str, str]]]:
                     for t in _unwrap(value_type)
                 ):
                     typed_mappings.add((model.__name__, name))
-            for concrete in _unwrap(annotation):
-                visit(concrete)
-
-    visit(GraphManifest)
     return sequences, typed_mappings
+
+
+def _jsonable_default(value: typing.Any) -> typing.Any:
+    if isinstance(value, ConfigBaseModel):
+        return value.to_dict()
+    if isinstance(value, (set, frozenset)):
+        return sorted(value, key=repr)
+    if isinstance(value, enum.Enum):
+        return value.value
+    return repr(value)
+
+
+def _contract_defaults() -> dict[str, typing.Any]:
+    """``{"Model.field": default}`` for every field reachable from GraphManifest.
+
+    A required field renders as ``"<required>"``; a factory that needs the
+    validated data renders as ``"<factory>"``.
+    """
+    defaults: dict[str, typing.Any] = {}
+    for model in _contract_models():
+        for name, info in model.model_fields.items():
+            if info.is_required():
+                value: typing.Any = "<required>"
+            else:
+                try:
+                    value = info.get_default(call_default_factory=True)
+                except TypeError:
+                    value = "<factory>"
+            defaults[f"{model.__name__}.{name}"] = json.loads(
+                json.dumps(value, default=_jsonable_default, sort_keys=True)
+            )
+    return dict(sorted(defaults.items()))
 
 
 # ── 1. exhaustiveness ───────────────────────────────────────────────────────
@@ -267,6 +310,41 @@ def test_the_canon_version_is_part_of_the_hashed_bytes() -> None:
         hashing_module.CANON_VERSION = original
     assert manifest_hash(manifest) == before
     assert CANON_VERSION.startswith("graflo/canon@")
+
+
+def test_a_changed_default_bumps_the_canon_version() -> None:
+    """The hash leaves defaults out, so a new default reinterprets old hashes.
+
+    A field left at its default is absent from the hashed payload. Moving that
+    default changes what an absent field means -- and the payload of every
+    manifest that states either value -- so it needs a CANON_VERSION bump.
+    Regenerate the snapshot with ``GRAFLO_WRITE_CANON_DEFAULTS=1``.
+    """
+    current = _contract_defaults()
+    if os.environ.get("GRAFLO_WRITE_CANON_DEFAULTS") == "1":
+        CANON_DEFAULTS.write_text(
+            json.dumps({"canon": CANON_VERSION, "defaults": current}, indent=2) + "\n"
+        )
+    snapshot = json.loads(CANON_DEFAULTS.read_text())
+    recorded: dict[str, typing.Any] = snapshot["defaults"]
+    changed = sorted(
+        key for key in recorded.keys() & current.keys() if recorded[key] != current[key]
+    )
+    if snapshot["canon"] == CANON_VERSION:
+        assert not changed, (
+            f"defaults changed under {CANON_VERSION}: {changed}. Bump "
+            "CANON_VERSION, then regenerate the snapshot."
+        )
+    else:
+        pytest.fail(
+            f"the snapshot was taken under {snapshot['canon']}; regenerate it "
+            f"for {CANON_VERSION}"
+        )
+    unrecorded = sorted(current.keys() - recorded.keys())
+    assert not unrecorded, (
+        f"fields missing from the snapshot: {unrecorded}. A new field needs no "
+        "CANON_VERSION bump; regenerate the snapshot."
+    )
 
 
 # ── 3. stability ────────────────────────────────────────────────────────────

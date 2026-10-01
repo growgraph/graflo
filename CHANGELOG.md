@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.15.1]
+
+### Changed
+
+- **Content hashes (`CANON_VERSION` is now `graflo/canon@4`).** 1.15.0 changed the
+  `Index.unique` default, which moved the hash of every manifest declaring an index.
+  Commits recorded before this release have outdated trees; run `graflo rehash --base`.
+
+### Added
+
+- `graflo rehash --base PATH` (or `ROOT=PATH` per root) recomputes recorded trees as well
+  as ids; `rehash_trees(history, bases)` does the same in Python.
+- `graflo verify` names `graflo rehash --base` when a replay fails.
+
+### Fixed
+
+- A declared non-unique edge index over an edge identity's fields replaced the unique
+  identity index; the identity index is unique again.
+- `graflo rehash` gave every naming root the same id; a root keeps its id.
+
 ## [1.15.0]
 
 ### Breaking

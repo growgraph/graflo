@@ -367,7 +367,41 @@ def test_rehash_restores_content_derived_ids(workspace) -> None:
     assert verify.exit_code == 0, verify.output
 
     again = _run("rehash", "--store", store)
-    assert "every commit id is current" in again.output
+    assert "every commit is current" in again.output
+
+
+def test_rehash_with_a_base_recomputes_trees_and_keeps_ids(workspace) -> None:
+    """A canon bump moves every tree; rehash replays from the base to restore them.
+
+    Simulated by overwriting the stored trees, the way a history hashed under
+    an older canon looks after an upgrade: the ids are still right, the trees
+    no longer verify.
+    """
+    _record(workspace, "age", "add age")
+    store = workspace["store"]
+    (path,) = store.glob("*.yaml")
+    stored = yaml.safe_load(path.read_text())
+    for key in ("tree", "tree_before"):
+        path.write_text(
+            path.read_text().replace(stored[key], f"stale{key}".ljust(64, "0")),
+            encoding="utf-8",
+        )
+
+    broken = _run("verify", "--base", workspace["v1"], "--store", store)
+    assert broken.exit_code != 0
+    assert "graflo rehash --base" in broken.output
+
+    result = _run("rehash", "--store", store, "--base", str(workspace["v1"]))
+    assert result.exit_code == 0, result.output
+    assert "1 tree(s)" in result.output
+    rewritten = yaml.safe_load(next(store.glob("*.yaml")).read_text())
+    assert rewritten["id"] == stored["id"]
+    assert (rewritten["tree"], rewritten["tree_before"]) == (
+        stored["tree"],
+        stored["tree_before"],
+    )
+    verify = _run("verify", "--base", workspace["v1"], "--store", store)
+    assert verify.exit_code == 0, verify.output
 
 
 def test_verify_can_assert_the_result_matches_a_manifest(workspace) -> None:

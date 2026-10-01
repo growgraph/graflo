@@ -120,6 +120,38 @@ def test_compile_identity_indexes_arango_prepends_from_to_when_identity_omits_en
     assert indexes[0].unique is True
 
 
+def test_a_declared_index_over_identity_fields_stays_unique(vertex_config_kg):
+    """A lookup index declared over an identity's fields does not replace the key."""
+    vertex_config = VertexConfig.from_dict(vertex_config_kg)
+    edge = Edge.from_dict(
+        {
+            "source": "entity",
+            "target": "entity",
+            "identities": [["source", "target", "pub_id"]],
+        }
+    )
+    edge.finish_init(vertex_config)
+    profile = DatabaseProfile.model_validate(
+        {
+            "db_flavor": DBType.ARANGO,
+            "edge_specs": [
+                {
+                    "source": "entity",
+                    "target": "entity",
+                    "indexes": [{"fields": ["_from", "_to", "pub_id"]}],
+                }
+            ],
+        }
+    )
+    vc_db = VertexConfigDBAware(vertex_config, profile)
+    ec_db = EdgeConfigDBAware(EdgeConfig(edges=[edge]), vc_db, profile)
+    ec_db.compile_identity_indexes()
+    indexes = profile.edge_secondary_indexes(edge.edge_id)
+    assert [(tuple(ix.fields), ix.unique) for ix in indexes] == [
+        (("_from", "_to", "pub_id"), True)
+    ]
+
+
 def test_compile_identity_indexes_neo4j_property_indexes_not_globally_unique(
     vertex_config_kg,
 ):
