@@ -69,7 +69,7 @@ graflo --version
 ```
 
 ```text
-graflo, version 1.15.0
+graflo, version 1.15.1
 ```
 
 The version you see is the one you installed. In a clone, run it as

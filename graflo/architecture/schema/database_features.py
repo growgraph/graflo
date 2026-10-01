@@ -623,6 +623,13 @@ class DatabaseProfile(ConfigBaseModel):
         *,
         purpose: str | None = None,
     ) -> None:
+        """Register a generated edge index unless its field-set is indexed.
+
+        Idempotent on the field-set, like :meth:`add_vertex_index`, with one
+        exception: a unique index (an edge identity) upgrades a declared
+        non-unique index over the same fields, so a lookup index never
+        replaces the key.
+        """
         spec = self._edge_variant_spec(edge_id=edge_id, purpose=purpose)
         if spec is None:
             source, target, relation = edge_id
@@ -635,9 +642,13 @@ class DatabaseProfile(ConfigBaseModel):
             # Auto-added indexes are additive by default.
             spec.indexes_mode = "append" if purpose is not None else "inherit"
             self.edge_specs.append(spec)
-        existing = {tuple(ix.fields) for ix in spec.indexes}
-        if tuple(index.fields) not in existing:
-            spec.indexes.append(index)
+        for position, existing in enumerate(spec.indexes):
+            if tuple(existing.fields) != tuple(index.fields):
+                continue
+            if index.unique and not existing.unique:
+                spec.indexes[position] = existing.model_copy(update={"unique": True})
+            return
+        spec.indexes.append(index)
 
     def edge_name_spec(
         self,

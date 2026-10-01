@@ -1,7 +1,7 @@
 {
-    "created_at": "2026-09-30T02:16:55.105543+00:00",
+    "created_at": "2026-10-01T18:27:26.937798+00:00",
     "edges": {},
-    "graflo_version": "1.14.0",
+    "graflo_version": "1.15.1",
     "schema_hash": "dc38250d4572c425feaae0e588dbbafde1f65691aff1f99579bab8575d64501d",
     "vertices": {
         "product": {

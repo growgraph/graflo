@@ -282,6 +282,7 @@ _HISTORY_EXPORTS = frozenset(
         "History",
         "checkout",
         "checkout_parent",
+        "rehash_trees",
         "verify_history",
     }
 )
@@ -506,6 +507,7 @@ __all__ = [
     "plan_switch_realization",
     "plan_withdraw_realization",
     "re_merge",
+    "rehash_trees",
     "same_name_groups",
     "schema_hash",
     "stable_hash",

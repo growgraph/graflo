@@ -44,6 +44,7 @@ from graflo.architecture.evolution.history import (
     History,
     checkout,
     checkout_parent,
+    rehash_trees,
     verify_history,
 )
 from graflo.architecture.evolution.merge3 import (
@@ -277,6 +278,20 @@ def verify_cmd(base_path: Path, against_path: Path | None, store: Path) -> None:
     if problems:
         for problem in problems:
             click.echo(f"error: {problem}", err=True)
+        provenance = base.metadata.provenance if base.metadata else None
+        if provenance is not None and provenance.canon != CANON_VERSION:
+            click.echo(
+                f"hint: the base was hashed under {provenance.canon} and this "
+                f"release hashes under {CANON_VERSION}; `graflo rehash --base` "
+                "recomputes the recorded trees",
+                err=True,
+            )
+        else:
+            click.echo(
+                "hint: trees recorded by an earlier release are recomputed by "
+                "`graflo rehash --base`",
+                err=True,
+            )
         raise click.ClickException(f"{len(problems)} head(s) failed to replay")
     click.echo(
         f"history replays cleanly ({len(history.commits)} commit(s), "
@@ -614,39 +629,89 @@ def stamp_cmd(
 # ── rehash ──────────────────────────────────────────────────────────────────
 
 
+def _rehash_bases(history: History, specs: tuple[str, ...]) -> dict[str, GraphManifest]:
+    """Resolve ``--base`` values to ``{root id: manifest}``.
+
+    ``ROOT=PATH`` names the root a base belongs to (a unique id prefix is
+    enough); a bare ``PATH`` is accepted when the history has a single root.
+    """
+    roots = [commit.id for commit in history.roots()]
+    bases: dict[str, GraphManifest] = {}
+    for spec in specs:
+        prefix, separator, path = spec.partition("=")
+        matches = [root for root in roots if root.startswith(prefix)]
+        if separator and prefix and len(matches) == 1:
+            bases[matches[0]] = _load(path)
+            continue
+        if len(roots) != 1:
+            raise click.UsageError(
+                f"the history has {len(roots)} roots; name the root each base "
+                "belongs to as ROOT=PATH"
+            )
+        bases[roots[0]] = _load(spec)
+    return bases
+
+
 @click.command("rehash")
 @_store_option
+@click.option(
+    "--base",
+    "base_specs",
+    multiple=True,
+    help=(
+        "Manifest a root starts from, as PATH or ROOT=PATH. Given, trees are "
+        "recomputed under the current canonical form as well."
+    ),
+)
 @click.option("--dry", is_flag=True, default=False, help="Report without rewriting.")
-def rehash_cmd(store: Path, dry: bool) -> None:
-    """Recompute every commit id from the current op serialization.
+def rehash_cmd(store: Path, base_specs: tuple[str, ...], dry: bool) -> None:
+    """Recompute commit ids, and with ``--base`` trees, under this release.
 
     A commit id is derived from its ops as serialized, so a release that renames
     an op field changes the id of every commit carrying that op -- and, through
-    the parent chain, of every commit after it. This walks the history in
-    topological order, recomputes each id against its already-rehashed parents,
-    and rewrites the store. Trees are untouched: the ops still replay to the same
-    manifests, only their names on disk move.
+    the parent chain, of every commit after it. A ``CANON_VERSION`` bump moves
+    every tree instead; recomputing trees needs the base each root starts from,
+    and keeps every id. Trees are rehashed first, then ids, and the store is
+    rewritten once.
     """
     history = FileCommitStore(store).load()
+    moved_trees = 0
+    if base_specs:
+        rehashed, skipped = rehash_trees(history, _rehash_bases(history, base_specs))
+        for before, after in zip(history.topological(), rehashed.topological()):
+            if before.tree != after.tree:
+                moved_trees += 1
+                click.echo(
+                    f"tree {before.short()}: {before.tree[:12]} -> {after.tree[:12]}"
+                )
+        if skipped:
+            click.echo(
+                f"{len(skipped)} commit(s) kept their trees: no base for their root"
+            )
+        history = rehashed
+
     mapping: dict[str, str] = {}
     rebuilt: list[Commit] = []
     for commit in history.topological():
         parents = [mapping.get(parent, parent) for parent in commit.parents]
-        new_id = compute_commit_id(list(commit.ops), parents)
+        new_id = (
+            compute_commit_id(list(commit.ops), parents) if commit.ops else commit.id
+        )
         mapping[commit.id] = new_id
         rebuilt.append(commit.model_copy(update={"id": new_id, "parents": parents}))
 
     changed = {old: new for old, new in mapping.items() if old != new}
-    if not changed:
-        click.echo(f"every commit id is current ({len(history.commits)} commit(s))")
-        return
     for old, new in changed.items():
         click.echo(f"{old} -> {new}")
+    if not changed and not moved_trees:
+        click.echo(f"every commit is current ({len(history.commits)} commit(s))")
+        return
+    summary = f"{len(changed)} commit id(s) and {moved_trees} tree(s)"
     if dry:
-        click.echo(f"{len(changed)} commit id(s) would change (dry run)")
+        click.echo(f"{summary} would change (dry run)")
         return
     FileCommitStore(store).save(History(commits=rebuilt))
-    click.echo(f"rewrote {len(changed)} commit id(s) in {store}")
+    click.echo(f"rewrote {summary} in {store}")
 
 
 def commit_group() -> dict[str, click.Command]:

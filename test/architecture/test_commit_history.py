@@ -26,6 +26,7 @@ from graflo.architecture.evolution.history import (
     FileCommitStore,
     History,
     checkout,
+    rehash_trees,
     verify_history,
 )
 from graflo.architecture.evolution.ops import AddVertexPropertiesOp
@@ -369,3 +370,49 @@ class TestNamingRoot:
                 tree_before="a" * 64,
                 tree="b" * 64,
             )
+
+
+# ── rehashing trees ─────────────────────────────────────────────────────────
+
+
+def _stale(commit: Commit) -> Commit:
+    """The commit as an older canon recorded it: same id, other trees.
+
+    Each hash maps to its reverse, so a stale history stays self-consistent.
+    """
+    before = commit.tree_before
+    return commit.model_copy(
+        update={
+            "tree": commit.tree[::-1],
+            "tree_before": before[::-1] if before is not None else None,
+        }
+    )
+
+
+def test_rehash_trees_restores_a_lineage_from_its_base() -> None:
+    base = _manifest(["id"])
+    root = build_root_commit(base, scope="artifact-1")
+    edit = build_commit(base, [_add("y")], parents=[root.id])
+    stale = History(commits=[_stale(root), _stale(edit)])
+    assert verify_history(base, stale)
+
+    rehashed, skipped = rehash_trees(stale, {root.id: base})
+
+    assert not skipped
+    assert [c.id for c in rehashed.topological()] == [root.id, edit.id]
+    assert [(c.tree, c.tree_before) for c in rehashed.topological()] == [
+        (root.tree, None),
+        (edit.tree, edit.tree_before),
+    ]
+    assert not verify_history(base, rehashed)
+
+
+def test_rehash_trees_leaves_a_root_without_a_base_alone() -> None:
+    base = _manifest(["id"])
+    root = build_root_commit(base, scope="artifact-1")
+    stale = History(commits=[_stale(root)])
+
+    rehashed, skipped = rehash_trees(stale, {})
+
+    assert skipped == [root.id]
+    assert rehashed.require(root.id).tree == root.tree[::-1]

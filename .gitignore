@@ -77,3 +77,6 @@ target/
 
 site/
 planning/
+
+# file-backend writer lock, left in each output directory
+examples/**/.lock
