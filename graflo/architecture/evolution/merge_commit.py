@@ -17,6 +17,8 @@ which is what a re-merge reads.
 
 from __future__ import annotations
 
+from typing import Any
+
 from graflo.architecture.contract.manifest import GraphManifest
 
 from .commit import Commit, CommitError, MergeRecipeRef, build_multi_parent_commit
@@ -49,6 +51,57 @@ def find_commit_by_tree(history: History, manifest: GraphManifest) -> Commit | N
     return min(preferred, key=lambda commit: commit.id)
 
 
+#: Op-level acknowledgements a recorded declaration may still carry, and the
+#: per-equivalence value each became.
+_RECORDED_ACKNOWLEDGEMENTS = {
+    "allow_self_relations": "self_relations",
+    "allow_observation_fusion": "observation_fusion",
+    "allow_row_fusion": "observation_fusion",
+}
+
+
+def lift_recorded_merge_op(payload: dict[str, Any]) -> dict[str, Any]:
+    """A recorded merge declaration in the current op vocabulary.
+
+    Authored op documents are refused when they use a removed key, naming its
+    replacement; a recorded one is history and cannot be edited, so it is
+    translated: ``vertices`` / ``relations`` to the ``*_equivalences`` lists,
+    ``resource_renames`` to ``renames.right.resources``, an op-level
+    acknowledgement onto every vertex equivalence, ``fuse_right`` to
+    ``union_right``, and ``allow_merges`` dropped.
+    """
+    out = dict(payload)
+    for old, new in (
+        ("vertices", "vertex_equivalences"),
+        ("relations", "relation_equivalences"),
+    ):
+        if old in out:
+            out.setdefault(new, out.pop(old))
+    out.pop("allow_merges", None)
+    resources = out.pop("resource_renames", None)
+    if resources:
+        renames = dict(out.get("renames") or {})
+        right = dict(renames.get("right") or {})
+        right["resources"] = {**dict(resources), **dict(right.get("resources") or {})}
+        renames["right"] = right
+        out["renames"] = renames
+    allow = sorted(
+        {
+            value
+            for key, value in _RECORDED_ACKNOWLEDGEMENTS.items()
+            if out.pop(key, False)
+        }
+    )
+    if allow:
+        out["vertex_equivalences"] = [
+            {**dict(e), "allow": sorted({*dict(e).get("allow", []), *allow})}
+            for e in out.get("vertex_equivalences", [])
+        ]
+    if out.get("name_conflict") == "fuse_right":
+        out["name_conflict"] = "union_right"
+    return out
+
+
 def left_relabel_ops(
     left: GraphManifest, right: GraphManifest, recipe: MergeRecipe
 ) -> list[ManifestOp]:
@@ -67,7 +120,9 @@ def left_relabel_ops(
     if recipe.kind != "merge":
         return []
     try:
-        op = MergeManifestsOp.model_validate(recipe.equivalences)
+        op = MergeManifestsOp.model_validate(
+            lift_recorded_merge_op(dict(recipe.equivalences))
+        )
     except ValueError as exc:
         raise CommitError(
             "the recorded merge declaration no longer loads (the merge op "

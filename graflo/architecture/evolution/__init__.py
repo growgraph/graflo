@@ -45,6 +45,7 @@ from .ops import (
     ManifestOp,
     MergeEdgesOp,
     MergeManifestsOp,
+    MergeRenames,
     MergeVerticesOp,
     NaturalIdentityTarget,
     ProjectManifestOp,
@@ -76,6 +77,7 @@ from .ops import (
     SetNativeInversesOp,
     SetVertexDescriptionsOp,
     SetVertexSemanticsOp,
+    SideRenames,
     VertexEquivalence,
     ops_reaching_ingestion,
 )
@@ -113,6 +115,19 @@ _MERGE_EXPORTS = frozenset(
 
 _MERGE_COMMIT_EXPORTS = frozenset({"build_merge_commit", "find_commit_by_tree"})
 
+_NAMING_GRAPH_EXPORTS = frozenset(
+    {
+        "MergeNamingError",
+        "MergeNamingIncompleteError",
+        "NamingFinding",
+        "NamingGraph",
+        "NamingResult",
+        "build_naming",
+        "naming_table",
+        "suggest_merge_op",
+    }
+)
+
 _INGESTION_APPLY_EXPORTS = frozenset(
     {
         "apply_add_resource_transforms",
@@ -137,7 +152,6 @@ _CANONICAL_EXPORTS = frozenset(
     {
         "CanonicalMap",
         "ClusterResolution",
-        "ClusterSpec",
         "Completion",
         "MergeCanonicalConflictError",
         "MergeIncompleteError",
@@ -147,13 +161,10 @@ _CANONICAL_EXPORTS = frozenset(
         "canonical_map_to_ops",
         "canonical_near_collisions",
         "canonicalize_ops",
-        "check_member_existence",
-        "clusters_to_side_maps",
         "dangling_entries",
         "fold_declared_maps",
         "compose_canonical_maps",
         "resolve_clusters",
-        "same_name_groups",
         "trim_canonical_map",
         "validate_and_complete_canonical_map",
     }
@@ -162,14 +173,9 @@ _CANONICAL_EXPORTS = frozenset(
 _EQUIVALENCE_EXPORTS = frozenset(
     {
         "Cluster",
-        "ClusterConflictError",
         "ClusterIndex",
         "ClusterResolution",
-        "ClusterSpec",
         "RelationCluster",
-        "UnknownMemberError",
-        "check_member_existence",
-        "index_clusters",
         "subject",
     }
 )
@@ -330,7 +336,6 @@ __all__ = [
     "CanonicalizeOp",
     "ChangeFieldTypesOp",
     "Cluster",
-    "ClusterConflictError",
     "ClusterIndex",
     "Commit",
     "CommitError",
@@ -372,10 +377,16 @@ __all__ = [
     "MergeIncompleteError",
     "MergeManifestsOp",
     "MergeNameConflictError",
+    "MergeNamingError",
+    "MergeNamingIncompleteError",
     "MergeRecipe",
     "MergeRecipeRef",
+    "MergeRenames",
     "MergeResult",
     "MergeVerticesOp",
+    "NamingFinding",
+    "NamingGraph",
+    "NamingResult",
     "NaturalIdentityTarget",
     "ProjectManifestOp",
     "PropertyEquivalence",
@@ -410,8 +421,8 @@ __all__ = [
     "SetVertexDescriptionsOp",
     "SetVertexSemanticsOp",
     "SideMaps",
+    "SideRenames",
     "UnclassifiedListField",
-    "UnknownMemberError",
     "VertexEquivalence",
     "apply_add_edge_indexes",
     "apply_add_edge_properties",
@@ -461,6 +472,7 @@ __all__ = [
     "build_merge_commit",
     "build_merge_recipe",
     "build_multi_parent_commit",
+    "build_naming",
     "build_recipe",
     "build_revert_commit",
     "build_root_commit",
@@ -470,7 +482,6 @@ __all__ = [
     "canonicalize_ops",
     "checkout",
     "checkout_parent",
-    "clusters_to_side_maps",
     "compose_canonical_maps",
     "compute_commit_id",
     "compute_root_commit_id",
@@ -484,7 +495,6 @@ __all__ = [
     "full_hash",
     "graph_hash",
     "identity_to_ops",
-    "index_clusters",
     "ingestion_hash",
     "invert_op",
     "invert_ops",
@@ -493,6 +503,7 @@ __all__ = [
     "manifest_hash",
     "merge_manifests",
     "merge_three_way",
+    "naming_table",
     "op_from_dict",
     "op_slots",
     "op_to_dict",
@@ -508,10 +519,10 @@ __all__ = [
     "plan_withdraw_realization",
     "re_merge",
     "rehash_trees",
-    "same_name_groups",
     "schema_hash",
     "stable_hash",
     "subject",
+    "suggest_merge_op",
     "take_left",
     "take_right",
     "trim_canonical_map",
@@ -530,6 +541,10 @@ def __getattr__(name: str) -> Any:
         from . import merge as merge_mod
 
         return getattr(merge_mod, name)
+    if name in _NAMING_GRAPH_EXPORTS:
+        from . import naming_graph as naming_graph_mod
+
+        return getattr(naming_graph_mod, name)
     if name in _MERGE_COMMIT_EXPORTS:
         from . import merge_commit as merge_commit_mod
 

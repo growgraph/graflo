@@ -1,0 +1,24 @@
+# The combined type keeps the maintenance system's name, Asset, and the
+# maintenance work orders are called MaintenanceOrder in the combined manifest.
+op: merge_manifests
+
+canonical_maps:
+    right: {properties: {Device: {serial: serial_number}}}
+
+vertex_equivalences:
+-   left: Asset
+    right: Device
+    into: Asset
+    identity:
+    -   name: match_key
+        sources:
+            assets: {input: [serial_number]}
+            devices: {input: [serial]}
+    -   local_key:
+            assets: {field: asset_id, tag: maintenance}
+            devices: {field: device_id, tag: sensors}
+
+# Everything no equivalence holds is renamed here, in its side's own names.
+renames:
+    left:
+        vertices: {WorkOrder: MaintenanceOrder}

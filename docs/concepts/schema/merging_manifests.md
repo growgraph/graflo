@@ -96,9 +96,10 @@ first:
 |---|---|
 | `--op FILE` | The merge op. Without it, the manifests are unioned as they are, which works when no name is on both sides. |
 | `-o FILE` | Where to write the merged manifest. Without it, only a summary is printed. |
-| `--dry-run` | Run the union and print every finding, but write nothing. |
+| `--dry-run` | Run the union, print every finding and the [naming table](#the-naming-table), and write nothing. |
+| `--suggest FILE` | Write an op that settles every problem a rename or an `into` can settle, and exit. See [Suggesting the declarations](#suggesting-the-declarations). |
 | `--plot FILE`, `--preview-json FILE` | Draw the declarations and every conflict, or write them as JSON. Both are written even when the union refuses. See [Previewing every conflict](#previewing-every-conflict). |
-| `--canonical-map SIDE=PATH` | Add a canonical map for `left`, `right` or `both`, on top of the maps in the op. Repeatable. |
+| `--canonical-map SIDE=PATH` | Add a vocabulary for `left`, `right` or `both`, on top of the maps in the op. Repeatable. |
 | `--name-conflict error\|union_right\|prefix_right` | Override the op's policy for a name both sides carry. See [Names both sides carry](#names-both-sides-carry). |
 | `--bump-version minor\|none` | Bump the merged schema version (default `minor`). |
 | `--strict-references` | Fail on ingestion or bindings references the merged schema lacks. |
@@ -120,15 +121,26 @@ op = MergeManifestsOp.model_validate(FileHandle.load("merge.yaml"))
 union = merge_manifests(left, right, op)
 ```
 
-`merge_manifests` returns a new manifest and leaves both inputs unchanged. It
-raises at the first refusal; to see every problem at once, use
-[`preview_merge`](#previewing-every-conflict).
+`merge_manifests` returns a new manifest and leaves both inputs unchanged. A
+problem with the names is raised as one `MergeNamingError` that lists every
+such problem; to see the schema-level ones too, such as two members that
+disagree on their key, use [`preview_merge`](#previewing-every-conflict).
 
 ## Naming the merged type
 
-A canonical map translates one side's names into the names the merged manifest
-uses. It has three parts, each a mapping from a source name to a canonical
-name:
+Every name in the op is a name the two manifests declare. Three declarations
+say what those names are called in the merged manifest, and the union resolves
+them together, in one pass, so you never write anything in an intermediate
+vocabulary:
+
+| Declaration | Names |
+|---|---|
+| an equivalence's `into` | the merged type of that equivalence |
+| a canonical map | any type, property or relation of a side, by default |
+| `renames` | a type, relation, property or resource no equivalence holds |
+
+A canonical map is the vocabulary: the default name of each of a side's names.
+It has three parts, each a mapping from a source name to a canonical name:
 
 ```yaml
 canonical_maps:
@@ -150,30 +162,72 @@ wherever the name occurs. The `--canonical-map SIDE=PATH` option and the
 `canonical_maps` argument of `merge_manifests` add maps to the ones in the op.
 
 A map is a vocabulary: it says what each name is called, once. So it may not
-chain (`{A: B, B: C}`) or swap (`{A: B, B: A}`), because a name that one entry
-renames cannot also be the canonical name of another; a map with a chain is
-refused when it is loaded. Two sources with one canonical name
-(`{Asset: Machine, Equipment: Machine}`) merge two types, so the map must say
-`allow_merges: true`.
+chain (`{A: B, B: C}`) or swap (`{A: B, B: A}`); a map with a chain is refused
+when it is loaded. A chain or a swap inside one union is written with
+`renames`, see [Reusing a name](#reusing-a-name). Two sources with one canonical
+name (`{Asset: Machine, Equipment: Machine}`) merge two types, so the map must
+say `allow_merges: true`.
 
 ### How the merged name is found
 
-An equivalence names the members of the merged type on each side. Its merged
-name is, in this order:
+An equivalence's merged name is, in this order:
 
-1. its `into`, translated by a canonical map if a map renames that name;
-2. otherwise, the canonical name a map gives one of its members (`Machine` in
-   the example);
+1. its `into`, used as written;
+2. otherwise, the name the vocabulary gives its members (`Machine` in the
+   example);
 3. otherwise, the one spelling every member shares.
 
-With none of these, the union refuses:
+`into` is a name in the merged manifest. A canonical map never translates it,
+and when it differs from the vocabulary's name for the group it wins: the
+group is called what `into` says, and the preview records a
+`vocabulary_override` note. With none of the three, the union refuses:
 
 ```text
-merge refused: MergeCanonicalConflictError: merge contradicts the canonical map (unnamed vertex cluster): cluster ['Asset'] ~ ['Device'] has no merged name. Give it `into`, or map a member in a canonical map.
+merge refused: MergeNamingError: merge refused (unnamed vertex cluster): ['Asset'] ~ ['Device'] has no merged name — its members are spelled differently and no vocabulary names them. Give the equivalence `into`.
 ```
 
-Error messages call one equivalence, with its members and merged name, a
-cluster.
+When the two sides' vocabularies name the group differently (`Machine` on the
+left, `Sensor` on the right) and the equivalence has no `into`, the union
+refuses too, and the refusal carries both `into` values to choose from.
+
+### Reusing a name
+
+Any name either manifest uses may be a name in the merged manifest, including
+one a side gives up in the same union, because all the renames of a side apply
+at once. To call the merged type `WorkOrder` while the maintenance system's
+own work orders become `Ticket`:
+
+```yaml
+vertex_equivalences:
+-   left: Asset
+    right: Device
+    into: WorkOrder
+renames:
+    left:
+        vertices: {WorkOrder: Ticket}
+```
+
+A swap is written the same way: `into: WorkOrder` with `renames: {left:
+{vertices: {WorkOrder: Asset}}}`.
+
+### Renaming what no equivalence holds
+
+`renames` names what no equivalence holds, per side, in that side's own names:
+
+```yaml
+renames:
+    left:
+        vertices: {WorkOrder: Ticket}
+        relations: {raised_on: targets}
+        properties: {WorkOrder: {wo_id: work_order_id}}
+    right:
+        resources: {devices: sensor_devices}
+```
+
+Every source must exist on its side. A type an equivalence holds is named by
+its `into`, and its properties by the equivalence's `properties`: a `renames`
+entry for it is refused (`double_home`), so each name is declared in one place.
+Over the vocabulary, a `renames` entry wins, with a note.
 
 ### Checking a map before a union
 
@@ -200,7 +254,7 @@ pruning a map is a change you can review. In Python the same two are
 `dangling_entries(cm, manifest)` and `trim_canonical_map(cm, manifest)`.
 
 In a union, a dangling entry is refused, and one refusal lists every dangling
-entry on that side, because a misspelled type has the same shape. Set
+entry, because a misspelled type has the same shape. Set
 `allow_dangling_entries: true` on the map, or on the op for all maps, when a
 shared vocabulary is deliberately broader than the manifest; the entries are
 then dropped and logged. An entry whose source is absent and whose target is
@@ -210,7 +264,7 @@ already present on that side is taken as already applied, and logged.
 
 A vertex equivalence declares that types on the two sides are one type. Its
 members are named in each side's own spelling, or by the canonical name a map
-gives them:
+gives them, which stands for every type the map sends there:
 
 ```yaml
 vertex_equivalences:
@@ -229,13 +283,15 @@ vertex_equivalences:
 | `identity` | The merged type's key, as ordered branches, when you declare it; see [Keying the merged type](#keying-the-merged-type) |
 | `derive_at` | Per resource, the pipeline level its derivations run at, needed only when the resource produces the type at more than one level |
 | `retire` | What becomes of each member's own key once the type is re-keyed: `demote` (default) or `keep` |
+| `allow` | Consequences of this merge it accepts: `self_relations`, `observation_fusion` |
 
 Properties with the same spelling on every member become one property without
 any declaration. A property equivalence is needed only to rename, and it takes
-`left`, `right` or both. A plain string applies to every member on that side; a
-mapping names the property per member (`left: {Asset: asset_serial, Equipment:
-equipment_serial}`). A property rename cannot fold two properties of one member
-into one; a canonical map that tries is refused.
+`left`, `right` or both. A plain string applies to every member the
+equivalence lists on that side; a mapping names the property per member
+(`left: {Asset: asset_serial, Equipment: equipment_serial}`). A property rename
+cannot fold two properties of one member into one; a canonical map that tries
+is refused.
 
 Relations work the same way with `relation_equivalences`, each a
 `RelationEquivalence` with `left`, `right` and an optional `into`.
@@ -243,30 +299,63 @@ Relations work the same way with `relation_equivalences`, each a
 ### Several types on one side
 
 When one side splits into several types what the other side keeps as one, list
-them. A list on either side declares that several distinct types become one,
-which the op must acknowledge with `allow_merges: true`:
+them:
 
 ```yaml
-allow_merges: true
 vertex_equivalences:
 -   left: [Asset, Equipment]
     right: Device
     into: Machine
 ```
 
-The acknowledgement is required because the union then writes records of
-different types into one type. It can also turn an edge between two members
-into an edge from a type to itself; the union refuses that unless the op sets
-`allow_self_relations: true`. And when one resource produces two members from
-the same record at the same pipeline level, both land on one merged vertex; the
-union refuses that unless the op sets `allow_observation_fusion: true`. Steps
-with distinct [roles](../glossary.md#role) keep their records apart and need no
-flag.
+Listing them is the declaration. Two consequences need a word of their own on
+the equivalence, under `allow`. An edge between two members becomes an edge
+from a type to itself: the union refuses that unless the equivalence says
+`allow: [self_relations]`. And when one resource produces two members from the
+same record at the same pipeline level, both land on one merged vertex: the
+union refuses that unless it says `allow: [observation_fusion]`. Steps with
+distinct [roles](../glossary.md#role) keep their records apart and need neither.
+A merge a canonical map makes with no equivalence involved is acknowledged on
+the map: `allow_self_relations: true`, `allow_observation_fusion: true`.
 
-The same member may not appear in two equivalences, and two equivalences may
-not share a merged name: that is one equivalence with more members, and must be
-written as one. A merged name that already names an unrelated type on a side is
-refused too, since the union would merge into it.
+### A vocabulary that merges several types
+
+A canonical map may already merge several of a side's types,
+`{Press: Machine, Lathe: Machine, Bench: Machine}` with `allow_merges: true`,
+while an equivalence names only some of them:
+
+```yaml
+canonical_maps:
+    left:
+        vertices: {Press: Machine, Lathe: Machine, Bench: Machine}
+        allow_merges: true
+vertex_equivalences:
+-   left: [Press, Lathe]          # or `left: Machine`, for all three
+    right: Device
+```
+
+The equivalence and the map are resolved together, so the merged type is the
+group they link: `Press`, `Lathe` and `Bench` from the left, `Device` from the
+right, called `Machine` by the map. Nothing has to be repeated from the map,
+and `into` may be omitted.
+
+The type is one, but which records fuse is decided per member. Per-member maps
+are keyed by the members' own names, and the union reads each side before
+renaming it, so a derivation keyed by `Press` still runs only for the rows a
+router sends to `Press`. A member the map joins that the identity gives no key
+source for its resource keeps its own key behind the tag `side:Type`, such as
+`left:Bench:B1`: its records belong to `Machine`, but never fuse with a
+device. The preview lists each such key as an `auto_local_key` note, and
+[`--suggest`](#suggesting-the-declarations) writes it out so you can edit it.
+
+### One type, one group
+
+A type is declared in one equivalence (`cluster_overlap`). Two equivalences
+the map links are one group: they may both list members, but only one may
+declare `identity`. Two groups nothing links may not arrive at one merged name
+(`shared_into`), and a group's name may not land on an unrelated type a side
+keeps (`occupied_into`): rename that type away with `renames`, pick another
+`into`, or add it to the group.
 
 ### Names both sides carry
 
@@ -276,14 +365,14 @@ equivalence covers, is decided by the op's `name_conflict` policy:
 | Policy | What happens |
 |---|---|
 | `error` (default) | The union refuses and prints the equivalences that would settle it. |
-| `union_right` | The union declares a one-to-one equivalence itself, under the left spelling, and merges the two exactly as a declared one. |
+| `union_right` | The union declares a one-to-one equivalence itself and merges the two exactly as a declared one. |
 | `prefix_right` | The right side's type is kept apart as `r_<name>`. |
 
 The default is `error` because two teams that both wrote `WorkOrder` do not
 necessarily mean the same thing, and a union by name cannot be split again:
 
 ```text
-merge refused: MergeIncompleteError: merge is incomplete (vertex name collision): ['WorkOrder'] exist on both sides and no equivalence merges them. Declare the equivalences the completion carries, set name_conflict='union_right' to union by name, or name_conflict='prefix_right' to keep them apart.
+merge refused: MergeNamingIncompleteError: merge is incomplete (vertex name collision): ['WorkOrder'] exist on both sides and no equivalence merges them. Declare the equivalences the completion carries, set name_conflict='union_right' to union by name, or name_conflict='prefix_right' to keep them apart.
 completion:
 kind: declare_equivalences
 vertex_equivalences:
@@ -295,13 +384,13 @@ vertex_equivalences:
 The part below `completion:` is the declaration that would make the op
 complete. Paste it into the op's `vertex_equivalences` to accept it.
 
-Two spellings of one name, such as `WorkOrder` and `work_order`, count as a
-collision too, and are refused with `MergeNameConflictError` under `error`.
-Under `union_right` they merge under the left spelling.
+Two spellings of one name, such as `WorkOrder` and `work_order`, are never
+merged by a policy: that would be a guess. `error` and `union_right` refuse
+them and carry the equivalence to declare; `prefix_right` keeps them apart.
 
 Resource and connector names are matched exactly, never by spelling, and
-`union_right` does not merge them: they are addresses, not concepts. Rename the
-right side's resources with `resource_renames: {old: new}`, or use
+`union_right` does not merge them: they are addresses, not concepts. Rename a
+side's resources with `renames: {right: {resources: {old: new}}}`, or use
 `prefix_right`. Property names are also matched exactly: `customer_email` and
 `customerEmail` stay two properties, because each is fed by a different column.
 
@@ -556,24 +645,64 @@ where a value naming the other side's type should reach it.
 
 ## When a union refuses
 
-Every refusal names what it is about and what to change:
+Every problem with the names is reported together, as one `MergeNamingError`;
+its `findings` list them, each with a `kind`, the names it is about, and the
+declarations that would settle it, safest first. The refusal also prints the
+[naming table](#the-naming-table), with the rows in conflict marked.
+
+| Finding | Cause | What to do |
+|---|---|---|
+| `unknown_member`, `dangling` | a declaration names a type, relation, property or resource the side does not declare | use the side's own spelling; the message names a near match |
+| `unnamed_cluster`, `disagreement` | a group with no name, or with two | add or align `into` |
+| `cluster_overlap`, `shared_into`, `occupied_into` | a type in two equivalences, two unlinked groups on one name, a group on an unrelated type's name | see [One type, one group](#one-type-one-group) |
+| `double_home` | a `renames` entry for a type a group names | name it on its equivalence |
+| `incomplete`, `name_collision` | a type a map sends onto a group's name, or a name both sides carry | add the declaration its completion prints; `MergeNamingIncompleteError` |
+| `near_collision` | two spellings of one name | declare an equivalence, or `prefix_right` |
+| `identity_disagreement`, `identity_coverage` | two equivalences of one group declaring `identity`, or a member no key can be derived for | keep one `identity`; add the key source the repair carries |
+| `unknown_property`, `property_collision`, `property_disagreement` | a property rename naming a missing field, folding two, or disagreeing with the map | fix the rename |
+
+The schema union refuses on its own after the names are settled:
 
 | Refusal | Cause | What to do |
 |---|---|---|
-| `ClusterConflictError` | a type in two equivalences, two equivalences with one merged name, or a merged name that is an unrelated existing type | write one equivalence per merged type |
-| `UnknownMemberError` | an equivalence names a type the side does not declare | use the side's own spelling; the message names a near match |
-| `MergeCanonicalConflictError` | an unnamed cluster, a map and an equivalence that send one name to two places, or dangling map entries | add `into`, fix the map, or [check it first](#checking-a-map-before-a-union) |
-| `MergeIncompleteError` | a name both sides carry, or a map that sends a type onto a merged name without making it a member | add the declaration its completion prints |
-| `MergeNameConflictError` | two spellings of one name | declare an equivalence, or choose a `name_conflict` policy |
 | `MergeIdentityError` | members disagree on their key, a declared key some member cannot fill, or a funnel over a member declaring `id` | [declare the key](#keying-the-merged-type) |
 | type or unit conflict | a property declared with two types or two units | retype or re-ground one side first |
 | `AlignmentConflictError` | a derived branch breaks [its rules](#rules-a-derived-branch-must-follow) | fix the derivation |
 
+### The naming table
+
+The naming table shows where every name goes: one row per merged name and per
+way of getting there.
+
+```text
+naming (vertex):
+  merged     left       right   via
+  WorkOrder  Asset      Device  equivalence  <- conflict
+  WorkOrder  WorkOrder  -       own name     <- conflict
+```
+
+`via` is `equivalence`, `vocabulary` (a canonical map, including a type it
+joins to a group), `rename`, `union_right` or `own name`. Two rows on one
+merged name are one type; a `<- conflict` mark says nothing links them. In
+Python, `build_naming(op, left=..., right=...)` returns the graph and every
+finding without raising, and `naming_table(result.graph)` renders it.
+
+### Suggesting the declarations
+
+`--suggest FILE` writes an op that settles what can be settled without
+guessing: for each problem, the first of its repairs an edit of the op can
+express — a rename away before a new `into`, and either before adding a type
+to a group, which fuses its records. It also writes out every automatic own
+key. Without `--op`, it writes a scaffold: one equivalence for every name both
+sides share. Two spellings of one name are listed as comments, never declared.
+In Python the same is `suggest_merge_op(left, right, op)`. Nothing is
+applied: read the file, edit it, and pass it with `--op`.
+
 ## Previewing every conflict
 
-`merge_manifests` stops at the first refusal, so three mistakes take three runs
-to find. `preview_merge` checks every declaration, one at a time, and reports
-every problem as data:
+`preview_merge` reports every problem a union would meet, as data: the naming
+problems `merge_manifests` raises together, and the schema-level ones it would
+reach only after them, such as members that disagree on their key:
 
 ```python
 from graflo.architecture.evolution.preview import preview_merge
@@ -583,22 +712,24 @@ for finding in preview.blocking:
     print(finding.severity, finding.kind, finding.nodes, finding.message)
 ```
 
-A finding has one of three severities: `refusal` is the one the union raised,
+A finding has one of three severities: `refusal` is one the union raised,
 `possible` is one the preview found on its own, and `note` records an accepted
-assumption, such as a map entry taken as already applied. `blocking` lists the
-first two; an empty list means the union would succeed. A finding that a
-declaration would settle carries the same completion as the refusal. The preview
-also holds the declaration graph: each side's types and properties, the
-equivalences over them, and the canonical names. Pass `attempt=False` to
-describe the declarations without running the union.
+default, such as an `into` overriding the vocabulary, an automatic own key, or
+a map entry taken as already applied. `blocking` lists the first two; an empty
+list means the union would succeed. A finding that a declaration would settle
+carries it as `completion`. The preview also holds the declaration graph: each
+side's types and properties, the groups over them, and where each name goes.
+Pass `attempt=False` to describe the declarations without running the union.
 
 The preview runs the same checks as the union, so whatever the union refuses,
 the preview reports.
 
 From the shell, `--plot` draws the declaration graph with its conflicts (the
 file suffix picks SVG, PDF, PNG or DOT), and `--preview-json` writes the same
-data. Both are written when the union refuses, which is when you need them.
-`--dry-run` prints the findings as a table:
+data. A type a vocabulary joins to a group is drawn with a dashed `vocabulary`
+edge, and a suggested repair in green. Both files are written when the union
+refuses, which is when you need them. `--dry-run` prints the findings as a
+table:
 
 ```bash
 graflo merge manifest_maintenance.yaml manifest_sensors.yaml \
@@ -616,8 +747,9 @@ it is written, so the file carries its own lineage. See
 
 ## Rules and limits
 
-- **Nothing is inferred.** A type is the same type on both sides only by name
-  or by a declared equivalence.
+- **Nothing is inferred.** A type is the same type on both sides only by a
+  declared equivalence, a canonical map that merges it, or an exact name under
+  `union_right`.
 - **A union is not an op for `apply_evolution`.** It takes two manifests, so it
   is applied with `merge_manifests` or `graflo merge`, and it has no inverse.
 - **Side order changes little.** Unioning B onto A and A onto B gives the same

@@ -28,8 +28,7 @@ CANONICAL_MAP = FIXTURES / "canonical_map.yaml"
 #: The n-ary boundary cluster of ``boundary_op.yaml``, in canonical names.
 BOUNDARY_OP: dict = {
     "op": "merge_manifests",
-    "allow_merges": True,
-    "vertices": [
+    "vertex_equivalences": [
         {"left": ["Company", "Shop"], "right": ["Org", "Branch"], "into": "Company"}
     ],
 }
@@ -45,7 +44,9 @@ EACH_OWN_KEY: list = ["company_id", "shop_id", "org_id", "branch_id"]
 #: merge refuses.
 KEYED_OP: dict = {
     **BOUNDARY_OP,
-    "vertices": [{**BOUNDARY_OP["vertices"][0], "identity": EACH_OWN_KEY}],
+    "vertex_equivalences": [
+        {**BOUNDARY_OP["vertex_equivalences"][0], "identity": EACH_OWN_KEY}
+    ],
 }
 
 
@@ -85,7 +86,9 @@ def test_a_canonical_map_lets_the_op_name_canonical_classes(
     op = dict(BOUNDARY_OP)
     # The four members disagree on their natural key; settling it keeps this
     # test about the rename rather than about identity.
-    op["vertices"] = [{**BOUNDARY_OP["vertices"][0], "identity": EACH_OWN_KEY}]
+    op["vertex_equivalences"] = [
+        {**BOUNDARY_OP["vertex_equivalences"][0], "identity": EACH_OWN_KEY}
+    ]
     op_path = _write(tmp_path, "op.yaml", op)
     out = tmp_path / "union.yaml"
     result = CliRunner().invoke(

@@ -107,7 +107,7 @@ def _resolve_name_collisions(
     *,
     name_conflict: Literal["error", "prefix_right", "union_right"],
     kind: str,
-    hint: str = "provide an equivalence / resource_renames",
+    hint: str = "rename one with `renames.<side>.resources`",
 ) -> dict[str, str]:
     """Return rename map for *candidates* that collide with *occupied*.
 
@@ -170,15 +170,21 @@ def _vertex_names(schema: Schema | None) -> set[str]:
     return set(schema.core_schema.vertex_config.vertex_set)
 
 
+def _apply_resource_renames(
+    manifest: GraphManifest, renames: Mapping[str, str]
+) -> None:
+    """Apply one side's ``renames.resources``."""
+    effective = {old: new for old, new in renames.items() if old != new}
+    if effective and manifest.ingestion_model is not None:
+        apply_rename_resources(manifest, RenameResourcesOp(renames=effective))
+
+
 def _apply_right_resource_policy(
     right: GraphManifest,
     op: MergeManifestsOp,
     left_resource_names: set[str],
 ) -> None:
-    if op.resource_renames:
-        apply_rename_resources(
-            right, RenameResourcesOp(renames=dict(op.resource_renames))
-        )
+    _apply_resource_renames(right, op.renames.right.resources)
 
     if right.ingestion_model is None:
         return
@@ -1675,8 +1681,7 @@ def _merge_manifests(
                 side,
             )
 
-    # Raw ClusterConflictError here (not wrapped): a merge op whose own
-    # declarations conflict is broken regardless of any canonical map.
+    # Every naming problem at once, as one MergeNamingError.
     resolution = resolve_clusters(
         op, left=out_left, right=out_right, canonical_maps=maps
     )
@@ -1690,6 +1695,7 @@ def _merge_manifests(
         index, left_schema, right_schema, side_maps
     )
 
+    _apply_resource_renames(out_left, op.renames.left.resources)
     left_resource_names: set[str] = set()
     if out_left.ingestion_model is not None:
         left_resource_names = {r.name for r in out_left.ingestion_model.resources}

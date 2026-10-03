@@ -6,6 +6,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [Unreleased]
+
+### Breaking
+
+- **A union resolves its names in one pass over the two manifests' own names.** A group is
+  everything an equivalence links, including every type a canonical map merges with one of its
+  members; per-member keys may name any type of the group.
+- **`into` is never translated by a canonical map**, and names the whole group when it differs from
+  the map's name (a `vocabulary_override` note).
+- **`MergeManifestsOp` keys removed**: `allow_merges` (listing members is the declaration),
+  `allow_self_relations` / `allow_observation_fusion` (now `allow:` on the equivalence, or the
+  same flags on a canonical map for a merge only the map makes),
+  `resource_renames` (now `renames.right.resources`), and the aliases `vertices`, `relations`,
+  `allow_row_fusion` and `fuse_right`. Each is refused with its replacement named; a recorded
+  merge recipe is translated on read.
+- **`name_conflict: union_right` unions exactly equal names only**; two spellings of one name are
+  refused under `error` and `union_right`.
+- **Naming refusals are one `MergeNamingError`** (`MergeNamingIncompleteError` when additions
+  settle them) listing every problem as a typed finding with repairs. `ClusterConflictError`,
+  `UnknownMemberError`, `ClusterSpec`, `index_clusters`, `check_member_existence`,
+  `same_name_groups` and `clusters_to_side_maps` are removed.
+
+### Added
+
+- `renames: {left, right}` on `MergeManifestsOp`: types, relations, properties and resources no
+  equivalence holds, applied simultaneously, so names may be reused, chained or swapped.
+- A type a canonical map joins to a group, with no key source for its resource, keeps its own key
+  behind `side:Type` (an `auto_local_key` note).
+- `build_naming`, `naming_table` and `suggest_merge_op`; `graflo merge` prints the naming table on
+  refusal and with `--dry-run`, and `graflo merge --suggest FILE` writes a suggested op.
+
 ## [1.15.1]
 
 ### Changed

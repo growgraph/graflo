@@ -290,11 +290,13 @@ class TestFusionIsJudgedPerSlot:
         op = MergeManifestsOp(
             vertex_equivalences=[
                 VertexEquivalence(
-                    left=["A", "B"], right="D", into="A", identity=["a_id"]
+                    left=["A", "B"],
+                    right="D",
+                    into="A",
+                    identity=["a_id"],
+                    allow=["observation_fusion"] if allow_fusion else [],
                 )
             ],
-            allow_merges=True,
-            allow_observation_fusion=allow_fusion,
         )
         return merge_manifests(left, right, op, bump_version=False)
 

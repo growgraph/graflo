@@ -266,6 +266,20 @@ class CanonicalMap(ConfigBaseModel):
             "author asked for."
         ),
     )
+    allow_self_relations: bool = PydanticField(
+        default=False,
+        description=(
+            "Accept a merge this map makes whose sources are connected by an "
+            "edge that becomes a self-relation."
+        ),
+    )
+    allow_observation_fusion: bool = PydanticField(
+        default=False,
+        description=(
+            "Accept a merge this map makes whose sources are produced in one "
+            "accumulator slot, fusing those observations into one node."
+        ),
+    )
 
     @model_validator(mode="after")
     def _validate_maps(self) -> CanonicalMap:
@@ -2274,8 +2288,13 @@ class VertexEquivalence(ConfigBaseModel):
     GraFlo applies this map deterministically; it does not infer semantic
     matches. ``left`` / ``right`` accept a bare class name (a 1-1 equivalence)
     or a list (an n-ary cluster): ``{Company, Shop} ~ {Org, Branch} ->
-    Company``. Declaring more than one member on a side is a merge and
-    requires ``MergeManifestsOp.allow_merges=True``.
+    Company``. A member may also be spelled by the canonical name a vocabulary
+    gives it, which stands for every class the vocabulary sends there.
+
+    The group is everything the equivalence links: its members, and every
+    class a vocabulary merges with one of them. Per-member maps (property
+    equivalences, member-keyed identity sources) may name any class of the
+    group by its own name.
 
     Properties with the same spelling on every member after alignment fuse by
     exact name without an entry in ``properties`` — list only renames.
@@ -2297,9 +2316,11 @@ class VertexEquivalence(ConfigBaseModel):
     into: str | None = PydanticField(
         default=None,
         description=(
-            "Merged vertex type name (may equal a member's name, or be a "
-            "new name). Omitted, the name comes from the canonical map that "
-            "maps a member, or from the one spelling every member shares."
+            "Merged vertex type name: any name, including one either side "
+            "uses or vacates. Never translated by a vocabulary; when it differs "
+            "from the vocabulary's name for the group it wins. Omitted, the "
+            "name comes from the vocabulary, or from the one spelling every "
+            "member shares."
         ),
     )
     properties: list[PropertyEquivalence] = PydanticField(
@@ -2336,6 +2357,16 @@ class VertexEquivalence(ConfigBaseModel):
             "that only reference a member at it; `keep` leaves the fields as "
             "plain properties. Unused while the merged class keeps its "
             "members' shared key."
+        ),
+    )
+    allow: list[Literal["self_relations", "observation_fusion"]] = PydanticField(
+        default_factory=list,
+        description=(
+            "Consequences of this merge it accepts. `self_relations`: an edge "
+            "between two members becomes an edge from the class to itself. "
+            "`observation_fusion`: two members produced in one accumulator "
+            "slot (same pipeline level and `role`, or both bare) fuse into one "
+            "node."
         ),
     )
 
@@ -2434,16 +2465,12 @@ class VertexEquivalence(ConfigBaseModel):
                 raise ValueError(
                     f"VertexEquivalence: {side} lists a class more than once: {members}"
                 )
-        for pe in self.properties:
-            for side, spec in (("left", pe.left), ("right", pe.right)):
-                if isinstance(spec, dict):
-                    unknown = sorted(set(spec) - set(self.members(side)))
-                    if unknown:
-                        raise ValueError(
-                            f"VertexEquivalence: property equivalence into "
-                            f"{pe.into!r} names {side} member(s) {unknown} not "
-                            f"in {side}={self.members(side)}"
-                        )
+        if len(self.allow) != len(set(self.allow)):
+            raise ValueError(
+                f"VertexEquivalence: allow lists a value twice: {self.allow}"
+            )
+        # Per-member property maps may name any class of the group, which only
+        # the manifests and the vocabulary decide: checked at resolution.
         return self
 
     @model_validator(mode="after")
@@ -2467,9 +2494,8 @@ class VertexEquivalence(ConfigBaseModel):
 class RelationEquivalence(ConfigBaseModel):
     """Collapse one or more left relations and one or more right relations onto one name.
 
-    Shares the ``left`` / ``right`` n-ary shape of :class:`VertexEquivalence`:
-    a bare name is a 1-1 equivalence, a list is a merge and requires
-    ``MergeManifestsOp.allow_merges=True``.
+    Shares the ``left`` / ``right`` n-ary shape and the naming rules of
+    :class:`VertexEquivalence`.
     """
 
     left: str | list[str] = PydanticField(
@@ -2481,8 +2507,9 @@ class RelationEquivalence(ConfigBaseModel):
     into: str | None = PydanticField(
         default=None,
         description=(
-            "Merged relation name. Omitted, the name comes from the canonical "
-            "map that maps a member, or from the one spelling every member shares."
+            "Merged relation name, never translated by a vocabulary. Omitted, "
+            "the name comes from the vocabulary, or from the one spelling "
+            "every member shares."
         ),
     )
 
@@ -2514,10 +2541,95 @@ class RelationEquivalence(ConfigBaseModel):
         return self
 
 
-def _describe_cluster(declaration: VertexEquivalence | RelationEquivalence) -> str:
-    if declaration.into is not None:
-        return f"into {declaration.into!r}"
-    return f"{declaration.left_members} ~ {declaration.right_members}"
+class SideRenames(ConfigBaseModel):
+    """Renames applied to one side's names that no equivalence groups.
+
+    Applied simultaneously with the side's groups and vocabulary, so a chain
+    (``{Asset: WorkOrder, WorkOrder: Ticket}``) and a swap resolve without an
+    intermediate name, and any name either side uses or vacates may be a
+    target. Every source must exist on the side. A class or relation that an
+    equivalence groups is named by that equivalence's ``into``, not here.
+    """
+
+    vertices: dict[str, str] = PydanticField(
+        default_factory=dict, description="Class renames: ``{old: new}``."
+    )
+    relations: dict[str, str] = PydanticField(
+        default_factory=dict, description="Relation renames: ``{old: new}``."
+    )
+    properties: dict[str, dict[str, str]] = PydanticField(
+        default_factory=dict,
+        description=(
+            "Attribute renames keyed by the class's own name: ``{class: {old: new}}``."
+        ),
+    )
+    resources: dict[str, str] = PydanticField(
+        default_factory=dict,
+        description="Resource renames, applied before the union: ``{old: new}``.",
+    )
+
+    @model_validator(mode="after")
+    def _validate_renames(self) -> SideRenames:
+        validate_rename_map_is_injective(
+            {s: t for s, t in self.vertices.items() if s != t},
+            kind="renames.vertices",
+            merge_hint="a VertexEquivalence",
+        )
+        validate_rename_map_is_injective(
+            {s: t for s, t in self.relations.items() if s != t},
+            kind="renames.relations",
+            merge_hint="a RelationEquivalence",
+        )
+        validate_rename_map_is_injective(
+            {s: t for s, t in self.resources.items() if s != t},
+            kind="renames.resources",
+            merge_hint="distinct resource names",
+        )
+        for cls, attr_map in self.properties.items():
+            validate_rename_map_is_injective(
+                attr_map,
+                kind=f"renames.properties (class {cls!r})",
+                merge_hint="a transform that combines the fields upstream",
+            )
+        return self
+
+    def is_empty(self) -> bool:
+        """Whether no rename is declared."""
+        return not (
+            self.vertices or self.relations or self.properties or self.resources
+        )
+
+
+class MergeRenames(ConfigBaseModel):
+    """Per-side renames of a merge, in each side's own names."""
+
+    left: SideRenames = PydanticField(default_factory=SideRenames)
+    right: SideRenames = PydanticField(default_factory=SideRenames)
+
+    def __getitem__(self, side: str) -> SideRenames:
+        return self.left if side == "left" else self.right
+
+
+#: Keys a merge op no longer accepts, and what replaces each. Refused with the
+#: replacement named rather than as an unknown field.
+_REMOVED_MERGE_KEYS: dict[str, str] = {
+    "vertices": "spell it `vertex_equivalences`",
+    "relations": "spell it `relation_equivalences`",
+    "resource_renames": "move it to `renames.right.resources`",
+    "allow_merges": (
+        "drop it: listing several members in an equivalence is the "
+        "declaration, and a vocabulary acknowledges its own merges"
+    ),
+    "allow_self_relations": (
+        "set `allow: [self_relations]` on the equivalence whose merge it accepts"
+    ),
+    "allow_observation_fusion": (
+        "set `allow: [observation_fusion]` on the equivalence whose merge it accepts"
+    ),
+    "allow_row_fusion": (
+        "set `allow: [observation_fusion]` on the equivalence whose merge it accepts"
+    ),
+}
 
 
 class MergeManifestsOp(ConfigBaseModel):
@@ -2526,41 +2638,36 @@ class MergeManifestsOp(ConfigBaseModel):
     Binary only — apply via :func:`~graflo.architecture.evolution.merge.merge_manifests`.
     Unary :func:`~graflo.architecture.evolution.apply.apply_evolution` rejects this op.
 
-    Empty ``vertex_equivalences`` / ``relation_equivalences`` yields a disjoint
-    union (schema + resources + bindings), subject to ``name_conflict`` /
-    ``resource_renames``.
+    Every name in the op is a name the input manifests declare. The
+    vocabulary (``canonical_maps``), the equivalences and ``renames`` are
+    resolved together, in one pass over those names, so nothing has to be
+    written in an intermediate vocabulary. A group is everything an
+    equivalence links, including every class a vocabulary merges with one of
+    its members; its merged name is ``into``, else the vocabulary's name, else
+    the one spelling its members share. Empty equivalences yield a disjoint
+    union, subject to ``name_conflict``.
 
     A vertex equivalence's ``identity`` with a derived or ``local_key`` branch
     is applied to the merged union before return (canonical attributes →
     resource derivations → priority funnel), then the members' own keys are
     demoted to secondary identities.
-
-    Equivalences name members in the manifests' own vocabulary (a member may
-    also be spelled by its canonical name when ``canonical_maps`` establishes
-    it); a cluster's merged name is ``into``, else the canonical name its
-    members map to, else the one spelling they share.
     """
 
     op: Literal["merge_manifests"] = "merge_manifests"
     vertex_equivalences: list[VertexEquivalence] = PydanticField(
         default_factory=list,
-        validation_alias=AliasChoices("vertex_equivalences", "vertices"),
-        description=(
-            "Explicit vertex equivalences across the two input manifests. "
-            "``vertices`` is accepted as a legacy alias."
-        ),
+        description="Vertex equivalences across the two input manifests.",
     )
     relation_equivalences: list[RelationEquivalence] = PydanticField(
         default_factory=list,
-        validation_alias=AliasChoices("relation_equivalences", "relations"),
-        description=(
-            "Optional relation equivalences across the two input manifests. "
-            "``relations`` is accepted as a legacy alias."
-        ),
+        description="Relation equivalences across the two input manifests.",
     )
-    resource_renames: dict[str, str] = PydanticField(
-        default_factory=dict,
-        description="Rename map applied to *right* resource names before union.",
+    renames: MergeRenames = PydanticField(
+        default_factory=MergeRenames,
+        description=(
+            "Per-side renames of classes, relations, attributes and resources "
+            "that no equivalence groups."
+        ),
     )
     name: str | None = PydanticField(
         default=None,
@@ -2582,39 +2689,19 @@ class MergeManifestsOp(ConfigBaseModel):
     name_conflict: Literal["error", "prefix_right", "union_right"] = PydanticField(
         default="error",
         description=(
-            "How to handle name collisions no equivalence covers, on the "
-            "right side (vertices, relations, resources, connectors). Vertex "
-            "and relation names collide both exactly and when they key alike "
-            "under ``canonical_key`` -- ``OrderLine`` and ``order_line`` are "
-            "one concept spelled two ways, and merging them into two "
-            "unrelated types splits the data silently. ``error`` refuses and "
-            "names the equivalences to declare; ``prefix_right`` keeps them "
-            "apart under ``r_`` names; ``union_right`` unions by name -- every "
-            "exact or near collision becomes a synthesized 1-1 equivalence "
-            "into the left spelling, so identity and property reconciliation "
-            "apply exactly as to a declared one. ``union_right`` applies to "
-            "vertices and relations only (resources and connectors are "
-            "addresses, not concepts, so it behaves as ``error`` for them). "
-            "``fuse_right`` is accepted as a legacy spelling of "
-            "``union_right``; `fuse` is otherwise reserved for records "
-            "becoming one node, not for type names."
+            "How to handle a name both sides arrive at that no equivalence "
+            "covers (vertices, relations, resources, connectors). ``error`` "
+            "refuses and names the equivalences to declare; ``prefix_right`` "
+            "keeps them apart under ``r_`` names; ``union_right`` unions "
+            "vertices and relations of exactly the same name, each pair "
+            "becoming a synthesized 1-1 equivalence, so identity and property "
+            "reconciliation apply as to a declared one (resources and "
+            "connectors are addresses, not concepts, so it behaves as "
+            "``error`` for them). Two spellings of one concept "
+            "(``OrderLine`` / ``order_line``) are never unioned: ``error`` and "
+            "``union_right`` refuse them, ``prefix_right`` keeps them apart."
         ),
     )
-
-    @field_validator("name_conflict", mode="before")
-    @classmethod
-    def _union_right_was_called_fuse_right(cls, value: Any) -> Any:
-        """Accept the pre-rename spelling of ``union_right``.
-
-        The policy unions two type *names*; ``fuse`` everywhere else in the
-        contract means two *records* becoming one node
-        (``allow_observation_fusion``, a derived identity), so the value was
-        renamed. Merge is excluded from the revision vocabulary, so no
-        stored change set carries the old spelling -- only authored documents,
-        which keep working.
-        """
-        return "union_right" if value == "fuse_right" else value
-
     router_scope: Literal["side", "union"] = PydanticField(
         default="side",
         description=(
@@ -2626,34 +2713,6 @@ class MergeManifestsOp(ConfigBaseModel):
             "as it was before the merge. ``union`` leaves routers open: such a "
             "value can name any class of the merged schema, the other side's "
             "included -- for sources that share type names and ids."
-        ),
-    )
-
-    allow_merges: bool = PydanticField(
-        default=False,
-        description=(
-            "Accept a vertex or relation equivalence that collapses more than "
-            "one class/relation on a side. A merge is a stated intent — it "
-            "fuses entities and can create self-relations — so it must be "
-            "acknowledged here rather than inferred from the equivalence list."
-        ),
-    )
-    allow_self_relations: bool = PydanticField(
-        default=False,
-        description=(
-            "Accept a merge whose sources are connected by an edge that "
-            "becomes a self-relation once both endpoints land on the same "
-            "merged vertex. Forwarded to the per-side ``MergeVerticesOp``."
-        ),
-    )
-    allow_observation_fusion: bool = PydanticField(
-        default=False,
-        validation_alias=AliasChoices("allow_observation_fusion", "allow_row_fusion"),
-        description=(
-            "Accept a merge whose sources are produced in one accumulator slot "
-            "(the same pipeline level and the same ``role``, or both bare). "
-            "Forwarded to the per-side ``CanonicalizeOp``. ``allow_row_fusion`` "
-            "is accepted as a legacy alias."
         ),
     )
     allow_dangling_entries: bool = PydanticField(
@@ -2669,34 +2728,34 @@ class MergeManifestsOp(ConfigBaseModel):
         PydanticField(
             default_factory=dict,
             description=(
-                "Canonical vocabulary per side. ``left`` / ``right`` apply to "
-                "that manifest's own names; ``both`` applies to either side and "
-                "to merged names. Merge applies each side's map together "
-                "with its equivalences in one step, and refuses when the two "
-                "disagree on where a name goes."
+                "The vocabulary per side. ``left`` / ``right`` apply to that "
+                "manifest's own names, ``both`` to either. A vocabulary is the "
+                "default name of a class; an equivalence's ``into`` overrides "
+                "it for the whole group."
             ),
         )
     )
 
-    @model_validator(mode="after")
-    def _require_allow_merges_for_nary(self) -> MergeManifestsOp:
-        if self.allow_merges:
-            return self
-        offending: set[str] = set()
-        for veq in self.vertex_equivalences:
-            if len(veq.left_members) > 1 or len(veq.right_members) > 1:
-                offending.add(f"vertex equivalence {_describe_cluster(veq)}")
-        for req in self.relation_equivalences:
-            if len(req.left_members) > 1 or len(req.right_members) > 1:
-                offending.add(f"relation equivalence {_describe_cluster(req)}")
-        if offending:
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_removed_keys(cls, data: Any) -> Any:
+        if not isinstance(data, Mapping):
+            return data
+        removed = sorted(key for key in data if key in _REMOVED_MERGE_KEYS)
+        if data.get("name_conflict") == "fuse_right":
+            raise ValueError(
+                "merge_manifests: name_conflict 'fuse_right' was removed; spell "
+                "it 'union_right'"
+            )
+        if removed:
             raise ValueError(
                 "merge_manifests: "
-                + "; ".join(sorted(offending))
-                + " collapses more than one class/relation on a side; a merge "
-                "is a stated intent — set allow_merges=True"
+                + "; ".join(
+                    f"`{key}` was removed: {_REMOVED_MERGE_KEYS[key]}"
+                    for key in removed
+                )
             )
-        return self
+        return data
 
 
 ManifestOp = Annotated[
