@@ -265,19 +265,11 @@ class TestLegacyFieldNames:
         assert new in ops_to_dicts([legacy])[0]
         assert old not in ops_to_dicts([legacy])[0]
 
-    def test_compose_equivalence_lists_accept_their_old_names(self) -> None:
-        legacy = MergeManifestsOp.model_validate(
-            {
-                "vertices": [{"left": "A", "right": "B", "into": "A"}],
-                "relations": [{"left": "r", "right": "s", "into": "r"}],
-            }
-        )
-        assert [v.into for v in legacy.vertex_equivalences] == ["A"]
-        assert [r.into for r in legacy.relation_equivalences] == ["r"]
-        assert set(legacy.to_dict(skip_defaults=True)) >= {
-            "vertex_equivalences",
-            "relation_equivalences",
-        }
+    def test_compose_equivalence_lists_name_their_new_names(self) -> None:
+        with pytest.raises(ValueError, match="spell it `vertex_equivalences`"):
+            MergeManifestsOp.model_validate(
+                {"vertices": [{"left": "A", "right": "B", "into": "A"}]}
+            )
 
 
 class TestParseTimeValidation:
@@ -642,16 +634,12 @@ class TestLegacyFieldAliases:
         assert payload["allow_observation_fusion"] is True
         assert "allow_row_fusion" not in payload
 
-    def test_merge_manifests_accepts_allow_row_fusion(self) -> None:
-        op = MergeManifestsOp.model_validate(
-            {"op": "merge_manifests", "allow_row_fusion": True}
-        )
-        assert op.allow_observation_fusion is True
-        assert "allow_row_fusion" not in op.to_dict()
-
-    def test_the_new_spelling_is_the_one_that_serializes(self) -> None:
-        op = MergeManifestsOp(allow_observation_fusion=True)
-        assert op.to_dict()["allow_observation_fusion"] is True
+    @pytest.mark.parametrize("key", ["allow_row_fusion", "allow_observation_fusion"])
+    def test_merge_manifests_points_a_removed_flag_at_the_equivalence(
+        self, key: str
+    ) -> None:
+        with pytest.raises(ValueError, match=r"allow: \[observation_fusion\]"):
+            MergeManifestsOp.model_validate({"op": "merge_manifests", key: True})
 
 
 class TestProjectionDepth:

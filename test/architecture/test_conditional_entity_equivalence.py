@@ -573,7 +573,6 @@ def _build_routed_union() -> GraphManifest:
     )
     op = MergeManifestsOp(
         vertex_equivalences=[_member_equivalence(_ROUTED_IDENTITY)],
-        allow_merges=True,
     )
     return merge_manifests(
         left, _manifest_b(), op, canonical_maps=[("left", _ROUTED_CANONICAL)]
@@ -705,7 +704,6 @@ def _build_member_union(
     )
     op = MergeManifestsOp(
         vertex_equivalences=[_member_equivalence(identity)],
-        allow_merges=True,
     )
     return merge_manifests(
         left, _manifest_b(), op, canonical_maps=[("left", _ROUTED_CANONICAL)]
@@ -864,8 +862,7 @@ class TestMemberKeyedRoutedFusion:
                     _renamed_resource(_MEMBER_IDENTITY, "r_b", "r_orgs")
                 )
             ],
-            allow_merges=True,
-            resource_renames={"r_view": "r_orgs"},
+            renames={"right": {"resources": {"r_view": "r_orgs"}}},
         )
 
         union = merge_manifests(
@@ -903,7 +900,6 @@ def _raw_member_union(identity: list[IdentityBranchDecl]) -> GraphManifest:
                 left=["Firm", "Shop"], right="Org", identity=list(identity)
             )
         ],
-        allow_merges=True,
         canonical_maps={"left": _ROUTED_CANONICAL},
     )
     return merge_manifests(_routed_manifest_a(), _manifest_b(), op)
@@ -971,7 +967,6 @@ def _build_dynamic_member_union() -> GraphManifest:
     )
     op = MergeManifestsOp(
         vertex_equivalences=[_member_equivalence(_MEMBER_IDENTITY)],
-        allow_merges=True,
     )
     return merge_manifests(
         left, _manifest_b(), op, canonical_maps=[("left", _ROUTED_CANONICAL)]

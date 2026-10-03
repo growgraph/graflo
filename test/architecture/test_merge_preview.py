@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Literal
 
 import pytest
 from suthing import FileHandle
@@ -66,7 +67,6 @@ def _boundary(canonical_map: CanonicalMap, **updates) -> MergeManifestsOp:
         "vertex_equivalences": [
             VertexEquivalence(left=["Firm", "Shop"], right=["Org", "Branch"])
         ],
-        "allow_merges": True,
         "canonical_maps": {"left": canonical_map},
         # A declared key, standing in for the example's derived identity:
         # without one the members disagree, which is its own test below.
@@ -90,7 +90,6 @@ def _keyed(canonical_map: CanonicalMap, **updates) -> MergeManifestsOp:
                 identity=_EACH_OWN_KEY,
             )
         ],
-        allow_merges=True,
         canonical_maps={"left": canonical_map},
         **updates,
     )
@@ -248,7 +247,6 @@ def test_an_unnamed_cluster_is_found_and_refused(left, right):
         vertex_equivalences=[
             VertexEquivalence(left=["Firm", "Shop"], right=["Org", "Branch"])
         ],
-        allow_merges=True,
     )
     preview = preview_merge(left, right, op)
 
@@ -264,29 +262,28 @@ def test_an_unnamed_cluster_is_found_and_refused(left, right):
     }
 
 
-def test_a_disagreeing_map_is_found_and_refused(left, right, canonical_map):
-    """The map says ``Firm`` is ``Company``; the cluster names it ``Party``."""
+def test_into_overriding_the_map_is_a_note_not_a_refusal(left, right, canonical_map):
+    """The map says ``Firm`` is ``Company``; ``into`` names the group ``Party``."""
     op = MergeManifestsOp(
         vertex_equivalences=[
             VertexEquivalence(
                 left=["Firm", "Shop"], right=["Org", "Branch"], into="Party"
             )
         ],
-        allow_merges=True,
         canonical_maps={"left": canonical_map},
     )
     preview = preview_merge(left, right, op)
 
-    assert preview.outcome.error_type == "MergeCanonicalConflictError"
-    assert "disagreement" in {f.kind for f in preview.findings}
-    refusal = next(f for f in preview.findings if f.severity == "refusal")
-    assert "left:Firm" in refusal.nodes
+    (override,) = [f for f in preview.findings if f.kind == "vocabulary_override"]
+    assert override.severity == "note"
+    assert "left:Firm" in override.nodes and "merged:Party" in override.nodes
+    assert "disagreement" not in {f.kind for f in preview.findings}
+    # What merge does stop on is the members' keys, a separate problem.
+    assert preview.outcome.check == "identity disagreement"
 
 
-def test_a_forgotten_member_carries_the_cluster_that_would_settle_it(
-    left, right, canonical_map
-):
-    """The map sends ``Shop`` to ``Company`` without declaring it a member."""
+def test_a_member_the_map_merges_joins_the_group(left, right, canonical_map):
+    """The map sends ``Firm`` and ``Shop`` to ``Company``; the group takes both."""
     extended = canonical_map.model_copy(
         update={
             "vertices": {**canonical_map.vertices, "Shop": "Company"},
@@ -295,16 +292,15 @@ def test_a_forgotten_member_carries_the_cluster_that_would_settle_it(
     )
     op = MergeManifestsOp(
         vertex_equivalences=[VertexEquivalence(left="Firm", right=["Org", "Branch"])],
-        allow_merges=True,
         canonical_maps={"left": extended},
     )
-    preview = preview_merge(left, right, op)
+    preview = preview_merge(left, right, op, attempt=False)
 
-    refusal = next(f for f in preview.findings if f.severity == "refusal")
-    assert refusal.kind == "incomplete"
-    assert refusal.completion is not None
-    assert refusal.completion["kind"] == "extend_cluster"
-    assert set(refusal.nodes) == {"left:Shop", "merged:Company"}
+    (cluster,) = preview.clusters
+    assert (cluster.into, cluster.left) == ("Company", ["Firm", "Shop"])
+    joined = preview.edges_between("left:Shop", "merged:Company")
+    assert [(e.kind, e.label) for e in joined] == [("map", "vocabulary")]
+    assert not [f for f in preview.findings if f.kind == "incomplete"]
 
 
 def test_overlapping_clusters_report_every_problem_not_only_the_first(
@@ -313,26 +309,24 @@ def test_overlapping_clusters_report_every_problem_not_only_the_first(
     """The point of the preview: merge stops at one, this does not.
 
     Two declarations claim ``right:Org``. Merge refuses on that and never
-    reaches the identity of either merged class; the preview reports all
-    three, so one run tells the author everything to fix.
+    reaches the identity of the group they link; the preview reports both,
+    so one run tells the author everything to fix.
     """
     op = MergeManifestsOp(
         vertex_equivalences=[
             VertexEquivalence(left="Firm", right=["Org", "Branch"]),
             VertexEquivalence(left="Shop", right="Org", into="Party"),
         ],
-        allow_merges=True,
         canonical_maps={"left": canonical_map},
     )
     preview = preview_merge(left, right, op)
 
-    assert preview.outcome.error_type == "ClusterConflictError"
+    assert preview.outcome.error_type == "MergeNamingError"
     kinds = [f.kind for f in preview.findings]
     assert kinds.count("cluster_overlap") == 1, "the refusal folds into its finding"
-    assert kinds.count("identity_disagreement") == 2, (
-        "merge never reached either; the preview did"
-    )
+    assert "identity_disagreement" in kinds, "merge never reached it; the preview did"
     overlap = next(f for f in preview.findings if f.kind == "cluster_overlap")
+    assert overlap.severity == "refusal"
     assert "right:Org" in overlap.nodes
 
 
@@ -442,7 +436,6 @@ def test_a_derived_branch_settles_it(left, right, canonical_map):
                 ],
             )
         ],
-        allow_merges=True,
         canonical_maps={"left": canonical_map},
     )
     preview = preview_merge(left, right, op, attempt=False)
@@ -466,7 +459,6 @@ def test_a_property_every_member_carries_settles_it(left, right, canonical_map):
                 identity=["match_key"],
             )
         ],
-        allow_merges=True,
         canonical_maps={"left": canonical_map},
     )
     preview = preview_merge(left, right, op, attempt=False)
@@ -494,14 +486,12 @@ def _cases(canonical_map: CanonicalMap) -> dict[str, MergeManifestsOp]:
                     identity=["company_id"],
                 )
             ],
-            allow_merges=True,
             canonical_maps={"left": canonical_map},
         ),
         "unnamed": MergeManifestsOp(
             vertex_equivalences=[
                 VertexEquivalence(left=["Firm", "Shop"], right=["Org", "Branch"])
             ],
-            allow_merges=True,
         ),
         "disagreeing-map": MergeManifestsOp(
             vertex_equivalences=[
@@ -509,7 +499,6 @@ def _cases(canonical_map: CanonicalMap) -> dict[str, MergeManifestsOp]:
                     left=["Firm", "Shop"], right=["Org", "Branch"], into="Party"
                 )
             ],
-            allow_merges=True,
             canonical_maps={"left": canonical_map},
         ),
         "overlap": MergeManifestsOp(
@@ -517,14 +506,12 @@ def _cases(canonical_map: CanonicalMap) -> dict[str, MergeManifestsOp]:
                 VertexEquivalence(left="Firm", right=["Org", "Branch"]),
                 VertexEquivalence(left="Shop", right="Org", into="Party"),
             ],
-            allow_merges=True,
             canonical_maps={"left": canonical_map},
         ),
         "forgotten-member": MergeManifestsOp(
             vertex_equivalences=[
                 VertexEquivalence(left="Firm", right=["Org", "Branch"])
             ],
-            allow_merges=True,
             canonical_maps={"left": extended},
         ),
         "unknown-member": MergeManifestsOp(
@@ -575,7 +562,7 @@ def _pair(
     left_edges: list[dict] | None = None,
     right_edges: list[dict] | None = None,
     equivalences: list[VertexEquivalence] | None = None,
-    name_conflict: str = "error",
+    name_conflict: Literal["error", "prefix_right", "union_right"] = "error",
 ) -> tuple[GraphManifest, GraphManifest, MergeManifestsOp]:
     """One cluster over one vertex per side, and the op that merges them."""
     return (
@@ -588,7 +575,6 @@ def _pair(
                     left=left_vertex["name"], right=right_vertex["name"], into="Party"
                 )
             ],
-            allow_merges=True,
             name_conflict=name_conflict,
         ),
     )
@@ -629,7 +615,6 @@ def _edge_pair(
         _schema_manifest("union-right", _EDGE_RIGHT, [right_edge]),
         MergeManifestsOp(
             vertex_equivalences=_EDGE_CLUSTERS,
-            allow_merges=True,
             name_conflict="union_right",
         ),
     )
@@ -738,14 +723,13 @@ def _clean_cases() -> dict[str, tuple[GraphManifest, GraphManifest, MergeManifes
             _schema_manifest("union-right", _EDGE_RIGHT, [agreeing_edge_right]),
             MergeManifestsOp(
                 vertex_equivalences=_EDGE_CLUSTERS,
-                allow_merges=True,
                 name_conflict=policy,
             ),
         )
     cases["shared-name-prefixed"] = (
         _schema_manifest("union-left", [_natural("Same")], []),
         _schema_manifest("union-right", [_natural("Same")], []),
-        MergeManifestsOp(allow_merges=True, name_conflict="prefix_right"),
+        MergeManifestsOp(name_conflict="prefix_right"),
     )
     cases["untyped-side-gives-way"] = _pair(
         {

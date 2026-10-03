@@ -222,3 +222,27 @@ class TestStampingDoesNotMoveTheContentAddress:
         assert merged.metadata.provenance is not None
         assert merged.metadata.provenance.parents == ["a" * 12, "b" * 12]
         assert merged.metadata.provenance.is_multi_parent
+
+
+class TestARecordedDeclarationStillLoads:
+    """History cannot be edited, so a recorded op in removed keys is translated."""
+
+    def test_removed_keys_are_lifted(self) -> None:
+        from graflo.architecture.evolution import MergeManifestsOp
+        from graflo.architecture.evolution.merge_commit import lift_recorded_merge_op
+
+        recorded = {
+            "op": "merge_manifests",
+            "vertices": [{"left": "A", "right": "B", "into": "C"}],
+            "allow_merges": True,
+            "allow_self_relations": True,
+            "resource_renames": {"r": "r_right"},
+            "name_conflict": "fuse_right",
+        }
+
+        op = MergeManifestsOp.model_validate(lift_recorded_merge_op(recorded))
+
+        (equivalence,) = op.vertex_equivalences
+        assert equivalence.allow == ["self_relations"]
+        assert op.renames.right.resources == {"r": "r_right"}
+        assert op.name_conflict == "union_right"

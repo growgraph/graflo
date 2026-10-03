@@ -134,8 +134,15 @@ of this merge says so, as a `lookup_demotion` note.
 **The combined type has no name.** [`merge_no_name.yaml`](merge_no_name.yaml) holds step 2 alone. Run step 4 with `--op merge_no_name.yaml`:
 
 ```text
-merge refused: MergeCanonicalConflictError: merge contradicts the canonical map (unnamed vertex cluster): cluster ['Asset'] ~ ['Device'] has no merged name. Give it `into`, or map a member in a canonical map.
+merge refused: MergeNamingError: merge refused (unnamed vertex cluster): ['Asset'] ~ ['Device'] has no merged name — its members are spelled differently and no vocabulary names them. Give the equivalence `into`.
+naming (vertex):
+  merged     left       right   via
+  ?          Asset      Device  equivalence
+  WorkOrder  WorkOrder  -       own name
 ```
+
+The naming table under the message shows where every type goes; the `?` is
+the name step 1 gives.
 
 **The two sides have no common key.** [`merge_no_identity.yaml`](merge_no_identity.yaml) holds steps 1 and 2. With `--op merge_no_identity.yaml`:
 
@@ -146,7 +153,14 @@ merge refused: MergeIdentityError: merge_manifests: merged vertex 'Machine' has 
 ## Also possible
 
 - One equivalence can name [several types per side](../../docs/concepts/schema/merging_manifests.md#several-types-on-one-side), and the combined type can key on [a property every member carries, or one key per member](../../docs/concepts/schema/merging_manifests.md#keying-the-merged-type).
-- `--plot conflicts.svg` draws [every conflict at once](../../docs/concepts/schema/merging_manifests.md#previewing-every-conflict).
+- The combined type can keep a name either side already uses.
+  [`merge_reuse.yaml`](merge_reuse.yaml) keeps the maintenance name `Asset`
+  with `into: Asset`, and calls the maintenance work orders `MaintenanceOrder`
+  with `renames`; see
+  [reusing a name](../../docs/concepts/schema/merging_manifests.md#reusing-a-name).
+- `--plot conflicts.svg` draws [every conflict at once](../../docs/concepts/schema/merging_manifests.md#previewing-every-conflict),
+  and `--suggest op.yaml` writes the declarations that settle what can be
+  settled without guessing.
 - The same merge from Python, with [`merge_manifests`](../../docs/concepts/schema/merging_manifests.md#from-python):
 
 ```python

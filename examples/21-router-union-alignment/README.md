@@ -166,9 +166,8 @@ example 20 produces.
 
 If the router sent two of its types into the combined type, say `machine` rows
 to `Machine` and `robot` rows to `Robot`, the equivalence would list both
-(`left: [Machine, Robot]`, with `allow_merges: true`). The register's entry in
-`sources` can then be keyed by type, and each type gets its own step,
-guarded on its own `type` value:
+(`left: [Machine, Robot]`). The register's entry in `sources` can then be keyed
+by type, and each type gets its own step, guarded on its own `type` value:
 
 ```yaml
 register:
@@ -177,6 +176,42 @@ register:
 ```
 
 See [one derivation per type](../../docs/concepts/schema/merging_manifests.md#a-resource-that-produces-several-members).
+
+A shared vocabulary may already call several register types by one name.
+[`merge_vocabulary.yaml`](merge_vocabulary.yaml) calls machines and production
+lines `Equipment`, and keeps the equivalence about machines and devices:
+
+```yaml
+canonical_maps:
+    left:
+        vertices: {Machine: Equipment, ProductionLine: Equipment}
+        allow_merges: true
+vertex_equivalences:
+-   left: Machine
+    right: Device
+```
+
+The combined type is `Equipment`, and production lines are part of it without
+being listed. Only machines are matched with devices: the derivations are keyed
+by `Machine`, and a production line keeps its own key behind a tag:
+
+```text
+naming (vertex):
+  merged     left            right   via
+  Equipment  Machine         Device  equivalence
+  Equipment  ProductionLine  -       vocabulary
+```
+
+```text
+resource  own key  vertex type  matched on              vertex id
+register  A1       Equipment    hp-0042                 303d50890862
+register  A2       Equipment    maintenance:A2          d154517d907c
+register  L1       Equipment    left:ProductionLine:L1  cb413d9d4729
+devices   D7       Equipment    hp-0042                 303d50890862
+devices   D9       Equipment    lt-0007                 27ded24b71df
+```
+
+See [a vocabulary that merges several types](../../docs/concepts/schema/merging_manifests.md#a-vocabulary-that-merges-several-types).
 
 ## What to read next
 

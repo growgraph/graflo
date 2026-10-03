@@ -45,7 +45,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from pydantic import Field as PydanticField
 
@@ -57,37 +57,16 @@ from graflo.architecture.schema.vertex import FieldMergeError, Vertex
 
 from .apply import relabel_vertex_fields
 from .canonical import (
-    ClusterResolution as _ClusterResolution,
-)
-from .canonical import (
+    Completion,
     MergeCanonicalConflictError,
     MergeIncompleteError,
     SideNames,
-    _carry_declared_entries,
-    _check_attribute_fixed_points,
-    _check_property_fields_exist,
-    _check_property_maps_against_manifest,
-    _cluster_maps,
-    _moving,
-    _preimages,
-    _resolve_cluster,
-    _same_name_payloads,
-    canonical_near_collisions,
-    fold_declared_maps,
-    same_name_groups,
-)
-from .canonical import (
-    SideMaps as _SideMaps,
 )
 from .equivalence import (
     Cluster,
-    ClusterConflictError,
     ClusterIndex,
-    ClusterSpec,
     Kind,
     Side,
-    UnknownMemberError,
-    did_you_mean,
     subject,
 )
 from .merge import (
@@ -102,11 +81,11 @@ from .merge_core import (
     merge_edge_pair,
     merge_vertex_models,
 )
+from .naming_graph import MergeNamingError, NamingGraph, build_naming
 from .ops import (
     CanonicalizeOp,
     CanonicalMap,
     MergeManifestsOp,
-    RelationEquivalence,
     VertexEquivalence,
     identity_branches_funnel,
 )
@@ -157,6 +136,9 @@ FindingKind = Literal[
     "edge_conflict",
     "reference_conversion",
     "lookup_demotion",
+    "double_home",
+    "vocabulary_override",
+    "auto_local_key",
 ]
 
 #: A refusal's ``check`` phrase to the finding kind it is an instance of. The
@@ -167,6 +149,7 @@ _KIND_BY_CHECK: dict[str, FindingKind] = {
     "cluster overlap": "cluster_overlap",
     "shared into": "shared_into",
     "occupied into": "occupied_into",
+    "double home": "double_home",
     "unknown vertex member": "unknown_member",
     "unknown relation member": "unknown_member",
     "joining a merged class": "incomplete",
@@ -202,10 +185,27 @@ _KIND_BY_CHECK: dict[str, FindingKind] = {
 #: Refusals that carry no ``check`` are classified by type alone. A value of
 #: ``None`` means "no expectation" -- the preview is not asked to have seen it.
 _KINDS_BY_TYPE: dict[type[BaseException], frozenset[FindingKind]] = {
-    ClusterConflictError: frozenset(
-        {"cluster_overlap", "shared_into", "occupied_into"}
+    MergeNamingError: frozenset(
+        {
+            "cluster_overlap",
+            "shared_into",
+            "occupied_into",
+            "unknown_member",
+            "disagreement",
+            "unnamed_cluster",
+            "incomplete",
+            "dangling",
+            "name_collision",
+            "near_collision",
+            "double_home",
+            "identity_disagreement",
+            "identity_coverage",
+            "property_disagreement",
+            "property_collision",
+            "property_retarget",
+            "unknown_property",
+        }
     ),
-    UnknownMemberError: frozenset({"unknown_member"}),
     MergeIncompleteError: frozenset({"incomplete", "name_collision"}),
     MergeIdentityError: frozenset(
         {"identity_disagreement", "identity_coverage", "identity_collision"}
@@ -396,6 +396,10 @@ class MergePreview(ConfigBaseModel):
         """Attribute nodes owned by the class node *node_id*, in declared order."""
         return [n for n in self.nodes if n.owner == node_id]
 
+    def edges_between(self, source: str, target: str) -> list[PreviewEdge]:
+        """Every edge from node *source* to node *target*."""
+        return [e for e in self.edges if e.source == source and e.target == target]
+
     def with_outcome(
         self, outcome: MergeOutcome, *, subjects: Sequence[str] = ()
     ) -> MergePreview:
@@ -420,6 +424,35 @@ class MergePreview(ConfigBaseModel):
             check=outcome.check,
             error_type=outcome.error_type,
         )
+        message = outcome.message or ""
+        listed = {
+            position
+            for position, finding in enumerate(self.findings)
+            if finding.severity == "possible"
+            and finding.message
+            and finding.message != message
+            and finding.message in message
+        }
+        if listed:
+            # A naming refusal that lists several problems: each one the
+            # structural pass found is part of it, and none is reported twice.
+            return self.model_copy(
+                update={
+                    "outcome": outcome,
+                    "findings": [
+                        finding.model_copy(
+                            update={
+                                "severity": "refusal",
+                                "source": "merge",
+                                "error_type": outcome.error_type,
+                            }
+                        )
+                        if position in listed
+                        else finding
+                        for position, finding in enumerate(self.findings)
+                    ],
+                }
+            )
         findings: list[MergeFinding] = []
         folded = False
         for finding in self.findings:
@@ -541,16 +574,20 @@ def outcome_from_manifest(manifest: GraphManifest) -> MergeOutcome:
 class _Builder:
     """Accumulates the declaration graph and its findings, refusing nothing.
 
-    Every check delegates to the canonical-map machinery, one unit at a time,
-    so a refusal on one declaration does not hide the next one. What this class
-    adds is the bookkeeping: which node a refusal is about, and the graph it is
-    a finding on.
+    The naming checks are the ones merge runs, in
+    :func:`~graflo.architecture.evolution.naming_graph.build_naming`, which
+    reports every problem rather than the first. The schema-union checks
+    delegate to the merge kernel one unit at a time, so a refusal on one
+    group does not hide the next. What this class adds is the bookkeeping:
+    which node a finding is about, and the graph it is a finding on.
     """
 
     op: MergeManifestsOp
     manifests: dict[Side, GraphManifest]
     names: dict[Side, SideNames]
-    declared: Any  # DeclaredMaps
+    canonical_maps: Sequence[tuple[Side, CanonicalMap]] = ()
+    declared: Any = None  # DeclaredMaps, set by the naming pass
+    graph: NamingGraph | None = None
     nodes: dict[str, PreviewNode] = field(default_factory=dict)
     edges: dict[str, PreviewEdge] = field(default_factory=dict)
     clusters: list[PreviewCluster] = field(default_factory=list)
@@ -559,14 +596,6 @@ class _Builder:
         default_factory=lambda: ClusterIndex(vertices=(), relations=())
     )
     composite: dict[Side, CanonicalizeOp] = field(default_factory=dict)
-    #: Declarations at or past this position per kind were synthesized by
-    #: merge rather than written by the author.
-    synthesized_from: tuple[int, int] = (1 << 30, 1 << 30)
-    #: ``{kind: [(merged name, left members, right members)]}`` for the names
-    #: both sides arrive at and no cluster merges.
-    groups: dict[str, list[tuple[str, list[str], list[str]]]] = field(
-        default_factory=dict
-    )
 
     # ── registries ──────────────────────────────────────────────────────────
 
@@ -723,493 +752,210 @@ class _Builder:
                     )
                 )
 
-    def resolve_clusters(self) -> None:
-        """Resolve every declaration on its own, so one refusal hides no other."""
-        specs: dict[Kind, list[ClusterSpec]] = {"vertex": [], "relation": []}
-        declarations: dict[Kind, list[Any]] = {
-            "vertex": list(self.op.vertex_equivalences),
-            "relation": list(self.op.relation_equivalences),
-        }
-        kinds: tuple[Kind, Kind] = ("vertex", "relation")
-        for position, kind in enumerate(kinds):
-            threshold = self.synthesized_from[position]
-            for index, declaration in enumerate(declarations[kind]):
-                specs[kind].append(
-                    self._resolve_one(
-                        declaration, kind=kind, synthesized=index >= threshold
-                    )
-                )
-        self._shape_checks(specs["vertex"], kind="vertex")
-        self._shape_checks(specs["relation"], kind="relation")
-        self._member_existence(specs)
-        self.index = _index_of(declarations, specs)
-        self._record_clusters()
+    def naming(self) -> None:
+        """The naming graph, and every finding of the checker merge itself runs.
 
-    def _resolve_one(
-        self,
-        declaration: VertexEquivalence | RelationEquivalence,
-        *,
-        kind: Kind,
-        synthesized: bool = False,
-    ) -> ClusterSpec:
-        """One declaration through the real resolver; its refusal becomes a finding."""
-        try:
-            return _resolve_cluster(
-                declaration,
-                kind=kind,
-                declared=self.declared,
-                names=self.names,
-                synthesized=synthesized,
-            )
-        except MergeCanonicalConflictError as exc:
-            self.from_refusal(exc, fallback="disagreement")
-        except ValueError as exc:  # a malformed declaration, reported as written
-            self.finding("disagreement", str(exc))
-        # A best-effort shape, so the cluster still draws: members as spelled,
-        # and the merged name only if the author gave one.
-        return ClusterSpec(
-            left=tuple(declaration.members("left")),
-            right=tuple(declaration.members("right")),
-            into=declaration.into or "",
-            declared_into=declaration.into,
-            synthesized=synthesized,
-        )
-
-    def _shape_checks(self, specs: Sequence[ClusterSpec], *, kind: Kind) -> None:
-        """Overlap, shared merged name, occupied merged name -- all of them.
-
-        The three rules of
-        :func:`~graflo.architecture.evolution.equivalence.index_clusters`,
-        reported together rather than one per run. Occupancy is computed
-        against the declared map, not the raw side names: a merged name whose
-        occupant another declaration renames away is not occupied.
+        :func:`~graflo.architecture.evolution.naming_graph.build_naming`
+        never refuses: it reports every naming problem as a finding and
+        lowers what it can, so the passes after this one still see groups and
+        relabels to check.
         """
-        claimed: dict[tuple[Side, str], int] = {}
-        into_owner: dict[str, int] = {}
-        claimed_by_side: dict[Side, set[str]] = {"left": set(), "right": set()}
-        for spec in specs:
-            claimed_by_side["left"].update(spec.left)
-            claimed_by_side["right"].update(spec.right)
+        result = build_naming(
+            self.op,
+            left=self.manifests["left"],
+            right=self.manifests["right"],
+            canonical_maps=self.canonical_maps,
+        )
+        resolution = result.resolution
+        self.index = resolution.index
+        self.declared = resolution.declared
+        self.composite = {side: resolution.side_maps[side] for side in _SIDES}
+        self.graph = result.graph
+        for finding in result.findings:
+            self.finding(
+                cast(FindingKind, finding.kind),
+                finding.message,
+                severity="note" if not finding.blocking else "possible",
+                nodes=[n for n in (self._node_for(s) for s in finding.subjects) if n],
+                completion=finding.repairs[0].to_dict() if finding.repairs else None,
+                check=finding.check or None,
+            )
+            if finding.blocking and finding.repairs:
+                self._suggest(finding.repairs[0])
+        self._record_clusters()
+        self._rename_edges()
+        self._property_edges()
 
-        for position, spec in enumerate(specs):
-            for side in _SIDES:
-                for name in spec.left if side == "left" else spec.right:
-                    prior = claimed.get((side, name))
-                    if prior is not None and prior != position:
-                        self.finding(
-                            "cluster_overlap",
-                            f"{kind} equivalence: {side}:{name} is claimed by two "
-                            f"equivalence declarations (into {specs[prior].into!r} "
-                            f"and into {spec.into!r}); merge them into one "
-                            "declaration",
-                            nodes=[subject(side, name)],
-                        )
-                    claimed[(side, name)] = position
-            if not spec.into:
-                continue
-            owner = into_owner.get(spec.into)
-            if owner is not None and owner != position:
-                self.finding(
-                    "shared_into",
-                    f"{kind} equivalence: two declarations both target into "
-                    f"{spec.into!r}; sharing one `into` collapses them into one "
-                    "merged class — spell it as one declaration",
-                    nodes=[subject("merged", spec.into)],
-                )
-            into_owner[spec.into] = position
-            for side in _SIDES:
-                members = spec.left if side == "left" else spec.right
-                occupied = self.names[side].of_kind(kind) - _moving(
-                    _side_mapping(self.declared, side, kind)
-                )
-                if spec.into not in occupied or spec.into in members:
-                    continue
-                if spec.into in claimed_by_side[side]:
-                    continue  # another declaration renames the occupant away
-                self.finding(
-                    "occupied_into",
-                    f"{kind} equivalence: into {spec.into!r} already exists on the "
-                    f"{side} side but is not a member of its cluster "
-                    f"({side}={list(members)})",
-                    nodes=[subject(side, spec.into), subject("merged", spec.into)],
-                )
-
-    def _member_existence(self, specs: Mapping[Kind, Sequence[ClusterSpec]]) -> None:
-        """Every member a side does not declare, with the near-spelling hint."""
-        for kind in ("vertex", "relation"):
-            for spec in specs[kind]:  # type: ignore[index]
-                for side in _SIDES:
-                    known = self.names[side].of_kind(kind)  # type: ignore[arg-type]
-                    for member in spec.left if side == "left" else spec.right:
-                        if member in known:
-                            continue
-                        self.finding(
-                            "unknown_member",
-                            f"merge: {side} {kind} {member!r} is not in the "
-                            f"{side} manifest{did_you_mean(member, known)}",
-                            nodes=[self.ghost(side, member, kind)],  # type: ignore[arg-type]
-                        )
+    def _node_for(self, subject_id: str) -> str | None:
+        """The node a finding's subject names: a ghost for an absent class, a merged name minted."""
+        if subject_id in self.nodes:
+            return subject_id
+        scope, _, rest = subject_id.partition(":")
+        name, _, attr = rest.partition(".")
+        if attr:
+            return None
+        if scope in _SIDES:
+            return self.ghost(scope, name)
+        if scope == "merged":
+            return self.add_node(PreviewNode(id=subject_id, kind="merged", name=name))
+        return None
 
     def _record_clusters(self) -> None:
-        """One :class:`PreviewCluster` per declaration, with its member edges."""
+        """One :class:`PreviewCluster` per group, with an edge from each member.
+
+        A declared member's edge is a ``member`` edge; a member the vocabulary
+        joins is drawn with a ``map`` edge, so the closure is visible.
+        """
         for kind, clusters in (
             ("vertex", self.index.vertices),
             ("relation", self.index.relations),
         ):
             for position, cluster in enumerate(clusters):
-                into = cluster.into or None
-                composed_id = (
-                    self.add_node(
-                        PreviewNode(
-                            id=subject("merged", into),
-                            kind="merged",
-                            name=into,
-                        )
+                composed_id = self.add_node(
+                    PreviewNode(
+                        id=subject("merged", cluster.into),
+                        kind="merged",
+                        name=cluster.into,
                     )
-                    if into
-                    else None
                 )
+                cluster_id = f"{kind}-cluster-{position}"
+                declaration = cluster.declaration
                 self.clusters.append(
                     PreviewCluster(
-                        id=f"{kind}-cluster-{position}",
+                        id=cluster_id,
                         kind=kind,  # type: ignore[arg-type]
-                        into=into,
+                        into=cluster.into,
                         declared_into=cluster.declared_into,
                         left=list(cluster.left),
                         right=list(cluster.right),
                         synthesized=cluster.synthesized,
-                        declared_identity=getattr(cluster.declaration, "identity", None)
+                        declared_identity=getattr(declaration, "identity", None)
                         is not None,
-                        derived_identity=isinstance(
-                            cluster.declaration, VertexEquivalence
-                        )
-                        and cluster.declaration.has_derivation,
+                        derived_identity=isinstance(declaration, VertexEquivalence)
+                        and declaration.has_derivation,
                     )
                 )
-                if composed_id is None:
-                    continue
                 for side in _SIDES:
+                    declared = set(cluster.declared_members(side))
                     for member in cluster.members(side):
-                        member_id = (
-                            subject(side, member)
-                            if member in self.names[side].of_kind(kind)  # type: ignore[arg-type]
-                            else self.ghost(side, member, kind)  # type: ignore[arg-type]
-                        )
+                        member_id = subject(side, member)
+                        if member_id not in self.nodes:
+                            member_id = self.ghost(side, member, kind)  # type: ignore[arg-type]
+                        if member in declared:
+                            self.add_edge(
+                                member_id, composed_id, "member", declared_by=cluster_id
+                            )
+                        else:
+                            self.add_edge(
+                                member_id,
+                                composed_id,
+                                "map",
+                                label="vocabulary",
+                                declared_by=side,
+                            )
+
+    def _rename_edges(self) -> None:
+        """A ``map`` edge per vocabulary entry or rename of a class no group holds."""
+        assert self.graph is not None
+        for edge in self.graph.edges:
+            if edge.kind not in ("vocabulary", "rename") or edge.target is None:
+                continue
+            if edge.source == edge.target:
+                continue
+            members = (
+                self.index.vertex_members(edge.side)
+                if edge.category == "vertex"
+                else self.index.relation_members(edge.side)
+            )
+            if edge.source in members:
+                continue
+            labels = (
+                self.index.labels
+                if edge.category == "vertex"
+                else self.index.relation_labels
+            )
+            scope = "merged" if edge.target in labels else "canonical"
+            target_id = self.add_node(
+                PreviewNode(
+                    id=subject(scope, edge.target), kind=scope, name=edge.target
+                )  # type: ignore[arg-type]
+            )
+            self.add_edge(
+                subject(edge.side, edge.source),
+                target_id,
+                "map",
+                label=edge.target,
+                declared_by=edge.declared_by,
+            )
+
+    def _property_edges(self) -> None:
+        """An attribute-level edge per property equivalence and per vocabulary attribute rename."""
+        for cluster in self.index.vertices:
+            for side in _SIDES:
+                for member, attr_map in cluster.property_maps(side).items():
+                    for old, new in attr_map.items():
                         self.add_edge(
-                            member_id,
-                            composed_id,
-                            "member",
-                            declared_by=f"{kind}-cluster-{position}",
+                            subject(side, member, old),
+                            self.attribute("merged", cluster.into, new),
+                            "property_equivalence",
+                            label=new,
+                            declared_by=cluster.into,
                         )
-                self._property_equivalence_edges(cluster, composed_id)
-
-    def _property_equivalence_edges(self, cluster: Cluster, composed_id: str) -> None:
-        """An attribute-level edge per :class:`PropertyEquivalence` side."""
-        declaration = cluster.declaration
-        if not isinstance(declaration, VertexEquivalence):
-            return
-        for side in _SIDES:
-            for member, attr_map in cluster.property_maps(side).items():
-                for old, new in attr_map.items():
-                    self.add_edge(
-                        subject(side, member, old),
-                        self.attribute("merged", cluster.into, new),
-                        "property_equivalence",
-                        label=new,
-                        declared_by=cluster.into,
-                    )
-
-    def composite_maps(self) -> None:
-        """Carry each declared entry into its side's composite, one at a time."""
         for side in _SIDES:
             cm: CanonicalMap = self.declared[side]
-            other: Side = "right" if side == "left" else "left"
-            vertices, relations, properties = _cluster_maps(self.index, side)
-            for kind, mapping, out in (
-                ("vertex", cm.vertices, vertices),
-                ("relation", cm.relations, relations),
-            ):
-                for source, target in mapping.items():
-                    self._carry_one(
-                        out,
-                        source,
-                        target,
-                        kind=kind,  # type: ignore[arg-type]
-                        side=side,
-                        other=other,
-                        cm=cm,
-                    )
-            self._carry_properties(properties, cm, side=side, other=other)
-            self.composite[side] = CanonicalizeOp(
-                vertices=vertices,
-                relations=relations,
-                properties=properties,
-                allow_merges=True,
-                allow_self_relations=True,
-                allow_observation_fusion=True,
-            )
-            self._map_edges(side, kind="vertex", mapping=vertices)
-            self._map_edges(side, kind="relation", mapping=relations)
-
-    def _carry_one(
-        self,
-        out: dict[str, str],
-        source: str,
-        target: str,
-        *,
-        kind: Kind,
-        side: Side,
-        other: Side,
-        cm: CanonicalMap,
-    ) -> None:
-        """One declared entry through the real classification.
-
-        ``_carry_declared_entries`` is a loop over a mapping, so handing it a
-        one-entry mapping classifies exactly that entry -- member, satisfied,
-        translated, inapplicable, dangling or incomplete -- in the same order
-        and by the same rules merge uses.
-        """
-        before = dict(out)
-        shared = (
-            self.declared.both.vertices
-            if kind == "vertex"
-            else self.declared.both.relations
-        )
-        try:
-            _carry_declared_entries(
-                out,
-                {source: target},
-                names=self.names[side].of_kind(kind),
-                other_names=self.names[other].of_kind(kind),
-                shared_sources=shared,
-                index=self.index,
-                side=side,
-                kind=kind,
-            )
-        except MergeIncompleteError as exc:
-            self.from_refusal(exc, fallback="incomplete")
-            return
-        except MergeCanonicalConflictError as exc:
-            self.from_refusal(exc, fallback="dangling")
-            return
-        if (
-            out == before
-            and source not in out
-            and target in self.names[side].of_kind(kind)
-        ):
-            self.finding(
-                "satisfied",
-                f"the {side} canonical {kind} entry {source!r} -> {target!r} is "
-                "taken as already applied (source absent, target present)",
-                severity="note",
-                nodes=[subject(side, target)],
-            )
-
-    def _carry_properties(
-        self,
-        properties: dict[str, dict[str, str]],
-        cm: CanonicalMap,
-        *,
-        side: Side,
-        other: Side,
-    ) -> None:
-        """The declared attribute maps, folded onto the cluster's own."""
-        known = self.names[side].vertices
-        for cls, attrs in cm.properties.items():
-            if cls not in known:
-                if cm.canonical_class(cls) in known:
+            for cls, attrs in cm.properties.items():
+                if cls not in self.names[side].vertices:
                     continue
-                if cls in self.declared.both.properties and (
-                    cls in self.names[other].vertices
-                    or cm.canonical_class(cls) in self.names[other].vertices
-                ):
-                    continue
-                where = (
-                    "a merged name"
-                    if cls in self.index.labels or cls in self.index.declared_intos
-                    else "no class on that side"
-                )
-                self.finding(
-                    "dangling",
-                    f"the {side} attribute map is keyed by {cls!r}, {where}; "
-                    "`properties` is keyed by the source class",
-                    nodes=[subject(side, cls)],
-                )
-                continue
-            bucket = properties.setdefault(cls, {})
-            for old, new in attrs.items():
-                existing = bucket.get(old)
-                if existing is not None and existing != new:
-                    self.finding(
-                        "property_disagreement",
-                        f"the canonical map says {side}:{cls}.{old} -> {new!r}, but "
-                        f"the equivalence maps it to {existing!r}",
-                        nodes=[subject(side, cls, old)],
-                    )
-                    continue
-                bucket[old] = new
                 owning = next(
                     (c for c in self.index.vertices if cls in c.members(side)), None
                 )
-                target = (
-                    self.attribute("merged", owning.into, new)
-                    if owning is not None
-                    else self.attribute("canonical", cm.canonical_class(cls), new)
-                )
-                self.add_edge(
-                    subject(side, cls, old),
-                    target,
-                    "property_map",
-                    label=new,
-                    declared_by=side,
-                )
-
-    def _map_edges(self, side: Side, *, kind: Kind, mapping: Mapping[str, str]) -> None:
-        """A ``map`` edge per declared rename that no cluster already explains."""
-        members = (
-            self.index.vertex_members(side)
-            if kind == "vertex"
-            else self.index.relation_members(side)
-        )
-        labels = self.index.labels if kind == "vertex" else self.index.relation_labels
-        for source, target in mapping.items():
-            if source == target or source in members:
-                continue
-            scope = "merged" if target in labels else "canonical"
-            source_id = (
-                subject(side, source)
-                if source in self.names[side].of_kind(kind)
-                else self.ghost(side, source, kind)
-            )
-            target_id = self.add_node(
-                PreviewNode(id=subject(scope, target), kind=scope, name=target)  # type: ignore[arg-type]
-            )
-            self.add_edge(source_id, target_id, "map", label=target, declared_by=side)
-
-    def property_checks(self) -> None:
-        """Absent fields, re-targeted canonical attributes, rename collisions."""
-        for cluster in self.index.vertices:
-            for side in _SIDES:
-                manifest = self.manifests[side]
-                try:
-                    _check_property_fields_exist(
-                        manifest, cluster, side=side, declared=self.declared[side]
+                for old, new in attrs.items():
+                    target = (
+                        self.attribute("merged", owning.into, new)
+                        if owning is not None
+                        else self.attribute("canonical", cm.canonical_class(cls), new)
                     )
-                except MergeCanonicalConflictError as exc:
-                    self.from_refusal(exc, fallback="unknown_property")
-                try:
-                    _check_attribute_fixed_points(
-                        cluster, side=side, declared=self.declared[side]
+                    self.add_edge(
+                        subject(side, cls, old),
+                        target,
+                        "property_map",
+                        label=new,
+                        declared_by=side,
                     )
-                except MergeCanonicalConflictError as exc:
-                    self.from_refusal(exc, fallback="property_retarget")
-        for side in _SIDES:
-            relabel = self.composite.get(side)
-            if relabel is None:
-                continue
-            for member, attr_map in relabel.properties.items():
-                one = CanonicalizeOp(properties={member: attr_map}, allow_merges=True)
-                try:
-                    _check_property_maps_against_manifest(
-                        self.manifests[side], one, side=side
-                    )
-                except MergeCanonicalConflictError as exc:
-                    self.from_refusal(exc, fallback="property_collision")
 
-    def same_names(self) -> None:
-        """Names both sides arrive at that no cluster merges."""
-        policy = self.op.name_conflict
-        resolution = _ClusterResolution(
-            index=self.index,
-            side_maps=_SideMaps(
-                left=self.composite["left"], right=self.composite["right"]
-            ),
-            declared=self.declared,
-        )
-        near = policy == "union_right"
-        for kind in ("vertex", "relation"):
-            groups = same_name_groups(
-                resolution,
-                self.names,
-                kind=kind,  # type: ignore[arg-type]
-                near=near,
-            )
-            if not groups:
+    def _suggest(self, repair: Completion) -> None:
+        """Draw the declaration a repair proposes."""
+        for payload in (*repair.vertex_equivalences, *repair.relation_equivalences):
+            into = payload.get("into")
+            if not into:
                 continue
-            self.groups[kind] = groups
-            shared = [into for into, _left, _right in groups]
-            if policy == "error":
-                self.finding(
-                    "name_collision",
-                    f"{shared} exist on both sides after the declared maps and no "
-                    "equivalence merges them",
-                    nodes=[subject("merged", name) for name in shared],
-                    completion={
-                        "kind": "declare_equivalences",
-                        f"{kind}_equivalences": [
-                            dict(p) for p in _same_name_payloads(groups)
-                        ],
-                    },
-                )
-            elif policy == "prefix_right":
-                self.finding(
-                    "prefixed",
-                    f"{shared} exist on both sides; prefix_right keeps them apart "
-                    "under r_ names",
-                    severity="note",
-                    nodes=[subject("merged", name) for name in shared],
-                )
-            self._suggest(groups, kind=kind)  # type: ignore[arg-type]
-        if policy == "error":
-            self._near_collisions()
-
-    def _near_collisions(self) -> None:
-        """Two spellings of one name, which merge refuses under ``error``."""
-        for kind in ("vertex", "relation"):
-            post = {
-                side: sorted(
-                    _preimages(
-                        _kind_mapping(self.composite[side], kind),  # type: ignore[arg-type]
-                        self.names[side].of_kind(kind),  # type: ignore[arg-type]
-                    )
-                )
-                for side in _SIDES
-                if side in self.composite
-            }
-            if len(post) != 2:
-                continue
-            labels = (
-                self.index.labels if kind == "vertex" else self.index.relation_labels
-            )
-            for left, right in canonical_near_collisions(
-                post["left"], post["right"], exempt=labels
-            ):
-                self.finding(
-                    "near_collision",
-                    f"{left!r} and {right!r} denote the same concept under different "
-                    "naming conventions, so they would merge into two unrelated "
-                    f"{kind} types with the source data split between them",
-                    nodes=[subject("merged", left), subject("merged", right)],
-                )
-
-    def _suggest(
-        self,
-        groups: Sequence[tuple[str, list[str], list[str]]],
-        *,
-        kind: Kind,
-    ) -> None:
-        """Draw the equivalence a shared name is asking for."""
-        for into, left, right in groups:
             target = self.add_node(
                 PreviewNode(id=subject("merged", into), kind="merged", name=into)
             )
-            for side, members in (("left", left), ("right", right)):
-                for member in members:
+            for side in _SIDES:
+                members = payload.get(side) or []
+                for member in [members] if isinstance(members, str) else members:
                     self.add_edge(
-                        subject(side, member),  # type: ignore[arg-type]
+                        subject(side, member),
                         target,
                         "suggested",
-                        label="declare",
+                        label=repair.kind,
+                        declared_by="completion",
+                    )
+        for side_name, fragment in repair.renames.items():
+            side = cast(Side, side_name)
+            for mapping in fragment.values():
+                for old, new in mapping.items():
+                    target = self.add_node(
+                        PreviewNode(
+                            id=subject("canonical", new), kind="canonical", name=new
+                        )
+                    )
+                    self.add_edge(
+                        subject(side, old),
+                        target,
+                        "suggested",
+                        label=repair.kind,
                         declared_by="completion",
                     )
 
@@ -1604,11 +1350,8 @@ class _Builder:
 
     def build(self) -> MergePreview:
         self.schema_nodes()
-        self.resolve_clusters()
-        self.composite_maps()
+        self.naming()
         self.composed_attributes()
-        self.property_checks()
-        self.same_names()
         self.identity_checks()
         self.merge_checks()
         self.edge_merge_checks()
@@ -1625,11 +1368,6 @@ class _Builder:
 
 def _kind_mapping(relabel: CanonicalizeOp, kind: Kind) -> dict[str, str]:
     return relabel.vertices if kind == "vertex" else relabel.relations
-
-
-def _side_mapping(declared: Any, side: Side, kind: Kind) -> Mapping[str, str]:
-    cm: CanonicalMap = declared[side]
-    return cm.vertices if kind == "vertex" else cm.relations
 
 
 def _type_label(prop: Any) -> str | None:
@@ -1649,42 +1387,6 @@ def _manifest_name(manifest: GraphManifest, fallback: str) -> str:
     if manifest.metadata is not None and getattr(manifest.metadata, "name", None):
         return str(manifest.metadata.name)
     return fallback
-
-
-def _index_of(
-    declarations: Mapping[Kind, Sequence[Any]],
-    specs: Mapping[Kind, Sequence[ClusterSpec]],
-) -> ClusterIndex:
-    """A :class:`ClusterIndex` over resolved specs, skipping the unnamed ones.
-
-    Built directly rather than through ``index_clusters``: the shape checks
-    have already run tolerantly, and a cluster whose merged name could not be
-    resolved has nothing to index under.
-    """
-    built: dict[Kind, list[Cluster]] = {"vertex": [], "relation": []}
-    for kind in ("vertex", "relation"):
-        for declaration, spec in zip(
-            declarations[kind],  # type: ignore[index]
-            specs[kind],  # type: ignore[index]
-            strict=True,
-        ):
-            if not spec.into:
-                continue
-            built[kind].append(  # type: ignore[index]
-                Cluster(
-                    left=spec.left,
-                    right=spec.right,
-                    into=spec.into,
-                    declaration=declaration,
-                    aliases=spec.aliases,
-                    declared_into=spec.declared_into,
-                    synthesized=spec.synthesized,
-                )
-            )
-    return ClusterIndex(
-        vertices=tuple(built["vertex"]),  # type: ignore[arg-type]
-        relations=tuple(built["relation"]),  # type: ignore[arg-type]
-    )
 
 
 # ── merging two branches: a projection, not a preview ───────────────────────
@@ -1828,43 +1530,6 @@ def build_merge3_preview(
 # ── the entry point ─────────────────────────────────────────────────────────
 
 
-def _extended(op: MergeManifestsOp, builder: _Builder) -> MergeManifestsOp | None:
-    """*op* with an equivalence per name both sides arrive at, or ``None``.
-
-    What ``resolve_clusters`` does under ``union_right``: every shared or
-    alike-spelled name becomes a 1-1 cluster into the left spelling, so the
-    union goes through the same identity and property reconciliation a declared
-    cluster does.
-    """
-    vertex_groups = builder.groups.get("vertex", [])
-    relation_groups = builder.groups.get("relation", [])
-    if not vertex_groups and not relation_groups:
-        return None
-    nary = any(
-        len(left_members) > 1 or len(right_members) > 1
-        for _into, left_members, right_members in (*vertex_groups, *relation_groups)
-    )
-    return op.model_copy(
-        update={
-            "vertex_equivalences": [
-                *op.vertex_equivalences,
-                *(
-                    VertexEquivalence.model_validate(payload)
-                    for payload in _same_name_payloads(vertex_groups)
-                ),
-            ],
-            "relation_equivalences": [
-                *op.relation_equivalences,
-                *(
-                    RelationEquivalence.model_validate(payload)
-                    for payload in _same_name_payloads(relation_groups)
-                ),
-            ],
-            "allow_merges": op.allow_merges or nary,
-        }
-    )
-
-
 def preview_merge(
     left: GraphManifest,
     right: GraphManifest,
@@ -1900,32 +1565,14 @@ def preview_merge(
         :attr:`~MergePreview.blocking` is what "this would merge" looks
         like.
     """
-    declared = fold_declared_maps(op, canonical_maps)
     manifests: dict[Side, GraphManifest] = {"left": left, "right": right}
     names: dict[Side, SideNames] = {
         "left": SideNames.of(left),
         "right": SideNames.of(right),
     }
-
-    builder = _Builder(op=op, manifests=manifests, names=names, declared=declared)
-    preview = builder.build()
-
-    if op.name_conflict == "union_right":
-        # The names both sides arrive at are only known once the first pass has
-        # applied the declared maps, so the clusters merge would synthesize
-        # for them are resolved on a second pass over the extended op.
-        extended = _extended(op, builder)
-        if extended is not None:
-            preview = _Builder(
-                op=extended,
-                manifests=manifests,
-                names=names,
-                declared=declared,
-                synthesized_from=(
-                    len(op.vertex_equivalences),
-                    len(op.relation_equivalences),
-                ),
-            ).build()
+    preview = _Builder(
+        op=op, manifests=manifests, names=names, canonical_maps=canonical_maps
+    ).build()
     if not attempt:
         return preview
     outcome, subjects, notes = _attempt(left, right, op, canonical_maps)
@@ -1972,12 +1619,10 @@ def _attempt(
             left, right, op, canonical_maps=canonical_maps, finish_init=False
         )
     except (
-        ClusterConflictError,
         MergeCanonicalConflictError,
         MergeIdentityError,
         MergeNameConflictError,
         AlignmentConflictError,
-        UnknownMemberError,
         ValueError,
     ) as exc:
         return (*outcome_from_exception(exc), [])
