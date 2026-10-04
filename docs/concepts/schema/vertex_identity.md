@@ -79,11 +79,11 @@ not create duplicates.
     hash_identity_properties: [sensor_id, taken_at]
 ```
 
-The hash is written to `id` only when the record has none, so a record
-carrying its own `id` would keep it. A vertex keyed by a hash that leaves
-`identity` out therefore may not declare a property `id`; loading one is
-refused, as is `replace_identity` onto a hash or a funnel for a vertex that
-declares one.
+The hash owns `id`: a record's own `id` is discarded at cast, whatever column
+or mapping it comes from. A vertex keyed by a hash that leaves `identity` out
+therefore may not declare a property `id`, whose values would be lost; loading
+one is refused, as is `replace_identity` onto a hash or a funnel for a vertex
+that declares one.
 
 Only the listed fields enter the hash. A record whose listed fields are all
 empty gets no `id`, rather than the hash of `{sensor_id: null, taken_at: null}`;

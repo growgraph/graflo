@@ -223,10 +223,18 @@ class TestLoadErrors:
         with pytest.raises(ValueError, match="field"):
             expr(kind=ExpressionFlavor.SQL)
 
-    def test_the_legacy_unary_key_still_loads(self) -> None:
-        expr = parse_filter_expression({"field": "a", "foo": "__gt__", "value": 1})
+    def test_the_operator_key_names_the_comparison(self) -> None:
+        expr = parse_filter_expression({"field": "a", "operator": "__gt__", "value": 1})
 
         assert expr.cmp_operator == ComparisonOperator.GT
+
+    def test_the_removed_foo_key_is_refused_with_its_new_spelling(self) -> None:
+        with pytest.raises(ValueError, match="`foo` was removed.*operator"):
+            parse_filter_expression({"field": "a", "foo": "__gt__", "value": 1})
+
+    def test_the_removed_foo_key_is_refused_when_validated_directly(self) -> None:
+        with pytest.raises(ValueError, match="`foo` was removed.*operator"):
+            FilterExpression.model_validate({"field": "a", "foo": "__gt__", "value": 1})
 
 
 class TestViewConditions:

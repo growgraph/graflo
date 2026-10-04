@@ -131,12 +131,14 @@ class IdentityPlan:
     """One class's declared identity branches, and where its sources derive them.
 
     ``branches`` are in funnel order, as :attr:`VertexEquivalence.identity`
-    declares them; ``at`` is :attr:`VertexEquivalence.derive_at`.
+    declares them; ``at`` is :attr:`VertexEquivalence.derive_at`;
+    ``digest_field`` is :attr:`VertexEquivalence.digest_field`.
     """
 
     vertex: str
     branches: tuple[IdentityBranchDecl, ...]
     at: Mapping[str, list[int]] = dataclasses.field(default_factory=dict)
+    digest_field: str = "id"
 
     def __post_init__(self) -> None:
         try:
@@ -1156,7 +1158,9 @@ def identity_to_ops(
             identity=list(plan.raw[0])
         )
     else:
-        target = FunnelIdentityTarget(funnel=plan.funnel())
+        target = FunnelIdentityTarget(
+            funnel=plan.funnel(), digest_field=plan.digest_field
+        )
     ops.append(
         ReplaceIdentityOp(
             replacements={

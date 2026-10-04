@@ -425,7 +425,8 @@ branch is one of three things:
 | a local key | `{local_key: {...}}`, always last | the record's own key behind a per-source tag |
 
 One property branch is a plain natural key. Any other list is an
-[identity funnel](../glossary.md#identity-funnel), whose synthetic key is `id`:
+[identity funnel](../glossary.md#identity-funnel), whose digest is stored in
+`digest_field` (`id` unless you set it):
 
 | `identity:` | The merged type is keyed on | Use it when |
 |---|---|---|
@@ -450,8 +451,17 @@ every required field of one funnel branch, declared on the member under its
 canonical name. A member that cannot would lose all its records, so the union
 refuses and names it (`identity coverage`); it refuses a branch no member
 declares for the same reason. A funnel also refuses a member that declares a
-property named `id`, the funnel's own key: that member's records would keep
-their `id` and bypass the funnel (`identity collision`).
+property named like its `digest_field`: the digest would replace that column's
+values, so they would be lost (`identity collision`). To keep a member's own
+`id`, store the digest in another field:
+
+```yaml
+    identity: [asset_id, device_id]
+    digest_field: machine_key
+```
+
+`digest_field` must not be a field of any branch, since the digest would
+replace the value that branch is computed from.
 
 The check reads the manifests, not the data. A record whose key field is empty
 still has no identity: it is not written, and the cast logs a warning such as
@@ -498,7 +508,8 @@ the same value:
 ```
 
 - `name` is the attribute the branch keys on; the union adds it to the merged
-  type.
+  type. It is the digest's input, not where the key is stored: that is
+  `digest_field`.
 - `sources` is keyed by resource name, because each resource derives the
   attribute from its own columns. `input` names those columns as they appear in
   the resource's records: `serial` for the sensor feed, even though the merged
@@ -596,9 +607,9 @@ combined:
   must agree: `LIST<STRING>` and `LIST<INT>` conflict. Two different units
   (`m/s` and `km/h`) conflict too, because one property would then hold values
   that cannot be compared. The union refuses both, naming every conflicting
-  property at once; retype one side first with
-  [`change_field_types`](manifest_evolution.md#properties). Descriptions from both
-  sides are kept. Grounding unions its `exact_match` and `synonyms`; two
+  property at once and, for a type, every member on each side that carries
+  each type; declare the merged type with `field_types` (below). Descriptions
+  from both sides are kept. Grounding unions its `exact_match` and `synonyms`; two
   different `iri` values are cleared rather than choosing one.
 - **Edges** of the same source, target and relation combine by the same rules.
 - **Schema metadata**: the name becomes `left+right` unless the op sets `name`,
@@ -612,6 +623,25 @@ combined:
   sides register under one name must have the same body. The ingestion model's
   write policies (`edges_on_duplicate`, `endpoints_on_ambiguous`) are the left
   side's.
+
+### How do I settle a property type the members disagree on?
+
+Declare the merged type on the op, keyed by the merged type (or relation) and
+the merged property name:
+
+```yaml
+field_types:
+  vertices:
+    Machine: {ram: {type: INT}}
+  edges:
+    has: {speed: {type: FLOAT}}
+```
+
+Before folding, the union retypes every member, on either side, that carries
+the property, under whatever spelling a rename sends to it. Members without the
+property are left alone. A `LIST` takes its `item_type`. An entry that no
+member reaches is refused. The declaration is part of the recorded merge, so it
+follows the vocabulary as members join or leave it.
 
 A manifest may carry only an ingestion model or only bindings, such as a new
 source wired onto an existing vocabulary. Such a side is a valid union input:
@@ -679,7 +709,7 @@ The schema union refuses on its own after the names are settled:
 
 | Refusal | Cause | What to do |
 |---|---|---|
-| `MergeIdentityError` | members disagree on their key, a declared key some member cannot fill, or a funnel over a member declaring `id` | [declare the key](#keying-the-merged-type) |
+| `MergeIdentityError` | members disagree on their key, a declared key some member cannot fill, or a funnel over a member declaring its `digest_field` | [declare the key](#keying-the-merged-type), or set `digest_field` |
 | type or unit conflict | a property declared with two types or two units | retype or re-ground one side first |
 | `AlignmentConflictError` | a derived branch breaks [its rules](#rules-a-derived-branch-must-follow) | fix the derivation |
 

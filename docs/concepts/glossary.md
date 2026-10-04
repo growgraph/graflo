@@ -80,7 +80,7 @@ Another set of properties, declared under `secondary_identities`, that finds an 
 
 ### identity funnel
 
-An ordered list of branches, each naming properties that identify a record; the first branch whose fields are all present is hashed into the vertex's `id`. A record that completes no branch gets no identity and is dropped, and a funnel with one branch equals `hash_identity_properties`.
+An ordered list of branches, each naming properties that identify a record; the first branch whose fields are all present is hashed into the vertex's identity field: `id`, or the one field `identity` names. A record that completes no branch gets no identity and is dropped, and a funnel with one branch equals `hash_identity_properties`.
 
 ```yaml
 identity_funnel:

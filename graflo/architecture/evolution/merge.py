@@ -56,9 +56,17 @@ from .merge_core import (
     merge_edge_pair,
     merge_vertex_models,
 )
+from .merge_types import (
+    MERGE_RETYPE_REMEDY,
+    UnionNames,
+    field_type_clashes,
+    field_type_ops,
+)
 from .ops import (
     AddSecondaryIdentitiesOp,
     CanonicalizeOp,
+    DerivedBranch,
+    LocalKeyBranch,
     ManifestOp,
     MergeManifestsOp,
     RenameRelationsOp,
@@ -556,29 +564,30 @@ def _composed_identity(
     )
 
 
-def _check_synthetic_id_free(
+def _check_digest_field_free(
     cluster: Cluster,
+    digest_field: str,
     member_keys: dict[tuple[Side, str], tuple[str, ...] | None],
     member_property_names: dict[tuple[Side, str], set[str]],
 ) -> None:
-    """Refuse a funnel over a merged class whose members declare ``id``.
+    """Refuse a funnel over a merged class whose members declare *digest_field*.
 
-    A funnel keys a record on a synthetic digest stored in ``id``, filled
-    only while the field is empty. A member that declares ``id`` as a real
-    property brings records whose ``id`` is already set: they would keep that
-    value as their primary key and bypass the funnel.
+    A funnel keys a record on a synthetic digest stored in *digest_field*, and
+    the cast discards a record's own value there for it. A member that
+    declares the field as a real property would lose its values silently.
     """
     for side in ("left", "right"):
         for member in cluster.members(side):
             if member_keys.get((side, member)) is None:
-                continue  # its own identity is synthetic; `id` is not a column
-            if "id" in member_property_names.get((side, member), set()):
+                continue  # its own identity is synthetic; its key is no column
+            if digest_field in member_property_names.get((side, member), set()):
                 raise MergeIdentityError(
                     f"merge_manifests: merged vertex {cluster.into!r} is keyed "
-                    f"on a funnel, whose synthetic key is `id`, but "
-                    f"{side}:{member} declares a property `id`; its records "
-                    "would keep that value and bypass the funnel. Rename the "
-                    "property with a PropertyEquivalence.",
+                    f"on a funnel whose digest is stored in `{digest_field}`, "
+                    f"but {side}:{member} declares a property `{digest_field}`, "
+                    "whose values the digest would replace. Rename the property "
+                    "with a PropertyEquivalence, or store the digest in another "
+                    "field with `digest_field` on the VertexEquivalence.",
                     check="identity collision",
                     subjects=(subject("merged", cluster.into), subject(side, member)),
                 )
@@ -649,16 +658,20 @@ def _describe_identity(identity: list[str] | IdentityFunnel) -> str:
 
 
 def _apply_composed_identity(
-    merged: Vertex, identity: list[str] | IdentityFunnel, *, declared: bool
+    merged: Vertex,
+    identity: list[str] | IdentityFunnel,
+    *,
+    declared: bool,
+    digest_field: str,
 ) -> Vertex:
     if not declared:
         return merged.model_copy(update={"identity": identity})
     if isinstance(identity, IdentityFunnel):
-        # A funnel-mode vertex carries the synthetic key under "id" -- the
-        # same convention `apply_replace_identity` uses for a FunnelIdentityTarget.
+        # A funnel-mode vertex carries its digest under *digest_field* -- as
+        # `apply_replace_identity` does for a FunnelIdentityTarget.
         return merged.model_copy(
             update={
-                "identity": ["id"],
+                "identity": [digest_field],
                 "identity_funnel": identity,
                 "hash_identity_properties": [],
                 "blank": False,
@@ -711,8 +724,8 @@ def _retire_member_keys(
             if vertex.identity_funnel is not None
             else vertex.identity
         )
-        # A funnel keys on a synthetic `id`; a member key spelled `id` cannot be
-        # demoted beside it without restating the primary.
+        # A funnel keys on its digest field; a member key spelled like it
+        # cannot be demoted beside it without restating the primary.
         restated = {primary, frozenset(vertex.identity)}
         by_fields = {
             frozenset(entry.fields): entry.name for entry in vertex.secondary_identities
@@ -1345,20 +1358,32 @@ def _union_schema(
                 f"{missing_side} after alignment (left={list(cluster.left)!r}, "
                 f"right={list(cluster.right)!r})"
             )
-        merged = merge_vertex_models([left_by_name[name], right_by_name[name]], name)
+        merged = merge_vertex_models(
+            [left_by_name[name], right_by_name[name]],
+            name,
+            retype_remedy=MERGE_RETYPE_REMEDY,
+        )
         identity, declared = _composed_identity(cluster, merged, member_keys)
         declaration = cluster.declaration
         assert isinstance(declaration, VertexEquivalence)
         if declared:
             rekeyed.add(name)
             if declaration.has_derivation or isinstance(identity, IdentityFunnel):
-                _check_synthetic_id_free(cluster, member_keys, member_property_names)
+                _check_digest_field_free(
+                    cluster,
+                    declaration.digest_field,
+                    member_keys,
+                    member_property_names,
+                )
             if declaration.has_derivation:
                 derived.add(name)
             else:
                 _check_identity_coverage(cluster, identity, member_property_names)
         merged = _apply_composed_identity(
-            merged, identity, declared=declared and not declaration.has_derivation
+            merged,
+            identity,
+            declared=declared and not declaration.has_derivation,
+            digest_field=declaration.digest_field,
         )
         out_vertices.append(merged)
         seen.add(name)
@@ -1397,7 +1422,9 @@ def _union_schema(
     ):
         eid = edge.edge_id
         if eid in by_id:
-            by_id[eid] = merge_edge_pair(by_id[eid], edge)
+            by_id[eid] = merge_edge_pair(
+                by_id[eid], edge, retype_remedy=MERGE_RETYPE_REMEDY
+            )
         else:
             by_id[eid] = edge
 
@@ -1688,6 +1715,24 @@ def _merge_manifests(
     index = resolution.index
     side_maps = resolution.side_maps
 
+    # Declared merged types, lowered onto each side's own names, and every
+    # clash no declaration settles -- both conflict points (one side's fold,
+    # the union) at once, before either runs.
+    union_names = UnionNames.of(
+        {"left": out_left, "right": out_right},
+        side_maps,
+        index=index,
+        name_conflict=op.name_conflict,
+    )
+    retypes = field_type_ops(
+        op.field_types, {"left": out_left, "right": out_right}, union_names
+    )
+    clash = field_type_clashes(
+        op.field_types, {"left": out_left, "right": out_right}, union_names
+    )
+    if clash is not None:
+        raise clash
+
     member_keys, member_property_names = _capture_all_member_state(
         index, left_schema, right_schema, side_maps
     )
@@ -1711,7 +1756,9 @@ def _merge_manifests(
     }
 
     for manifest, side in ((out_left, "left"), (out_right, "right")):
-        apply_manifest_ops_inplace(manifest, canonicalize_ops(side_maps[side]))
+        apply_manifest_ops_inplace(
+            manifest, [*retypes[side], *canonicalize_ops(side_maps[side])]
+        )
 
     _apply_right_schema_collision_policy(out_left, out_right, op, index)
 
@@ -1801,8 +1848,11 @@ def _merge_manifests(
             branches=_completable_branches(
                 result,
                 cluster,
+                side,
+                member,
                 member_keys.get((side, member)) or (),
                 member_property_names.get((side, member), set()),
+                sides,
             ),
         )
         for cluster in index.vertices
@@ -1816,15 +1866,19 @@ def _merge_manifests(
 def _completable_branches(
     manifest: GraphManifest,
     cluster: Cluster,
+    side: Side,
+    member: str,
     key: Sequence[str],
     carried: Collection[str],
+    sides: Mapping[str, GraphManifest],
 ) -> tuple[str, ...]:
     """Funnel branches a member's records can complete, up to its own key's.
 
     A branch is completable when each field it requires is one the member
-    carries or one a derived branch adds. The walk stops at the branch over
-    the member's own key: a record carrying the key always completes it, so
-    nothing after it is reachable.
+    carries or one a derived or ``local_key`` branch adds *for this member*:
+    some resource producing it has an entry for the branch that applies to it.
+    The walk stops at the branch over the member's own key: a record carrying
+    the key always completes it, so nothing after it is reachable.
     """
     schema = manifest.graph_schema
     if (
@@ -1838,10 +1892,17 @@ def _completable_branches(
     declaration = cluster.declaration
     derived: set[str] = set()
     if isinstance(declaration, VertexEquivalence):
-        derived = {b.name for b in declaration.derived_branches()}
+        stepped: list[DerivedBranch | LocalKeyBranch] = [
+            *declaration.derived_branches()
+        ]
         local_key = declaration.local_key_branch()
         if local_key is not None:
-            derived.add(local_key.name)
+            stepped.append(local_key)
+        derived = {
+            branch.name
+            for branch in stepped
+            if _branch_reaches(branch, cluster, side, member, sides)
+        }
     reachable = set(carried) | derived
     out: list[str] = []
     for branch in funnel.branches:
@@ -1851,6 +1912,28 @@ def _completable_branches(
         if required == set(key):
             break
     return tuple(out)
+
+
+def _branch_reaches(
+    branch: DerivedBranch | LocalKeyBranch,
+    cluster: Cluster,
+    side: Side,
+    member: str,
+    sides: Mapping[str, GraphManifest],
+) -> bool:
+    """Whether a resource producing *member* on *side* derives *branch* for it.
+
+    An unkeyed entry applies to every member the resource produces; a
+    member-keyed one only to the members it names, by own or canonical name.
+    """
+    for resource in branch.sources:
+        produced = _members_produced(resource, cluster, sides)
+        if produced is None or produced[0] != side or member not in produced[1]:
+            continue
+        keyed = branch.members_for(resource)
+        if keyed is None or member in {cluster.resolved(side, k) for k in keyed}:
+            return True
+    return False
 
 
 def _apply_merge_naming(manifest: GraphManifest, op: MergeManifestsOp) -> None:
@@ -1917,6 +2000,7 @@ def _apply_derived_identities(
                 vertex=cluster.into,
                 branches=tuple(declaration.identity),
                 at=dict(declaration.derive_at),
+                digest_field=declaration.digest_field,
             ),
             sides=sides,
             resolve=cluster.resolved,

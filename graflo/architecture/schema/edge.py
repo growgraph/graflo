@@ -743,6 +743,17 @@ class EdgeConfig(ConfigBaseModel):
             vertex_config=vertex_config,
         )
 
+    def declared(self, edge_id: EdgeId) -> Edge | None:
+        """The edge that declares *edge_id*, or ``None`` if none does.
+
+        *edge_id* itself, else the relation-less template between its endpoints,
+        which declares every relation a step reads from the data.
+        """
+        edge = self._edges_map.get(edge_id)
+        if edge is not None:
+            return edge
+        return self._edges_map.get((edge_id[0], edge_id[1], None))
+
     def edge_for(self, edge_id: EdgeId) -> Edge:
         """Return the config-owned :class:`Edge` instance for ``edge_id`` after merges.
 

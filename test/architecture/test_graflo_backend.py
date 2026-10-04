@@ -475,3 +475,21 @@ def test_an_edge_filter_keeps_the_matching_edges(tmp_path: Path) -> None:
         )
 
     assert [row["_to_key"] for row in rows] == ["2"]
+
+
+def test_schema_drift_against_the_file_backend_is_not_sampled(tmp_path: Path) -> None:
+    """The backend reads its ``schema.yaml`` catalogue, so a missing property is a fact."""
+    config = GraFloBackendConfig(output_dir=tmp_path, chunk_size=10)
+    with ConnectionManager(connection_config=config) as conn:
+        conn.init_db(_sample_schema(), recreate_schema=True)
+        conn.upsert_docs_batch(
+            [{"id": "1", "name": "Alice"}], "person", match_keys=["id"]
+        )
+    declared = _sample_schema()
+    declared.core_schema.vertex_config["person"].properties.append(Field(name="email"))
+    declared.finish_init()
+
+    drift = GraphEngine().diff_live_schema(config, declared)
+
+    assert drift.sampled is False
+    assert drift.missing_properties == {"person": ["email"]}

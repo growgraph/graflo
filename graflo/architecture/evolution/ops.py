@@ -515,7 +515,7 @@ class HashIdentityTarget(ConfigBaseModel):
 
 
 class FunnelIdentityTarget(ConfigBaseModel):
-    """Target an identity funnel: ordered fallback branches digested into ``id``.
+    """Target an identity funnel: fallback branches digested into ``digest_field``.
 
     The general form of :class:`HashIdentityTarget` — a flat hash key is a funnel
     with one branch. Both resolve to identity mode ``hash``.
@@ -526,6 +526,22 @@ class FunnelIdentityTarget(ConfigBaseModel):
         ...,
         description="Ordered fallback branches; the first complete one wins.",
     )
+    digest_field: str = PydanticField(
+        default="id",
+        min_length=1,
+        description="Property the digest is stored in; the vertex's identity field.",
+    )
+
+    @model_validator(mode="after")
+    def _digest_field_is_no_branch_field(self) -> FunnelIdentityTarget:
+        # The cast drops a digest vertex's identity field from each record, so
+        # a branch reading the same field could never complete.
+        if self.digest_field in self.funnel.field_names:
+            raise ValueError(
+                f"funnel identity: digest_field {self.digest_field!r} is also a "
+                "branch field; the digest would replace that branch's input"
+            )
+        return self
 
 
 class AssignedIdentityTarget(ConfigBaseModel):
@@ -1400,6 +1416,32 @@ class ChangeFieldTypesOp(ConfigBaseModel):
         return self
 
 
+class MergeFieldTypes(ConfigBaseModel):
+    """The type of a merged property, declared on the merge by its merged names.
+
+    Keyed by the class or relation name and the property name the **merged**
+    manifest carries. The merge retypes every member, on either side, that
+    carries the property (under whatever spelling it is renamed from) before
+    folding it, so members that disagree on a type merge into the declared one.
+    Members that do not carry the property are left alone.
+    """
+
+    vertices: dict[str, dict[str, FieldTypeSpec]] = PydanticField(
+        default_factory=dict,
+        description="``{merged_vertex: {merged_property: {type, item_type}}}``.",
+    )
+    edges: dict[str, dict[str, FieldTypeSpec]] = PydanticField(
+        default_factory=dict,
+        description="``{merged_relation: {property: {type, item_type}}}``.",
+    )
+
+    @model_validator(mode="after")
+    def _require_a_target(self) -> MergeFieldTypes:
+        if not self.vertices and not self.edges:
+            raise ValueError("field_types requires at least one of vertices or edges")
+        return self
+
+
 class AddVertexIndexesOp(ConfigBaseModel):
     """Author secondary indexes on vertices in the database profile."""
 
@@ -2050,7 +2092,9 @@ def _refuse_member_keyed_guards(
 class DerivedBranch(ConfigBaseModel):
     """A funnel branch over an attribute each source derives from its own columns.
 
-    ``name`` is the canonical attribute the branch keys on. ``sources`` is
+    ``name`` is the canonical attribute the branch keys on: the digest's
+    input, not where the digest is stored (that is
+    :attr:`VertexEquivalence.digest_field`). ``sources`` is
     keyed by resource, because derivation inputs are that resource's raw
     column names. An entry is either
 
@@ -2069,7 +2113,10 @@ class DerivedBranch(ConfigBaseModel):
 
     name: str = PydanticField(
         ...,
-        description="Canonical attribute the branch keys on; its funnel branch id.",
+        description=(
+            "Derived attribute this branch digests; its funnel branch id. Not "
+            "where the key is stored: see `VertexEquivalence.digest_field`."
+        ),
     )
     sources: dict[str, DerivationSpec | dict[str, DerivationSpec]] = PydanticField(
         ...,
@@ -2248,7 +2295,8 @@ class PropertyEquivalence(ConfigBaseModel):
     boundary rename, ``merge_vertex_models`` unions fields by spelling, so a
     property present under the same name on every member fuses for free.
     Declare an equivalence only to rename or to pick a different ``into``; the
-    merged key is declared on the :class:`VertexEquivalence`.
+    merged key is declared on the :class:`VertexEquivalence`, the merged type
+    in :attr:`MergeManifestsOp.field_types`.
     """
 
     left: str | dict[str, str] | None = PydanticField(
@@ -2304,7 +2352,8 @@ class VertexEquivalence(ConfigBaseModel):
     ``[a, b]``), a :class:`DerivedBranch` each source computes from its own
     columns, or a :class:`LocalKeyBranch` (the tagged fallback, last). One
     property branch keys the class on that natural key; anything else keys it
-    on a funnel, where a record keys on its first complete branch.
+    on a funnel, where a record keys on its first complete branch. A funnel's
+    digest is stored in ``digest_field`` (``id`` by default).
     """
 
     left: str | list[str] = PydanticField(
@@ -2336,6 +2385,15 @@ class VertexEquivalence(ConfigBaseModel):
             "property branch is a natural key; anything else is a funnel. When "
             "unset, identity is carried through only if every member agrees; "
             "disagreement raises `MergeIdentityError`."
+        ),
+    )
+    digest_field: str = PydanticField(
+        default="id",
+        min_length=1,
+        description=(
+            "Property the merged funnel's digest is stored in -- the class's "
+            "identity field. Only for a funnel `identity`; it must not be a "
+            "branch field. Set it when a member carries a real `id`."
         ),
     )
     derive_at: dict[str, list[int]] = PydanticField(
@@ -2481,6 +2539,12 @@ class VertexEquivalence(ConfigBaseModel):
                     "VertexEquivalence: derive_at is set but no identity branch "
                     "derives anything"
                 )
+            if self.digest_field != "id":
+                raise ValueError(
+                    f"VertexEquivalence: digest_field {self.digest_field!r} is "
+                    "set but no identity is declared; it names where a funnel "
+                    "identity's digest is stored"
+                )
             return self
         check_identity_branches(self.identity, label="VertexEquivalence")
         if self.derive_at and not self.has_derivation:
@@ -2488,7 +2552,31 @@ class VertexEquivalence(ConfigBaseModel):
                 "VertexEquivalence: derive_at is set but no identity branch "
                 "derives anything"
             )
+        if self.is_natural_key:
+            if self.digest_field != "id":
+                raise ValueError(
+                    f"VertexEquivalence: digest_field {self.digest_field!r} is "
+                    f"set, but identity {self.identity!r} is a natural key, "
+                    "stored in its own fields; digest_field applies only to a "
+                    "funnel"
+                )
+            return self
+        branch_names = {f for b in self.identity for f in branch_fields(b)}
+        if self.digest_field in branch_names:
+            raise ValueError(
+                f"VertexEquivalence: digest_field {self.digest_field!r} is also "
+                "an identity branch field. A branch names what the digest is "
+                "computed from, not where it is stored, and the digest would "
+                "replace that branch's input; store the digest in another field"
+            )
         return self
+
+    @property
+    def is_natural_key(self) -> bool:
+        """Whether ``identity`` is one property branch, kept as a natural key."""
+        return self.identity is not None and (
+            len(self.identity) == 1 and not self.has_derivation
+        )
 
 
 class RelationEquivalence(ConfigBaseModel):
@@ -2734,6 +2822,14 @@ class MergeManifestsOp(ConfigBaseModel):
                 "it for the whole group."
             ),
         )
+    )
+    field_types: MergeFieldTypes | None = PydanticField(
+        default=None,
+        description=(
+            "Merged property types, keyed by merged names: every member that "
+            "carries the property is retyped before the fold, so members that "
+            "disagree on a type merge into this one."
+        ),
     )
 
     @model_validator(mode="before")

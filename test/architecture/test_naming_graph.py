@@ -702,6 +702,22 @@ class TestThePreview:
         assert [e.kind for e in declared] == ["member"]
         assert [(e.kind, e.label) for e in joined] == [("map", "vocabulary")]
 
+    def test_a_demoted_key_lists_only_the_branches_its_member_can_reach(self) -> None:
+        """Bench joins by the vocabulary alone: no derivation keys it, so its
+        records complete only their own tagged local key."""
+        preview = preview_merge(
+            _register_manifest(), _devices_manifest(), _engineer_op()
+        )
+
+        notes = {
+            f.message.split(" key on ")[0]: f.message
+            for f in preview.findings
+            if f.kind == "lookup_demotion"
+        }
+        assert "records of left:Bench" not in notes
+        assert "['match_key', 'local_key']" in notes["records of left:Press"]
+        assert "['match_key', 'local_key']" in notes["records of right:Device"]
+
 
 class TestAVocabularyAcknowledgesItsOwnMerges:
     """A merge only the vocabulary makes has no equivalence to carry `allow`."""

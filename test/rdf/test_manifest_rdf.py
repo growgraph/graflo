@@ -209,7 +209,10 @@ def test_round_trip_example_16_secondary_identities() -> None:
             "assigned",
         ),
         (
-            lambda v: setattr(v, "identity_funnel", _sample_funnel()),
+            lambda v: (
+                setattr(v, "identity", ["id"]),
+                setattr(v, "identity_funnel", _sample_funnel()),
+            ),
             "hash",
         ),
     ],
@@ -236,6 +239,8 @@ def test_round_trip_preserves_identity_funnel() -> None:
     original = _load_example_manifest("16-secondary-identities")
     vertex = original.graph_schema.core_schema.vertex_config.vertices[0]
     vertex.secondary_identities = []
+    # A funnel stores its digest in a field no branch reads.
+    vertex.identity = ["id"]
     vertex.identity_funnel = _sample_funnel()
 
     restored = _round_trip(original)

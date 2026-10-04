@@ -34,7 +34,10 @@ the position matters.
 6. **Snapshot both sides.** Also before the rename: the rename rewrites a
    router's `type_map` values to the merged name, after which nothing says
    which router key produced which member. A derived identity needs that.
-7. **Apply the composite rename** to each side, one `CanonicalizeOp` per side.
+7. **Apply the composite rename** to each side, one `CanonicalizeOp` per side,
+   preceded by the `change_field_types` the op's `field_types` lower to on that
+   side's own names. Every property type clash no declaration settles is
+   refused before this step, naming the members that carry each type.
 8. **Prefix the right side's remaining collisions** (`prefix_right` only;
    `error` and `union_right` settled theirs in step 3).
 9. **Union schema, ingestion and bindings by name** (`_union_schema`,

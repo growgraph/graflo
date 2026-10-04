@@ -185,8 +185,18 @@ manifest.bindings = Bindings(
 Loading the file checks each block: an edge that names an undeclared vertex
 type, two edges with the same source, target and relation, or two resources
 with the same name are rejected. `finish_init()` then connects the resources to
-the schema. It does not check that the vertex types named in steps are
-declared unless you call it as `finish_init(strict_references=True)`.
+the schema. It does not check the steps against the schema unless you call it as
+`finish_init(strict_references=True)`, which ingestion does by default
+(`IngestionParams.strict_references`). Then a step may write only what the
+schema declares:
+
+- every vertex type it names;
+- every edge it writes: the declared edge, or, for a relation read from the
+  data, a declared edge between the same endpoints with no `relation`;
+- every property a `from` mapping writes to.
+
+A step that breaks one of these is refused when the manifest loads. A relation
+found in the data that no edge declares is skipped, with a warning.
 
 ```python
 from graflo import GraphEngine, GraphManifest

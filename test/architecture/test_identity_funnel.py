@@ -330,3 +330,132 @@ class TestCastPathMaterialization:
         filter_graph_container_drop_empty_identity_inplace(graph, vertex_config=config)
 
         assert graph.vertices["party"] == [keyed]
+
+
+class TestARecordCannotSupplyTheDigestKey:
+    """A digest vertex keys on ``id``, so a record's own ``id`` must not reach it.
+
+    Normalization adds ``id`` to ``properties`` for every digest vertex, so a
+    source column of that name used to be copied into the document and keep
+    its value, bypassing the digest.
+    """
+
+    @staticmethod
+    def _manifest(vertex: dict, pipeline: list[dict] | None = None):
+        from graflo.architecture.contract.manifest import GraphManifest
+
+        manifest = GraphManifest.from_config(
+            {
+                "schema": {
+                    "metadata": {"name": "readings", "version": "1.0.0"},
+                    "graph": {
+                        "vertex_config": {"vertices": [vertex]},
+                        "edge_config": {"edges": []},
+                    },
+                },
+                "ingestion_model": {
+                    "resources": [
+                        {
+                            "name": "rows",
+                            "pipeline": pipeline or [{"vertex": "reading"}],
+                        }
+                    ],
+                    "transforms": [],
+                },
+            }
+        )
+        manifest.finish_init()
+        return manifest
+
+    @staticmethod
+    def _cast(manifest, rows: list[dict]) -> list[dict]:
+        import asyncio
+
+        from graflo.hq.document_caster import DocumentCaster
+        from graflo.hq.ingestion_parameters import IngestionParams
+
+        caster = DocumentCaster(manifest.require_ingestion_model())
+        result = asyncio.run(caster.cast_batch(rows, "rows", params=IngestionParams()))
+        return list(result.graph.vertices.get("reading", []))
+
+    def test_an_explicit_identity_still_keys_on_the_digest(self) -> None:
+        """The shape a normalized, dumped manifest carries."""
+        manifest = self._manifest(
+            {
+                "name": "reading",
+                "properties": ["id", "sensor_id", "taken_at"],
+                "identity": ["id"],
+                "hash_identity_properties": ["sensor_id", "taken_at"],
+            }
+        )
+
+        (doc,) = self._cast(
+            manifest, [{"id": "mine", "sensor_id": "s1", "taken_at": "t1"}]
+        )
+
+        assert doc["id"] == compute_hash_identity(
+            {"sensor_id": "s1", "taken_at": "t1"}, ["sensor_id", "taken_at"]
+        )
+
+    def test_a_normalized_hash_vertex_ignores_a_source_id_column(self) -> None:
+        manifest = self._manifest(
+            {
+                "name": "reading",
+                "properties": ["sensor_id", "taken_at"],
+                "hash_identity_properties": ["sensor_id", "taken_at"],
+            }
+        )
+
+        docs = self._cast(
+            manifest,
+            [
+                {"id": "same", "sensor_id": "s1", "taken_at": "t1"},
+                {"id": "same", "sensor_id": "s2", "taken_at": "t1"},
+            ],
+        )
+
+        assert len({doc["id"] for doc in docs}) == 2
+        assert "same" not in {doc["id"] for doc in docs}
+
+    def test_a_mapped_id_does_not_bypass_a_funnel(self) -> None:
+        manifest = self._manifest(
+            {
+                "name": "reading",
+                "properties": ["serial", "label"],
+                "identity_funnel": {
+                    "branches": [{"id": "serial", "fields": ["serial"]}]
+                },
+            },
+            pipeline=[
+                {
+                    "vertex": "reading",
+                    "from": {"id": "row_id", "serial": "serial", "label": "label"},
+                }
+            ],
+        )
+
+        (doc,) = self._cast(
+            manifest, [{"row_id": "mine", "serial": "S-1", "label": "x"}]
+        )
+
+        assert doc["id"] != "mine"
+        schema = manifest.graph_schema
+        assert schema is not None
+        assert doc["id"] == compute_vertex_identity(
+            {"serial": "S-1"}, schema.core_schema.vertex_config["reading"]
+        )
+
+    def test_a_record_with_no_digest_source_is_not_keyed_on_its_own_id(
+        self,
+    ) -> None:
+        manifest = self._manifest(
+            {
+                "name": "reading",
+                "properties": ["sensor_id", "taken_at"],
+                "hash_identity_properties": ["sensor_id", "taken_at"],
+            }
+        )
+
+        docs = self._cast(manifest, [{"id": "mine"}])
+
+        assert all(doc.get("id") != "mine" for doc in docs)

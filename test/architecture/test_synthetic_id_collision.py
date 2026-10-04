@@ -1,8 +1,9 @@
-"""A digest identity keys on a synthetic ``id``; a real ``id`` property would bypass it.
+"""A digest identity keys on a synthetic field; a real property there would be lost.
 
-The digest is written to ``id`` only while the field is empty, so a record
-carrying its own ``id`` keeps that value as its key. Each way of arriving at a
-digest identity over a declared ``id`` is refused.
+The field is ``id`` unless a funnel names its own ``digest_field``. The cast
+discards a record's own value there for the digest, so a declared column of
+that name would never be stored. Each way of arriving at a digest identity over
+such a column is refused.
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ import pytest
 
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.evolution import (
+    FunnelIdentityTarget,
     IdentityReplacement,
     ReplaceIdentityOp,
     apply_evolution,
@@ -128,3 +130,58 @@ def test_the_differ_reports_a_re_key_onto_a_digest_over_a_natural_id() -> None:
     _, warnings = diff_manifests_verified(base, target)
 
     assert any("declares a property `id`" in warning for warning in warnings)
+
+
+def test_a_funnel_stored_in_digest_field_keeps_a_declared_id() -> None:
+    manifest = _manifest(
+        {"name": "person", "properties": ["id", "email"], "identity": ["email"]}
+    )
+    out = _rekey(manifest, {"mode": "funnel", "funnel": _FUNNEL, "digest_field": "pid"})
+    vertex = out.require_schema().core_schema.vertex_config["person"]
+    assert vertex.identity == ["pid"]
+    assert "id" in vertex.property_names
+
+
+def test_a_funnel_target_storing_its_digest_in_a_branch_field_is_refused() -> None:
+    with pytest.raises(ValueError, match="also a branch field"):
+        FunnelIdentityTarget.model_validate(
+            {"funnel": _FUNNEL, "digest_field": "email"}
+        )
+
+
+def test_a_funnel_vertex_keyed_on_a_branch_field_is_refused() -> None:
+    """The cast drops identity fields from records, so that branch never fires."""
+    with pytest.raises(ValueError, match="also identity_funnel branch fields"):
+        VertexConfig.model_validate(
+            {
+                "vertices": [
+                    {
+                        "name": "person",
+                        "properties": ["email"],
+                        "identity": ["email"],
+                        "identity_funnel": _FUNNEL,
+                    }
+                ]
+            }
+        )
+
+
+def test_the_differ_replays_a_funnel_stored_in_digest_field() -> None:
+    from graflo.architecture.evolution.autogenerate import diff_manifests_verified
+
+    base = _manifest(
+        {"name": "person", "properties": ["id", "email"], "identity": ["email"]}
+    )
+    target = _manifest(
+        {
+            "name": "person",
+            "properties": ["id", "email"],
+            "identity": ["pid"],
+            "identity_funnel": _FUNNEL,
+        }
+    )
+
+    ops, warnings = diff_manifests_verified(base, target)
+
+    assert ops
+    assert warnings == []

@@ -332,6 +332,64 @@ def test_ingest_half_is_not_applicable_without_an_ingestion_model():
     assert any(f.status == "not_applicable" for f in result.findings)
 
 
+def _with_edge_step(edge_step: dict) -> dict:
+    config = _conformant()
+    config["ingestion_model"] = {
+        "resources": [
+            {
+                "name": "observations",
+                "pipeline": [
+                    {"vertex": "Observation"},
+                    {"vertex": "Asset"},
+                    {"vertex": "Agent"},
+                    {"edge": edge_step},
+                ],
+            }
+        ]
+    }
+    return config
+
+
+def _ingest_findings(config: dict) -> list:
+    result = _assertion(check_manifest_config(config), "provenance")
+    return [f for f in result.findings if "ingest" in f.message]
+
+
+def test_a_resource_writing_a_provenance_relation_attaches_it():
+    config = _with_edge_step(
+        {"from": "Observation", "to": "Agent", "relation": "wasAttributedTo"}
+    )
+    (finding,) = _ingest_findings(config)
+    assert finding.status == "pass"
+    assert finding.detail == {"resources": ["observations"]}
+
+
+def test_a_relation_less_step_adopts_the_declared_provenance_relation():
+    config = _with_edge_step({"from": "Observation", "to": "Agent"})
+    (finding,) = _ingest_findings(config)
+    assert finding.status == "pass"
+
+
+def test_no_resource_writing_a_provenance_relation_warns():
+    config = _with_edge_step(
+        {"from": "Observation", "to": "Asset", "relation": "hasFeatureOfInterest"}
+    )
+    result = _assertion(check_manifest_config(config), "provenance")
+    (finding,) = _ingest_findings(config)
+    assert finding.status == "warn"
+    assert "wasAttributedTo" in finding.message
+    assert result.status == "warn"
+
+
+def test_a_data_driven_relation_cannot_be_checked_statically():
+    config = _with_edge_step(
+        {"from": "Observation", "to": "Agent", "relation_field": "kind"}
+    )
+    (finding,) = _ingest_findings(config)
+    assert finding.status == "not_applicable"
+    assert finding.detail == {"resources": ["observations"]}
+
+
 # --- schema-less manifests --------------------------------------------------
 
 

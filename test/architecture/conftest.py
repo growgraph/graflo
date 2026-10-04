@@ -566,7 +566,7 @@ def vc_ticker_filtered():
             -   value
             filters:
             -   field: name
-                foo: __ne__
+                operator: __ne__
                 value: Volume                        
     """
     )

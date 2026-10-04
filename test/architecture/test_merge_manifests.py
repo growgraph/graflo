@@ -288,7 +288,10 @@ def test_incompatible_property_types_raise() -> None:
     assert "vertex 'C'" in message
     assert "property 'z'" in message
     assert "'STRING' vs 'INT'" in message
-    assert "change_field_types" in message
+    # The source spellings are listed as origins, and the remedy is keyed by
+    # the merged names the heading carries.
+    assert "left A.x" in message and "right B.y" in message
+    assert "field_types: {vertices: {C: {z:" in message
 
 
 def test_resource_name_collision_error_and_rename() -> None:

@@ -38,7 +38,22 @@ schema:
                 identity:
                 -   id
         edge_config:
-            edges: []
+            edges:
+            -   source: person
+                target: institution
+                relation: employed_by
+            -   source: person
+                target: vehicle
+                relation: owns
+            -   source: person
+                target: person
+                relation: colleague_of
+            -   source: institution
+                target: institution
+                relation: funds
+            -   source: institution
+                target: institution
+                relation: invests_in
     db_profile: {}
 ingestion_model:
     resources:

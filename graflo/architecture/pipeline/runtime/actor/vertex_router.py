@@ -18,6 +18,7 @@ from graflo.architecture.graph_types import (
 from graflo.architecture.schema.vertex import VertexConfig, VertexName
 
 from .base import ActorInitContext, VertexProducingActor
+from .vertex import refuse_undeclared_mapping, undeclared_mapping_targets
 
 if TYPE_CHECKING:
     from .wrapper import ActorWrapper
@@ -100,6 +101,18 @@ class VertexRouterActor(VertexProducingActor):
                     f"vertex_router on {self.type_field!r}: lookup_only names "
                     f"{unknown}, which the schema does not declare"
                 )
+        if init_ctx.strict_references:
+            # Checked for the classes the router names; one it routes to by
+            # pass-through is known only per record, and gets the declared
+            # part of the map (see `_get_or_create_wrapper`).
+            for vertex_type, from_doc in self.vertex_from_map.items():
+                refuse_undeclared_mapping(self.vertex_config, vertex_type, from_doc)
+            if self.from_doc:
+                for vertex_type in sorted(set(self.type_map.values())):
+                    if vertex_type not in self.vertex_from_map:
+                        refuse_undeclared_mapping(
+                            self.vertex_config, vertex_type, self.from_doc
+                        )
 
     def _get_or_create_wrapper(self, vertex_type: str) -> ActorWrapper | None:
         from .wrapper import ActorWrapper
@@ -124,6 +137,8 @@ class VertexRouterActor(VertexProducingActor):
                 per_type_from = self.vertex_from_map[vertex_type]
             else:
                 per_type_from = self.from_doc
+            if self._init_ctx.strict_references and per_type_from:
+                per_type_from = self._declared_part(vertex_type, per_type_from)
             config = VertexActorConfig.model_validate(
                 {
                     "type": "vertex",
@@ -144,6 +159,22 @@ class VertexRouterActor(VertexProducingActor):
             self.role,
         )
         return wrapper
+
+    def _declared_part(
+        self, vertex_type: str, from_doc: dict[str, str]
+    ) -> dict[str, str]:
+        """*from_doc* without the targets *vertex_type* does not declare, said once."""
+        unknown = undeclared_mapping_targets(self.vertex_config, vertex_type, from_doc)
+        if not unknown:
+            return from_doc
+        logger.warning(
+            "vertex_router on %r: %s routed by pass-through does not declare %s; "
+            "those `from` targets are not mapped",
+            self.type_field,
+            vertex_type,
+            unknown,
+        )
+        return {k: v for k, v in from_doc.items() if k not in unknown}
 
     def count(self) -> int:
         return 1 + sum(w.count() for w in self._vertex_actors.values())

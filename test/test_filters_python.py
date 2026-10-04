@@ -204,94 +204,96 @@ def test_filter_expression_sql_if_then_implication() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Tests for 'foo' key in YAML filters (dunder-method shorthand)
+# Tests for the 'operator' key in YAML filters (dunder-method shorthand)
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture()
-def foo_clause_open():
+def operator_clause_open():
     return yaml.safe_load(
         """
         field: name
-        foo: __eq__
+        operator: __eq__
         value: Open
     """
     )
 
 
 @pytest.fixture()
-def foo_clause_close():
+def operator_clause_close():
     return yaml.safe_load(
         """
         field: name
-        foo: __eq__
+        operator: __eq__
         value: Close
     """
     )
 
 
 @pytest.fixture()
-def foo_clause_positive_value():
+def operator_clause_positive_value():
     return yaml.safe_load(
         """
         field: value
-        foo: __gt__
+        operator: __gt__
         value: 0
     """
     )
 
 
 @pytest.fixture()
-def foo_clause_volume():
+def operator_clause_volume():
     return yaml.safe_load(
         """
         field: name
-        foo: __ne__
+        operator: __ne__
         value: Volume
     """
     )
 
 
-def test_foo_leaf_infers_cmp_operator(foo_clause_open):
-    """'foo: __eq__' should populate both unary_op and cmp_operator."""
-    expr = FilterExpression.from_dict(foo_clause_open)
+def test_operator_leaf_infers_cmp_operator(operator_clause_open):
+    """'operator: __eq__' should populate both unary_op and cmp_operator."""
+    expr = FilterExpression.from_dict(operator_clause_open)
     assert expr.kind == "leaf"
     assert expr.unary_op == "__eq__"
     assert expr.cmp_operator == ComparisonOperator.EQ
 
 
-def test_foo_leaf_python_evaluation(foo_clause_open):
-    expr = FilterExpression.from_dict(foo_clause_open)
+def test_operator_leaf_python_evaluation(operator_clause_open):
+    expr = FilterExpression.from_dict(operator_clause_open)
     assert expr(kind=ExpressionFlavor.PYTHON, name="Open")
     assert not expr(kind=ExpressionFlavor.PYTHON, name="Close")
 
 
-def test_foo_leaf_aql_rendering(foo_clause_open):
-    """A leaf built from 'foo' should also render correctly in AQL."""
-    expr = FilterExpression.from_dict(foo_clause_open)
+def test_operator_leaf_aql_rendering(operator_clause_open):
+    """A leaf built from 'operator' should also render correctly in AQL."""
+    expr = FilterExpression.from_dict(operator_clause_open)
     out = expr(doc_name="doc", kind=ExpressionFlavor.AQL)
     assert isinstance(out, str)
     assert '"name"' in out
     assert '== "Open"' in out
 
 
-def test_foo_neq_python(foo_clause_volume):
-    expr = FilterExpression.from_dict(foo_clause_volume)
+def test_operator_neq_python(operator_clause_volume):
+    expr = FilterExpression.from_dict(operator_clause_volume)
     assert expr.cmp_operator == ComparisonOperator.NEQ
     assert expr(kind=ExpressionFlavor.PYTHON, name="Open")
     assert not expr(kind=ExpressionFlavor.PYTHON, name="Volume")
 
 
-def test_foo_gt_python(foo_clause_positive_value):
-    expr = FilterExpression.from_dict(foo_clause_positive_value)
+def test_operator_gt_python(operator_clause_positive_value):
+    expr = FilterExpression.from_dict(operator_clause_positive_value)
     assert expr.cmp_operator == ComparisonOperator.GT
     assert expr(kind=ExpressionFlavor.PYTHON, value=5)
     assert not expr(kind=ExpressionFlavor.PYTHON, value=-1)
 
 
-def test_foo_implication_from_dict(foo_clause_open, foo_clause_positive_value):
-    """IF_THEN composite built with 'foo'-style leaves evaluates correctly."""
-    raw = {"if_then": [foo_clause_open, foo_clause_positive_value]}
+def test_operator_implication_from_dict(
+    operator_clause_open, operator_clause_positive_value
+):
+    """IF_THEN composite built with 'operator'-style leaves evaluates correctly."""
+    raw = {"if_then": [operator_clause_open, operator_clause_positive_value]}
     expr = FilterExpression.from_dict(raw)
 
     assert expr.kind == "composite"
@@ -305,7 +307,7 @@ def test_foo_implication_from_dict(foo_clause_open, foo_clause_positive_value):
     assert expr(kind=ExpressionFlavor.PYTHON, name="Close", value=-1.0)
 
 
-def test_foo_ticker_yaml_filters_or():
+def test_operator_ticker_yaml_filters_or():
     """End-to-end: parse the exact OR-based filter structure from ticker.yaml.
 
     With OR(IF_THEN(A,B), IF_THEN(C,D)) where A and C are mutually exclusive,
@@ -317,20 +319,20 @@ def test_foo_ticker_yaml_filters_or():
     - or:
         - if_then:
             - field: name
-              foo: __eq__
+              operator: __eq__
               value: Open
             - field: value
-              foo: __gt__
+              operator: __gt__
               value: 0
         - if_then:
             - field: name
-              foo: __eq__
+              operator: __eq__
               value: Close
             - field: value
-              foo: __gt__
+              operator: __gt__
               value: 0
     - field: name
-      foo: __ne__
+      operator: __ne__
       value: Volume
     """
     )
@@ -350,27 +352,27 @@ def test_foo_ticker_yaml_filters_or():
     assert passes_all({"name": "High", "value": -3.0})
 
 
-def test_foo_ticker_yaml_filters_and():
+def test_operator_ticker_yaml_filters_and():
     """AND-based variant: AND(IF_THEN, IF_THEN) correctly enforces positive values."""
     raw_filters = yaml.safe_load(
         """
     - and:
         - if_then:
             - field: name
-              foo: __eq__
+              operator: __eq__
               value: Open
             - field: value
-              foo: __gt__
+              operator: __gt__
               value: 0
         - if_then:
             - field: name
-              foo: __eq__
+              operator: __eq__
               value: Close
             - field: value
-              foo: __gt__
+              operator: __gt__
               value: 0
     - field: name
-      foo: __ne__
+      operator: __ne__
       value: Volume
     """
     )
@@ -388,9 +390,11 @@ def test_foo_ticker_yaml_filters_and():
     assert passes_all({"name": "High", "value": -3.0})
 
 
-def test_foo_direct_construction():
-    """FilterExpression.model_validate with 'foo' infers kind, cmp_operator, unary_op."""
-    expr = FilterExpression.model_validate({"field": "x", "foo": "__le__", "value": 10})
+def test_operator_direct_construction():
+    """FilterExpression.model_validate with 'operator' infers kind, cmp_operator, unary_op."""
+    expr = FilterExpression.model_validate(
+        {"field": "x", "operator": "__le__", "value": 10}
+    )
     assert expr.kind == "leaf"
     assert expr.unary_op == "__le__"
     assert expr.cmp_operator == ComparisonOperator.LE
@@ -405,7 +409,7 @@ def test_foo_direct_construction():
 
 @pytest.fixture()
 def vertex_config_with_filters():
-    """VertexConfig built from YAML with foo-style filters (AND variant)."""
+    """VertexConfig built from YAML with operator-style filters (AND variant)."""
     return yaml.safe_load(
         """
     vertices:
@@ -417,20 +421,20 @@ def vertex_config_with_filters():
         -   and:
             -   if_then:
                 -   field: name
-                    foo: __eq__
+                    operator: __eq__
                     value: Open
                 -   field: value
-                    foo: __gt__
+                    operator: __gt__
                     value: 0
             -   if_then:
                 -   field: name
-                    foo: __eq__
+                    operator: __eq__
                     value: Close
                 -   field: value
-                    foo: __gt__
+                    operator: __gt__
                     value: 0
         -   field: name
-            foo: __ne__
+            operator: __ne__
             value: Volume
     """
     )
@@ -460,8 +464,8 @@ def _apply_vertex_filters(
     ]
 
 
-def test_vertex_config_parses_foo_filters(vertex_config_with_filters):
-    """VertexConfig correctly parses foo-style filters from YAML into FilterExpressions."""
+def test_vertex_config_parses_operator_filters(vertex_config_with_filters):
+    """VertexConfig correctly parses operator-style filters from YAML into FilterExpressions."""
     from graflo.architecture.schema.vertex import VertexConfig
 
     vc = VertexConfig.model_validate(vertex_config_with_filters)

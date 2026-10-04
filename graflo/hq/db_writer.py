@@ -602,13 +602,7 @@ class DBWriter:
 
         def _schema_edge_for(edge_id: tuple) -> Edge | None:
             """Return the schema Edge for a gc edge key, or None if not declared."""
-            if edge_id in core_ec:
-                return core_ec.edge_for(edge_id)
-            # Dynamic-relation edges: schema declares (source, target, None).
-            null_id = (edge_id[0], edge_id[1], None)
-            if null_id in core_ec:
-                return core_ec.edge_for(null_id)
-            return None
+            return core_ec.declared(edge_id)
 
         endpoint_match_for = self._endpoint_match_lookup(resource)
 

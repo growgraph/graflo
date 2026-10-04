@@ -59,6 +59,8 @@ schema:
                 target: community
             -   source: community
                 target: community
+            -   source: publication
+                target: mention
     db_profile:
         vertex_storage_names:
             publication: publications

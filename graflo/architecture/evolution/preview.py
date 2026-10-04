@@ -74,13 +74,20 @@ from .merge import (
     DemotedKey,
     MergeIdentityError,
     MergeNameConflictError,
-    _resolve_schema_collisions,
 )
 from .merge_core import (
     EdgeMergeError,
     VertexMergeError,
     merge_edge_pair,
     merge_vertex_models,
+)
+from .merge_types import (
+    MERGE_RETYPE_REMEDY,
+    FieldTypeDeclarationError,
+    UnionNames,
+    field_type_ops,
+    union_name_map,
+    with_declared_types,
 )
 from .naming_graph import MergeNamingError, NamingGraph, build_naming
 from .ops import (
@@ -160,6 +167,7 @@ _KIND_BY_CHECK: dict[str, FindingKind] = {
     # six and must never be added.
     "field type conflict": "type_conflict",
     "field units conflict": "unit_conflict",
+    "field type declaration": "dangling",
     "identity mode conflict": "identity_mode_conflict",
     "identity funnel conflict": "identity_funnel_conflict",
     "secondary identity conflict": "secondary_identity_conflict",
@@ -1047,7 +1055,8 @@ class _Builder:
         hash and funnel identities are reconciled (or refused) by the vertex
         merge itself. A declared key of property branches must be one every
         member can complete; one with a derived branch is checked by its own
-        lowering. A funnel must not meet a member declaring ``id``.
+        lowering. A funnel must not meet a member declaring its
+        ``digest_field``.
         """
         for cluster in self.index.vertices:
             declaration = cluster.declaration
@@ -1057,7 +1066,9 @@ class _Builder:
             if declaration.identity is not None:
                 raw = declaration.raw_branches()
                 if declaration.has_derivation or len(raw) > 1:
-                    self._synthetic_id_collision(cluster, keys, properties)
+                    self._digest_field_collision(
+                        cluster, declaration.digest_field, keys, properties
+                    )
                 if not declaration.has_derivation:
                     self._identity_coverage(
                         cluster,
@@ -1080,24 +1091,25 @@ class _Builder:
                 ],
             )
 
-    def _synthetic_id_collision(
+    def _digest_field_collision(
         self,
         cluster: Cluster,
+        digest_field: str,
         keys: Sequence[tuple[Side, str, tuple[str, ...]]],
         properties: Mapping[tuple[Side, str], set[str]],
     ) -> None:
         colliding = [
             (side, member)
             for side, member, _key in keys
-            if "id" in properties.get((side, member), set())
+            if digest_field in properties.get((side, member), set())
         ]
         if colliding:
             self.finding(
                 "identity_collision",
-                f"merged vertex {cluster.into!r} is keyed on a funnel, whose "
-                f"synthetic key is `id`, but "
+                f"merged vertex {cluster.into!r} is keyed on a funnel whose "
+                f"digest is stored in `{digest_field}`, but "
                 f"{', '.join(f'{s}:{m}' for s, m in colliding)} declare a "
-                "property `id`",
+                f"property `{digest_field}`",
                 nodes=[
                     subject("merged", cluster.into),
                     *(subject(s, m) for s, m in colliding),
@@ -1201,6 +1213,21 @@ class _Builder:
         ``_apply_derived_identities``; no case is known that refuses only
         there, and this pass would not see it if one appeared.
         """
+        declared = self.op.field_types
+        try:
+            field_type_ops(
+                declared,
+                self.manifests,
+                UnionNames.of(
+                    self.manifests,
+                    self.composite,
+                    index=self.index,
+                    name_conflict=self.op.name_conflict,
+                ),
+            )
+        except FieldTypeDeclarationError as exc:
+            self.from_refusal(exc, fallback="dangling")
+        declared_vertices = declared.vertices if declared is not None else {}
         for cluster in self.index.vertices:
             members: list[tuple[Side, str, Vertex]] = []
             for side in _SIDES:
@@ -1228,12 +1255,22 @@ class _Builder:
                             nodes=[subject(side, member)],
                         )
                         continue
+                    relabelled = relabelled.model_copy(
+                        update={
+                            "properties": with_declared_types(
+                                relabelled.properties,
+                                declared_vertices.get(cluster.into),
+                            )
+                        }
+                    )
                     members.append((side, member, relabelled))
             if len(members) < 2:
                 continue
             try:
                 merge_vertex_models(
-                    [vertex for _s, _m, vertex in members], cluster.into
+                    [vertex for _s, _m, vertex in members],
+                    cluster.into,
+                    retype_remedy=MERGE_RETYPE_REMEDY,
                 )
             except ValueError as exc:
                 # Deliberately wider than the two typed errors: this module
@@ -1248,57 +1285,16 @@ class _Builder:
                 )
 
     def _effective_map(self, side: Side, kind: Kind) -> dict[str, str]:
-        """Where a name on *side* ends up, as the union sees it.
-
-        Merge applies the composite relabel first and the right side's
-        name-conflict policy second (``merge_manifests``, in that order), so
-        the map the union sees is the policy merged onto the relabel. The
-        policy is obtained from the very function merge calls, over the
-        *post-relabel* names, so ``prefix_right`` cannot drift out of sync
-        here and start reporting conflicts on merges that succeed.
-
-        Under ``error`` and ``union_right`` the policy is empty by
-        construction, and when it refuses, ``same_names`` has already said so.
-        """
-        composite = (
-            _kind_mapping(self.composite[side], kind) if side in self.composite else {}
+        """Where a name on *side* ends up, as the union sees it (see
+        :func:`~graflo.architecture.evolution.merge_types.union_name_map`)."""
+        return union_name_map(
+            self.composite,
+            self.names,
+            index=self.index,
+            name_conflict=self.op.name_conflict,
+            side=side,
+            kind=kind,
         )
-        if side != "right":
-            return dict(composite)
-
-        left_after = {
-            _kind_mapping(self.composite["left"], kind).get(name, name)
-            if "left" in self.composite
-            else name
-            for name in self.names["left"].of_kind(kind)
-        }
-        right_after = sorted(
-            {composite.get(name, name) for name in self.names[side].of_kind(kind)}
-        )
-        try:
-            policy = _resolve_schema_collisions(
-                left_names=left_after,
-                right_names=right_after,
-                exempt=(
-                    self.index.labels
-                    if kind == "vertex"
-                    else self.index.relation_labels
-                ),
-                name_conflict=self.op.name_conflict,
-                kind=kind,
-                equivalence_hint=(
-                    "VertexEquivalence" if kind == "vertex" else "RelationEquivalence"
-                ),
-            )
-        except ValueError:
-            policy = {}  # the refusal is `same_names`' to report, not this pass's
-        if not policy:
-            return dict(composite)
-        out = {name: policy.get(target, target) for name, target in composite.items()}
-        for name in self.names[side].of_kind(kind):
-            if name not in out and name in policy:
-                out[name] = policy[name]
-        return out
 
     def edge_merge_checks(self) -> None:
         """Two declarations of one logical edge that the union cannot fold.
@@ -1310,6 +1306,8 @@ class _Builder:
         folds each group on its own -- one unit at a time, so a group that
         refuses does not hide the next.
         """
+        declared = self.op.field_types
+        declared_edges = declared.edges if declared is not None else {}
         by_id: dict[Any, list[tuple[Side, Edge]]] = {}
         for side in _SIDES:
             schema = self.manifests[side].graph_schema
@@ -1329,6 +1327,15 @@ class _Builder:
                         ),
                     }
                 )
+                if remapped.relation is not None:
+                    remapped = remapped.model_copy(
+                        update={
+                            "properties": with_declared_types(
+                                remapped.properties,
+                                declared_edges.get(remapped.relation),
+                            )
+                        }
+                    )
                 by_id.setdefault(remapped.edge_id, []).append((side, remapped))
 
         for edge_id, group in by_id.items():
@@ -1337,7 +1344,9 @@ class _Builder:
             folded = group[0][1]
             for _side, edge in group[1:]:
                 try:
-                    folded = merge_edge_pair(folded, edge)
+                    folded = merge_edge_pair(
+                        folded, edge, retype_remedy=MERGE_RETYPE_REMEDY
+                    )
                 except ValueError as exc:  # never raise out of a preview
                     self.from_refusal(
                         exc,
@@ -1389,10 +1398,6 @@ class _Builder:
             clusters=self.clusters,
             findings=self.findings,
         )
-
-
-def _kind_mapping(relabel: CanonicalizeOp, kind: Kind) -> dict[str, str]:
-    return relabel.vertices if kind == "vertex" else relabel.relations
 
 
 def _type_label(prop: Any) -> str | None:

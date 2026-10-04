@@ -108,13 +108,16 @@ def left_relabel_ops(
     """The relabel a merge applied to its left side, as ops.
 
     ``merge_manifests`` resolves its declared clusters and canonical maps into
-    one composite ``canonicalize`` per side and applies it before the union.
+    one composite ``canonicalize`` per side and applies it before the union,
+    preceded by the retype its ``field_types`` declare for that side.
     The left one is part of how the merged manifest came from the left, so a
     merge commit records it first. Resolved from the recorded declaration --
     the whole op, canonical maps included -- against both sides, exactly as
     the merge resolved it.
     """
     from .canonical import canonicalize_ops, resolve_clusters
+    from .equivalence import Side
+    from .merge_types import UnionNames, field_type_ops
     from .ops import MergeManifestsOp
 
     if recipe.kind != "merge":
@@ -132,11 +135,22 @@ def left_relabel_ops(
         resolution = resolve_clusters(
             op, left=left.model_copy(deep=True), right=right.model_copy(deep=True)
         )
+        manifests: dict[Side, GraphManifest] = {"left": left, "right": right}
+        retypes = field_type_ops(
+            op.field_types,
+            manifests,
+            UnionNames.of(
+                manifests,
+                resolution.side_maps,
+                index=resolution.index,
+                name_conflict=op.name_conflict,
+            ),
+        )
     except Exception as exc:
         raise CommitError(
             f"the recorded merge declaration does not resolve against its inputs: {exc}"
         ) from exc
-    return canonicalize_ops(resolution.side_maps["left"])
+    return [*retypes["left"], *canonicalize_ops(resolution.side_maps["left"])]
 
 
 def build_merge_commit(

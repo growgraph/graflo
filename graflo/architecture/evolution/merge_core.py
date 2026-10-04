@@ -157,19 +157,24 @@ def _union_secondary_identities(
     return list(by_field_set.values())
 
 
-def merge_vertex_models(vertices: list[Vertex], into_name: str) -> Vertex:
+def merge_vertex_models(
+    vertices: list[Vertex], into_name: str, *, retype_remedy: str | None = None
+) -> Vertex:
     """Merge vertex definitions into a single :class:`Vertex`.
 
     Identity mode is carried through the merge: ``blank`` / ``assigned`` propagate when
     any source declares them, and ``hash_identity_properties`` / ``secondary_identities``
     are unioned. The mutual exclusions enforced by :meth:`Vertex.set_identity` are
     checked here so the failure names the merge rather than surfacing from pydantic.
+    ``retype_remedy`` replaces the fix a property type clash suggests.
     """
     if not vertices:
         raise ValueError("merge_vertex_models requires at least one vertex")
 
     props = union_field_lists(
-        (f for v in vertices for f in v.properties), owner=f"vertex {into_name!r}"
+        (f for v in vertices for f in v.properties),
+        owner=f"vertex {into_name!r}",
+        retype_remedy=retype_remedy,
     )
 
     identity_out: list[str] = []
@@ -288,14 +293,15 @@ def merge_vertex_models(vertices: list[Vertex], into_name: str) -> Vertex:
     )
 
 
-def merge_edge_pair(a: Edge, b: Edge) -> Edge:
+def merge_edge_pair(a: Edge, b: Edge, *, retype_remedy: str | None = None) -> Edge:
     """Merge two edges with the same :attr:`~graflo.architecture.schema.edge.Edge.edge_id`.
 
     ``type`` / ``by`` must agree: ``edge_id`` leaves them out so two sources can
     describe one logical edge, but a ``DIRECT`` edge and an ``INDIRECT`` one via
     some vertex are different physical things with no weaker-wins ordering
     between them (unlike ``directed``), so disagreement raises rather than
-    keeping one side's silently.
+    keeping one side's silently. ``retype_remedy`` replaces the fix a property
+    type clash suggests.
     """
     if (a.type, a.by) != (b.type, b.by):
         raise EdgeMergeError(
@@ -304,7 +310,11 @@ def merge_edge_pair(a: Edge, b: Edge) -> Edge:
             check="edge type disagreement",
             edge_id=a.edge_id,
         )
-    props = union_field_lists(a.properties + b.properties, owner=f"edge {a.edge_id!r}")
+    props = union_field_lists(
+        a.properties + b.properties,
+        owner=f"edge {a.edge_id!r}",
+        retype_remedy=retype_remedy,
+    )
 
     identities_out: list[list[str]] = []
     seen_identities: set[tuple[str, ...]] = set()

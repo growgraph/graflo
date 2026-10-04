@@ -49,6 +49,8 @@ class GraFloBackendConnection(Connection):
     flavor = DBType.GRAFLO_BACKEND
     supports_graph_export = True
     supports_schema_introspection = True
+    #: Introspection reads the ``schema.yaml`` catalogue the writer keeps.
+    schema_introspection_is_sampled = False
 
     def __init__(self, config: GraFloBackendConfig) -> None:
         super().__init__()
