@@ -24,20 +24,20 @@ schema:
                 -   or:
                     -   if_then:
                         -   field: name
-                            foo: __eq__
+                            operator: __eq__
                             value: Open
                         -   field: value
-                            foo: __gt__
+                            operator: __gt__
                             value: 0
                     -   if_then:
                         -   field: name
-                            foo: __eq__
+                            operator: __eq__
                             value: Close
                         -   field: value
-                            foo: __gt__
+                            operator: __gt__
                             value: 0
                 -   field: name
-                    foo: __ne__
+                    operator: __ne__
                     value: Volume
         edge_config:
             edges:

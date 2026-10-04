@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking
+
+- **Filter leaves** spell the comparison `operator` (`operator: __gt__`); the `foo` key is refused
+  with that repair.
+
 ### Added
 
 - **`MergeManifestsOp.field_types`** declares a merged property's type by merged names
@@ -26,6 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The merge preview's `lookup_demotion` note** lists only the branches a member's own resources
   derive for it, so a vocabulary-joined member keyed by its own tag is no longer reported as
   completing every derived branch.
+- **Schema drift against the file backend** is no longer flagged as sampled: its introspection reads
+  the `schema.yaml` catalogue, so a missing property is reported as a fact.
+- **World-model assertion 6** checks that some resource's edge steps write a provenance relation:
+  it warns when none does, and is `not_applicable` when the relation comes from the data.
 
 ## [1.16.0]
 

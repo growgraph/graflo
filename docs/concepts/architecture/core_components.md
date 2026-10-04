@@ -85,7 +85,7 @@ record or through `from`. The
   identity: [name, value]
   filters:
     - field: value
-      foo: __gt__
+      operator: __gt__
       value: 0
 ```
 

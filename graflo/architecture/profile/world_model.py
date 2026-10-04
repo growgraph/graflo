@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
+from graflo.architecture.contract.ingestion.steps.ref import iter_edge_steps
 from graflo.architecture.profile.context import (
     AGENT_TYPE_IRIS,
     PROVENANCE_EDGE_IRIS,
@@ -495,16 +496,72 @@ def check_provenance(context: CheckContext) -> AssertionResult:
             )
         )
     elif provenance_edges:
-        findings.append(
-            Finding(
-                assertion=_A6,
-                status="pass",
-                severity="info",
-                target="manifest",
-                message="provenance relations available to ingestion",
-            )
-        )
+        findings.append(_provenance_writers(context, edges, provenance_edges))
     return _result(_A6, "Provenance is expressible and attached", findings, checked)
+
+
+def _provenance_writers(
+    context: CheckContext, edges: list, provenance_edges: list
+) -> Finding:
+    """Whether some resource's edge steps write a provenance relation.
+
+    Judged by relation name: a step's fixed or mapped relations, and for a
+    relation-less step the one relation declared between its endpoints. A step
+    whose relation comes from the data is reported as uncheckable, not passed.
+    """
+    ingestion = context.manifest.ingestion_model
+    assert ingestion is not None
+    relations = {e.relation for e in provenance_edges if e.relation}
+    writers: list[str] = []
+    data_driven: list[str] = []
+    for resource in ingestion.resources:
+        for view in iter_edge_steps(list(resource.pipeline)):
+            written = view.relations_written()
+            if written is None:
+                data_driven.append(resource.name)
+                continue
+            if not written and view.source and view.target:
+                declared = [
+                    e.relation
+                    for e in edges
+                    if (e.source, e.target) == (view.source, view.target)
+                ]
+                if len(declared) == 1 and declared[0]:
+                    written = {declared[0]}
+            if written & relations:
+                writers.append(resource.name)
+    if writers:
+        return Finding(
+            assertion=_A6,
+            status="pass",
+            severity="info",
+            target="manifest",
+            message="provenance relations are written at ingest",
+            detail={"resources": sorted(set(writers))},
+        )
+    if data_driven:
+        return Finding(
+            assertion=_A6,
+            status="not_applicable",
+            severity="info",
+            target="manifest",
+            message=(
+                "no resource writes a provenance relation at ingest by a fixed "
+                "relation; resources taking the relation from the data cannot "
+                "be checked statically"
+            ),
+            detail={"resources": sorted(set(data_driven))},
+        )
+    return Finding(
+        assertion=_A6,
+        status="warn",
+        severity="warning",
+        target="manifest",
+        message=(
+            "no resource writes a provenance relation at ingest "
+            f"({', '.join(sorted(relations))}), so ingested facts carry no source"
+        ),
+    )
 
 
 WORLD_MODEL_PROFILE = Profile(

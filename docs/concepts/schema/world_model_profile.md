@@ -114,8 +114,13 @@ or `foaf:Agent`), and an edge grounded in a derivation or attribution term
 `prov:used`, `sosa:madeBySensor`). Without both, the graph holds statements
 with no accountable source.
 
-The ingestion half is reported `not_applicable` when the manifest has no
-ingestion model, rather than passing a question it never asked.
+The ingestion half asks whether some resource's edge steps write one of those
+relations. A step counts by its fixed or mapped relation; a step with no
+relation counts by the one relation declared between its endpoints. When none
+does, the half warns. When the only candidates take their relation from the
+data, it is `not_applicable`: that cannot be checked from the manifest. It is
+also `not_applicable` when the manifest has no ingestion model, rather than
+passing a question it never asked.
 
 This is unrelated to `ManifestMetadata.provenance`, which records the manifest
 file's own content address and lineage. Assertion 6 is about the data.

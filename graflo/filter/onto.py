@@ -116,10 +116,15 @@ DUNDER_TO_CMP: MappingProxyType[str, ComparisonOperator] = MappingProxyType(
     }
 )
 
-#: Keys a leaf entry may carry. ``operator`` and ``foo`` are the authored
-#: spellings of ``unary_op``.
+#: Keys a leaf entry may carry. ``operator`` is the authored spelling of
+#: ``unary_op``.
 _LEAF_KEYS: frozenset[str] = frozenset(
-    {"kind", "field", "value", "cmp_operator", "unary_op", "operator", "foo"}
+    {"kind", "field", "value", "cmp_operator", "unary_op", "operator"}
+)
+
+_FOO_REMOVED = (
+    "filter key `foo` was removed: spell the comparison `operator` "
+    "(for example `operator: __gt__`)"
 )
 
 #: Inverse of :data:`DUNDER_TO_CMP`, so expressions authored in list form
@@ -205,7 +210,7 @@ class FilterExpression(ConfigBaseModel):
     @model_validator(mode="before")
     @classmethod
     def leaf_operator_to_unary_op(cls, data: Any) -> Any:
-        """Map leaf 'operator' or 'foo' (YAML/kwargs) to unary_op; infer kind and cmp_operator."""
+        """Map leaf 'operator' (YAML/kwargs) to unary_op; infer kind and cmp_operator."""
         if not isinstance(data, dict):
             return data
         data = dict(data)
@@ -227,11 +232,11 @@ class FilterExpression(ConfigBaseModel):
             if data.get("cmp_operator") is not None or data.get("field") is not None:
                 data["kind"] = "leaf"
 
+        if "foo" in data:
+            raise ValueError(_FOO_REMOVED)
         raw_op = None
         if "operator" in data and isinstance(data["operator"], str):
             raw_op = data.pop("operator")
-        elif "foo" in data and isinstance(data["foo"], str):
-            raw_op = data.pop("foo")
         if raw_op is not None:
             data["unary_op"] = raw_op
             if data.get("cmp_operator") is None and raw_op in DUNDER_TO_CMP:
@@ -326,14 +331,16 @@ class FilterExpression(ConfigBaseModel):
             else:
                 # The model is built by hand below, so `extra="forbid"` never
                 # sees these keys: an unknown one would be dropped silently.
+                if "foo" in data:
+                    raise ValueError(_FOO_REMOVED)
                 unknown = sorted(str(key) for key in data if key not in _LEAF_KEYS)
                 if unknown:
                     raise ValueError(
                         f"unknown filter key(s) {unknown}; a leaf takes "
-                        f"{sorted(_LEAF_KEYS - {'kind', 'foo', 'unary_op'})}, a "
+                        f"{sorted(_LEAF_KEYS - {'kind', 'unary_op'})}, a "
                         f"logical entry one of {sorted(_LOGICAL_OPERATOR_JSON_VALUES)}"
                     )
-                unary_op = data.get("operator") or data.get("foo")
+                unary_op = data.get("operator")
                 cmp_operator = data.get("cmp_operator")
                 if cmp_operator is None and unary_op is not None:
                     cmp_operator = DUNDER_TO_CMP.get(unary_op)
