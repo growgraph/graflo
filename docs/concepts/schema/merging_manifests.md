@@ -425,7 +425,8 @@ branch is one of three things:
 | a local key | `{local_key: {...}}`, always last | the record's own key behind a per-source tag |
 
 One property branch is a plain natural key. Any other list is an
-[identity funnel](../glossary.md#identity-funnel), whose synthetic key is `id`:
+[identity funnel](../glossary.md#identity-funnel), whose digest is stored in
+`digest_field` (`id` unless you set it):
 
 | `identity:` | The merged type is keyed on | Use it when |
 |---|---|---|
@@ -450,8 +451,17 @@ every required field of one funnel branch, declared on the member under its
 canonical name. A member that cannot would lose all its records, so the union
 refuses and names it (`identity coverage`); it refuses a branch no member
 declares for the same reason. A funnel also refuses a member that declares a
-property named `id`, the funnel's own key: the funnel would replace that
-column's values, so they would be lost (`identity collision`).
+property named like its `digest_field`: the digest would replace that column's
+values, so they would be lost (`identity collision`). To keep a member's own
+`id`, store the digest in another field:
+
+```yaml
+    identity: [asset_id, device_id]
+    digest_field: machine_key
+```
+
+`digest_field` must not be a field of any branch, since the digest would
+replace the value that branch is computed from.
 
 The check reads the manifests, not the data. A record whose key field is empty
 still has no identity: it is not written, and the cast logs a warning such as
@@ -498,7 +508,8 @@ the same value:
 ```
 
 - `name` is the attribute the branch keys on; the union adds it to the merged
-  type.
+  type. It is the digest's input, not where the key is stored: that is
+  `digest_field`.
 - `sources` is keyed by resource name, because each resource derives the
   attribute from its own columns. `input` names those columns as they appear in
   the resource's records: `serial` for the sensor feed, even though the merged
@@ -698,7 +709,7 @@ The schema union refuses on its own after the names are settled:
 
 | Refusal | Cause | What to do |
 |---|---|---|
-| `MergeIdentityError` | members disagree on their key, a declared key some member cannot fill, or a funnel over a member declaring `id` | [declare the key](#keying-the-merged-type) |
+| `MergeIdentityError` | members disagree on their key, a declared key some member cannot fill, or a funnel over a member declaring its `digest_field` | [declare the key](#keying-the-merged-type), or set `digest_field` |
 | type or unit conflict | a property declared with two types or two units | retype or re-ground one side first |
 | `AlignmentConflictError` | a derived branch breaks [its rules](#rules-a-derived-branch-must-follow) | fix the derivation |
 

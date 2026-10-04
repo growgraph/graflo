@@ -564,28 +564,30 @@ def _composed_identity(
     )
 
 
-def _check_synthetic_id_free(
+def _check_digest_field_free(
     cluster: Cluster,
+    digest_field: str,
     member_keys: dict[tuple[Side, str], tuple[str, ...] | None],
     member_property_names: dict[tuple[Side, str], set[str]],
 ) -> None:
-    """Refuse a funnel over a merged class whose members declare ``id``.
+    """Refuse a funnel over a merged class whose members declare *digest_field*.
 
-    A funnel keys a record on a synthetic digest stored in ``id``, and the
-    cast discards a record's own ``id`` for it. A member that declares ``id``
-    as a real property would lose that column's values silently.
+    A funnel keys a record on a synthetic digest stored in *digest_field*, and
+    the cast discards a record's own value there for it. A member that
+    declares the field as a real property would lose its values silently.
     """
     for side in ("left", "right"):
         for member in cluster.members(side):
             if member_keys.get((side, member)) is None:
-                continue  # its own identity is synthetic; `id` is not a column
-            if "id" in member_property_names.get((side, member), set()):
+                continue  # its own identity is synthetic; its key is no column
+            if digest_field in member_property_names.get((side, member), set()):
                 raise MergeIdentityError(
                     f"merge_manifests: merged vertex {cluster.into!r} is keyed "
-                    f"on a funnel, whose synthetic key is `id`, but "
-                    f"{side}:{member} declares a property `id`, whose values "
-                    "the funnel's key would replace. Rename the property with "
-                    "a PropertyEquivalence.",
+                    f"on a funnel whose digest is stored in `{digest_field}`, "
+                    f"but {side}:{member} declares a property `{digest_field}`, "
+                    "whose values the digest would replace. Rename the property "
+                    "with a PropertyEquivalence, or store the digest in another "
+                    "field with `digest_field` on the VertexEquivalence.",
                     check="identity collision",
                     subjects=(subject("merged", cluster.into), subject(side, member)),
                 )
@@ -656,16 +658,20 @@ def _describe_identity(identity: list[str] | IdentityFunnel) -> str:
 
 
 def _apply_composed_identity(
-    merged: Vertex, identity: list[str] | IdentityFunnel, *, declared: bool
+    merged: Vertex,
+    identity: list[str] | IdentityFunnel,
+    *,
+    declared: bool,
+    digest_field: str,
 ) -> Vertex:
     if not declared:
         return merged.model_copy(update={"identity": identity})
     if isinstance(identity, IdentityFunnel):
-        # A funnel-mode vertex carries the synthetic key under "id" -- the
-        # same convention `apply_replace_identity` uses for a FunnelIdentityTarget.
+        # A funnel-mode vertex carries its digest under *digest_field* -- as
+        # `apply_replace_identity` does for a FunnelIdentityTarget.
         return merged.model_copy(
             update={
-                "identity": ["id"],
+                "identity": [digest_field],
                 "identity_funnel": identity,
                 "hash_identity_properties": [],
                 "blank": False,
@@ -718,8 +724,8 @@ def _retire_member_keys(
             if vertex.identity_funnel is not None
             else vertex.identity
         )
-        # A funnel keys on a synthetic `id`; a member key spelled `id` cannot be
-        # demoted beside it without restating the primary.
+        # A funnel keys on its digest field; a member key spelled like it
+        # cannot be demoted beside it without restating the primary.
         restated = {primary, frozenset(vertex.identity)}
         by_fields = {
             frozenset(entry.fields): entry.name for entry in vertex.secondary_identities
@@ -1363,13 +1369,21 @@ def _union_schema(
         if declared:
             rekeyed.add(name)
             if declaration.has_derivation or isinstance(identity, IdentityFunnel):
-                _check_synthetic_id_free(cluster, member_keys, member_property_names)
+                _check_digest_field_free(
+                    cluster,
+                    declaration.digest_field,
+                    member_keys,
+                    member_property_names,
+                )
             if declaration.has_derivation:
                 derived.add(name)
             else:
                 _check_identity_coverage(cluster, identity, member_property_names)
         merged = _apply_composed_identity(
-            merged, identity, declared=declared and not declaration.has_derivation
+            merged,
+            identity,
+            declared=declared and not declaration.has_derivation,
+            digest_field=declaration.digest_field,
         )
         out_vertices.append(merged)
         seen.add(name)
@@ -1986,6 +2000,7 @@ def _apply_derived_identities(
                 vertex=cluster.into,
                 branches=tuple(declaration.identity),
                 at=dict(declaration.derive_at),
+                digest_field=declaration.digest_field,
             ),
             sides=sides,
             resolve=cluster.resolved,

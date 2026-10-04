@@ -1406,6 +1406,7 @@ class _Naming:
                 into=component.name,
                 properties=properties,
                 identity=identity,
+                digest_field=source.digest_field,
                 derive_at=derive_at if identity is not None else {},
                 retire=source.retire,
                 allow=allow,  # type: ignore[arg-type]

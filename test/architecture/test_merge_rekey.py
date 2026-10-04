@@ -33,6 +33,7 @@ from graflo.architecture.evolution import (
     apply_evolution,
     merge_manifests,
 )
+from graflo.architecture.evolution.preview import preview_merge
 from graflo.architecture.evolution.rewrite import collect_endpoint_selectors
 from graflo.hq.document_caster import DocumentCaster
 from graflo.hq.ingestion_parameters import IngestionParams
@@ -323,6 +324,122 @@ class TestDerivedIdentityDemotesMemberKeys:
             )
         )
         assert _z(merged).identity == ["id"]
+
+
+class TestDigestField:
+    """Where a funnel stores its digest: ``id`` by default, or ``digest_field``."""
+
+    def test_a_member_keeps_id_when_the_digest_is_stored_elsewhere(self) -> None:
+        merged = _merge(
+            VertexEquivalence(
+                left="X",
+                right="Y",
+                into="Z",
+                identity=["x_id", "y_id"],
+                digest_field="cid",
+            ),
+            right=_side_b(properties=["y_id", "cname", "id"]),
+        )
+        assert _z(merged).identity == ["cid"]
+        assert _z(merged).identity_funnel is not None
+        assert "id" in _z(merged).property_names
+
+    def test_a_derived_identity_stores_its_digest_in_digest_field(self) -> None:
+        """A derived branch names the digest's input; ``id`` stays a real column."""
+        merged = _merge(
+            VertexEquivalence(
+                left="X",
+                right="Y",
+                into="Z",
+                identity=_derived_identity(name="new_id"),
+                digest_field="cid",
+            ),
+            right=_side_b(properties=["y_id", "cname", "id"]),
+        )
+        assert _z(merged).identity == ["cid"]
+        caster = DocumentCaster(merged.require_ingestion_model())
+        result = asyncio.run(
+            caster.cast_batch(
+                [{"y_id": "y1", "cname": "Acme", "id": "own-1"}],
+                "r_y",
+                params=IngestionParams(),
+            )
+        )
+        [doc] = result.graph.vertices["Z"]
+        assert doc["id"] == "own-1"
+        assert doc["cid"] and doc["cid"] != "own-1"
+
+    def test_a_digest_field_a_member_declares_is_refused(self) -> None:
+        with pytest.raises(MergeIdentityError, match="`cname`") as excinfo:
+            _merge(
+                VertexEquivalence(
+                    left="X",
+                    right="Y",
+                    into="Z",
+                    identity=["x_id", "y_id"],
+                    digest_field="cname",
+                )
+            )
+        assert excinfo.value.check == "identity collision"
+
+    @pytest.mark.parametrize(
+        "identity",
+        [[_name_key("cid"), "x_id"], ["cid", "x_id"], [["cid", "name"], "x_id"]],
+        ids=["derived", "property", "composite"],
+    )
+    def test_a_digest_field_named_like_a_branch_is_refused(
+        self, identity: list[IdentityBranchDecl]
+    ) -> None:
+        """The cast drops the digest field from records: that branch could not fire."""
+        with pytest.raises(ValueError, match="not where it is stored"):
+            VertexEquivalence(
+                left="X", right="Y", identity=identity, digest_field="cid"
+            )
+
+    @pytest.mark.parametrize(
+        "identity", [None, ["name"], [["name", "x_id"]]], ids=["none", "one", "pair"]
+    )
+    def test_digest_field_without_a_funnel_is_refused(
+        self, identity: list[IdentityBranchDecl] | None
+    ) -> None:
+        with pytest.raises(ValueError, match="digest_field 'cid'"):
+            VertexEquivalence(
+                left="X", right="Y", identity=identity, digest_field="cid"
+            )
+
+    def test_the_default_digest_field_is_id(self) -> None:
+        merged = _merge(
+            VertexEquivalence(left="X", right="Y", into="Z", identity=["x_id", "y_id"])
+        )
+        assert _z(merged).identity == ["id"]
+
+    @pytest.mark.parametrize(
+        ("digest_field", "colliding"),
+        [("id", True), ("cid", False)],
+        ids=["default", "elsewhere"],
+    )
+    def test_the_preview_tests_the_declared_digest_field(
+        self, digest_field: str, colliding: bool
+    ) -> None:
+        preview = preview_merge(
+            _side_a(),
+            _side_b(properties=["y_id", "cname", "id"]),
+            MergeManifestsOp(
+                vertex_equivalences=[
+                    VertexEquivalence(
+                        left="X",
+                        right="Y",
+                        into="Z",
+                        identity=["x_id", "y_id"],
+                        digest_field=digest_field,
+                        allow=["self_relations"],
+                    )
+                ],
+                canonical_maps={"left": CanonicalMap(vertices={"Ap": "Zp"})},
+            ),
+        )
+        kinds = {f.kind for f in preview.findings}
+        assert ("identity_collision" in kinds) is colliding
 
 
 class TestResourcesOutsideTheDerivedBranches:

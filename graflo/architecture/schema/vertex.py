@@ -775,6 +775,15 @@ class Vertex(ConfigBaseModel):
                     f"Vertex '{self.name}': assigned and identity_funnel are "
                     "mutually exclusive"
                 )
+            overlap = sorted(set(self.identity) & set(self.identity_funnel.field_names))
+            if overlap:
+                # The cast drops a digest vertex's identity fields from each
+                # record, so a branch reading one could never complete.
+                raise ValueError(
+                    f"Vertex '{self.name}': identity field(s) {overlap} are also "
+                    "identity_funnel branch fields; the field the digest is "
+                    "stored in must be one no branch reads"
+                )
         merged_properties = union_field_lists(
             self.properties, owner=f"vertex {self.name!r}"
         )

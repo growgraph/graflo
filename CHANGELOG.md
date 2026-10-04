@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [Unreleased]
+## [1.16.1]
 
 ### Breaking
 
@@ -22,8 +22,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`MergeManifestsOp.field_types`** declares a merged property's type by merged names
   (`{vertices: {C: {ram: {type: INT}}}, edges: {…}}`); every member carrying the property is
   retyped before the fold, in the merge, the merge commit and the preview.
+- **`VertexEquivalence.digest_field`** and **`FunnelIdentityTarget.digest_field`** name the property
+  a funnel's digest is stored in (default `id`), so a member's own `id` can stay an ordinary
+  property.
 
 ### Changed
+
+- **A funnel whose identity field is also a branch field** is refused, on a vertex, a funnel
+  target and a `VertexEquivalence`.
 
 - **A property type clash in a merge** is refused before any fold, listing the members on each side
   that carry each type and the `field_types` entry that settles it.

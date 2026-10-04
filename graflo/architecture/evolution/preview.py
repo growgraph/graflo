@@ -1055,7 +1055,8 @@ class _Builder:
         hash and funnel identities are reconciled (or refused) by the vertex
         merge itself. A declared key of property branches must be one every
         member can complete; one with a derived branch is checked by its own
-        lowering. A funnel must not meet a member declaring ``id``.
+        lowering. A funnel must not meet a member declaring its
+        ``digest_field``.
         """
         for cluster in self.index.vertices:
             declaration = cluster.declaration
@@ -1065,7 +1066,9 @@ class _Builder:
             if declaration.identity is not None:
                 raw = declaration.raw_branches()
                 if declaration.has_derivation or len(raw) > 1:
-                    self._synthetic_id_collision(cluster, keys, properties)
+                    self._digest_field_collision(
+                        cluster, declaration.digest_field, keys, properties
+                    )
                 if not declaration.has_derivation:
                     self._identity_coverage(
                         cluster,
@@ -1088,24 +1091,25 @@ class _Builder:
                 ],
             )
 
-    def _synthetic_id_collision(
+    def _digest_field_collision(
         self,
         cluster: Cluster,
+        digest_field: str,
         keys: Sequence[tuple[Side, str, tuple[str, ...]]],
         properties: Mapping[tuple[Side, str], set[str]],
     ) -> None:
         colliding = [
             (side, member)
             for side, member, _key in keys
-            if "id" in properties.get((side, member), set())
+            if digest_field in properties.get((side, member), set())
         ]
         if colliding:
             self.finding(
                 "identity_collision",
-                f"merged vertex {cluster.into!r} is keyed on a funnel, whose "
-                f"synthetic key is `id`, but "
+                f"merged vertex {cluster.into!r} is keyed on a funnel whose "
+                f"digest is stored in `{digest_field}`, but "
                 f"{', '.join(f'{s}:{m}' for s, m in colliding)} declare a "
-                "property `id`",
+                f"property `{digest_field}`",
                 nodes=[
                     subject("merged", cluster.into),
                     *(subject(s, m) for s, m in colliding),

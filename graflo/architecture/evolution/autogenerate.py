@@ -48,6 +48,7 @@ from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import Field, Vertex
 
 from .canonicalize import canonical_payload
+from .identity import SYNTHETIC_ID_FIELD
 from .ops import (
     AddEdgeIndexesOp,
     AddEdgePropertiesOp,
@@ -1347,10 +1348,13 @@ def _identity_key(vertex: Vertex) -> tuple:
 
 def _identity_target(vertex: Vertex) -> dict[str, Any]:
     if vertex.identity_funnel is not None:
-        return {
+        target: dict[str, Any] = {
             "mode": "funnel",
             "funnel": vertex.identity_funnel.to_dict(skip_defaults=False),
         }
+        if vertex.identity and vertex.identity[0] != SYNTHETIC_ID_FIELD:
+            target["digest_field"] = vertex.identity[0]
+        return target
     if vertex.hash_identity_properties:
         return {"mode": "hash", "hash_from": list(vertex.hash_identity_properties)}
     if vertex.assigned:

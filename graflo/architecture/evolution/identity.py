@@ -33,7 +33,8 @@ logger = logging.getLogger(__name__)
 #: Name given to a demoted identity when the op does not supply ``retire_as``.
 DEFAULT_RETIRED_IDENTITY_NAME = "retired_identity"
 
-#: Synthetic identity field used by every non-natural identity mode.
+#: Synthetic identity field of every non-natural identity mode, unless a funnel
+#: target names its own ``digest_field``.
 SYNTHETIC_ID_FIELD = "id"
 
 
@@ -56,7 +57,7 @@ def _target_state(target: IdentityTarget) -> _TargetState:
             [SYNTHETIC_ID_FIELD], False, False, list(target.hash_from), None
         )
     if target.mode == "funnel":
-        return _TargetState([SYNTHETIC_ID_FIELD], False, False, [], target.funnel)
+        return _TargetState([target.digest_field], False, False, [], target.funnel)
     if target.mode == "assigned":
         return _TargetState([SYNTHETIC_ID_FIELD], False, True, [], None)
     return _TargetState([SYNTHETIC_ID_FIELD], True, False, [], None)
@@ -284,17 +285,24 @@ def apply_replace_identity(manifest: GraphManifest, op: ReplaceIdentityOp) -> No
         else:
             required_properties = hash_properties
         _require_properties_exist(vertex, required_properties)
+        digest_field = identity[0]
         if (
             spec.to.mode in ("hash", "funnel")
             and vertex.identity_mode == "natural"
-            and SYNTHETIC_ID_FIELD in vertex.property_names
+            and digest_field in vertex.property_names
         ):
-            # The digest owns `id`: a record's own `id` is discarded at cast,
-            # so the property's values would be lost silently.
+            # The digest owns its field: a record's own value there is
+            # discarded at cast, so the property's values would be lost silently.
+            remedy = (
+                "rename the property first, or store the digest elsewhere "
+                "with `digest_field`"
+                if spec.to.mode == "funnel"
+                else "rename the property first"
+            )
             raise ValueError(
                 f"replace_identity: vertex '{vertex.name}' declares a property "
-                f"`{SYNTHETIC_ID_FIELD}`, which a {spec.to.mode} identity uses "
-                "for its synthetic key; rename the property first"
+                f"`{digest_field}`, which a {spec.to.mode} identity uses "
+                f"for its synthetic key; {remedy}"
             )
 
         old_identity = list(vertex.identity)
