@@ -408,21 +408,23 @@ class TestValidateAndCompleteCanonicalMap:
         )
         assert side_maps.left.vertices == {"Firm": "Company"}
 
-    def test_a_disagreeing_into_raises(self) -> None:
+    def test_into_overrides_the_canonical_name_with_a_note(self) -> None:
         op = MergeManifestsOp(
             vertex_equivalences=[
                 VertexEquivalence(left="Firm", right="Org", into="Party")
             ]
         )
-        with pytest.raises(MergeCanonicalConflictError, match="disagreement"):
-            validate_and_complete_canonical_map(
-                op,
-                left=_source_a_manifest(),
-                right=_right_b_manifest(),
-                canonical_maps=[("left", _CANONICAL)],
-            )
+        resolution = resolve_clusters(
+            op,
+            left=_source_a_manifest(),
+            right=_right_b_manifest(),
+            canonical_maps=[("left", _CANONICAL)],
+        )
+        assert resolution.side_maps.left.vertices == {"Firm": "Party"}
+        assert any(f.kind == "vocabulary_override" for f in resolution.findings)
 
-    def test_a_retired_name_as_into_is_translated_not_resurrected(self) -> None:
+    def test_a_name_the_vocabulary_retires_may_be_reused_as_into(self) -> None:
+        """`into` is a name in the union, never translated by a side's vocabulary."""
         op = MergeManifestsOp(
             vertex_equivalences=[
                 VertexEquivalence(left="Firm", right="Org", into="Firm")
@@ -434,8 +436,8 @@ class TestValidateAndCompleteCanonicalMap:
             right=_right_b_manifest(),
             canonical_maps=[("left", _CANONICAL)],
         )
-        assert side_maps.left.vertices == {"Firm": "Company"}
-        assert side_maps.right.vertices == {"Org": "Company"}
+        assert side_maps.left.vertices == {"Firm": "Firm"}
+        assert side_maps.right.vertices == {"Org": "Firm"}
 
     def test_a_member_answers_to_its_canonical_name(self) -> None:
         """One alias table serves every per-member map of the declaration."""
@@ -484,27 +486,30 @@ class TestValidateAndCompleteCanonicalMap:
         assert side_maps.left.vertices == {"Deal": "Deal"}
         assert side_maps.right.vertices == {"Deal": "Deal"}
 
-    def test_a_map_merge_into_a_composed_class_raises(self) -> None:
+    def test_a_map_merge_closes_the_group_over_the_vocabulary(self) -> None:
+        """The map merges Firm and Deal; an equivalence naming Firm takes both."""
         cm = CanonicalMap(
-            vertices={"Firm": "Company", "Deal": "Company"}, allow_merges=True
+            vertices={"Firm": "Company", "Deal": "Company"},
+            allow_merges=True,
+            allow_self_relations=True,
         )
         op = MergeManifestsOp(
             vertex_equivalences=[VertexEquivalence(left="Firm", right="Org")]
         )
-        with pytest.raises(MergeIncompleteError, match="joining a merged class") as exc:
-            validate_and_complete_canonical_map(
-                op,
-                left=_source_a_manifest(),
-                right=_right_b_manifest(),
-                canonical_maps=[("left", cm)],
-            )
-        completion = exc.value.completion
-        assert completion.kind == "extend_cluster"
-        assert completion.side == "left"
-        (payload,) = completion.vertex_equivalences
-        assert payload["left"] == ["Firm", "Deal"]
-        assert payload["right"] == "Org"
-        assert payload["into"] == "Company"
+        resolution = resolve_clusters(
+            op,
+            left=_source_a_manifest(),
+            right=_right_b_manifest(),
+            canonical_maps=[("left", cm)],
+        )
+        (cluster,) = resolution.index.vertices
+        assert cluster.into == "Company"
+        assert cluster.left == ("Firm", "Deal")
+        assert cluster.declared_left == ("Firm",)
+        assert resolution.side_maps.left.vertices == {
+            "Firm": "Company",
+            "Deal": "Company",
+        }
 
     def test_a_dangling_map_entry_raises(self) -> None:
         cm = CanonicalMap(vertices={"Ghost": "Company"})
@@ -581,7 +586,7 @@ class TestValidateAndCompleteCanonicalMap:
             allow_dangling_entries=True,
         )
         with caplog.at_level(
-            logging.INFO, logger="graflo.architecture.evolution.canonical"
+            logging.INFO, logger="graflo.architecture.evolution.naming_graph"
         ):
             side_maps = validate_and_complete_canonical_map(
                 MergeManifestsOp(),
@@ -669,7 +674,7 @@ class TestValidateAndCompleteCanonicalMap:
         assert side_maps.left.relations == {"signs": "has"}
         assert side_maps.right.relations == {"inks": "has"}
 
-    def test_a_disagreeing_relation_into_raises(self) -> None:
+    def test_a_relation_into_overrides_the_canonical_name(self) -> None:
         cm = CanonicalMap(relations={"signs": "has"})
         right = _manifest(
             name="b4",
@@ -686,25 +691,23 @@ class TestValidateAndCompleteCanonicalMap:
             relation_equivalences=[
                 RelationEquivalence(left="signs", right="inks", into="signed")
             ],
+            name_conflict="union_right",
         )
-        with pytest.raises(MergeCanonicalConflictError, match="relation disagreement"):
-            validate_and_complete_canonical_map(
-                op,
-                left=_source_a_manifest(),
-                right=right,
-                canonical_maps=[("left", cm)],
-            )
+        resolution = resolve_clusters(
+            op, left=_source_a_manifest(), right=right, canonical_maps=[("left", cm)]
+        )
+        assert resolution.side_maps.left.relations == {"signs": "signed"}
+        assert resolution.side_maps.right.relations == {"inks": "signed"}
+        assert any(f.kind == "vocabulary_override" for f in resolution.findings)
 
-    def test_into_re_targets_canonical_class_raises(self) -> None:
+    def test_into_may_rename_a_canonical_class(self) -> None:
         op = MergeManifestsOp(
             vertex_equivalences=[
                 VertexEquivalence(left="Company", right="Org", into="Party")
             ]
         )
-        # `Company` is a canonical target, hence a fixed point: a cluster may
-        # not rename it, whichever vocabulary the equivalence is written in.
-        with pytest.raises(MergeCanonicalConflictError, match="disagreement"):
-            self._validate(op)
+        side_maps = self._validate(op)
+        assert side_maps.left.vertices == {"Company": "Party"}
 
     def test_a_property_equivalence_naming_an_absent_field_raises(self) -> None:
         op = MergeManifestsOp(
@@ -795,7 +798,6 @@ class TestValidateAndCompleteCanonicalMap:
                     ],
                 )
             ],
-            allow_merges=True,
             canonical_maps={"left": cm},
         )
         from graflo.architecture.evolution.canonical import resolve_clusters
@@ -824,7 +826,7 @@ class TestValidateAndCompleteCanonicalMap:
         )
 
     def _right_collapse_op(
-        self, *, allow_merges: bool = True, allow_self_relations: bool = False
+        self, *, allow_self_relations: bool = False
     ) -> MergeManifestsOp:
         # One right-side n-ary cluster: {Org, Branch} ~ {Company} -> Company.
         # Declares the merged identity explicitly so this fixture isn't
@@ -837,18 +839,17 @@ class TestValidateAndCompleteCanonicalMap:
                     right=["Org", "Branch"],
                     into="Company",
                     identity=["company_id", "org_id", "branch_id"],
+                    allow=["self_relations"] if allow_self_relations else [],
                 )
             ],
-            allow_merges=allow_merges,
-            allow_self_relations=allow_self_relations,
         )
 
-    def test_nary_cluster_without_allow_merges_raises_at_construction(self) -> None:
-        with pytest.raises(ValueError, match="allow_merges"):
-            self._right_collapse_op(allow_merges=False)
+    def test_the_removed_allow_merges_names_its_replacement(self) -> None:
+        with pytest.raises(ValueError, match="listing several members"):
+            MergeManifestsOp.model_validate({"allow_merges": True})
 
     def test_right_collapse_lowers_and_validates(self) -> None:
-        op = self._right_collapse_op()
+        op = self._right_collapse_op(allow_self_relations=True)
         side_maps = validate_and_complete_canonical_map(
             op,
             left=self._canonical_a(),
@@ -889,10 +890,12 @@ class TestValidateAndCompleteCanonicalMap:
         op = MergeManifestsOp(
             vertex_equivalences=[
                 VertexEquivalence(
-                    left=["Company", "Deal"], right=["Org", "Branch"], into="Company"
+                    left=["Company", "Deal"],
+                    right=["Org", "Branch"],
+                    into="Company",
+                    allow=["self_relations"],
                 )
             ],
-            allow_merges=True,
         )
         side_maps = validate_and_complete_canonical_map(
             op,
@@ -903,17 +906,16 @@ class TestValidateAndCompleteCanonicalMap:
         assert side_maps.left.vertices == {"Company": "Company", "Deal": "Company"}
         assert side_maps.right.vertices == {"Org": "Company", "Branch": "Company"}
 
-    def test_left_collapse_without_ack_raises_at_construction(self) -> None:
-        with pytest.raises(ValueError, match="allow_merges"):
-            MergeManifestsOp(
-                vertex_equivalences=[
-                    VertexEquivalence(
-                        left=["Company", "Deal"],
-                        right=["Org", "Branch"],
-                        into="Company",
-                    )
-                ]
-            )
+    def test_a_left_collapse_needs_no_acknowledgement(self) -> None:
+        """Listing several members is the declaration."""
+        op = MergeManifestsOp(
+            vertex_equivalences=[
+                VertexEquivalence(
+                    left=["Company", "Deal"], right=["Org", "Branch"], into="Company"
+                )
+            ]
+        )
+        assert len(op.vertex_equivalences[0].left_members) == 2
 
     def test_completion_infers_right_peer(self) -> None:
         op = MergeManifestsOp(
@@ -1024,20 +1026,18 @@ class TestTheTwoChecksDoNotOverlap:
         manifest.finish_init()
         return manifest
 
-    def test_an_undeclared_near_collision_raises_only_compose_error(self) -> None:
-        from graflo.architecture.evolution import (
-            MergeNameConflictError,
-            merge_manifests,
-        )
+    def test_an_undeclared_near_collision_is_one_finding(self) -> None:
+        from graflo.architecture.evolution import merge_manifests
+        from graflo.architecture.evolution.naming_graph import MergeNamingError
 
-        with pytest.raises(MergeNameConflictError) as excinfo:
+        with pytest.raises(MergeNamingError) as excinfo:
             merge_manifests(
                 self._one_vertex("OrderLine", "r_left"),
                 self._one_vertex("order_line", "r_right"),
                 MergeManifestsOp(),
             )
-        # Not the declared-map error: nothing was declared to contradict.
-        assert not isinstance(excinfo.value, MergeCanonicalConflictError)
+        (finding,) = excinfo.value.findings
+        assert finding.kind == "near_collision"
 
     def test_a_mapped_name_keys_differently_so_only_the_validator_sees_it(
         self,
@@ -1088,18 +1088,18 @@ class TestCaseTable:
         assert side_maps.left.vertices == {"Firm": "Company", "Deal": "Contract"}
         assert side_maps.right.vertices == {"Org": "Company"}
 
-    def test_a_both_entry_over_a_composed_name_translates_it(self) -> None:
+    def test_a_both_entry_over_a_merged_name_dangles_with_a_hint(self) -> None:
+        """A vocabulary renames the sides' names; `into` names the union's."""
         op = MergeManifestsOp(
             vertex_equivalences=[
                 VertexEquivalence(left="Firm", right="Org", into="Company")
             ],
             canonical_maps={"both": CanonicalMap(vertices={"Company": "Party"})},
         )
-        side_maps = validate_and_complete_canonical_map(
-            op, left=_source_a_manifest(), right=_right_b_manifest()
-        )
-        assert side_maps.left.vertices == {"Firm": "Party"}
-        assert side_maps.right.vertices == {"Org": "Party"}
+        with pytest.raises(MergeCanonicalConflictError, match="set `into` to 'Party'"):
+            validate_and_complete_canonical_map(
+                op, left=_source_a_manifest(), right=_right_b_manifest()
+            )
 
     def test_a_dangling_both_entry_is_still_refused(self) -> None:
         op = MergeManifestsOp(
@@ -1173,7 +1173,7 @@ class TestCaseTable:
         )
         left = apply_evolution(_source_a_manifest(), canonical_map_to_ops(_CANONICAL))
         with caplog.at_level(
-            logging.INFO, logger="graflo.architecture.evolution.canonical"
+            logging.INFO, logger="graflo.architecture.evolution.naming_graph"
         ):
             validate_and_complete_canonical_map(
                 op,
@@ -1198,17 +1198,19 @@ class TestCaseTable:
         )
         with pytest.raises(MergeIncompleteError, match="vertex name collision") as exc:
             merge_manifests(_source_a_manifest(), right, op)
-        completion = exc.value.completion
+        vertex, relation = exc.value.findings
+        assert "relation name collision" in relation.message
+        (completion,) = vertex.repairs
         assert completion.kind == "declare_equivalences"
         assert completion.vertex_equivalences == (
             {"left": "Deal", "right": "Deal", "into": "Deal"},
         )
-        assert completion.relation_equivalences == (
+        assert completion.relation_equivalences == ()
+        (relation_completion,) = relation.repairs
+        assert relation_completion.relation_equivalences == (
             {"left": "signs", "right": "signs", "into": "signs"},
         )
-        assert completion.to_dict()["vertex_equivalences"] == [
-            {"left": "Deal", "right": "Deal", "into": "Deal"}
-        ]
+        assert exc.value.completion == completion
 
     def test_union_right_unions_shared_names_through_a_cluster(self) -> None:
         right = _manifest(
@@ -1331,8 +1333,7 @@ class TestCaseTable:
         index = resolve_clusters(op, left=_source_a_manifest(), right=right).index
         assert [c.synthesized for c in index.vertices] == [False, False]
 
-    def test_union_right_still_parses_as_fuse_right(self) -> None:
+    def test_fuse_right_names_its_replacement(self) -> None:
         """`fuse` is reserved for records; the policy unions type names."""
-        op = MergeManifestsOp.model_validate({"name_conflict": "fuse_right"})
-        assert op.name_conflict == "union_right"
-        assert op.to_dict()["name_conflict"] == "union_right"
+        with pytest.raises(ValueError, match="union_right"):
+            MergeManifestsOp.model_validate({"name_conflict": "fuse_right"})

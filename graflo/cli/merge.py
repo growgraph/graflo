@@ -1,10 +1,12 @@
 """``graflo merge`` -- the binary merge of two manifests, from the shell.
 
 This verb is ``examples/20-manifest-union/merge.yaml`` applied from the
-shell: the merge op and its canonical maps are one recipe, and merge
-applies them together -- an equivalence may name a class in the manifest's
-own vocabulary or in the canonical one, and the two declarations are checked
-for disagreement before anything is renamed.
+shell: the merge op and its canonical maps are one recipe, resolved together
+in one pass over the two manifests' own names. A refusal names every problem
+at once and prints the naming table -- each merged name, the classes that
+arrive at it, and how -- so the picture is there when it is needed;
+``--dry-run`` prints it too. ``--suggest`` writes an op that settles what can
+be settled without guessing, for review.
 
 Either side may carry no ``schema`` block: a manifest with only an
 ``ingestion_model`` and/or ``bindings`` is a new source wired onto an existing
@@ -33,11 +35,15 @@ from graflo.architecture.evolution.canonical import (
     Scope,
     compose_canonical_maps,
 )
-from graflo.architecture.evolution.equivalence import ClusterConflictError
 from graflo.architecture.evolution.merge import (
     MergeIdentityError,
     MergeNameConflictError,
     merge_manifests,
+)
+from graflo.architecture.evolution.naming_graph import (
+    build_naming,
+    naming_table,
+    suggest_merge_op,
 )
 from graflo.architecture.evolution.ops import MergeManifestsOp
 from graflo.architecture.evolution.preview import (
@@ -137,16 +143,13 @@ def _fold_canonical_maps(
 )
 @click.option(
     "--name-conflict",
-    # `fuse_right` is the pre-rename spelling of `union_right`; both are
-    # accepted here so a recorded command line keeps working.
-    type=click.Choice(["error", "prefix_right", "union_right", "fuse_right"]),
+    type=click.Choice(["error", "prefix_right", "union_right"]),
     default=None,
     help=(
         "Override the op's name_conflict policy: error refuses a name both "
         "sides carry and prints the equivalences to declare; union_right "
-        "unions by name (each shared or alike-spelled name becomes a 1-1 "
-        "equivalence into the left spelling); prefix_right keeps them apart "
-        "under r_ names."
+        "unions classes of exactly the same name (each pair becomes a 1-1 "
+        "equivalence); prefix_right keeps them apart under r_ names."
     ),
 )
 @click.option(
@@ -184,6 +187,17 @@ def _fold_canonical_maps(
     help=(
         "Write the same preview as JSON: nodes, edges, clusters, findings and "
         "the outcome. Written even when merge refuses."
+    ),
+)
+@click.option(
+    "--suggest",
+    "suggest_path",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help=(
+        "Write a merge op that settles every problem a rename or an `into` "
+        "can settle, without guessing, and exit; without --op, a scaffold "
+        "declaring every name both sides share. Review it before use."
     ),
 )
 @click.option(
@@ -226,6 +240,7 @@ def merge(
     dry_run: bool,
     plot_path: Path | None,
     preview_json_path: Path | None,
+    suggest_path: Path | None,
     max_rows: int,
     profile_name: str | None,
     store: Path,
@@ -252,6 +267,15 @@ def merge(
         op = MergeManifestsOp.model_validate(payload)
     except ValueError as exc:
         raise _MergeSetupError(f"{op_path}: invalid merge op -- {exc}") from exc
+
+    if suggest_path is not None:
+        _write_suggestion(
+            suggest_path,
+            left_manifest,
+            right_manifest,
+            op if op_path is not None else None,
+        )
+        return
 
     wants_preview = plot_path is not None or preview_json_path is not None or dry_run
     if plot_path is not None:
@@ -288,15 +312,16 @@ def merge(
         # declaration to paste into the op, so print it as one.
         emit(*outcome_from_exception(exc))
         click.echo(f"merge refused: {type(exc).__name__}: {exc}", err=True)
-        click.echo("completion:", err=True)
-        click.echo(
-            yaml.safe_dump(exc.completion.to_dict(), sort_keys=False).rstrip(),
-            err=True,
-        )
+        if exc.completion is not None:
+            click.echo("completion:", err=True)
+            click.echo(
+                yaml.safe_dump(exc.completion.to_dict(), sort_keys=False).rstrip(),
+                err=True,
+            )
+        _echo_naming(left_manifest, right_manifest, op, err=True)
         raise SystemExit(EXIT_REFUSED)
     except (
         AlignmentConflictError,
-        ClusterConflictError,
         MergeCanonicalConflictError,
         MergeIdentityError,
         MergeNameConflictError,
@@ -306,6 +331,8 @@ def merge(
         # bury it.
         emit(*outcome_from_exception(exc))
         click.echo(f"merge refused: {type(exc).__name__}: {exc}", err=True)
+        if isinstance(exc, MergeCanonicalConflictError):
+            _echo_naming(left_manifest, right_manifest, op, err=True)
         raise SystemExit(EXIT_REFUSED)
 
     emit(outcome_from_manifest(merged))
@@ -327,6 +354,7 @@ def merge(
             click.echo(line)
 
     if dry_run:
+        _echo_naming(left_manifest, right_manifest, op, err=False)
         click.echo("dry run: nothing written")
         return
 
@@ -476,6 +504,64 @@ def _findings_table(preview: MergePreview) -> list[str]:
             f"{where}\n      {finding.message}"
         )
     return lines
+
+
+def _echo_naming(
+    left: GraphManifest, right: GraphManifest, op: MergeManifestsOp, *, err: bool
+) -> None:
+    """The naming table: each merged name, the classes that arrive at it, and how."""
+    result = build_naming(op, left=left, right=right)
+    for kind in ("vertex", "relation"):
+        lines = naming_table(
+            result.graph, kind, findings=result.findings, quiet=kind == "relation"
+        )
+        if not lines:
+            continue
+        click.echo(f"naming ({kind}):", err=err)
+        for line in lines:
+            click.echo(f"  {line}", err=err)
+
+
+def _write_suggestion(
+    path: Path,
+    left: GraphManifest,
+    right: GraphManifest,
+    op: MergeManifestsOp | None,
+) -> None:
+    """Write the suggested op, the two-spelling candidates as comments, and what is left."""
+    suggested = suggest_merge_op(left, right, op)
+    result = build_naming(suggested, left=left, right=right)
+    text = "# Suggested by `graflo merge --suggest`: review before use.\n"
+    text += yaml.safe_dump(suggested.to_dict(skip_defaults=True), sort_keys=False)
+    near = [f for f in result.findings if f.kind == "near_collision"]
+    if near:
+        text += (
+            "# Two spellings of one concept each, never unioned without you; "
+            "declare the ones that are:\n"
+        )
+        for finding in near:
+            for repair in finding.repairs:
+                for payload in (
+                    *repair.vertex_equivalences,
+                    *repair.relation_equivalences,
+                ):
+                    text += f"#   - {json.dumps(payload)}\n"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+    click.echo(f"suggestion: {path}")
+    for kind in ("vertex", "relation"):
+        lines = naming_table(
+            result.graph, kind, findings=result.findings, quiet=kind == "relation"
+        )
+        if lines:
+            click.echo(f"naming ({kind}):")
+        for line in lines:
+            click.echo(f"  {line}")
+    remaining = [f for f in result.blocking if f.kind != "near_collision"]
+    if remaining:
+        click.echo(f"left for you: {len(remaining)}")
+        for finding in remaining:
+            click.echo(f"  - {finding.message}")
 
 
 def _summary(manifest: GraphManifest) -> list[str]:

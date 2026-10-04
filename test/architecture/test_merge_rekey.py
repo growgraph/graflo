@@ -155,9 +155,10 @@ def _merge(
         left if left is not None else _side_a(),
         right if right is not None else _side_b(),
         MergeManifestsOp(
-            vertex_equivalences=list(equivalences),
+            vertex_equivalences=[
+                e.model_copy(update={"allow": ["self_relations"]}) for e in equivalences
+            ],
             canonical_maps={"left": CanonicalMap(vertices={"Ap": "Zp"})},
-            allow_self_relations=True,
         ),
         bump_version=False,
     )
@@ -521,10 +522,13 @@ def _merge_routed(
             {
                 "vertex_equivalences": [
                     VertexEquivalence(
-                        left="X", right="Y", into="Z", identity=_derived_identity()
+                        left="X",
+                        right="Y",
+                        into="Z",
+                        identity=_derived_identity(),
+                        allow=["self_relations"],
                     )
                 ],
-                "allow_self_relations": True,
                 "router_scope": router_scope,
             }
         ),
@@ -663,10 +667,9 @@ class TestRoutedReferences:
                         right="Y",
                         into="Z",
                         identity=["x_id", "y_id"],
+                        allow=["self_relations"],
                     )
                 ],
-                allow_merges=True,
-                allow_self_relations=True,
             ),
             bump_version=False,
         )
@@ -795,11 +798,14 @@ def test_preview_notes_each_resource_merge_turns_into_a_reference() -> None:
         MergeManifestsOp(
             vertex_equivalences=[
                 VertexEquivalence(
-                    left="X", right="Y", into="Z", identity=_derived_identity()
+                    left="X",
+                    right="Y",
+                    into="Z",
+                    identity=_derived_identity(),
+                    allow=["self_relations"],
                 )
             ],
             canonical_maps={"left": CanonicalMap(vertices={"Ap": "Zp"})},
-            allow_self_relations=True,
         ),
     )
     assert preview.outcome.status == "merged"
@@ -818,10 +824,15 @@ def _preview(identity: list[IdentityBranchDecl]):
         _side_b(),
         MergeManifestsOp(
             vertex_equivalences=[
-                VertexEquivalence(left="X", right="Y", into="Z", identity=identity)
+                VertexEquivalence(
+                    left="X",
+                    right="Y",
+                    into="Z",
+                    identity=identity,
+                    allow=["self_relations"],
+                )
             ],
             canonical_maps={"left": CanonicalMap(vertices={"Ap": "Zp"})},
-            allow_self_relations=True,
         ),
     )
 
@@ -855,11 +866,14 @@ def test_a_merge_that_pins_a_left_reference_is_recordable() -> None:
     op = MergeManifestsOp(
         vertex_equivalences=[
             VertexEquivalence(
-                left="X", right="Y", into="Z", identity=_derived_identity()
+                left="X",
+                right="Y",
+                into="Z",
+                identity=_derived_identity(),
+                allow=["self_relations"],
             )
         ],
         canonical_maps={"left": CanonicalMap(vertices={"Ap": "Zp"})},
-        allow_self_relations=True,
     )
     merged = merge_manifests(left, right, op, bump_version=False)
     assert collect_endpoint_selectors(_pipeline(merged, "r_ap")) == [("Z", "by_x_id")]

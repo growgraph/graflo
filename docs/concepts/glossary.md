@@ -298,7 +298,7 @@ A declaration in a union that vertex types on the two sides are one type, writte
 
 ### cluster
 
-One equivalence taken as a whole: its members on both sides and the merged name. Error messages use the word, as in `ClusterConflictError`, raised when a type appears in two equivalences or two equivalences share a merged name. See [Merging manifests](schema/merging_manifests.md).
+A group of a union taken as a whole: the types its equivalences name, every type a canonical map merges with one of them, and the one merged name they take. Error messages use the word, as in `unnamed vertex cluster`. See [Merging manifests](schema/merging_manifests.md#a-vocabulary-that-merges-several-types).
 
 ### identity branch
 

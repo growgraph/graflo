@@ -1,8 +1,9 @@
 # Merge internals
 
 This page is for people who change the code behind `merge_manifests` and its
-preview. It records the order in which a union runs and why, how declared maps
-and equivalences are resolved into one rename per side, the words the code uses
+preview. It records the order in which a union runs and why, how the
+vocabulary, the equivalences and `renames` are resolved into one rename per
+side, the words the code uses
 for combining things, and how a derived identity is lowered to ops. What a
 user declares and sees is on [Merging manifests](../concepts/schema/merging_manifests.md).
 
@@ -12,21 +13,24 @@ user declares and sees is on [Merging manifests](../concepts/schema/merging_mani
 `graflo/architecture/evolution/merge.py`). The comments give the reason where
 the position matters.
 
-1. **Fold the declared maps** per side: the `both` map under the `left` map, and
-   under the `right` map (`fold_declared_maps`, through
+1. **Resolve the names** (`resolve_clusters`, through `build_naming` in
+   `naming_graph.py`): the vocabulary, the equivalences and `renames` in one
+   pass over the sides' own names. Every problem found is raised together as
+   one `MergeNamingError`. The result is one cluster per group, over its closed
+   member set, and one composite rename per side.
+2. **Fold the vocabulary** happens inside it: the `both` map under the `left`
+   map, and under the `right` map (`fold_declared_maps`, through
    `compose_canonical_maps`). Two maps that disagree on a source, or where one
    moves the other's target, are refused.
-2. **Resolve the clusters** against those maps (`resolve_clusters`): the members
-   in each manifest's own spelling, one merged name each, and one composite
-   rename per side.
-3. **Synthesize** a cluster for every name both sides still carry, as
-   `name_conflict` directs, and resolve again, so synthesized clusters are
-   ordinary clusters from here on.
+3. **Synthesize** a group for every exact name both sides still carry under
+   `union_right`, and name the groups again, so synthesized groups are
+   ordinary groups from here on.
+
 4. **Capture each member's key and property names** before the rename. Once the
    members share one name, the schema no longer says which key came from which
    member, and the merged identity is decided by comparing exactly those.
-5. **Rename the right side's resources** by `resource_renames`, then by the
-   collision policy.
+5. **Rename each side's resources** by `renames.<side>.resources`, then the
+   right side's by the collision policy.
 6. **Snapshot both sides.** Also before the rename: the rename rewrites a
    router's `type_map` values to the merged name, after which nothing says
    which router key produced which member. A derived identity needs that.
@@ -57,87 +61,112 @@ the position matters.
 14. **Apply the op's `name` and `target_namespace`** (`_apply_merge_naming`),
     then `finish_init`.
 
-## How maps and equivalences resolve
+## How names resolve
 
-`resolve_clusters` turns the declared maps and the equivalences into one
-`CanonicalizeOp` per side, applied before the union by name. The terms the code
-uses:
+`build_naming` (`graflo/architecture/evolution/naming_graph.py`) builds one
+graph and checks it; it never raises, so the preview reads the same result.
 
-| Term | Type | Meaning |
-|---|---|---|
-| declared map | `CanonicalMap`, folded into `DeclaredMaps` | a map the author wrote, in `op.canonical_maps[scope]` or passed to `merge_manifests` |
-| cluster | `Cluster`, resolved from `ClusterSpec` | one equivalence, resolved: its members per side in the manifests' own spelling, and its merged name |
-| cluster map | | per side, every member onto its merged name, the merged name itself included, so the op merges into it rather than refusing an occupied target |
-| composite map | `SideMaps`, one `CanonicalizeOp` per side | the cluster map plus every declared entry that applies to a non-member. A relabel, not a vocabulary: two clusters may chain when one merged name is renamed by another declaration |
-| fixed point | | a canonical target; no map and no cluster may move it |
-| opinion | | what the declared maps say a member's canonical name is: its target, or itself when it is a fixed point |
-| satisfied entry | | a declared entry whose source is absent and whose target is present on a side; taken as already applied and logged |
-| dangling entry | `DanglingEntry` | a declared entry matching nothing on any side it could apply to |
-| synthesized cluster | `Cluster.synthesized` | a cluster the union declares itself under `union_right` |
-| completion | `Completion`, on `MergeIncompleteError` | the extension that would make an incomplete declaration consistent |
+- **Nodes** are the types and relations each side declares, under their own
+  names. They are never renamed before the union, which is what keeps
+  per-member maps and router guards meaningful.
+- **Edges** come from three declarations: a vocabulary entry (`left:Press →
+  Machine`), an equivalence's membership, and a `renames` entry. `union_right`
+  adds edges between exact same names.
+- **Groups** are the components of the merging edges: a vocabulary sending
+  several sources to one target (acknowledged by its `allow_merges`), an
+  equivalence, and `union_right`. A component holding an equivalence is a
+  cluster. Its members are the closed set, and `declared_left` /
+  `declared_right` keep the ones the equivalences name.
+- **Names**: a group takes its equivalences' `into`, never translated, else the
+  vocabulary's target, else the one spelling its members share. Anything else
+  takes its `renames` target, else its vocabulary target, else its own name.
+  The op over the vocabulary is a note (`vocabulary_override`), not a refusal.
 
-Canonicalizing a side first and then declaring clusters in canonical names is
-the same function as declaring them in raw names on an op that carries the map,
-because renames compose; `merge_manifests` accepts either. Canonicalizing the
-union afterwards is a different function in general (it can collapse two merged
-names) and is a separate `CanonicalizeOp` on the result.
+The checks are predicates on that graph:
 
-One rule underlies every refusal: the maps and the equivalences must agree on
-where a name goes, and a canonical target is a fixed point neither may move.
+| Rule | Finding |
+|---|---|
+| every merged name is reached by one group or one ungrouped name | `occupied_into`, `shared_into`, or `incomplete` when the stray arrives by a vocabulary entry |
+| a group has one name | `unnamed_cluster`, `disagreement` |
+| a name is declared in one place | `cluster_overlap` (one type in two equivalences), `double_home` (a `renames` entry for a group member) |
+| every declared name exists | `unknown_member`, `dangling` |
+| a group has one identity | `identity_disagreement` |
+| a vocabulary-joined member can fill a property-only key | `identity_coverage`, repaired by a `local_key` branch that makes the key a funnel |
+| a group's merge is acknowledged | `self_relation`, `observation_fusion`; see below |
+| a name both sides carry, no group | `name_collision` under `error`, synthesized under `union_right`, prefixed later under `prefix_right` |
+| two spellings of one name | `near_collision` under `error` and `union_right`; kept apart under `prefix_right` |
+
+Each finding carries the names it is about and its repairs, safest first:
+`rename_away`, `set_into`, `extend_cluster` (which fuses entities),
+`add_key_source`, `acknowledge`, `declare_equivalences`. `suggest_merge_op`
+applies the first repair an op edit can express, repeatedly; it never applies
+`add_key_source` or `acknowledge`, because each decides which records fuse.
+The attribute-level checks (`check_property_fields_exist`,
+`check_attribute_fixed_points`, `check_property_maps_against_manifest` in
+`canonical.py`) run per group, and their refusals are collected as findings.
+
+Every finding's message starts with its `check` phrase. A `MergeNamingError`
+carries its findings, so the preview classifies it by their kinds
+(`MergeOutcome.kinds`); `kind_for_check` reads only the phrases of refusals
+raised after naming.
+
+### Lowering a group
+
+Each cluster's `declaration` is one `VertexEquivalence` over the closed sets:
+the property equivalences of all its equivalences, a bare property name
+expanded over the members its own equivalence lists, and the one `identity`.
+When that identity derives, a member keeps its own key behind `side:Type` for
+every resource that produces it and that its stepped branches do not key for
+it: a resource whose entries are keyed by other members, a member-keyed local
+key that skips it, or, for a member the vocabulary joins, a resource with no
+entry at all. A member an equivalence lists whose resource has no entry is
+left to the reference conversion of step 12. Each automatic key is an
+`auto_local_key` note. Downstream code iterates `cluster.members(side)` and
+needs nothing else.
+
+The composite rename per side sends every node of a multi-node component, self
+entries included, onto the component's name, and every renamed singleton onto
+its new name, all in one `CanonicalizeOp`. A chain or a swap therefore resolves
+without an intermediate name. A recorded declaration in removed keys is
+translated on read by `lift_recorded_merge_op` in `merge_commit.py`.
 
 ### Per name
 
-For one name on one side, with `E` its cluster and `C` the declared entry that
-names it:
-
 | Case | Outcome |
 |---|---|
-| neither | unchanged |
-| `C` only, target free or declared by a self entry | carried into the composite map |
-| `C` only, target an unmoving non-member without a self entry | refused by the op (occupied target) |
-| `E` only | onto the merged name |
-| `E` and `C` agree; `E` without `into` and `C` names a member; `into` itself in the domain of `C` | onto the merged name, which `C` supplies or translates |
-| `E` names a member the side does not declare | `UnknownMemberError`, naming another spelling that denotes the same concept when there is one |
-| `E` with no `into`, no mapped member and no shared spelling | refused as an unnamed cluster |
-| contradiction: `E` and `C` disagree; `E` moves a fixed point; a property equivalence renames a canonical attribute | `MergeCanonicalConflictError`, naming both declarations |
-| ambiguity: a canonical name denotes two members; maps disagree on translating `into` | `MergeCanonicalConflictError` |
-| incomplete: `C` sends a non-member onto a merged name | `MergeIncompleteError`; the completion is the cluster extended with that member |
-| one-sided `both` entry | applied where it matches |
-| `both` entry over a merged name | a translation of `into`, not a dangling entry |
-| dangling | refused; one refusal lists every dangling entry on the side. It outranks an incomplete refusal on the same side, since a name that is absent is the more basic mistake |
-| dangling, with `allow_dangling_entries` | dropped and logged |
-| satisfied | no-op, logged |
-| `properties` keyed by a merged or canonical type | refused; the map is keyed by the source type |
+| no declaration | unchanged |
+| a vocabulary entry or a `renames` entry, target free | renamed |
+| either, target an unrelated name kept on that side | `occupied_into` |
+| a group member | onto the group's name |
+| a group member also in a vocabulary group | the whole vocabulary group joins the cluster |
+| a member spelled by a canonical name | every source the vocabulary sends there |
+| `into` differing from the vocabulary's name | `into`, with a note |
+| a vocabulary entry whose source is an `into` | dangling, with a hint to set `into` instead |
+| satisfied: source absent, target present | no-op, a `satisfied` note |
+| dangling | one finding per entry; dropped and logged with `allow_dangling_entries` |
+| `properties` keyed by a merged name | refused; the map is keyed by the source type |
 | `properties` renaming a field the member does not declare, or onto a field it keeps | refused; a property rename cannot merge two fields |
-| chain or swap inside one map | refused when the `CanonicalMap` is built |
+| a property equivalence renaming a canonical attribute | `property_retarget` |
+| chain or swap inside one `CanonicalMap` | refused when the map is built; written with `renames` instead |
 
-### Across the two sides
+Two declared maps chaining (`{Z: Q}` and `{X: Z}`) are refused by
+`compose_canonical_maps`, in either order. Resource and connector names are
+matched exactly; `union_right` behaves as `error` for them. Two property names
+that key alike are never combined.
 
-Decided after each side's composite map has been applied:
-
-| Case | Outcome |
-|---|---|
-| a name both sides carry, no cluster | `error`: `MergeIncompleteError` whose completion declares the equivalence in each side's own spelling; `union_right`: a synthesized cluster; `prefix_right`: `r_<name>` |
-| two spellings of one name (`OrderLine` / `order_line`) | `error`: `MergeNameConflictError`; `union_right`: a synthesized cluster under the left spelling; `prefix_right`: kept apart |
-| a resource or connector name both sides carry | matched exactly only; `union_right` behaves as `error` |
-| two property names that key alike | never combined; only exact spellings are |
-| two declared maps chaining (`{Z: Q}` and `{X: Z}`) | refused by `compose_canonical_maps`, in either order |
-
-A synthesized cluster goes through the same identity reconciliation as a
-declared one: two same-named types whose keys disagree raise
-`MergeIdentityError`, and the right side's properties are unioned rather than
-dropped.
-
-`ClusterConflictError` covers the shape of the declarations: a type claimed by
-two clusters, two clusters sharing one merged name, a merged name occupying an
-existing non-member type. It is raised unwrapped, before any rename, because an
-op whose own declarations conflict is broken whatever the maps say.
+A synthesized group goes through the same identity reconciliation as a declared
+one: two same-named types whose keys disagree raise `MergeIdentityError`, and
+the right side's properties are unioned rather than dropped.
 
 The observation-fusion guard is judged per accumulator slot, which is what the
 runtime fuses on: a vertex step stores at its `role` sub-slot when it has one
 and at the bare level otherwise, and a router at its `role` (or `type_field`).
-`allow_self_relations` and `allow_observation_fusion` are forwarded from the op
-to the per-side `CanonicalizeOp`.
+Both guards are judged per group and per side in the naming pass, on that
+side's manifest before the relabel (`merge_self_relations`, `merge_fused_slots`
+in `apply.py`). A group accepts what one of its equivalences lists in `allow`.
+A side's vocabulary accepts, through `allow_self_relations` and
+`allow_observation_fusion`, only the merges it makes itself. The per-side
+`CanonicalizeOp` then sets both flags, since the judgement is already made.
 
 ## Words for combining things
 
@@ -148,10 +177,10 @@ Five verbs recur in the code, in seven senses:
 | merge | join two manifests of unrelated lineage by declared equivalence (the union) | `merge_manifests`, `MergeManifestsOp` |
 | union | assemble two collections by name: the outer step | `_union_transforms`, `_union_schema`, `_union_bindings` |
 | merge | combine the two definitions one name has, refusing conflicts: the inner step | `merge_vertex_models`, `merge_edge_pair`, `merge_semantics` |
-| merge (collapse) | send several distinct types or relations to one name | `MergeVerticesOp`, `MergeEdgesOp`, `allow_merges` |
+| merge (collapse) | send several distinct types or relations to one name | `MergeVerticesOp`, `MergeEdgesOp`, `CanonicalMap.allow_merges` |
 | merge3 | reconcile two descendants of a common ancestor | `merge_three_way`, `MergeResult`, `MergeConflict` |
 | fuse | two records becoming one node when cast | `allow_observation_fusion`, a derived identity |
-| collapse | cluster members arriving at their merged name | `VertexEquivalence`, `CanonicalizeOp` |
+| collapse | group members arriving at their merged name | `VertexEquivalence`, `CanonicalizeOp` |
 
 Union and merge are the two levels of one operation: the union walks the names,
 and the merge is what it does at a name both sides carry. `_union_transforms`
@@ -162,8 +191,8 @@ earlier, so the two lists only concatenate.
 
 Collapse and merge at a name share one implementation: `merge_vertex_models` is
 called by both `MergeVerticesOp` and the union, because at the field level they
-are the same work. What differs is the author's claim about the inputs, and
-`allow_merges` is where it is made.
+are the same work. What differs is the author's claim about the inputs: an
+equivalence's member list, or a vocabulary's `allow_merges`.
 
 Inside `evolution/merge3.py` and `plot/merge3.py`, a bare "merge" is the
 three-way merge; everywhere else it is the union. The qualifier is spelled out
@@ -179,25 +208,26 @@ The names follow the generic model-management operators: Merge takes two
 models plus correspondences, and Compose takes two mappings. `compose` names
 one thing in the package, `compose_canonical_maps`.
 
-Some inputs accept a second spelling: the `name_conflict` value `fuse_right`
-reads as `union_right`, `allow_observation_fusion` accepts `allow_row_fusion`,
-and several ops accept other field names (`vertices` for `renames` on
-`rename_vertices`, for example). Each alias is listed in the field's
-description.
+Some unary ops accept a second spelling (`vertices` for `renames` on
+`rename_vertices`, `allow_row_fusion` on `merge_vertices`, for example); each
+alias is listed in the field's description. `MergeManifestsOp` accepts none: a
+removed key is refused with its replacement named.
 
 ## How the preview stays complete
 
-`preview_merge` is not a second implementation of the rules: each check calls
-the function the union itself calls, one declaration or one map entry at a time,
-so a refusal on one unit does not hide the next. That includes the schema
-union: the preview runs `merge_vertex_models` and `merge_edge_pair` per cluster.
+`preview_merge` is not a second implementation of the rules. It reads the
+naming graph and findings of `build_naming`, the same pass the union raises
+from, and then runs the schema-union kernels itself, one group at a time
+(`merge_vertex_models`, `merge_edge_pair`), so a refusal on one group does not
+hide the next. A `MergeNamingError` that lists several problems marks each
+matching finding as a refusal.
 
 The tests hold it to one invariant: whatever the union refuses, the preview has
 a finding of a matching kind. It fails closed. A refusal the preview cannot
 classify fails the suite instead of being skipped, so a new rule cannot be added
-without a finding kind to report it under. A refusal is classifiable by the
-`check` phrase every `Refusal` in the merge and union path carries, mapped to a
-finding kind in `preview.py`.
+without a finding kind to report it under. A naming finding carries its kind;
+any other refusal is classified by the `check` phrase every `Refusal` in the
+union path carries, mapped to a finding kind in `preview.py`.
 
 ## How a derived identity is lowered
 

@@ -6,160 +6,108 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.16.0]
+
+### Breaking
+
+- **Union naming** resolves in one pass over each manifest's names; equivalence groups include all
+  types a canonical map merges; per-member keys may name any type in the group. **`into`** is not
+  rewritten by a canonical map.
+- **`MergeManifestsOp`** drops `allow_merges`, self-relation/fusion flags, `resource_renames`, and
+  legacy aliases — use member lists, `allow` on equivalences or canonical maps, and
+  `renames.right.resources`; recorded recipes translate on read.
+- **`allow` and `name_conflict`** are scoped per group; `union_right` unions identical names only
+  (alternate spellings are refused).
+- **Merge naming refusals** are a single **`MergeNamingError`** with typed findings and repairs;
+  legacy cluster/naming helpers are removed.
+
+### Added
+
+- **`renames: {left, right}`** on `MergeManifestsOp` for types, relations, properties, and
+  resources outside equivalences (reuse, chain, or swap names).
+- **Funnel merge keys:** mapped types without a resource key keep `side:Type` when needed;
+  property-only keys refuse unmappable types with a `local_key` repair hint.
+- **`MergeOutcome.kinds`**, **`build_naming`**, **`naming_table`**, **`suggest_merge_op`**;
+  **`graflo merge`** prints the naming table on refusal and `--dry-run`; **`--suggest FILE`**
+  writes a suggested op.
+
 ## [1.15.1]
 
 ### Changed
 
-- **Content hashes (`CANON_VERSION` is now `graflo/canon@4`).** 1.15.0 changed the
-  `Index.unique` default, which moved the hash of every manifest declaring an index.
-  Commits recorded before this release have outdated trees; run `graflo rehash --base`.
+- **Content hashes** (`CANON_VERSION` `graflo/canon@4`): re-run **`graflo rehash --base`** on
+  histories recorded before this release (1.15.0 index default moved manifest hashes).
 
 ### Added
 
-- `graflo rehash --base PATH` (or `ROOT=PATH` per root) recomputes recorded trees as well
-  as ids; `rehash_trees(history, bases)` does the same in Python.
-- `graflo verify` names `graflo rehash --base` when a replay fails.
+- **`graflo rehash --base`** recomputes commit trees and ids; **`rehash_trees`** in Python;
+  **`graflo verify`** points here when replay fails.
 
 ### Fixed
 
-- A declared non-unique edge index over an edge identity's fields replaced the unique
-  identity index; the identity index is unique again.
-- `graflo rehash` gave every naming root the same id; a root keeps its id.
+- Non-unique edge indexes no longer replace the unique identity index on an edge.
+- **`graflo rehash`** preserves distinct ids per naming root.
 
 ## [1.15.0]
 
 ### Breaking
 
-- **Indexes are not unique by default.** `Index.unique` defaults to `false`; add `unique: true`
-  where repeated values must be rejected. Identity indexes stay unique.
-- **A NebulaGraph VID starts with its tag**: `<tag>::<identity values>`. Re-write spaces written
-  by earlier versions.
-- **A PostgreSQL edge table stores every identity field of a composite endpoint**, as
-  `source__<field>` / `target__<field>` columns. Re-write such edge tables; a one-field identity
-  keeps `source_id` / `target_id`.
-- **`KafkaDataSource` commits only acknowledged batches.** Code that reads it directly calls
-  `acknowledge(batch_index)` and `close()`.
-- **Stricter manifests.** Refused at load: a filter entry with an unknown key, no operator or
-  several logical operators; a SQL condition with no `field`; `time_filter` on a
-  `FileConnector` (`date_field` is removed); a non-empty `merge_collections`; an edge step with
-  no `relation` where several are declared; a `fulltext` index on a target other than ArangoDB;
-  TigerGraph `run_mode: run_only`; a hash- or funnel-keyed vertex that declares a property `id`
-  and no `identity`.
-- **Unbuildable sources fail the run** under `strict_registry` (the default): an API or Kafka
-  connector without a connection configuration, a table connector without a PostgreSQL one, a
-  SPARQL connector without `endpoint_url` or `rdf_file`.
-- **A failed SQL query or API request raises** instead of ending the source early.
-- **`<PREFIX>SCHEMA_NAME` is read from the environment**; an unprefixed `SCHEMA` or
-  `SCHEMA_NAME` is not.
-- **`graflo ingest` has no `--source-path`.**
-- **`build_revert_commit` takes `before=`**, the manifest the reverted commit was applied to.
+- **`Index.unique`** defaults to `false` (identity indexes stay unique).
+- **NebulaGraph VIDs** are `<tag>::<identity values>` — re-write existing spaces.
+- **PostgreSQL composite edge endpoints** use `source__*` / `target__*` columns — migrate tables
+  (single-field identities keep `source_id` / `target_id`).
+- **`KafkaDataSource`:** commit only after **`acknowledge(batch_index)`**; call **`close()`**.
+- **Stricter manifest validation** at load (filters, SQL/file connectors, edge steps, indexes,
+  TigerGraph run mode, hash/funnel keys without identity).
+- **`strict_registry` (default):** runs fail when a connector cannot be built; SQL/API errors
+  propagate instead of stopping the source quietly.
+- **`<PREFIX>SCHEMA_NAME` only** — unprefixed `SCHEMA` / `SCHEMA_NAME` are ignored.
+- **`graflo ingest`:** `--source-path` removed; **`build_revert_commit`** takes **`before=`**.
 
 ### Added
 
-- `GraphEngine.delete_vertices` and `delete_edges`: remove vertices with their edges, or edges,
-  by identity. Every backend but the file backend (`ConnectionCapability.INSTANCE_DELETE`).
-- `graflo.filter.BoundParams`: renders filter values as driver placeholders (`@f0` in AQL, `$f0`
-  in Cypher, `%(f0)s` in SQL) and collects the values.
-- `FilterExpression.matches(doc)` evaluates a filter in Python; `graflo.filter.onto.render_conjunct`
-  renders one as an operand of `AND`.
-- `TableConnector.build_query(extra_filters=...)`, `graflo.filter.sql.datetime_range_filter` and
-  `SelectSpec.effective_base_alias()`.
-- `GraphEngine.ingest(data_source_registry=...)`, also on `Caster.ingest`: the sources to read,
-  by resource.
-- `AbstractDataSource.acknowledge(batch_index)` and `close()`, called by the ingest once a batch
-  is written and when the source is done.
-- `SparqlConnector.same_as` (`collapse` | `keep`) and `SparqlConnector.typed_objects`, also on the
-  RDF data sources.
-- SQL schema inference: `entity_tables`, and `SchemaIntrospectionResult.skipped_tables` and
-  `.reference_edges`.
-- Manifest ops: `replace_resources`, which `diff_manifests` emits for a pipeline edit;
-  `ProjectManifestOp.partial_resources` (`trim` | `drop`); `checkout_parent(base, history,
-  commit_id)`.
-- `aggregate` on the file backend.
-- `Connection.export_graph_container`, and `graflo.db.resolve.present_documents` /
-  `absent_documents` for backends built on `fetch_docs`.
-- A warning naming each edge the writer drops because the schema does not declare it.
-- A `tests` workflow that runs the suites needing no database on every pull request.
+- **`GraphEngine.delete_vertices` / `delete_edges`** by identity (all backends except file).
+- **Filters:** **`BoundParams`**, **`FilterExpression.matches`**, SQL **`extra_filters`** and
+  **`datetime_range_filter`**, **`SelectSpec.effective_base_alias()`**.
+- **Ingest:** optional **`data_source_registry`**, source **`acknowledge`** / **`close`**.
+- **RDF/SQL inference:** **`SparqlConnector.same_as`**, **`typed_objects`**, **`entity_tables`**,
+  skipped tables and reference edges on introspection.
+- **Manifest/evolution:** **`replace_resources`**, **`ProjectManifestOp.partial_resources`**,
+  **`checkout_parent`**; file-backend **`aggregate`**; **`export_graph_container`** and document
+  presence helpers.
+- Warning when the writer drops edges not declared in the schema; CI workflow for no-DB test suites.
 
 ### Changed
 
-- Several writers can write one file-backend directory at once, in one process or several;
-  `INDEX.json` is updated under a lock on `.lock`.
-- A `.tsv` file is read with a tab separator unless `sep` is given.
-- `429` is in an API connector's default `retry_status_forcelist`.
-- SQL schema inference makes a foreign key of an entity table an edge, and logs every table it
-  leaves out, with the reason.
-- RDF schema inference gives the subject and the objects of each property their own role, skips
-  anonymous classes, refuses two classes sharing a local name, and orders its output by IRI.
-- An edge step with no `relation` takes the one declared between its endpoints.
-- A vertex weight goes on every edge its step writes for the record.
-- A resource whose edge step takes an endpoint from a role is cast in-process, not in worker
-  processes.
-- Removing a resource removes the connectors that served only it.
-- Three-way merge reads resource pipelines and the fields they map, so an edit on one side to
-  what the other side's pipeline uses is a conflict.
-- `graflo log` names the verb that joins its heads: `merge3` or `merge`.
-- `MigrationRecord.operations` holds the operations applied; earlier records still load.
-- Neo4j, Memgraph and FalkorDB answer `fetch_present_documents` by batch position, and
-  `insert_return_batch` raises on all three.
-- Traversal reads edge endpoints under each backend's own names and leaves them out of the edge
-  properties.
-- uv is pinned with `[tool.uv] required-version`. The `plot` extra requires `pygraphviz>=2.0,<3`,
-  whose wheels bundle Graphviz.
-- The docs are built with ProperDocs (`properdocs.yml`, `properdocs build` / `serve`), with a new
-  theme and landing page, and API reference pages titled by module name.
+- **File backend:** concurrent writers with locked **`INDEX.json`**; **`.tsv`** default tab separator.
+- **Inference and casting:** SQL FK → edges with skip logging; RDF roles and class rules; default
+  single relation on edge steps; vertex weights on all edges from the step; role-based edge casting
+  in-process; resource removal drops orphan connectors.
+- **Merge/evolution:** three-way merge conflicts on pipeline field usage; **`graflo log`** labels
+  **`merge3`** vs **`merge`**; **`MigrationRecord.operations`**.
+- **Backends:** batch **`fetch_present_documents`** / **`insert_return_batch`** on Neo4j, Memgraph,
+  FalkorDB; traversal endpoint field names; API connector retries **`429`**.
+- **`plot` extra:** `pygraphviz>=2.0,<3`; docs built with **ProperDocs** and module-titled API pages.
 
 ### Fixed
 
-- `OR` beside another condition is parenthesised wherever conditions are joined with `AND`, in
-  SQL sources and in every backend's edge lookups.
-- `IN` lists every member in SQL and is always a list in AQL, Cypher, nGQL and GSQL. A TigerGraph
-  REST filter refuses `IN`.
-- A `select` view without joins no longer qualifies conditions with an undeclared alias, and a
-  nested `AND` / `OR` survives qualification under joins.
-- A run's date range applies when the connector names its date column.
-- `max_items` bounds the SQL query, not only the rows read.
-- The CSV reader handles quoted newlines and separators other than a comma, header included.
-- `Resource.encoding` is used when reading files.
-- A Python operator spelling (`operator: __eq__`) is no longer written into queries; a literal
-  boolean or date renders in the target's syntax.
-- ArangoDB `fetch_edges` with `filters` sent `FILTER FILTER`, and matched a far-end type with a
-  `LIKE` that read `_` as a wildcard.
-- NebulaGraph `fetch_present_documents` escapes the VID.
-- A filter on a document with a field named `kind` failed.
-- `Neo4jConfig` completes `bolt://` and `neo4j://` URIs with the Bolt port, 7687 by default.
-- An API connector with no credentials sent an empty `Authorization: Bearer` header.
-- `graflo ingest` failed at start-up, and with `--data-source-config-path` wrote with the default
-  flavor.
-- Kafka offsets were committed before their batch was written. Delivery is now at least once.
-- An inferred edge between two vertices of one type could start at the nested vertex.
-- A vertex weight's `filter` tested field names and raised `KeyError`; a vertex weight dropped the
-  edges beyond its number of weight vertices; `extra_weights` with `vertex_weights` raised on the
-  first batch.
-- Two cast threads could register the same new edge twice, or fail assembling a record while the
-  other registered one; an edge type registered for one record was inferred for the records after
-  it.
-- A multi-valued RDF object property dropped the record; an inferred RDF resource linked the
-  wrong vertices; an object of a property with several ranges was linked under every range.
-- A blank node got a new key on every read.
-- A file backend written with `target_flavor_hint` read back empty, and a walk over it found no
-  edges.
-- Memgraph edge indexes were created as label indexes.
-- PostgreSQL endpoints sharing their first identity field were one endpoint.
-- `graflo revert` failed on every commit.
-- `diff_manifests` removed a resource twice, and declared a synthetic key before the identity
-  change that creates it.
-- Removing an edge missed edge steps written flat or without `type`, and left empty steps behind.
-- An invalid `transform` step reported the wrong rule, and an invalid `edge` step listed the other
-  step kinds' complaints.
-- API reference edit links, the docs workflow on `examples/` changes, and the opt-in test gate,
-  which skipped unmarked tests whose parameter id matched a marker name.
+- **Filters and SQL:** parenthesised **`OR`**, correct **`IN`** rendering, join alias qualification,
+  date-range and **`max_items`** on queries, CSV quoting/separators, **`Resource.encoding`**, safe
+  operator and literal rendering.
+- **Backend queries:** ArangoDB edge filters, Nebula VID escaping, documents with a **`kind`**
+  field, Neo4j URI default port, empty API **`Authorization`** header.
+- **Ingest and Kafka:** startup and flavor with **`--data-source-config-path`**; at-least-once Kafka
+  commits after write.
+- **Casting and RDF:** vertex weights and threaded edge registration; multi-valued RDF properties,
+  blank-node keys, **`target_flavor_hint`** file reads, Memgraph edge indexes, PostgreSQL composite
+  endpoints.
+- **Evolution CLI:** **`graflo revert`**, **`diff_manifests`** resource/identity ordering, edge
+  removal coverage, clearer invalid step errors; docs edit links and CI test selection.
 
 ### Security
 
-- Filter values reach ArangoDB, Neo4j, Memgraph, FalkorDB and PostgreSQL as bound parameters in
-  `fetch_docs`, `fetch_edges`, `aggregate` and the lookups built on them. NebulaGraph and
-  TigerGraph keep literals and refuse a value with no safe literal form.
+- Filter values bind as parameters on ArangoDB, Neo4j, Memgraph, FalkorDB, and PostgreSQL; Nebula
+  and TigerGraph use literals and refuse unsafe values.
 
 ## [1.14.1]
 

@@ -1,44 +1,26 @@
-"""Equivalence clusters over merge-time vertex/relation mappings.
+"""The resolved shape of a merge's groups.
 
-A :class:`~graflo.architecture.evolution.ops.VertexEquivalence` (or
-:class:`~graflo.architecture.evolution.ops.RelationEquivalence`) declares one
-n-ary cluster directly: ``left`` / ``right`` name one or more members on each
-side, collapsing onto one merged name. :func:`index_clusters` is the
-consistency check over the *declared* clusters of one
-:class:`~graflo.architecture.evolution.ops.MergeManifestsOp` — there is no
-connected-component search left to do (one declaration *is* one cluster); it
-validates that the declarations do not overlap or collapse into each other by
-accident:
+A :class:`Cluster` is one group as merge applies it: its members on each side
+in the manifests' own names, closed over every class a vocabulary merges with
+one of them, and the one name the group takes. A :class:`ClusterIndex` holds
+every group of one merge op. Both are built by
+:mod:`~graflo.architecture.evolution.naming_graph`, which also owns every rule
+about which groups may exist; this module only carries the result.
 
-* no ``(side, name)`` may be claimed by two declarations — that is the
-  author's job to state as one cluster, not two;
-* two declarations must not share one merged name — sharing one collapses
-  them into one merged class, which must be spelled as one n-ary cluster so
-  it is visible to review, not left implicit;
-* a merged name that already exists as a *different*, non-member class on a
-  side must not be silently merged into — add it to the cluster explicitly.
-  The one exception is a name that *another* declaration renames away: the
-  lowered map applies in one step, so the side lands on a vacated name whether
-  it is one member or a merge.
-
-Members and merged names are resolved before indexing — ``into`` may be
-omitted and a member may be spelled by its canonical name — by
-:func:`~graflo.architecture.evolution.canonical.resolve_clusters`, which hands
-the resolved shapes in as :class:`ClusterSpec`\\ s. Nodes are ``(side, name)``
-pairs so a class named ``Org`` on the left is never confused with ``Org`` on
-the right.
+Nodes are ``(side, name)`` pairs, so a class named ``Org`` on the left is never
+confused with ``Org`` on the right, and :func:`subject` spells them as the ids
+refusals and previews point at.
 """
 
 from __future__ import annotations
 
-from collections.abc import Collection, Iterable, Sequence
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Generic, Literal, TypeVar
 
-from graflo.architecture.refusal import Refusal
 from graflo.architecture.schema.naming import canonical_slug
 
-from .ops import MergeManifestsOp, RelationEquivalence, VertexEquivalence
+from .ops import RelationEquivalence, VertexEquivalence
 
 Side = Literal["left", "right"]
 
@@ -72,62 +54,15 @@ def subject(scope: SubjectScope, name: str, attr: str | None = None) -> str:
     return f"{scope}:{name}" if attr is None else f"{scope}:{name}.{attr}"
 
 
-class ClusterConflictError(Refusal):
-    """Two or more equivalence declarations conflict over cluster membership.
-
-    ``check`` names the rule that refused and ``subjects`` the names it is
-    about, as :func:`subject` ids -- see :class:`.Refusal`.
-    """
-
-
-class UnknownMemberError(Refusal):
-    """An equivalence names a member the manifest on that side does not declare.
-
-    Its own type because it is the one refusal here that is nearly always a
-    typo rather than a disagreement between two declarations, and a caller
-    classifying refusals cannot key on a bare ``ValueError``.
-
-    Derives ``check`` and ``subjects`` rather than taking them from the caller:
-    there is only one rule it can be an instance of, and only one name it can
-    be about.
-    """
-
-    def __init__(self, message: str, *, side: Side, kind: Kind, member: str) -> None:
-        super().__init__(
-            message,
-            check=f"unknown {kind} member",
-            subjects=(subject(side, member),),
-        )
-        self.side = side
-        self.kind = kind
-        self.member = member
-
-
-@dataclass(frozen=True)
-class ClusterSpec:
-    """One declaration's resolved shape: members in the manifests' own names, and its merged name.
-
-    ``aliases`` records, per side, every other name a member answers to —
-    the canonical name it was declared by, or the one the canonical map gives
-    it — so the per-member maps (property equivalences, member-keyed
-    derivation sources) may be keyed by either the member's own name or its
-    canonical one. ``declared_into`` is
-    the merged name as the author spelled it, before any canonical map
-    translated it; ``synthesized`` marks a cluster merge created itself for
-    a same-name pair under ``name_conflict="union_right"``.
-    """
-
-    left: tuple[str, ...]
-    right: tuple[str, ...]
-    into: str
-    aliases: dict[Side, dict[str, str]] = field(default_factory=dict)
-    declared_into: str | None = None
-    synthesized: bool = False
-
-
 @dataclass(frozen=True)
 class Cluster(Generic[DeclarationT]):
-    """One n-ary equivalence cluster, over vertices or relations, in resolved names."""
+    """One group, over vertices or relations, in the sides' own names.
+
+    ``left`` / ``right`` are the closed member sets: every class the group's
+    equivalences name, and every class a vocabulary merges with one of them.
+    ``declared_left`` / ``declared_right`` are the ones the equivalences
+    name. ``declaration`` is one equivalence over the closed sets.
+    """
 
     left: tuple[str, ...]
     right: tuple[str, ...]
@@ -136,6 +71,13 @@ class Cluster(Generic[DeclarationT]):
     aliases: dict[Side, dict[str, str]] = field(default_factory=dict)
     declared_into: str | None = None
     synthesized: bool = False
+    declared_left: tuple[str, ...] = ()
+    declared_right: tuple[str, ...] = ()
+
+    def declared_members(self, side: Side) -> tuple[str, ...]:
+        """The members the equivalences name on *side*, without the vocabulary-joined ones."""
+        declared = self.declared_left if side == "left" else self.declared_right
+        return declared or self.members(side)
 
     def members(self, side: Side) -> tuple[str, ...]:
         return self.left if side == "left" else self.right
@@ -160,7 +102,7 @@ RelationCluster = Cluster[RelationEquivalence]
 
 @dataclass(frozen=True)
 class ClusterIndex:
-    """Every declared cluster of one merge op, validated for consistency."""
+    """Every group of one merge op, as merge applies them."""
 
     vertices: tuple[Cluster[VertexEquivalence], ...]
     relations: tuple[Cluster[RelationEquivalence], ...]
@@ -177,7 +119,7 @@ class ClusterIndex:
 
     @property
     def declared_intos(self) -> frozenset[str]:
-        """Every merged name as the author spelled it, before translation."""
+        """Every ``into`` the equivalences of the groups spell."""
         return frozenset(
             c.declared_into
             for c in (*self.vertices, *self.relations)
@@ -201,156 +143,6 @@ class ClusterIndex:
         return next((c for c in self.vertices if c.into == into), None)
 
 
-def _check_declarations(
-    specs: Sequence[ClusterSpec],
-    *,
-    kind: str,
-    left_names: Collection[str],
-    right_names: Collection[str],
-) -> None:
-    """Shared overlap / shared-name / occupied-name checks for one declaration kind."""
-    claimed: dict[tuple[Side, str], int] = {}
-    into_owner: dict[str, int] = {}
-    claimed_by_side: dict[Side, set[str]] = {"left": set(), "right": set()}
-    for spec in specs:
-        claimed_by_side["left"].update(spec.left)
-        claimed_by_side["right"].update(spec.right)
-
-    for index, spec in enumerate(specs):
-        into = spec.into
-        for side, members in (("left", spec.left), ("right", spec.right)):
-            for name in members:
-                key: tuple[Side, str] = (side, name)  # type: ignore[assignment]
-                prior = claimed.get(key)
-                if prior is not None and prior != index:
-                    raise ClusterConflictError(
-                        f"{kind}: {side}:{name} is claimed by two equivalence "
-                        f"declarations (into {specs[prior].into!r} and "
-                        f"into {into!r}); merge them into one declaration",
-                        check="cluster overlap",
-                        subjects=(
-                            subject(side, name),
-                            subject("merged", specs[prior].into),
-                            subject("merged", into),
-                        ),
-                    )
-                claimed[key] = index
-        prior_owner = into_owner.get(into)
-        if prior_owner is not None and prior_owner != index:
-            raise ClusterConflictError(
-                f"{kind}: two equivalence declarations both target into "
-                f"{into!r}; two declarations sharing one `into` collapse into "
-                "one merged class — spell it as one declaration naming "
-                "every member",
-                check="shared into",
-                subjects=(subject("merged", into),),
-            )
-        into_owner[into] = index
-        for side, members, names in (
-            ("left", spec.left, left_names),
-            ("right", spec.right, right_names),
-        ):
-            if into not in names or into in members:
-                continue
-            if into in claimed_by_side[side]:
-                # Another declaration renames the occupant away, and the
-                # lowered map applies in one step, so this side lands on a
-                # vacated name — for a single member and a merge alike.
-                continue
-            raise ClusterConflictError(
-                f"{kind}: into {into!r} already exists on the {side} side "
-                f"but is not a member of its cluster "
-                f"({side}={list(members)}); add it to this cluster's `{side}` "
-                "to merge into it, declare it in another cluster so it is "
-                "renamed away, or pick a different `into`",
-                check="occupied into",
-                subjects=(subject(side, into), subject("merged", into)),
-            )
-
-
-def declared_spec(declaration: VertexEquivalence | RelationEquivalence) -> ClusterSpec:
-    """The shape a declaration states outright, with no canonical map to consult."""
-    if declaration.into is None:
-        raise ValueError(
-            f"equivalence {declaration.left_members} ~ "
-            f"{declaration.right_members} has no `into`; a merged name comes "
-            "from `into`, from a canonical map on the merge op, or from one "
-            "spelling every member shares — resolve it through "
-            "validate_and_complete_canonical_map, or name it"
-        )
-    return ClusterSpec(
-        left=tuple(declaration.left_members),
-        right=tuple(declaration.right_members),
-        into=declaration.into,
-        declared_into=declaration.into,
-    )
-
-
-def index_clusters(
-    op: MergeManifestsOp,
-    *,
-    left_vertices: Collection[str] = (),
-    right_vertices: Collection[str] = (),
-    left_relations: Collection[str] = (),
-    right_relations: Collection[str] = (),
-    vertex_specs: Sequence[ClusterSpec] | None = None,
-    relation_specs: Sequence[ClusterSpec] | None = None,
-) -> ClusterIndex:
-    """Validate and index the declared clusters of *op*.
-
-    *vertex_specs* / *relation_specs* are the resolved shapes, aligned with the
-    op's declaration lists; omitted, each declaration is taken as written
-    (which requires ``into``). The name collections are what a merged name
-    may collide with on each side.
-
-    Raises :class:`ClusterConflictError` on an overlapping declaration, two
-    declarations sharing one merged name, or a merged name that would
-    silently occupy an existing non-member class on a side.
-    """
-    if vertex_specs is None:
-        vertex_specs = [declared_spec(v) for v in op.vertex_equivalences]
-    if relation_specs is None:
-        relation_specs = [declared_spec(r) for r in op.relation_equivalences]
-    _check_declarations(
-        vertex_specs,
-        kind="vertex equivalence",
-        left_names=left_vertices,
-        right_names=right_vertices,
-    )
-    _check_declarations(
-        relation_specs,
-        kind="relation equivalence",
-        left_names=left_relations,
-        right_names=right_relations,
-    )
-    return ClusterIndex(
-        vertices=tuple(
-            Cluster(
-                left=spec.left,
-                right=spec.right,
-                into=spec.into,
-                declaration=v,
-                aliases=spec.aliases,
-                declared_into=spec.declared_into,
-                synthesized=spec.synthesized,
-            )
-            for v, spec in zip(op.vertex_equivalences, vertex_specs, strict=True)
-        ),
-        relations=tuple(
-            Cluster(
-                left=spec.left,
-                right=spec.right,
-                into=spec.into,
-                declaration=r,
-                aliases=spec.aliases,
-                declared_into=spec.declared_into,
-                synthesized=spec.synthesized,
-            )
-            for r, spec in zip(op.relation_equivalences, relation_specs, strict=True)
-        ),
-    )
-
-
 def did_you_mean(name: str, candidates: Iterable[str]) -> str:
     """A suffix naming a candidate that denotes the same concept, if any.
 
@@ -366,56 +158,3 @@ def did_you_mean(name: str, candidates: Iterable[str]) -> str:
         f"; it has {near[0]!r}, which denotes the same concept — author the "
         "equivalence in the manifest's own spelling"
     )
-
-
-def check_member_existence(
-    vertex_clusters: Iterable[ClusterSpec | Cluster[VertexEquivalence]],
-    relation_clusters: Iterable[ClusterSpec | Cluster[RelationEquivalence]],
-    *,
-    left_vertex_names: Collection[str],
-    right_vertex_names: Collection[str],
-    left_relation_names: Collection[str],
-    right_relation_names: Collection[str],
-) -> None:
-    """Every member must exist on its side; a near-miss spelling is named.
-
-    Raises:
-        UnknownMemberError: A member is absent from its side. A subclass of
-            ``ValueError``, so existing handlers are unaffected.
-    """
-    for cluster in vertex_clusters:
-        for member in cluster.left:
-            if member not in left_vertex_names:
-                raise UnknownMemberError(
-                    f"merge_manifests: left vertex {member!r} not in left "
-                    f"manifest{did_you_mean(member, left_vertex_names)}",
-                    side="left",
-                    kind="vertex",
-                    member=member,
-                )
-        for member in cluster.right:
-            if member not in right_vertex_names:
-                raise UnknownMemberError(
-                    f"merge_manifests: right vertex {member!r} not in right "
-                    f"manifest{did_you_mean(member, right_vertex_names)}",
-                    side="right",
-                    kind="vertex",
-                    member=member,
-                )
-    for cluster in relation_clusters:
-        for member in cluster.left:
-            if member not in left_relation_names:
-                raise UnknownMemberError(
-                    f"merge_manifests: left relation {member!r} not in left manifest",
-                    side="left",
-                    kind="relation",
-                    member=member,
-                )
-        for member in cluster.right:
-            if member not in right_relation_names:
-                raise UnknownMemberError(
-                    f"merge_manifests: right relation {member!r} not in right manifest",
-                    side="right",
-                    kind="relation",
-                    member=member,
-                )

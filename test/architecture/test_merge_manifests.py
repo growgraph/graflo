@@ -7,7 +7,6 @@ import pytest
 from graflo.architecture.contract.bindings import FileConnector
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.evolution import (
-    ClusterConflictError,
     MergeIdentityError,
     MergeIncompleteError,
     MergeManifestsOp,
@@ -19,6 +18,7 @@ from graflo.architecture.evolution import (
     merge_manifests,
     resolve_clusters,
 )
+from graflo.architecture.evolution.naming_graph import MergeNamingError
 from graflo.architecture.graph_types import Index
 from graflo.architecture.schema.core import CoreSchema
 from graflo.architecture.schema.database_features import (
@@ -314,7 +314,7 @@ def test_resource_name_collision_error_and_rename() -> None:
     out = merge_manifests(
         left,
         right,
-        MergeManifestsOp(resource_renames={"shared": "shared_right"}),
+        MergeManifestsOp(renames={"right": {"resources": {"shared": "shared_right"}}}),
         bump_version=False,
     )
     assert {r.name for r in out.ingestion_model.resources} == {  # type: ignore[union-attr]
@@ -361,13 +361,13 @@ def test_relation_equivalence_and_self_loop_after_boundary() -> None:
     )
     op = MergeManifestsOp(
         vertex_equivalences=[
-            VertexEquivalence(left=["A", "B"], right=["X", "Y"], into="AB")
+            VertexEquivalence(
+                left=["A", "B"], right=["X", "Y"], into="AB", allow=["self_relations"]
+            )
         ],
         relation_equivalences=[
             RelationEquivalence(left="link", right="link", into="link")
         ],
-        allow_merges=True,
-        allow_self_relations=True,
     )
     out = merge_manifests(left, right, op, bump_version=False)
     assert out.graph_schema is not None
@@ -435,23 +435,28 @@ def _vertex_names(manifest: GraphManifest) -> set[str]:
 
 def test_a_canonical_near_collision_raises_by_default() -> None:
     """The defect itself: two spellings, no equivalence, previously silent."""
-    with pytest.raises(MergeNameConflictError, match="same concept"):
+    with pytest.raises(MergeNamingError, match="same concept"):
         merge_manifests(_named("OrderLine"), _named("order_line"), MergeManifestsOp())
 
 
 def test_a_trailing_plural_is_a_collision_too() -> None:
     """`canonical_key` folds the plural, and so must the check."""
-    with pytest.raises(MergeNameConflictError):
+    with pytest.raises(MergeNamingError, match="same concept"):
         merge_manifests(_named("Customer"), _named("Customers"), MergeManifestsOp())
 
 
 def test_the_message_names_both_spellings_and_the_ways_out() -> None:
-    with pytest.raises(MergeNameConflictError) as excinfo:
+    with pytest.raises(MergeNamingError) as excinfo:
         merge_manifests(_named("OrderLine"), _named("order_line"), MergeManifestsOp())
     message = str(excinfo.value)
     assert "'OrderLine' / 'order_line'" in message
     assert "VertexEquivalence" in message
-    assert "union_right" in message and "prefix_right" in message
+    assert "prefix_right" in message
+    (finding,) = excinfo.value.findings
+    (repair,) = finding.repairs
+    assert repair.vertex_equivalences == (
+        {"left": "OrderLine", "right": "order_line", "into": "OrderLine"},
+    )
 
 
 def test_a_declared_equivalence_exempts_a_near_collision() -> None:
@@ -483,27 +488,23 @@ def test_prefix_right_keeps_a_near_collision_apart() -> None:
     assert _vertex_names(merged) == {"OrderLine", "r_order_line"}
 
 
-def test_union_right_adopts_the_left_spelling() -> None:
+def test_union_right_never_unions_two_spellings() -> None:
+    """Two spellings of one concept are a guess; only exact names are unioned."""
+    with pytest.raises(MergeNamingError, match="same concept"):
+        merge_manifests(
+            _named("OrderLine"),
+            _named("order_line"),
+            MergeManifestsOp(name_conflict="union_right"),
+        )
+
+
+def test_union_right_unions_exactly_the_same_name() -> None:
     merged = merge_manifests(
-        _named("OrderLine"),
-        _named("order_line"),
+        _named("OrderLine", resource="r_left"),
+        _named("OrderLine", resource="r_right"),
         MergeManifestsOp(name_conflict="union_right"),
     )
     assert _vertex_names(merged) == {"OrderLine"}
-
-
-def test_union_right_rewrites_ingestion_too() -> None:
-    """The rename has to reach the pipelines, not just the schema.
-
-    A rename that lands on the schema alone leaves every resource step pointing
-    at a vertex that no longer exists -- the same shape of silent breakage the
-    check exists to prevent.
-    """
-    merged = merge_manifests(
-        _named("OrderLine"),
-        _named("order_line"),
-        MergeManifestsOp(name_conflict="union_right"),
-    )
     assert merged.ingestion_model is not None
     targets = {
         step.get("vertex")
@@ -515,7 +516,7 @@ def test_union_right_rewrites_ingestion_too() -> None:
 
 
 def test_relations_that_key_alike_collide() -> None:
-    with pytest.raises(MergeNameConflictError, match="relation"):
+    with pytest.raises(MergeNamingError, match="relation"):
         merge_manifests(
             _named("A", relation="placedBy"),
             _named("B", relation="placed_by"),
@@ -680,9 +681,7 @@ def test_disagreeing_into_on_shared_node_raises() -> None:
             {"name": "r_b2", "apply": [{"vertex": "CB2"}]},
         ],
     )
-    from graflo.architecture.evolution import ClusterConflictError
-
-    with pytest.raises(ClusterConflictError, match="claimed"):
+    with pytest.raises(MergeNamingError) as excinfo:
         merge_manifests(
             left,
             right,
@@ -694,6 +693,9 @@ def test_disagreeing_into_on_shared_node_raises() -> None:
                 ]
             ),
         )
+    kinds = {f.kind for f in excinfo.value.findings}
+    assert "cluster_overlap" in kinds
+    assert "disagreement" in kinds  # the linked group is named both X and Y
 
 
 def test_a_derived_identity_applies_inside_compose() -> None:
@@ -841,7 +843,6 @@ def test_nary_cluster_composes_schema_and_ingestion() -> None:
                 identity=["company_id", "shop_id", "org_id", "branch_id"],
             )
         ],
-        allow_merges=True,
     )
     out = merge_manifests(left, right, op, bump_version=False)
     schema = out.graph_schema
@@ -926,7 +927,6 @@ def test_per_member_property_equivalence_maps() -> None:
                 identity=["uid"],
             )
         ],
-        allow_merges=True,
     )
     out = merge_manifests(left, right, op, bump_version=False)
     company = next(
@@ -976,7 +976,6 @@ def test_relation_nary_collapse() -> None:
         relation_equivalences=[
             RelationEquivalence(left=["signs", "owns"], right="has", into="signs")
         ],
-        allow_merges=True,
     )
     out = merge_manifests(left, right, op, bump_version=False)
     relations = {
@@ -987,7 +986,7 @@ def test_relation_nary_collapse() -> None:
     assert relations == {"signs"}
 
 
-def test_union_right_adopts_left_spelling_for_relations() -> None:
+def test_union_right_unions_relations_of_the_same_name() -> None:
     left = _manifest(
         name="l",
         vertices=[
@@ -1006,7 +1005,7 @@ def test_union_right_adopts_left_spelling_for_relations() -> None:
             Vertex(name="AR", properties=[Field(name="id")], identity=["id"]),
             Vertex(name="BR", properties=[Field(name="id")], identity=["id"]),
         ],
-        edges=[Edge(source="AR", target="BR", relation="placed_by")],
+        edges=[Edge(source="AR", target="BR", relation="placedBy")],
         resources=[
             {"name": "r_ar", "apply": [{"vertex": "AR"}]},
             {"name": "r_br", "apply": [{"vertex": "BR"}]},
@@ -1172,8 +1171,13 @@ def test_occupied_into_raises_through_compose() -> None:
     op = MergeManifestsOp(
         vertex_equivalences=[VertexEquivalence(left="A", right="B", into="Person")]
     )
-    with pytest.raises(ClusterConflictError, match="not a member"):
+    with pytest.raises(MergeNamingError, match="nothing links") as excinfo:
         merge_manifests(left, right, op, bump_version=False)
+    (finding,) = excinfo.value.findings
+    assert finding.kind == "occupied_into"
+    assert finding.repairs[0].renames == {
+        "left": {"vertices": {"Person": "Person_left"}}
+    }
 
 
 def test_a_demoted_key_keeps_its_declared_field_order() -> None:
@@ -1288,16 +1292,16 @@ def test_a_merge_chain_through_an_occupied_into_composes() -> None:
                 right="Y",
                 into="Z",
                 identity=["x_id", "x2_id", "y_id"],
+                allow=["observation_fusion"],
             ),
             VertexEquivalence(
                 left="Z",
                 right="W",
                 into="Q",
                 identity=["z_id", "w_id"],
+                allow=["observation_fusion"],
             ),
         ],
-        allow_merges=True,
-        allow_observation_fusion=True,
     )
     out = merge_manifests(left, right, op, bump_version=False)
     assert out.graph_schema is not None
@@ -1351,7 +1355,6 @@ def test_role_separated_members_compose_without_the_fusion_flag() -> None:
                 identity=["x_id", "x2_id", "y_id"],
             )
         ],
-        allow_merges=True,
     )
     out = merge_manifests(left, right, op, bump_version=False)
     assert out.graph_schema is not None
@@ -1722,19 +1725,12 @@ class TestComposedProfileFold:
 
 
 def test_union_right_unions_the_right_model_rather_than_dropping_it() -> None:
-    """The right ``order_line`` used to be skipped.
-
-    Adopting the left spelling made the right vertex share a name with the
-    union, and the union skipped any right vertex whose name it had seen --
-    so its properties and identity vanished with nothing raising. The fuse is
-    now a synthesized cluster, so the two models are unioned like a declared
-    equivalence.
-    """
+    """A union by name merges the right model, so its properties survive."""
     right = _manifest(
         name="r",
         vertices=[
             Vertex(
-                name="order_line",
+                name="OrderLine",
                 properties=[
                     Field(name="id", type=FieldType.STRING),
                     Field(name="qty", type=FieldType.INT),
@@ -1743,7 +1739,7 @@ def test_union_right_unions_the_right_model_rather_than_dropping_it() -> None:
             )
         ],
         edges=[],
-        resources=[{"name": "r_right", "apply": [{"vertex": "order_line"}]}],
+        resources=[{"name": "r_right", "apply": [{"vertex": "OrderLine"}]}],
     )
     merged = merge_manifests(
         _named("OrderLine"), right, MergeManifestsOp(name_conflict="union_right")
@@ -1754,17 +1750,17 @@ def test_union_right_unions_the_right_model_rather_than_dropping_it() -> None:
     assert "qty" in vc.property_names("OrderLine")
 
 
-def test_union_right_synthesizes_a_cluster_for_a_near_collision() -> None:
+def test_union_right_synthesizes_a_cluster_for_a_shared_name() -> None:
     resolution = resolve_clusters(
         MergeManifestsOp(name_conflict="union_right"),
         left=_named("OrderLine"),
-        right=_named("order_line"),
+        right=_named("OrderLine"),
     )
     (cluster,) = resolution.index.vertices
     assert cluster.synthesized
     assert (cluster.left, cluster.right, cluster.into) == (
         ("OrderLine",),
-        ("order_line",),
+        ("OrderLine",),
         "OrderLine",
     )
 

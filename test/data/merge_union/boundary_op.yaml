@@ -10,7 +10,6 @@
 # [company_id] would leave Shop, Org and Branch completing no key -- merge
 # refuses it rather than dropping their records.
 op: merge_manifests
-allow_merges: true
 vertex_equivalences:
 -   left: [Firm, Shop]
     right: [Org, Branch]

@@ -1,18 +1,17 @@
-"""Canonical vocabulary maps and merge-time cluster resolution.
+"""Canonical vocabulary maps, and the shared pieces of merge resolution.
 
-Two declarations say how two manifests' names relate. A
-:class:`~graflo.architecture.evolution.ops.CanonicalMap` translates one side's
+A :class:`~graflo.architecture.evolution.ops.CanonicalMap` translates one side's
 vocabulary into canonical names — a partial function on names, identity where
 unmapped, and *idempotent*: a canonical name is a fixed point nothing maps away
-from. An equivalence cluster on a
-:class:`~graflo.architecture.evolution.ops.MergeManifestsOp` says *which*
-classes across the two sides are one, and may leave what they are called to
-the map. Renames compose, so "canonicalize, then declare equivalences in
-canonical names" and "declare equivalences in raw names, then canonicalize"
-are the same function; :func:`resolve_clusters` computes it directly — one
-composite relabel per side, applied as a single
-:class:`~graflo.architecture.evolution.ops.CanonicalizeOp` — so there is no
-intermediate vocabulary an author has to write in.
+from. On its own it lowers to one
+:class:`~graflo.architecture.evolution.ops.CanonicalizeOp`
+(:func:`canonical_map_to_ops`); :func:`dangling_entries` and
+:func:`trim_canonical_map` check it against one manifest before any merge.
+
+In a merge it is the **vocabulary** layer: a class's default name in the union.
+:mod:`~graflo.architecture.evolution.naming_graph` resolves it together with
+the op's equivalences and ``renames``, in one pass over the sides' own names;
+:func:`resolve_clusters` is that resolution, raising every problem at once.
 
 Vocabulary
 ----------
@@ -20,62 +19,23 @@ Vocabulary
 - **declared map** — a ``CanonicalMap`` the author wrote:
   ``op.canonical_maps[scope]`` and the ``canonical_maps=`` pairs handed to
   merge. Scoped ``left`` / ``right`` (that side's own names) or ``both``
-  (either side's names, and merged names). Folded per side by
-  :func:`compose_canonical_maps` into a :class:`DeclaredMaps`.
-- **cluster** (:class:`~graflo.architecture.evolution.equivalence.Cluster`,
-  resolved from a :class:`~graflo.architecture.evolution.equivalence.ClusterSpec`)
-  — one equivalence declaration, resolved: its members per side, in the
-  manifests' own spelling, and its **merged name** — ``into`` translated
-  through the declared maps, else the canonical name a map gives a member,
-  else the one spelling every member shares.
-- **cluster map** — per side, every member onto its merged name, the merged
-  name itself included as a self entry so the op merges into it rather than
-  refusing an occupied target.
-- **composite map** (:class:`SideMaps`, one ``CanonicalizeOp`` per side) — the
-  cluster map plus every declared entry that applies to a non-member: what
-  merge applies to that side before the union by name. A relabel, not a
-  vocabulary — two clusters may legitimately chain (one merged name renamed
-  away by another declaration), which a ``CanonicalMap`` refuses.
-- **fixed point** — a canonical target. No declared map and no cluster may
-  move it.
-- **opinion** — what the declared maps say a member's canonical name is: the
-  target it maps to, or itself when it is a fixed point.
+  (either side's names). Folded per side by :func:`compose_canonical_maps`
+  into a :class:`DeclaredMaps`.
+- **composite map** (:class:`SideMaps`, one ``CanonicalizeOp`` per side) —
+  what merge applies to that side before the union by name: every group
+  member onto its merged name, every other class onto its rename or
+  vocabulary name, simultaneously.
 - **satisfied entry** — a declared entry whose source is absent from a side and
   whose target is present: taken as already applied by the caller. A heuristic
   — it cannot tell that from a target that never had that source — so it is
   logged.
 - **dangling entry** — a declared entry that matches nothing on any side it
-  could apply to. A typo, refused: one refusal names every one of them on a
-  side, each with a near-miss candidate where another spelling denotes the
-  same concept. ``allow_dangling_entries`` drops them instead, for a shared
-  vocabulary deliberately broader than the manifest it is applied to.
-- **synthesized cluster** — a cluster merge declares itself under
-  ``name_conflict="union_right"`` for a name both sides carry after their
-  composite maps, or two spellings of one name, so that a union by name goes
-  through the same identity and property reconciliation as a declared one.
-- **completion** (:class:`Completion`) — the extension that would make an
-  incomplete declaration consistent, carried by
-  :class:`MergeIncompleteError` as declaration payloads.
-
-One rule
---------
-
-**The declared maps and the equivalences must agree on where every name goes,
-and a canonical target is a fixed point neither may re-map.** Every refusal is
-an instance of it, in one of four classes:
-
-| class | error | a trigger |
-|---|---|---|
-| contradiction | ``MergeCanonicalConflictError`` | the map says ``Firm → Company``, the cluster names the merged class ``Party`` |
-| ambiguity | ``MergeCanonicalConflictError`` | one canonical name denotes two members of one cluster |
-| incomplete | ``MergeIncompleteError`` (carries a ``Completion``) | a map entry sends a non-member onto a merged name |
-| dangling | ``MergeCanonicalConflictError`` | an entry matching no name on any side it could apply to |
-
-Plus the cluster-shape checks of
-:mod:`~graflo.architecture.evolution.equivalence`, which run before any
-rename. Every case a declared entry and a cluster can stand in — agreement,
-naming, translation and each refusal — is tabulated in
-``docs/concepts/schema/manifest_evolution.md`` under "Canonical maps".
+  could apply to. A typo, refused, each with a near-miss candidate where
+  another spelling denotes the same concept. ``allow_dangling_entries`` drops
+  them instead, for a shared vocabulary deliberately broader than the
+  manifest it is applied to.
+- **completion** (:class:`Completion`) — a declaration that would settle a
+  refusal, carried as a paste-ready payload.
 
 Identity is nominal: a class is the same class across two manifests only by
 name (or by declared equivalence) — nothing structural fingerprints it, and
@@ -95,14 +55,10 @@ from graflo.architecture.schema.naming import canonical_slug
 
 from .equivalence import (
     Cluster,
-    ClusterConflictError,
     ClusterIndex,
-    ClusterSpec,
     Kind,
     Side,
-    check_member_existence,
     did_you_mean,
-    index_clusters,
     subject,
 )
 from .ops import (
@@ -110,7 +66,6 @@ from .ops import (
     CanonicalMap,
     ManifestOp,
     MergeManifestsOp,
-    RelationEquivalence,
     VertexEquivalence,
 )
 
@@ -128,12 +83,14 @@ __all__ = [
     "canonical_map_to_ops",
     "canonical_near_collisions",
     "canonicalize_ops",
-    "clusters_to_side_maps",
+    "check_attribute_fixed_points",
+    "check_property_fields_exist",
+    "check_property_maps_against_manifest",
     "compose_canonical_maps",
     "dangling_entries",
+    "dangling_refusal",
     "fold_declared_maps",
     "resolve_clusters",
-    "same_name_groups",
     "trim_canonical_map",
     "validate_and_complete_canonical_map",
 ]
@@ -158,39 +115,67 @@ class MergeCanonicalConflictError(Refusal):
     subclass :class:`MergeIncompleteError` is the one refusal an extension
     resolves.
 
-    ``check`` names the rule that refused — the parenthesised phrase in the
-    message — and ``subjects`` the names it is about, as
+    ``check`` names the rule that refused — the phrase the message starts
+    with — and ``subjects`` the names it is about, as
     :func:`~graflo.architecture.evolution.equivalence.subject` ids; see
     :class:`.Refusal`.
     """
 
 
+#: What a repair does. ``extend_cluster`` replaces one equivalence by the
+#: payload (the same declaration with one more member) and fuses entities;
+#: ``declare_equivalences`` adds the payloads (or ``name_conflict="union_right"``
+#: declares them itself); ``set_into`` replaces one equivalence by the payload,
+#: renamed; ``rename_away`` adds the ``renames`` entry; ``add_key_source``
+#: adds the identity entry carried in the payload; ``acknowledge`` replaces one
+#: equivalence by the payload with a consequence added to its ``allow``.
+#: ``add_key_source`` and ``acknowledge`` are left to the author, because each
+#: decides which records fuse.
+CompletionKind = Literal[
+    "extend_cluster",
+    "declare_equivalences",
+    "set_into",
+    "rename_away",
+    "add_key_source",
+    "acknowledge",
+]
+
+
 @dataclass(frozen=True)
 class Completion:
-    """The extension that would make an incomplete merge declaration consistent.
+    """A declaration that would settle a merge refusal, ready to paste.
 
-    ``kind`` says what to do: ``extend_cluster`` — replace one declared cluster
-    by the payload carried here (the same declaration with one more member);
-    ``declare_equivalences`` — add the carried declarations to the op (or set
-    ``name_conflict="union_right"``, which declares exactly these itself).
-    Payloads are ``VertexEquivalence`` / ``RelationEquivalence`` documents, so
-    a CLI can print them and an author can paste them.
+    Payloads are ``VertexEquivalence`` / ``RelationEquivalence`` documents and
+    a ``renames`` fragment (``{side: {vertices: {old: new}}}``), so a CLI can
+    print them and an author can paste them. ``label`` says in a few words
+    what applying it does.
     """
 
-    kind: Literal["extend_cluster", "declare_equivalences"]
+    kind: CompletionKind
     side: Side | None = None
     vertex_equivalences: tuple[dict[str, Any], ...] = ()
     relation_equivalences: tuple[dict[str, Any], ...] = ()
+    renames: dict[str, Any] = field(default_factory=dict)
+    label: str = ""
+    #: For ``set_into`` / ``extend_cluster``: the position of the equivalence
+    #: the payload replaces, in the op's list of its kind.
+    replaces: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """The completion as a plain document."""
         out: dict[str, Any] = {"kind": self.kind}
+        if self.label:
+            out["label"] = self.label
         if self.side is not None:
             out["side"] = self.side
+        if self.replaces is not None:
+            out["replaces"] = self.replaces
         if self.vertex_equivalences:
             out["vertex_equivalences"] = [dict(p) for p in self.vertex_equivalences]
         if self.relation_equivalences:
             out["relation_equivalences"] = [dict(p) for p in self.relation_equivalences]
+        if self.renames:
+            out["renames"] = dict(self.renames)
         return out
 
 
@@ -281,23 +266,7 @@ def _conflict(
     check: str, detail: str, hint: str, *, subjects: tuple[str, ...] = ()
 ) -> MergeCanonicalConflictError:
     return MergeCanonicalConflictError(
-        f"merge contradicts the canonical map ({check}): {detail}. {hint}",
-        check=check,
-        subjects=subjects,
-    )
-
-
-def _incomplete(
-    check: str,
-    detail: str,
-    hint: str,
-    completion: Completion,
-    *,
-    subjects: tuple[str, ...] = (),
-) -> MergeIncompleteError:
-    return MergeIncompleteError(
-        f"merge is incomplete ({check}): {detail}. {hint}",
-        completion,
+        f"{check}: {detail}. {hint}",
         check=check,
         subjects=subjects,
     )
@@ -375,6 +344,10 @@ def compose_canonical_maps(base: CanonicalMap, extension: CanonicalMap) -> Canon
         allow_dangling_entries=(
             base.allow_dangling_entries or extension.allow_dangling_entries
         ),
+        allow_self_relations=base.allow_self_relations
+        or extension.allow_self_relations,
+        allow_observation_fusion=base.allow_observation_fusion
+        or extension.allow_observation_fusion,
     )
 
 
@@ -423,8 +396,9 @@ def canonical_map_to_ops(
             properties={cls: dict(attrs) for cls, attrs in cm.properties.items()},
             relations=dict(cm.relations),
             allow_merges=cm.allow_merges,
-            allow_self_relations=allow_self_relations,
-            allow_observation_fusion=allow_observation_fusion,
+            allow_self_relations=allow_self_relations or cm.allow_self_relations,
+            allow_observation_fusion=allow_observation_fusion
+            or cm.allow_observation_fusion,
         )
     )
 
@@ -500,7 +474,7 @@ def _count(n: int, singular: str, plural: str) -> str:
     return f"{n} {singular if n == 1 else plural}"
 
 
-def _dangling_refusal(
+def dangling_refusal(
     entries: Sequence[DanglingEntry], *, names: SideNames | None = None
 ) -> MergeCanonicalConflictError:
     """One refusal naming every dangling entry on a side.
@@ -550,8 +524,7 @@ def _dangling_refusal(
     # Built directly rather than through ``_conflict``: the hint belongs with
     # the summary, above the list, not trailing off the last entry.
     return MergeCanonicalConflictError(
-        f"merge contradicts the canonical map (dangling entry): "
-        f"{len(entries)} {side} canonical map entries match nothing on that "
+        f"dangling entry: {len(entries)} {side} canonical map entries match nothing on that "
         f"side{context}. {hint}\n{listed}",
         check="dangling entry",
         subjects=subjects,
@@ -560,18 +533,22 @@ def _dangling_refusal(
 
 @dataclass(frozen=True)
 class ClusterResolution:
-    """What merge applies: the resolved clusters and one composite relabel per side.
+    """What merge applies: the resolved groups and one composite relabel per side.
 
-    ``declared`` is the folded declared vocabulary as seen from each side;
-    ``side_maps`` is the composite — every cluster member onto its merged
-    name, every applicable declared entry as written — one
+    ``declared`` is the folded vocabulary as seen from each side;
+    ``side_maps`` is the composite — every group member onto its merged
+    name, every other class onto its rename or vocabulary name — one
     :class:`~graflo.architecture.evolution.ops.CanonicalizeOp` per side.
-    ``index`` includes any cluster merge synthesized.
+    ``index`` includes any group merge synthesized; each cluster's members
+    are the closed group. ``findings`` are the notes the resolution made
+    (defaults it applied), and ``graph`` the naming graph it was read from.
     """
 
     index: ClusterIndex
     side_maps: SideMaps
     declared: DeclaredMaps
+    findings: tuple[Any, ...] = ()
+    graph: Any = None
 
 
 def fold_declared_maps(
@@ -593,424 +570,7 @@ def fold_declared_maps(
     )
 
 
-def _mapping(cm: CanonicalMap | CanonicalizeOp, kind: Kind) -> dict[str, str]:
-    return cm.vertices if kind == "vertex" else cm.relations
-
-
-def _resolve_member(
-    declared: str,
-    *,
-    names: frozenset[str],
-    mapping: Mapping[str, str],
-    side: Side,
-    kind: Kind,
-) -> str:
-    """A member spelled by its own name, or by its canonical name when that names one source."""
-    if declared in names:
-        return declared
-    sources = sorted(
-        source
-        for source, target in mapping.items()
-        if target == declared and source != target and source in names
-    )
-    if len(sources) == 1:
-        return sources[0]
-    if len(sources) > 1:
-        raise _conflict(
-            f"ambiguous {kind} member",
-            f"{side} {kind} {declared!r} is the canonical name of {sources}",
-            "Name the member by its own spelling.",
-            subjects=tuple(subject(side, source) for source in sources),
-        )
-    return declared  # reported by the existence check
-
-
-def _resolve_cluster(
-    declaration: VertexEquivalence | RelationEquivalence,
-    *,
-    kind: Kind,
-    declared: DeclaredMaps,
-    names: Mapping[Side, SideNames],
-    synthesized: bool,
-) -> ClusterSpec:
-    """Resolve one declaration's members and merged name against the declared maps.
-
-    The merged name is ``into`` (translated through the maps when they map
-    it), else the canonical name the maps give a member, else the one
-    spelling every member shares. Then the commutation rule: every member the
-    maps have an opinion about — a mapped source, or a canonical target, which
-    is a fixed point — must agree with that name.
-    """
-    mapping = {side: _mapping(declared[side], kind) for side in _SIDES}
-    side_names = {side: names[side].of_kind(kind) for side in _SIDES}
-    targets = {side: _targets(mapping[side]) for side in _SIDES}
-
-    members: dict[Side, list[str]] = {}
-    aliases: dict[Side, dict[str, str]] = {}
-    for side in _SIDES:
-        resolved: list[str] = []
-        for spelled in declaration.members(side):
-            name = _resolve_member(
-                spelled,
-                names=side_names[side],
-                mapping=mapping[side],
-                side=side,
-                kind=kind,
-            )
-            resolved.append(name)
-            if name != spelled:
-                aliases.setdefault(side, {})[spelled] = name
-        members[side] = resolved
-        # A member may also be named by its canonical name wherever the
-        # declaration keys by member — unless that name is a real class on the
-        # side, or the canonical name of two members.
-        canonical = [mapping[side].get(m, m) for m in resolved]
-        for member, name in zip(resolved, canonical, strict=True):
-            if name == member or name in side_names[side] or canonical.count(name) > 1:
-                continue
-            aliases.setdefault(side, {}).setdefault(name, member)
-
-    opinions: dict[str, list[str]] = {}
-    for side in _SIDES:
-        for member in members[side]:
-            mapped = mapping[side].get(member)
-            if mapped is not None and mapped != member:
-                opinions.setdefault(mapped, []).append(f"{side}:{member}")
-            elif member in targets[side]:
-                opinions.setdefault(member, []).append(f"{side}:{member}")
-    if len(opinions) > 1:
-        raise _conflict(
-            f"{kind} disagreement",
-            "the canonical maps name the members of one cluster differently: "
-            f"{dict(sorted(opinions.items()))}",
-            "One merged class has one canonical name — fix the canonical "
-            "map, or split the cluster.",
-            # `opinions` values are already `side:member` ids.
-            subjects=tuple(
-                sorted(
-                    {subject("merged", name) for name in opinions}
-                    | {who for whos in opinions.values() for who in whos}
-                )
-            ),
-        )
-
-    if declaration.into is not None:
-        translated = {
-            mapping[side][declaration.into]
-            for side in _SIDES
-            if mapping[side].get(declaration.into, declaration.into) != declaration.into
-        }
-        if len(translated) > 1:
-            raise _conflict(
-                f"ambiguous {kind} label",
-                f"the canonical maps disagree on {declaration.into!r}: "
-                f"{sorted(translated)}",
-                "Reconcile the maps, or name the merged class by its canonical name.",
-                subjects=tuple(subject("merged", name) for name in sorted(translated)),
-            )
-        label = translated.pop() if translated else declaration.into
-    elif opinions:
-        label = next(iter(opinions))
-    else:
-        spellings = {member for side in _SIDES for member in members[side]}
-        if len(spellings) != 1:
-            raise _conflict(
-                f"unnamed {kind} cluster",
-                f"cluster {members['left']} ~ {members['right']} has no merged name",
-                "Give it `into`, or map a member in a canonical map.",
-                subjects=tuple(
-                    subject(side, member) for side in _SIDES for member in members[side]
-                ),
-            )
-        label = spellings.pop()
-
-    if opinions and label not in opinions:
-        ((canonical_name, who),) = opinions.items()
-        raise _conflict(
-            f"{kind} disagreement",
-            f"the canonical map says {', '.join(who)} is {canonical_name!r}, but "
-            f"the equivalence names the merged {kind} {label!r}",
-            "The two declarations must agree on where a name goes; canonical "
-            "names are fixed points, so set `into` to the canonical name or "
-            "fix the canonical map.",
-            subjects=(
-                *who,
-                subject("merged", canonical_name),
-                subject("merged", label),
-            ),
-        )
-    return ClusterSpec(
-        left=tuple(members["left"]),
-        right=tuple(members["right"]),
-        into=label,
-        aliases=aliases,
-        declared_into=declaration.into,
-        synthesized=synthesized,
-    )
-
-
-def _cluster_maps(
-    index: ClusterIndex, side: Side
-) -> tuple[dict[str, str], dict[str, str], dict[str, dict[str, str]]]:
-    """Every cluster member onto its merged name, with the declared attribute maps.
-
-    A member that already equals the merged name gets a self entry: it
-    declares the name a member of its own group, so the op merges into it
-    rather than refusing an occupied target.
-    """
-    vertices: dict[str, str] = {}
-    properties: dict[str, dict[str, str]] = {}
-    for cluster in index.vertices:
-        for member in cluster.members(side):
-            vertices[member] = cluster.into
-        for member, attr_map in cluster.property_maps(side).items():
-            properties.setdefault(member, {}).update(attr_map)
-    relations: dict[str, str] = {}
-    for cluster in index.relations:
-        for member in cluster.members(side):
-            relations[member] = cluster.into
-    return vertices, relations, properties
-
-
-def clusters_to_side_maps(index: ClusterIndex, *, allow_merges: bool) -> SideMaps:
-    """Lower every cluster of *index* into a pair of per-side relabels, and nothing else."""
-    ops: dict[Side, CanonicalizeOp] = {}
-    for side in _SIDES:
-        vertices, relations, properties = _cluster_maps(index, side)
-        ops[side] = CanonicalizeOp(
-            vertices=vertices,
-            relations=relations,
-            properties=properties,
-            allow_merges=allow_merges,
-        )
-    return SideMaps(left=ops["left"], right=ops["right"])
-
-
-def _extended_cluster_completion(
-    index: ClusterIndex, *, kind: Kind, side: Side, merged: str, member: str
-) -> Completion:
-    clusters: Sequence[Cluster] = (
-        index.vertices if kind == "vertex" else index.relations
-    )
-    cluster = next(c for c in clusters if c.into == merged)
-    payload = cluster.declaration.to_dict(skip_defaults=True)
-    payload[side] = [*cluster.members(side), member]
-    payload["into"] = cluster.into
-    if kind == "vertex":
-        return Completion(
-            kind="extend_cluster", side=side, vertex_equivalences=(payload,)
-        )
-    return Completion(
-        kind="extend_cluster", side=side, relation_equivalences=(payload,)
-    )
-
-
-def _carry_declared_entries(
-    out: dict[str, str],
-    mapping: Mapping[str, str],
-    *,
-    names: frozenset[str],
-    other_names: frozenset[str],
-    shared_sources: Collection[str],
-    index: ClusterIndex,
-    side: Side,
-    kind: Kind,
-    dangling: list[DanglingEntry] | None = None,
-) -> None:
-    """Carry the declared map's entries for non-members into a side's composite.
-
-    *dangling* selects how a dangling entry is reported. Left at ``None`` the
-    entry is refused on the spot, which is what a caller classifying one entry
-    at a time wants. Given a list, the entry is appended to it and skipped, and
-    the caller refuses once for every kind it collected.
-
-    *out* is that side's cluster map; every declared entry lands in one of
-    five outcomes:
-
-    * **member** — the source is in *out*: the commutation rule already holds
-      for it, nothing to carry;
-    * **satisfied** — the source is absent and the target present: assumed
-      already applied by the caller, logged, not carried;
-    * **translated** — the source is a merged name as the author spelled
-      it: the cluster's ``into`` translation already used it;
-    * **inapplicable** — a ``both``-scoped entry that matches the other side
-      only: carried there, skipped here;
-    * **dangling** — matches nothing anywhere it could apply: refused;
-    * **carried** — otherwise, as declared — unless the target is a merged
-      name, which makes the declaration incomplete: a class joining a merged
-      class is governed by the cluster's identity and property maps, so it
-      must be a member, and the refusal carries that extended cluster.
-    """
-    composed_names = index.labels if kind == "vertex" else index.relation_labels
-    for source, target in mapping.items():
-        if source in out:
-            continue
-        if source not in names:
-            if target in names:
-                logger.info(
-                    "merge: %s canonical %s entry %r -> %r is already applied "
-                    "(source absent, target present); carried as satisfied",
-                    side,
-                    kind,
-                    source,
-                    target,
-                )
-                continue
-            if source in index.declared_intos or source in composed_names:
-                continue
-            if source in shared_sources and (
-                source in other_names or target in other_names
-            ):
-                continue
-            entry = DanglingEntry(
-                side=side,
-                kind=kind,
-                source=source,
-                target=target,
-                suggestion=did_you_mean(source, names),
-            )
-            if dangling is None:
-                raise _dangling_refusal((entry,))
-            dangling.append(entry)
-            continue
-        if target in composed_names and target != source:
-            raise _incomplete(
-                f"{kind} joining a merged class",
-                f"the canonical map sends {side}:{source!r} onto {target!r}, "
-                "the merged name of a declared cluster, without declaring it "
-                "a member",
-                f"A {kind} joining a merged class is governed by the "
-                "cluster's identity and property maps: declare it a member "
-                "(the completion carries the extended cluster).",
-                _extended_cluster_completion(
-                    index, kind=kind, side=side, merged=target, member=source
-                ),
-                subjects=(subject(side, source), subject("merged", target)),
-            )
-        out[source] = target
-
-
-def _side_map(
-    op: MergeManifestsOp,
-    index: ClusterIndex,
-    declared: DeclaredMaps,
-    names: Mapping[Side, SideNames],
-    *,
-    side: Side,
-    dangling: list[DanglingEntry],
-) -> CanonicalizeOp:
-    """One side's composite relabel; its dangling entries land in *dangling*."""
-    cm = declared[side]
-    other = _other(side)
-    vertices, relations, properties = _cluster_maps(index, side)
-    _carry_declared_entries(
-        vertices,
-        cm.vertices,
-        names=names[side].vertices,
-        other_names=names[other].vertices,
-        shared_sources=declared.both.vertices,
-        index=index,
-        side=side,
-        kind="vertex",
-        dangling=dangling,
-    )
-    _carry_declared_entries(
-        relations,
-        cm.relations,
-        names=names[side].relations,
-        other_names=names[other].relations,
-        shared_sources=declared.both.relations,
-        index=index,
-        side=side,
-        kind="relation",
-        dangling=dangling,
-    )
-    for cls, attrs in cm.properties.items():
-        if cls not in names[side].vertices:
-            if cm.canonical_class(cls) in names[side].vertices:
-                continue  # satisfied: the class was already renamed away
-            if cls in declared.both.properties and (
-                cls in names[other].vertices
-                or cm.canonical_class(cls) in names[other].vertices
-            ):
-                continue  # a `both` entry that applies to the other side
-            if cls in index.labels or cls in index.declared_intos:
-                # Not a missing name but a misplaced one, with its own hint:
-                # refused on the spot rather than listed with the typos.
-                raise _conflict(
-                    "dangling entry",
-                    f"the canonical map's {side} attribute map is keyed by "
-                    f"{cls!r}, a merged name",
-                    "`properties` is keyed by the source class: key the "
-                    "attribute map by the member it applies to.",
-                    subjects=(subject("merged", cls),),
-                )
-            dangling.append(
-                DanglingEntry(
-                    side=side,
-                    kind="property",
-                    source=cls,
-                    suggestion=did_you_mean(cls, names[side].vertices),
-                )
-            )
-            continue
-        bucket = properties.setdefault(cls, {})
-        for old, new in attrs.items():
-            existing = bucket.get(old)
-            if existing is not None and existing != new:
-                raise _conflict(
-                    "property disagreement",
-                    f"the canonical map says {side}:{cls}.{old} -> {new!r}, "
-                    f"but the equivalence maps it to {existing!r}",
-                    "The two declarations must agree on where an attribute "
-                    "goes; fix one of them.",
-                    subjects=(subject(side, cls, old),),
-                )
-            bucket[old] = new
-    return CanonicalizeOp(
-        vertices=vertices,
-        relations=relations,
-        properties=properties,
-        allow_merges=op.allow_merges or cm.allow_merges,
-        allow_self_relations=op.allow_self_relations,
-        allow_observation_fusion=op.allow_observation_fusion,
-    )
-
-
-def _composite_side_maps(
-    op: MergeManifestsOp,
-    index: ClusterIndex,
-    declared: DeclaredMaps,
-    names: Mapping[Side, SideNames],
-) -> SideMaps:
-    ops: dict[Side, CanonicalizeOp] = {}
-    for side in _SIDES:
-        cm = declared[side]
-        dangling: list[DanglingEntry] = []
-        try:
-            built = _side_map(op, index, declared, names, side=side, dangling=dangling)
-        except MergeIncompleteError as exc:
-            # A name that is not on the side at all is the more basic mistake,
-            # and which of the two surfaced first used to be mapping order.
-            if not dangling:
-                raise
-            raise _dangling_refusal(dangling, names=names[side]) from exc
-        if dangling:
-            if not (op.allow_dangling_entries or cm.allow_dangling_entries):
-                raise _dangling_refusal(dangling, names=names[side])
-            for entry in dangling:
-                logger.info(
-                    "merge: dropping the %s canonical %s, which matches "
-                    "nothing on that side (allow_dangling_entries)%s",
-                    entry.side,
-                    entry.describe(),
-                    entry.suggestion,
-                )
-        ops[side] = built
-    return SideMaps(left=ops["left"], right=ops["right"])
-
-
-def _check_property_fields_exist(
+def check_property_fields_exist(
     manifest: GraphManifest, cluster: Cluster, *, side: Side, declared: CanonicalMap
 ) -> None:
     """Every field a property equivalence names must exist on its member, as spelled."""
@@ -1053,7 +613,7 @@ def _check_property_fields_exist(
             )
 
 
-def _check_attribute_fixed_points(
+def check_attribute_fixed_points(
     cluster: Cluster, *, side: Side, declared: CanonicalMap
 ) -> None:
     """A canonical attribute the map established on a member may not be renamed by the cluster.
@@ -1079,7 +639,7 @@ def _check_attribute_fixed_points(
                 )
 
 
-def _check_property_maps_against_manifest(
+def check_property_maps_against_manifest(
     manifest: GraphManifest, relabel: CanonicalizeOp, *, side: Side
 ) -> None:
     """Refuse a property rename whose old name is absent or whose new name collides.
@@ -1122,147 +682,6 @@ def _check_property_maps_against_manifest(
                 )
 
 
-def _occupancy(names: frozenset[str], mapping: Mapping[str, str]) -> frozenset[str]:
-    """Names a merged name could collide with: those the declared map does not move away."""
-    return names - _moving(mapping)
-
-
-def _resolve(
-    op: MergeManifestsOp,
-    *,
-    declared: DeclaredMaps,
-    names: Mapping[Side, SideNames],
-    manifests: Mapping[Side, GraphManifest],
-    synthesized_from: tuple[int, int],
-) -> ClusterResolution:
-    """Resolve *op*'s clusters as declared; *synthesized_from* marks the tail merge added."""
-    vertex_specs = [
-        _resolve_cluster(
-            v,
-            kind="vertex",
-            declared=declared,
-            names=names,
-            synthesized=i >= synthesized_from[0],
-        )
-        for i, v in enumerate(op.vertex_equivalences)
-    ]
-    relation_specs = [
-        _resolve_cluster(
-            r,
-            kind="relation",
-            declared=declared,
-            names=names,
-            synthesized=i >= synthesized_from[1],
-        )
-        for i, r in enumerate(op.relation_equivalences)
-    ]
-    check_member_existence(
-        vertex_specs,
-        relation_specs,
-        left_vertex_names=names["left"].vertices,
-        right_vertex_names=names["right"].vertices,
-        left_relation_names=names["left"].relations,
-        right_relation_names=names["right"].relations,
-    )
-    index = index_clusters(
-        op,
-        left_vertices=_occupancy(names["left"].vertices, declared.left.vertices),
-        right_vertices=_occupancy(names["right"].vertices, declared.right.vertices),
-        left_relations=_occupancy(names["left"].relations, declared.left.relations),
-        right_relations=_occupancy(names["right"].relations, declared.right.relations),
-        vertex_specs=vertex_specs,
-        relation_specs=relation_specs,
-    )
-    for side in _SIDES:
-        for cluster in index.vertices:
-            _check_property_fields_exist(
-                manifests[side], cluster, side=side, declared=declared[side]
-            )
-            _check_attribute_fixed_points(cluster, side=side, declared=declared[side])
-    side_maps = _composite_side_maps(op, index, declared, names)
-    for side in _SIDES:
-        _check_property_maps_against_manifest(
-            manifests[side], side_maps[side], side=side
-        )
-    return ClusterResolution(index=index, side_maps=side_maps, declared=declared)
-
-
-def _preimages(
-    mapping: Mapping[str, str], names: frozenset[str]
-) -> dict[str, list[str]]:
-    """``{post-map name: [own names landing on it]}`` over one side."""
-    groups: dict[str, list[str]] = {}
-    for name in sorted(names):
-        groups.setdefault(mapping.get(name, name), []).append(name)
-    return groups
-
-
-def _members_field(members: Sequence[str]) -> str | list[str]:
-    return members[0] if len(members) == 1 else list(members)
-
-
-def same_name_groups(
-    resolution: ClusterResolution,
-    names: Mapping[Side, SideNames],
-    *,
-    kind: Kind,
-    near: bool,
-) -> list[tuple[str, list[str], list[str]]]:
-    """``(merged name, left members, right members)`` for every name no cluster covers.
-
-    Names are compared after each side's composite map, since that is what
-    the union sees. With *near*, two spellings of one name (``canonical_slug``
-    alike) form one group too, merged under the left spelling.
-    """
-    index = resolution.index
-    merged = index.labels if kind == "vertex" else index.relation_labels
-    pre = {
-        side: _preimages(
-            _mapping(resolution.side_maps[side], kind), names[side].of_kind(kind)
-        )
-        for side in _SIDES
-    }
-    groups: list[tuple[str, list[str], list[str]]] = []
-    if near:
-        by_key: dict[str, dict[Side, list[str]]] = {}
-        for side in _SIDES:
-            for post_name in pre[side]:
-                if post_name in merged:
-                    continue
-                by_key.setdefault(canonical_slug(post_name), {}).setdefault(
-                    side, []
-                ).append(post_name)
-        for _key, sides in sorted(by_key.items()):
-            left_post = sorted(sides.get("left", []))
-            right_post = sorted(sides.get("right", []))
-            if not left_post or not right_post:
-                continue
-            exact = sorted(set(left_post) & set(right_post))
-            into = exact[0] if exact else left_post[0]
-            groups.append(
-                (
-                    into,
-                    [m for n in left_post for m in pre["left"][n]],
-                    [m for n in right_post for m in pre["right"][n]],
-                )
-            )
-        return groups
-    for post_name in sorted(set(pre["left"]) & set(pre["right"])):
-        if post_name in merged:
-            continue
-        groups.append((post_name, pre["left"][post_name], pre["right"][post_name]))
-    return groups
-
-
-def _same_name_payloads(
-    groups: Sequence[tuple[str, list[str], list[str]]],
-) -> tuple[dict[str, Any], ...]:
-    return tuple(
-        {"left": _members_field(left), "right": _members_field(right), "into": into}
-        for into, left, right in groups
-    )
-
-
 def resolve_clusters(
     op: MergeManifestsOp,
     *,
@@ -1270,102 +689,24 @@ def resolve_clusters(
     right: GraphManifest,
     canonical_maps: Sequence[tuple[Side, CanonicalMap]] = (),
 ) -> ClusterResolution:
-    """Resolve *op*'s clusters against its declared maps and build the per-side composite.
+    """Resolve *op*'s groups and build the per-side composite relabel.
 
-    *canonical_maps* are extra ``(side, map)`` pairs folded into
+    *canonical_maps* are extra ``(side, map)`` vocabulary pairs folded into
     ``op.canonical_maps``. *left* / *right* are the manifests about to be
-    merged, in whatever vocabulary they are in: a declared entry whose
-    source is absent on its side but whose target is present is satisfied and
-    is a no-op; one matching nothing is refused as a typo.
+    merged, in their own names: the vocabulary, the equivalences and
+    ``op.renames`` are resolved together over those names, in one pass (see
+    :mod:`~graflo.architecture.evolution.naming_graph`).
 
-    A name both sides carry after their composite maps, and no cluster
-    merges, is what ``op.name_conflict`` decides: ``error`` refuses it as
-    incomplete, naming the equivalences to declare; ``union_right`` declares
-    them itself (a **synthesized** cluster, so the union goes through the
-    same identity and property reconciliation as a declared one — two
-    spellings of one name, ``canonical_slug`` alike, are one such cluster
-    under the left spelling); ``prefix_right`` leaves them to merge to keep
-    apart.
-
-    Raises :class:`~graflo.architecture.evolution.equivalence.ClusterConflictError`
-    when the declared clusters themselves conflict,
-    :class:`MergeCanonicalConflictError` when a map and the equivalences
-    disagree — a member the map sends elsewhere than the merged name, a
-    canonical class or attribute re-targeted by a cluster, a cluster with no
-    name, a dangling entry, a property equivalence naming an absent or
-    colliding field — and :class:`MergeIncompleteError` when an extension
-    would resolve it: a map entry sending a non-member onto a merged name,
-    or a shared name under ``name_conflict="error"``.
+    Raises:
+        MergeNamingError: Every blocking problem with the declarations, at once
+            -- a :class:`MergeCanonicalConflictError`, and a
+            :class:`MergeIncompleteError` too when every problem is one an
+            addition settles (a shared name under ``name_conflict="error"``,
+            a vocabulary sending a class onto a group's name).
     """
-    declared = fold_declared_maps(op, canonical_maps)
-    names: dict[Side, SideNames] = {
-        "left": SideNames.of(left),
-        "right": SideNames.of(right),
-    }
-    manifests: dict[Side, GraphManifest] = {"left": left, "right": right}
-    resolution = _resolve(
-        op,
-        declared=declared,
-        names=names,
-        manifests=manifests,
-        synthesized_from=(len(op.vertex_equivalences), len(op.relation_equivalences)),
-    )
-    if op.name_conflict == "prefix_right":
-        return resolution
+    from .naming_graph import resolve_naming
 
-    near = op.name_conflict == "union_right"
-    vertex_groups = same_name_groups(resolution, names, kind="vertex", near=near)
-    relation_groups = same_name_groups(resolution, names, kind="relation", near=near)
-    if not vertex_groups and not relation_groups:
-        return resolution
-
-    if op.name_conflict == "error":
-        kind: Kind = "vertex" if vertex_groups else "relation"
-        shared = [into for into, _l, _r in (vertex_groups or relation_groups)]
-        raise _incomplete(
-            f"{kind} name collision",
-            f"{shared} exist on both sides and no equivalence merges them",
-            "Declare the equivalences the completion carries, set "
-            "name_conflict='union_right' to union by name, or "
-            "name_conflict='prefix_right' to keep them apart.",
-            Completion(
-                kind="declare_equivalences",
-                vertex_equivalences=_same_name_payloads(vertex_groups),
-                relation_equivalences=_same_name_payloads(relation_groups),
-            ),
-            subjects=tuple(subject("merged", name) for name in shared),
-        )
-
-    nary = any(
-        len(l_members) > 1 or len(r_members) > 1
-        for _into, l_members, r_members in (*vertex_groups, *relation_groups)
-    )
-    extended = op.model_copy(
-        update={
-            "vertex_equivalences": [
-                *op.vertex_equivalences,
-                *(
-                    VertexEquivalence.model_validate(payload)
-                    for payload in _same_name_payloads(vertex_groups)
-                ),
-            ],
-            "relation_equivalences": [
-                *op.relation_equivalences,
-                *(
-                    RelationEquivalence.model_validate(payload)
-                    for payload in _same_name_payloads(relation_groups)
-                ),
-            ],
-            "allow_merges": op.allow_merges or nary,
-        }
-    )
-    return _resolve(
-        extended,
-        declared=declared,
-        names=names,
-        manifests=manifests,
-        synthesized_from=(len(op.vertex_equivalences), len(op.relation_equivalences)),
-    )
+    return resolve_naming(op, left=left, right=right, canonical_maps=canonical_maps)
 
 
 def validate_and_complete_canonical_map(
@@ -1375,30 +716,20 @@ def validate_and_complete_canonical_map(
     right: GraphManifest,
     canonical_maps: Sequence[tuple[Side, CanonicalMap]] = (),
 ) -> SideMaps:
-    """Validate *op* against its declared maps and return the completed per-side relabels.
+    """Validate *op* against its vocabulary and return the completed per-side relabels.
 
-    The merged name of every cluster is completed — from ``into``, the
-    declared map, or the members' shared spelling — and every member maps
-    onto it; the declared map's remaining entries are carried as written.
+    Every group's merged name is completed — from ``into``, the vocabulary,
+    or the members' shared spelling — and every member maps onto it; the
+    remaining vocabulary entries and ``renames`` are carried as written.
     Apply the result to each side with :func:`canonicalize_ops` before the
     schema/resource union, which is what
     :func:`~graflo.architecture.evolution.merge.merge_manifests` does.
 
-    Raises :class:`MergeCanonicalConflictError` for every refusal of
-    :func:`resolve_clusters`, wrapping a
-    :class:`~graflo.architecture.evolution.equivalence.ClusterConflictError`
-    when the declared clusters themselves conflict.
+    Raises the :class:`MergeNamingError` of :func:`resolve_clusters`.
     """
-    try:
-        return resolve_clusters(
-            op, left=left, right=right, canonical_maps=canonical_maps
-        ).side_maps
-    except ClusterConflictError as exc:
-        raise MergeCanonicalConflictError(
-            f"merge contradicts the canonical map (cluster conflict): {exc}",
-            check=exc.check or "cluster conflict",
-            subjects=exc.subjects,
-        ) from exc
+    return resolve_clusters(
+        op, left=left, right=right, canonical_maps=canonical_maps
+    ).side_maps
 
 
 def dangling_entries(
