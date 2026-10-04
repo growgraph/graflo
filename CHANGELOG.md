@@ -21,6 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`change_field_types` on an edge relation** retypes the edges of the relation that declare the
   property, and refuses only a property none of them declares.
 
+### Fixed
+
+- **The merge preview's `lookup_demotion` note** lists only the branches a member's own resources
+  derive for it, so a vocabulary-joined member keyed by its own tag is no longer reported as
+  completing every derived branch.
+
 ## [1.16.0]
 
 ### Breaking

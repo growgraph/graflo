@@ -65,6 +65,8 @@ from .merge_types import (
 from .ops import (
     AddSecondaryIdentitiesOp,
     CanonicalizeOp,
+    DerivedBranch,
+    LocalKeyBranch,
     ManifestOp,
     MergeManifestsOp,
     RenameRelationsOp,
@@ -1833,8 +1835,11 @@ def _merge_manifests(
             branches=_completable_branches(
                 result,
                 cluster,
+                side,
+                member,
                 member_keys.get((side, member)) or (),
                 member_property_names.get((side, member), set()),
+                sides,
             ),
         )
         for cluster in index.vertices
@@ -1848,15 +1853,19 @@ def _merge_manifests(
 def _completable_branches(
     manifest: GraphManifest,
     cluster: Cluster,
+    side: Side,
+    member: str,
     key: Sequence[str],
     carried: Collection[str],
+    sides: Mapping[str, GraphManifest],
 ) -> tuple[str, ...]:
     """Funnel branches a member's records can complete, up to its own key's.
 
     A branch is completable when each field it requires is one the member
-    carries or one a derived branch adds. The walk stops at the branch over
-    the member's own key: a record carrying the key always completes it, so
-    nothing after it is reachable.
+    carries or one a derived or ``local_key`` branch adds *for this member*:
+    some resource producing it has an entry for the branch that applies to it.
+    The walk stops at the branch over the member's own key: a record carrying
+    the key always completes it, so nothing after it is reachable.
     """
     schema = manifest.graph_schema
     if (
@@ -1870,10 +1879,17 @@ def _completable_branches(
     declaration = cluster.declaration
     derived: set[str] = set()
     if isinstance(declaration, VertexEquivalence):
-        derived = {b.name for b in declaration.derived_branches()}
+        stepped: list[DerivedBranch | LocalKeyBranch] = [
+            *declaration.derived_branches()
+        ]
         local_key = declaration.local_key_branch()
         if local_key is not None:
-            derived.add(local_key.name)
+            stepped.append(local_key)
+        derived = {
+            branch.name
+            for branch in stepped
+            if _branch_reaches(branch, cluster, side, member, sides)
+        }
     reachable = set(carried) | derived
     out: list[str] = []
     for branch in funnel.branches:
@@ -1883,6 +1899,28 @@ def _completable_branches(
         if required == set(key):
             break
     return tuple(out)
+
+
+def _branch_reaches(
+    branch: DerivedBranch | LocalKeyBranch,
+    cluster: Cluster,
+    side: Side,
+    member: str,
+    sides: Mapping[str, GraphManifest],
+) -> bool:
+    """Whether a resource producing *member* on *side* derives *branch* for it.
+
+    An unkeyed entry applies to every member the resource produces; a
+    member-keyed one only to the members it names, by own or canonical name.
+    """
+    for resource in branch.sources:
+        produced = _members_produced(resource, cluster, sides)
+        if produced is None or produced[0] != side or member not in produced[1]:
+            continue
+        keyed = branch.members_for(resource)
+        if keyed is None or member in {cluster.resolved(side, k) for k in keyed}:
+            return True
+    return False
 
 
 def _apply_merge_naming(manifest: GraphManifest, op: MergeManifestsOp) -> None:
