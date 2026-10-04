@@ -102,6 +102,19 @@ class BulkCsvAppender:
         self._open_files: dict[str, TextIO] = {}
         self._writers: dict[str, Any] = {}
         self._manifest: dict[str, Path] = {}
+        self._reported_undeclared_edges: set[tuple] = set()
+
+    def _report_undeclared_edge(self, edge_id: tuple, count: int) -> None:
+        """Say, once per edge id, that its edges are not staged."""
+        if edge_id in self._reported_undeclared_edges:
+            return
+        self._reported_undeclared_edges.add(edge_id)
+        logger.warning(
+            "Edge %s is not staged: the schema does not declare it (%s in this "
+            "batch; reported once).",
+            edge_id,
+            count,
+        )
 
     @property
     def staged_file_paths(self) -> dict[str, Path]:
@@ -148,9 +161,12 @@ class BulkCsvAppender:
 
             ec = self._schema_db.edge_config
             for edge_id, docs in gc.edges.items():
-                if edge_id not in schema.core_schema.edge_config:
+                # A relation read from the data is declared by its endpoints'
+                # relation-less template, exactly as the REST writer resolves it.
+                edge = schema.core_schema.edge_config.declared(edge_id)
+                if edge is None:
+                    self._report_undeclared_edge(edge_id, len(docs))
                     continue
-                edge = schema.core_schema.edge_config.edge_for(edge_id)
                 if not docs:
                     continue
                 runtime = ec.runtime(edge)

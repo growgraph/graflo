@@ -1039,15 +1039,16 @@ class VertexConfig(ConfigBaseModel):
             if not vertex.identity:
                 digest = bool(vertex.hash_identity_properties or vertex.identity_funnel)
                 if digest and blank_id_field in vertex.property_names:
-                    # Before normalization assigns it, `id` here is the author's:
-                    # records would keep their own `id` and bypass the digest.
+                    # Before normalization assigns it, `id` here is the author's,
+                    # and the cast discards a record's own `id` for the digest.
                     raise ValueError(
                         f"Vertex '{vertex.name}' declares a property "
                         f"`{blank_id_field}`, which its digest identity uses for "
-                        "its synthetic key: a record carrying its own "
-                        f"`{blank_id_field}` would keep it and bypass the digest. "
-                        f"Leave `{blank_id_field}` out of `properties` (the key is "
-                        "added for you), or rename it if records carry one"
+                        "its synthetic key: a record's own "
+                        f"`{blank_id_field}` is replaced by the digest, never "
+                        f"stored. Leave `{blank_id_field}` out of `properties` "
+                        "(the key is added for you), or rename it if records "
+                        "carry one you want to keep"
                     )
                 if digest or vertex.blank or vertex.assigned:
                     vertex.identity = [blank_id_field]

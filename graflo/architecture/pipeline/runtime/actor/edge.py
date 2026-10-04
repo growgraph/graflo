@@ -105,6 +105,7 @@ class EdgeActor(Actor):
             self._relation_map: dict[str, str] = {}
             self._relation_map_only = False
             self._strict_edge_types = False
+            self._rejected_edges: set[tuple[str, str, str | None]] = set()
             self._edge_cache: dict[tuple[str, str, str | None], Edge] = {}
             self._init_ctx: ActorInitContext | None = None
             self.derivation: EdgeDerivation = EdgeDerivation()
@@ -126,6 +127,7 @@ class EdgeActor(Actor):
         self._relation_map = config.relation_map or {}
         self._relation_map_only = config.relation_map_only
         self._strict_edge_types = config.strict_edge_types
+        self._rejected_edges = set()
         self._edge_cache = {}
         self._init_ctx = None
 
@@ -213,10 +215,17 @@ class EdgeActor(Actor):
                 la.finish_init(init_ctx)
             return
 
+        if init_ctx.strict_references:
+            # Strict references close the schema: a relation found in the data
+            # must be declared too.
+            self._strict_edge_types = True
+
         if self.edge is not None:
             # Static mode: register schema Edge now.
             self._adopt_declared_relation()
             edge_id = self.edge.edge_id
+            if init_ctx.strict_references:
+                self._refuse_undeclared(edge_id)
             init_ctx.edge_config.update_edges(
                 self.edge, vertex_config=self.vertex_config
             )
@@ -236,6 +245,25 @@ class EdgeActor(Actor):
                 init_ctx, self._static_source, self._static_target
             )
             self._check_inverse_emission(init_ctx, None)
+
+    def _refuse_undeclared(self, edge_id: EdgeId) -> None:
+        """Refuse a static step whose edge the schema does not declare.
+
+        Checked before the step registers its edge, so the resource's edge
+        config still holds only what the schema declares.
+        """
+        if self.edge_config is None or self.edge_config.declared(edge_id) is not None:
+            return
+        source, target, relation = edge_id
+        declared = sorted(
+            str(r) for r in self._declared_relations(source, target) if r is not None
+        )
+        raise ValueError(
+            f"edge step {source} -> {target} (relation {relation!r}) writes an edge "
+            "the schema does not declare"
+            + (f"; declared between them: {declared}" if declared else "")
+            + ". Declare it in edge_config, or name a declared relation"
+        )
 
     def _declared_relations(self, source: str, target: str) -> set[str | None]:
         """Relations the edge config declares from *source* to *target*."""
@@ -459,6 +487,8 @@ class EdgeActor(Actor):
         cached = self._edge_cache.get(key)
         if cached is not None:
             return cached
+        if key in self._rejected_edges:
+            return None
         with _EDGE_REGISTRATION_LOCK:
             return self._create_edge_locked(key)
 
@@ -468,18 +498,22 @@ class EdgeActor(Actor):
         cached = self._edge_cache.get(key)
         if cached is not None:
             return cached
-        # Skip if this (source, target, relation) was not pre-declared.
+        # Skip what the schema does not declare, by the writer's rule: the edge
+        # itself, or the relation-less template between its endpoints.
         if (
             self._strict_edge_types
             and self.edge_config is not None
-            and key not in self.edge_config
+            and self.edge_config.declared(key) is None
         ):
-            logger.debug(
-                "EdgeActor: strict_edge_types=True, skipping undeclared (%s, %s, %s)",
-                source,
-                target,
-                relation,
-            )
+            if key not in self._rejected_edges:
+                self._rejected_edges.add(key)
+                logger.warning(
+                    "Edge (%s, %s, %s) is skipped: the schema does not declare it "
+                    "(reported once per step).",
+                    source,
+                    target,
+                    relation,
+                )
             return None
         edge = Edge(
             source=source,

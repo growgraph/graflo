@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 
 from graflo.architecture.contract.ingestion.steps import VertexActorConfig
@@ -43,6 +43,29 @@ def explode_identity_lists(
     return [{**doc, field: value} for value in doc[field] if value is not None]
 
 
+def undeclared_mapping_targets(
+    vertex_config: VertexConfig, vertex: str, from_doc: Mapping[str, str]
+) -> list[str]:
+    """The ``from`` targets *vertex* does not declare as properties."""
+    if vertex not in vertex_config.vertex_set:
+        return []
+    declared = set(vertex_config.property_names(vertex))
+    return sorted(target for target in from_doc if target not in declared)
+
+
+def refuse_undeclared_mapping(
+    vertex_config: VertexConfig, vertex: str, from_doc: Mapping[str, str]
+) -> None:
+    """Refuse a ``from`` map that writes a property *vertex* does not declare."""
+    unknown = undeclared_mapping_targets(vertex_config, vertex, from_doc)
+    if unknown:
+        raise ValueError(
+            f"vertex step {vertex!r} maps {unknown} through `from`, which "
+            f"{vertex!r} does not declare as properties; declare them, or map "
+            "onto declared properties"
+        )
+
+
 class VertexActor(VertexProducingActor):
     """Actor for processing vertex data."""
 
@@ -77,6 +100,8 @@ class VertexActor(VertexProducingActor):
     def finish_init(self, init_ctx: ActorInitContext) -> None:
         self.vertex_config = init_ctx.vertex_config
         self.allowed_vertex_names = init_ctx.allowed_vertex_names
+        if init_ctx.strict_references and self.from_doc:
+            refuse_undeclared_mapping(self.vertex_config, self.name, self.from_doc)
 
     def _filter_and_aggregate_vertex_docs(
         self, docs: list[dict[str, Any]], doc: dict[str, Any]
@@ -240,6 +265,14 @@ class VertexActor(VertexProducingActor):
             }
             if passthrough_doc:
                 agg.append(passthrough_doc)
+
+        if self.name in self.vertex_config.hash_identity_vertices:
+            # A digest vertex's key is synthetic: a value the record carries
+            # under that name (a source `id` column, a mapping, a positional
+            # transform output) would key the document instead of the digest.
+            for vertex_doc in agg:
+                for field in identity_fields:
+                    vertex_doc.pop(field, None)
 
         merged = fuse_doc_basis(agg, index_keys=tuple(identity_fields))
 

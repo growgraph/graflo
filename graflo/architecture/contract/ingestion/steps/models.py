@@ -674,9 +674,10 @@ class EdgeActorConfig(EdgeEndpointMatchOptionsConfig):
     strict_edge_types: bool = PydanticField(
         default=False,
         description=(
-            "When True, skip documents whose resolved (source_type, target_type) pair "
-            "is not pre-declared in the resource edge_config at init. "
-            "When False (default), dynamic pairs are registered at runtime."
+            "When True, skip documents whose resolved (source, target, relation) "
+            "the edge config does not declare, as that edge or as a relation-less "
+            "edge between the same endpoints. When False (default), dynamic pairs "
+            "are registered at runtime. Implied by strict_references."
         ),
     )
     relation: str | None = PydanticField(

@@ -18,7 +18,9 @@ schema:
                 identity:
                 -   _key
         edge_config:
-            edges: []
+            edges:
+            -   source: institution
+                target: institution
     db_profile:
         vertex_storage_names:
             institution: institutions

@@ -289,8 +289,8 @@ def apply_replace_identity(manifest: GraphManifest, op: ReplaceIdentityOp) -> No
             and vertex.identity_mode == "natural"
             and SYNTHETIC_ID_FIELD in vertex.property_names
         ):
-            # The digest is written to `id` only while it is empty, so a record
-            # carrying its own `id` would keep it and bypass the digest.
+            # The digest owns `id`: a record's own `id` is discarded at cast,
+            # so the property's values would be lost silently.
             raise ValueError(
                 f"replace_identity: vertex '{vertex.name}' declares a property "
                 f"`{SYNTHETIC_ID_FIELD}`, which a {spec.to.mode} identity uses "

@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Filter leaves** spell the comparison `operator` (`operator: __gt__`); the `foo` key is refused
   with that repair.
+- **`strict_references`** (on by default at ingest) closes the schema: a step writing an undeclared
+  edge, or mapping `from` onto an undeclared property, is refused at load; a relation found in the
+  data that no edge declares is skipped with a warning. A relation-less edge between the same
+  endpoints declares every relation read from the data.
 
 ### Added
 
@@ -35,6 +39,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the `schema.yaml` catalogue, so a missing property is reported as a fact.
 - **World-model assertion 6** checks that some resource's edge steps write a provenance relation:
   it warns when none does, and is `not_applicable` when the relation comes from the data.
+- **TigerGraph bulk loading** stages edges whose relation is read from the data, under the
+  relation-less edge that declares them; they were skipped without a word.
+- **A hash- or funnel-keyed vertex** always keys on its digest: a record's own `id` (a source
+  column, a `from` mapping or a transform output) is discarded at cast. Records sharing a source
+  `id` used to keep it and fold into one vertex.
 
 ## [1.16.0]
 

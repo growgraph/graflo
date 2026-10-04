@@ -1,8 +1,8 @@
-"""A digest identity keys on a synthetic ``id``; a real ``id`` property would bypass it.
+"""A digest identity keys on a synthetic ``id``; a real ``id`` property would be lost.
 
-The digest is written to ``id`` only while the field is empty, so a record
-carrying its own ``id`` keeps that value as its key. Each way of arriving at a
-digest identity over a declared ``id`` is refused.
+The cast discards a record's own ``id`` for the digest, so a declared ``id``
+column would never be stored. Each way of arriving at a digest identity over a
+declared ``id`` is refused.
 """
 
 from __future__ import annotations

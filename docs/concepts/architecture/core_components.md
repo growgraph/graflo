@@ -378,8 +378,9 @@ Payload and selection:
   each link.
 - `strict_edge_types: true`: for steps whose endpoints come from roles, skip a
   record whose resolved `(source, target, relation)` the schema does not
-  declare. By default such an edge type is added when it is first seen; set
-  this for targets that need their edge types defined before any write.
+  declare, neither as that edge nor as a relation-less edge between the same
+  endpoints. Otherwise such an edge type is added when it is first seen.
+  Ingestion sets it on every step, through `strict_references`.
 
 ### The `transform` step
 

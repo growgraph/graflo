@@ -1,11 +1,12 @@
-# GraFlo <img src="https://raw.githubusercontent.com/growgraph/graflo/main/docs/assets/favicon.ico" alt="graflo logo" style="height: 32px; width:32px;"/>
+# GraFlo <img src="https://raw.githubusercontent.com/growgraph/graflo/main/docs/assets/favicon.ico" alt="graflo logo" height="32" width="32"/>
 
-![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)
-[![PyPI version](https://badge.fury.io/py/graflo.svg)](https://badge.fury.io/py/graflo)
-[![PyPI Downloads](https://static.pepy.tech/badge/graflo)](https://pepy.tech/projects/graflo)
-[![Docs](https://img.shields.io/badge/docs-growgraph.github.io-orange.svg)](https://growgraph.github.io/graflo)
-[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green)](https://github.com/growgraph/graflo/blob/main/LICENSE)
-[![pre-commit](https://github.com/growgraph/graflo/actions/workflows/pre-commit.yml/badge.svg)](https://github.com/growgraph/graflo/actions/workflows/pre-commit.yml)
+[![tests](https://img.shields.io/github/actions/workflow/status/growgraph/graflo/tests.yml?branch=main&label=tests)](https://github.com/growgraph/graflo/actions/workflows/tests.yml)
+[![pre-commit](https://img.shields.io/github/actions/workflow/status/growgraph/graflo/pre-commit.yml?branch=main&label=pre-commit)](https://github.com/growgraph/graflo/actions/workflows/pre-commit.yml)
+[![docs](https://img.shields.io/github/actions/workflow/status/growgraph/graflo/build-docs.yml?branch=main&label=docs)](https://growgraph.github.io/graflo)  
+[![PyPI](https://img.shields.io/pypi/v/graflo)](https://pypi.org/project/graflo/)
+[![Python](https://img.shields.io/pypi/pyversions/graflo)](https://pypi.org/project/graflo/)
+[![Downloads](https://img.shields.io/pepy/dt/graflo)](https://pepy.tech/projects/graflo)
+[![License](https://img.shields.io/pypi/l/graflo)](https://github.com/growgraph/graflo/blob/main/LICENSE)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.15446131.svg)](https://doi.org/10.5281/zenodo.15446131)
 
 GraFlo is a Python library that turns records from files, SQL databases, RDF,

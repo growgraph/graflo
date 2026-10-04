@@ -571,10 +571,9 @@ def _check_synthetic_id_free(
 ) -> None:
     """Refuse a funnel over a merged class whose members declare ``id``.
 
-    A funnel keys a record on a synthetic digest stored in ``id``, filled
-    only while the field is empty. A member that declares ``id`` as a real
-    property brings records whose ``id`` is already set: they would keep that
-    value as their primary key and bypass the funnel.
+    A funnel keys a record on a synthetic digest stored in ``id``, and the
+    cast discards a record's own ``id`` for it. A member that declares ``id``
+    as a real property would lose that column's values silently.
     """
     for side in ("left", "right"):
         for member in cluster.members(side):
@@ -584,9 +583,9 @@ def _check_synthetic_id_free(
                 raise MergeIdentityError(
                     f"merge_manifests: merged vertex {cluster.into!r} is keyed "
                     f"on a funnel, whose synthetic key is `id`, but "
-                    f"{side}:{member} declares a property `id`; its records "
-                    "would keep that value and bypass the funnel. Rename the "
-                    "property with a PropertyEquivalence.",
+                    f"{side}:{member} declares a property `id`, whose values "
+                    "the funnel's key would replace. Rename the property with "
+                    "a PropertyEquivalence.",
                     check="identity collision",
                     subjects=(subject("merged", cluster.into), subject(side, member)),
                 )

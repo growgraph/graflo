@@ -250,7 +250,7 @@ class TestDeclaredIdentityCoverage:
         assert [b.id for b in funnel.branches] == ["name", "y_id"]
 
     def test_a_funnel_over_a_member_declaring_id_is_refused(self) -> None:
-        """A funnel's synthetic key is ``id``; a real ``id`` column would bypass it."""
+        """A funnel's synthetic key is ``id``; a real ``id`` column would be lost."""
         with pytest.raises(MergeIdentityError, match="right:Y") as excinfo:
             _merge(
                 VertexEquivalence(

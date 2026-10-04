@@ -450,8 +450,8 @@ every required field of one funnel branch, declared on the member under its
 canonical name. A member that cannot would lose all its records, so the union
 refuses and names it (`identity coverage`); it refuses a branch no member
 declares for the same reason. A funnel also refuses a member that declares a
-property named `id`, the funnel's own key: that member's records would keep
-their `id` and bypass the funnel (`identity collision`).
+property named `id`, the funnel's own key: the funnel would replace that
+column's values, so they would be lost (`identity collision`).
 
 The check reads the manifests, not the data. A record whose key field is empty
 still has no identity: it is not written, and the cast logs a warning such as
