@@ -83,8 +83,12 @@ __all__ = [
     "canonical_map_to_ops",
     "canonical_near_collisions",
     "canonicalize_ops",
+    "check_attribute_fixed_points",
+    "check_property_fields_exist",
+    "check_property_maps_against_manifest",
     "compose_canonical_maps",
     "dangling_entries",
+    "dangling_refusal",
     "fold_declared_maps",
     "resolve_clusters",
     "trim_canonical_map",
@@ -111,8 +115,8 @@ class MergeCanonicalConflictError(Refusal):
     subclass :class:`MergeIncompleteError` is the one refusal an extension
     resolves.
 
-    ``check`` names the rule that refused — the parenthesised phrase in the
-    message — and ``subjects`` the names it is about, as
+    ``check`` names the rule that refused — the phrase the message starts
+    with — and ``subjects`` the names it is about, as
     :func:`~graflo.architecture.evolution.equivalence.subject` ids; see
     :class:`.Refusal`.
     """
@@ -123,13 +127,17 @@ class MergeCanonicalConflictError(Refusal):
 #: ``declare_equivalences`` adds the payloads (or ``name_conflict="union_right"``
 #: declares them itself); ``set_into`` replaces one equivalence by the payload,
 #: renamed; ``rename_away`` adds the ``renames`` entry; ``add_key_source``
-#: adds the identity entry carried in the payload.
+#: adds the identity entry carried in the payload; ``acknowledge`` replaces one
+#: equivalence by the payload with a consequence added to its ``allow``.
+#: ``add_key_source`` and ``acknowledge`` are left to the author, because each
+#: decides which records fuse.
 CompletionKind = Literal[
     "extend_cluster",
     "declare_equivalences",
     "set_into",
     "rename_away",
     "add_key_source",
+    "acknowledge",
 ]
 
 
@@ -258,7 +266,7 @@ def _conflict(
     check: str, detail: str, hint: str, *, subjects: tuple[str, ...] = ()
 ) -> MergeCanonicalConflictError:
     return MergeCanonicalConflictError(
-        f"merge contradicts the canonical map ({check}): {detail}. {hint}",
+        f"{check}: {detail}. {hint}",
         check=check,
         subjects=subjects,
     )
@@ -466,7 +474,7 @@ def _count(n: int, singular: str, plural: str) -> str:
     return f"{n} {singular if n == 1 else plural}"
 
 
-def _dangling_refusal(
+def dangling_refusal(
     entries: Sequence[DanglingEntry], *, names: SideNames | None = None
 ) -> MergeCanonicalConflictError:
     """One refusal naming every dangling entry on a side.
@@ -516,8 +524,7 @@ def _dangling_refusal(
     # Built directly rather than through ``_conflict``: the hint belongs with
     # the summary, above the list, not trailing off the last entry.
     return MergeCanonicalConflictError(
-        f"merge contradicts the canonical map (dangling entry): "
-        f"{len(entries)} {side} canonical map entries match nothing on that "
+        f"dangling entry: {len(entries)} {side} canonical map entries match nothing on that "
         f"side{context}. {hint}\n{listed}",
         check="dangling entry",
         subjects=subjects,
@@ -563,7 +570,7 @@ def fold_declared_maps(
     )
 
 
-def _check_property_fields_exist(
+def check_property_fields_exist(
     manifest: GraphManifest, cluster: Cluster, *, side: Side, declared: CanonicalMap
 ) -> None:
     """Every field a property equivalence names must exist on its member, as spelled."""
@@ -606,7 +613,7 @@ def _check_property_fields_exist(
             )
 
 
-def _check_attribute_fixed_points(
+def check_attribute_fixed_points(
     cluster: Cluster, *, side: Side, declared: CanonicalMap
 ) -> None:
     """A canonical attribute the map established on a member may not be renamed by the cluster.
@@ -632,7 +639,7 @@ def _check_attribute_fixed_points(
                 )
 
 
-def _check_property_maps_against_manifest(
+def check_property_maps_against_manifest(
     manifest: GraphManifest, relabel: CanonicalizeOp, *, side: Side
 ) -> None:
     """Refuse a property rename whose old name is absent or whose new name collides.

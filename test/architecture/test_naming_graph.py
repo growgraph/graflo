@@ -10,6 +10,7 @@ survive the relabel.
 from __future__ import annotations
 
 import asyncio
+from typing import Literal
 
 import pytest
 
@@ -752,3 +753,261 @@ class TestAVocabularyAcknowledgesItsOwnMerges:
             self._parts(), _customers("Customer"), op(allow_self_relations=True)
         )
         assert _vertex_set(union) == {"Part", "Customer"}
+
+
+# --------------------------------------------------------------------------- #
+# An acknowledgement covers its own group, never another.
+# --------------------------------------------------------------------------- #
+
+
+_Allow = Literal["self_relations", "observation_fusion"]
+
+
+def _two_pairs() -> GraphManifest:
+    """Two pairs of types, each pair joined by an edge."""
+    manifest = GraphManifest.from_config(
+        {
+            "schema": {
+                "metadata": {"name": "pairs", "version": "1.0.0"},
+                "graph": {
+                    "vertex_config": {
+                        "vertices": [
+                            {"name": n, "properties": ["id"], "identity": ["id"]}
+                            for n in ("Engine", "Pump", "Valve", "Pipe")
+                        ]
+                    },
+                    "edge_config": {
+                        "edges": [
+                            {
+                                "source": "Engine",
+                                "target": "Pump",
+                                "relation": "drives",
+                            },
+                            {"source": "Valve", "target": "Pipe", "relation": "seals"},
+                        ]
+                    },
+                },
+            }
+        }
+    )
+    manifest.finish_init()
+    return manifest
+
+
+class TestAnAcknowledgementIsPerGroup:
+    @staticmethod
+    def _op(
+        first: list[_Allow], second: list[_Allow], **map_flags: bool
+    ) -> MergeManifestsOp:
+        return MergeManifestsOp(
+            vertex_equivalences=[
+                VertexEquivalence(
+                    left=["Engine", "Pump"],
+                    right="Motor",
+                    into="Motor",
+                    allow=first,
+                ),
+                VertexEquivalence(
+                    left=["Valve", "Pipe"],
+                    right="Fitting",
+                    into="Fitting",
+                    allow=second,
+                ),
+            ],
+            canonical_maps={"left": CanonicalMap(**map_flags)} if map_flags else {},
+        )
+
+    def test_one_groups_allow_does_not_license_the_others(self) -> None:
+        with pytest.raises(MergeNamingError) as excinfo:
+            merge_manifests(
+                _two_pairs(),
+                _customers("Motor", "Fitting"),
+                self._op(["self_relations"], []),
+            )
+
+        (finding,) = excinfo.value.findings
+        assert finding.kind == "self_relation"
+        assert "merged:Fitting" in finding.subjects
+        (repair,) = finding.repairs
+        assert repair.kind == "acknowledge"
+        assert repair.replaces == 1
+        assert repair.vertex_equivalences[0]["allow"] == ["self_relations"]
+
+    def test_each_group_accepting_its_own_merges(self) -> None:
+        union = merge_manifests(
+            _two_pairs(),
+            _customers("Motor", "Fitting"),
+            self._op(["self_relations"], ["self_relations"]),
+        )
+
+        assert _vertex_set(union) == {"Motor", "Fitting"}
+
+    def test_a_map_flag_does_not_license_an_equivalences_merge(self) -> None:
+        with pytest.raises(MergeNamingError, match="self-relation") as excinfo:
+            merge_manifests(
+                _two_pairs(),
+                _customers("Motor", "Fitting"),
+                self._op([], [], allow_self_relations=True),
+            )
+
+        assert {f.kind for f in excinfo.value.findings} == {"self_relation"}
+        assert len(excinfo.value.findings) == 2
+
+    def test_the_preview_reports_it_without_running_the_union(self) -> None:
+        preview = preview_merge(
+            _two_pairs(),
+            _customers("Motor", "Fitting"),
+            self._op(["self_relations"], []),
+            attempt=False,
+        )
+
+        assert [f.kind for f in preview.blocking] == ["self_relation"]
+
+
+# --------------------------------------------------------------------------- #
+# A property-only key and a member the vocabulary joins.
+# --------------------------------------------------------------------------- #
+
+
+class TestAPropertyKeyAndAVocabularyJoinedMember:
+    @staticmethod
+    def _op(identity: list[object]) -> MergeManifestsOp:
+        return MergeManifestsOp(
+            vertex_equivalences=[
+                VertexEquivalence.model_validate(
+                    {
+                        "left": ["Press", "Lathe"],
+                        "right": "Device",
+                        "properties": _SERIALS,
+                        "identity": identity,
+                    }
+                )
+            ],
+            canonical_maps={"left": _VOCABULARY},
+        )
+
+    def test_a_member_that_cannot_fill_the_key_is_refused_with_its_own_key(
+        self,
+    ) -> None:
+        result = build_naming(
+            self._op(["serial"]), left=_register_manifest(), right=_devices_manifest()
+        )
+
+        (finding,) = result.blocking
+        assert finding.kind == "identity_coverage"
+        assert "left:Bench" in finding.subjects
+        (repair,) = finding.repairs
+        assert repair.kind == "add_key_source"
+        assert repair.vertex_equivalences == (
+            {
+                "local_key": {
+                    "register": {"Bench": {"field": "asset_id", "tag": "left:Bench"}}
+                }
+            },
+        )
+
+    def test_appending_the_repair_makes_the_key_a_funnel_that_keeps_it(
+        self,
+    ) -> None:
+        local_key = {
+            "local_key": {
+                "register": {"Bench": {"field": "asset_id", "tag": "left:Bench"}}
+            }
+        }
+
+        union = merge_manifests(
+            _register_manifest(), _devices_manifest(), self._op(["serial", local_key])
+        )
+
+        benches = _cast(union, "register", _REGISTER_ROWS[2:], "Machine")
+        assert [b["local_key"] for b in benches] == ["left:Bench:B1"]
+
+
+# --------------------------------------------------------------------------- #
+# The group's `into`, wherever it is written.
+# --------------------------------------------------------------------------- #
+
+
+def test_into_on_a_later_equivalence_of_the_group_is_the_declared_into() -> None:
+    op = MergeManifestsOp(
+        vertex_equivalences=[
+            VertexEquivalence(left="Press", right="Device"),
+            VertexEquivalence(left="Lathe", right="Gauge", into="Equipment"),
+        ],
+        canonical_maps={"left": _VOCABULARY},
+    )
+
+    result = build_naming(
+        op, left=_register_manifest(), right=_devices_manifest(gauges=True)
+    )
+
+    (cluster,) = result.resolution.index.vertices
+    assert cluster.into == "Equipment"
+    assert cluster.declared_into == "Equipment"
+
+
+# --------------------------------------------------------------------------- #
+# Two classes of one side on one name.
+# --------------------------------------------------------------------------- #
+
+
+class TestTwoClassesOfOneSideOnOneName:
+    @staticmethod
+    def _op() -> MergeManifestsOp:
+        return MergeManifestsOp(
+            canonical_maps={"left": CanonicalMap(vertices={"Asset": "WorkOrder"})}
+        )
+
+    def test_the_class_the_vocabulary_moved_can_keep_its_own_name(self) -> None:
+        result = build_naming(self._op(), left=_maintenance(), right=_sensors())
+
+        (finding,) = result.blocking
+        assert finding.kind == "occupied_into"
+        keep, away = finding.repairs
+        assert keep.renames == {"left": {"vertices": {"Asset": "Asset"}}}
+        assert away.renames == {"left": {"vertices": {"WorkOrder": "WorkOrder_left"}}}
+
+    def test_the_suggestion_keeps_it(self) -> None:
+        suggested = suggest_merge_op(_maintenance(), _sensors(), self._op())
+
+        assert suggested.renames.left.vertices == {"Asset": "Asset"}
+        union = merge_manifests(_maintenance(), _sensors(), suggested)
+        assert _vertex_set(union) == {"Asset", "WorkOrder", "Device"}
+
+
+def test_merged_types_come_in_the_order_their_equivalences_are_declared() -> None:
+    """Not alphabetically: Valve and Pipe are declared first, so Fitting leads."""
+    op = MergeManifestsOp(
+        vertex_equivalences=[
+            VertexEquivalence(
+                left=["Valve", "Pipe"],
+                right="Fitting",
+                into="Fitting",
+                allow=["self_relations"],
+            ),
+            VertexEquivalence(
+                left=["Engine", "Pump"],
+                right="Motor",
+                into="Motor",
+                allow=["self_relations"],
+            ),
+        ]
+    )
+
+    union = merge_manifests(_two_pairs(), _customers("Motor", "Fitting"), op)
+
+    schema = union.graph_schema
+    assert schema is not None
+    assert [v.name for v in schema.core_schema.vertex_config.vertices] == [
+        "Fitting",
+        "Motor",
+    ]
+
+
+def test_a_suggested_declaration_is_drawn_with_a_short_caption() -> None:
+    preview = preview_merge(
+        _maintenance(), _customers("WorkOrder"), MergeManifestsOp(), attempt=False
+    )
+
+    labels = {e.label for e in preview.edges if e.kind == "suggested"}
+    assert labels == {"declare"}

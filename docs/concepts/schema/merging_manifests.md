@@ -183,7 +183,7 @@ group is called what `into` says, and the preview records a
 `vocabulary_override` note. With none of the three, the union refuses:
 
 ```text
-merge refused: MergeNamingError: merge refused (unnamed vertex cluster): ['Asset'] ~ ['Device'] has no merged name — its members are spelled differently and no vocabulary names them. Give the equivalence `into`.
+merge refused: MergeNamingError: unnamed vertex cluster: ['Asset'] ~ ['Device'] has no merged name — its members are spelled differently and no vocabulary names them. Give the equivalence `into`.
 ```
 
 When the two sides' vocabularies name the group differently (`Machine` on the
@@ -315,8 +315,10 @@ from a type to itself: the union refuses that unless the equivalence says
 same record at the same pipeline level, both land on one merged vertex: the
 union refuses that unless it says `allow: [observation_fusion]`. Steps with
 distinct [roles](../glossary.md#role) keep their records apart and need neither.
-A merge a canonical map makes with no equivalence involved is acknowledged on
-the map: `allow_self_relations: true`, `allow_observation_fusion: true`.
+An `allow` covers its own group only, never another group of the same side.
+A merge a canonical map makes is acknowledged on the map:
+`allow_self_relations: true`, `allow_observation_fusion: true`. Such a flag
+covers only the merges that map makes, never an equivalence's.
 
 ### A vocabulary that merges several types
 
@@ -342,11 +344,18 @@ and `into` may be omitted.
 The type is one, but which records fuse is decided per member. Per-member maps
 are keyed by the members' own names, and the union reads each side before
 renaming it, so a derivation keyed by `Press` still runs only for the rows a
-router sends to `Press`. A member the map joins that the identity gives no key
-source for its resource keeps its own key behind the tag `side:Type`, such as
-`left:Bench:B1`: its records belong to `Machine`, but never fuse with a
+router sends to `Press`.
+
+When the identity is a funnel, a member the map joins that the identity gives
+no key source for its resource keeps its own key behind the tag `side:Type`,
+such as `left:Bench:B1`. Its records belong to `Machine`, but never fuse with a
 device. The preview lists each such key as an `auto_local_key` note, and
 [`--suggest`](#suggesting-the-declarations) writes it out so you can edit it.
+
+A plain property key, such as `identity: [serial_number]`, has no place for an
+own key. A member the map joins that does not carry the key is refused
+(`identity_coverage`), and the repair carries the `local_key` branch to append.
+With it, the identity becomes a funnel, and the member keeps its own key.
 
 ### One type, one group
 
@@ -372,7 +381,7 @@ The default is `error` because two teams that both wrote `WorkOrder` do not
 necessarily mean the same thing, and a union by name cannot be split again:
 
 ```text
-merge refused: MergeNamingIncompleteError: merge is incomplete (vertex name collision): ['WorkOrder'] exist on both sides and no equivalence merges them. Declare the equivalences the completion carries, set name_conflict='union_right' to union by name, or name_conflict='prefix_right' to keep them apart.
+merge refused: MergeNamingIncompleteError: vertex name collision: ['WorkOrder'] exist on both sides and no equivalence merges them. Declare the equivalences the completion carries, set name_conflict='union_right' to union by name, or name_conflict='prefix_right' to keep them apart.
 completion:
 kind: declare_equivalences
 vertex_equivalences:
@@ -659,7 +668,12 @@ declarations that would settle it, safest first. The refusal also prints the
 | `incomplete`, `name_collision` | a type a map sends onto a group's name, or a name both sides carry | add the declaration its completion prints; `MergeNamingIncompleteError` |
 | `near_collision` | two spellings of one name | declare an equivalence, or `prefix_right` |
 | `identity_disagreement`, `identity_coverage` | two equivalences of one group declaring `identity`, or a member no key can be derived for | keep one `identity`; add the key source the repair carries |
-| `unknown_property`, `property_collision`, `property_disagreement` | a property rename naming a missing field, folding two, or disagreeing with the map | fix the rename |
+| `self_relation`, `observation_fusion` | a group's merge turns an edge into a self-relation, or fuses two members one record produces | accept it with `allow` on the equivalence, or the flag on the map; see [Several types on one side](#several-types-on-one-side) |
+| `unknown_property`, `property_collision`, `property_disagreement`, `property_retarget` | a property rename naming a missing field, folding two, disagreeing with the map, or renaming an attribute the map established | fix the rename |
+
+A finding that an addition settles, such as a name both sides carry, is
+`incomplete`; when every finding is, the error is `MergeNamingIncompleteError`.
+Every other finding is a `refusal`.
 
 The schema union refuses on its own after the names are settled:
 
@@ -692,8 +706,9 @@ finding without raising, and `naming_table(result.graph)` renders it.
 `--suggest FILE` writes an op that settles what can be settled without
 guessing: for each problem, the first of its repairs an edit of the op can
 express — a rename away before a new `into`, and either before adding a type
-to a group, which fuses its records. It also writes out every automatic own
-key. Without `--op`, it writes a scaffold: one equivalence for every name both
+to a group, which fuses its records. Accepting a self-relation or a fused
+observation, and adding a key source, are left to you, because each decides
+which records fuse. It also writes out every automatic own key. Without `--op`, it writes a scaffold: one equivalence for every name both
 sides share. Two spellings of one name are listed as comments, never declared.
 In Python the same is `suggest_merge_op(left, right, op)`. Nothing is
 applied: read the file, edit it, and pass it with `--op`.

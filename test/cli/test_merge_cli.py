@@ -175,7 +175,7 @@ def test_without_the_canonical_map_the_same_op_is_refused_on_membership(
         ],
     )
     assert result.exit_code == 1
-    assert "not in left manifest" in result.output
+    assert "is not in the left manifest" in result.output
 
 
 def test_dry_run_writes_nothing(tmp_path: pathlib.Path) -> None:

@@ -53,11 +53,11 @@ from .canonical import (
     MergeIncompleteError,
     SideMaps,
     SideNames,
-    _check_attribute_fixed_points,
-    _check_property_fields_exist,
-    _check_property_maps_against_manifest,
-    _dangling_refusal,
     canonical_near_collisions,
+    check_attribute_fixed_points,
+    check_property_fields_exist,
+    check_property_maps_against_manifest,
+    dangling_refusal,
     fold_declared_maps,
 )
 from .equivalence import (
@@ -79,6 +79,7 @@ from .ops import (
     PropertyEquivalence,
     RelationEquivalence,
     VertexEquivalence,
+    branch_fields,
 )
 
 logger = logging.getLogger(__name__)
@@ -95,6 +96,14 @@ Via = Literal["equivalence", "vocabulary", "rename", "union_right", "own name"]
 
 #: A node: which kind of name, which side, the name as that side spells it.
 NodeKey = tuple[Kind, Side, str]
+
+#: The finding kind of each refusal
+#: :func:`~graflo.architecture.evolution.canonical.check_property_maps_against_manifest`
+#: raises, by its ``check``.
+_PROPERTY_MAP_KINDS: dict[str, str] = {
+    "unknown property": "unknown_property",
+    "property rename collision": "property_collision",
+}
 
 
 @dataclass(frozen=True)
@@ -126,7 +135,7 @@ def _describe_findings(findings: Sequence[NamingFinding]) -> str:
         f"  {position}. {finding.message}"
         for position, finding in enumerate(findings, start=1)
     )
-    return f"merge refused: {len(findings)} problems with the declarations:\n{listed}"
+    return f"{len(findings)} problems with the declarations:\n{listed}"
 
 
 class MergeNamingError(MergeCanonicalConflictError):
@@ -306,6 +315,8 @@ class _Component:
     nodes: list[NodeKey]
     declarations: list[_Declaration]
     name: str | None = None
+    #: The one ``into`` the group's equivalences spell, whichever spells it.
+    into: str | None = None
 
     @property
     def grouped(self) -> bool:
@@ -376,14 +387,16 @@ class _Naming:
     def note(self, kind: str, message: str, *, subjects: Iterable[str] = ()) -> None:
         self.finding(kind, message, severity="note", subjects=subjects)
 
-    def from_refusal(self, exc: Refusal | ValueError, *, kind: str) -> None:
-        completion = getattr(exc, "completion", None)
+    def from_refusal(self, exc: ValueError, *, kind: str) -> None:
+        """Record a refusal one of the shared checks raised, as a finding of *kind*."""
+        refusal = exc if isinstance(exc, Refusal) else None
         self.finding(
             kind,
             str(exc),
-            subjects=getattr(exc, "subjects", ()) or (),
-            repairs=(completion,) if isinstance(completion, Completion) else (),
-            check=getattr(exc, "check", "") or kind.replace("_", " "),
+            subjects=refusal.subjects if refusal is not None else (),
+            repairs=(exc.completion,) if isinstance(exc, MergeIncompleteError) else (),
+            check=(refusal.check if refusal is not None else "")
+            or kind.replace("_", " "),
         )
 
     # ── the pass ────────────────────────────────────────────────────────────
@@ -429,6 +442,7 @@ class _Naming:
             ),
         )
         side_maps = self._side_maps(components, index)
+        self._consequences(components)
         self._property_checks(index, side_maps)
         graph = self._graph(components)
         findings = tuple(self.findings)
@@ -470,7 +484,7 @@ class _Naming:
                         if prior is not None and prior != position:
                             self.finding(
                                 "cluster_overlap",
-                                f"{kind} equivalence: {side}:{name} is declared by two "
+                                f"cluster overlap: {kind} {side}:{name} is declared by two "
                                 f"equivalences (#{prior} and #{position}); one class "
                                 "is declared in one equivalence — fold them into one",
                                 subjects=(subject(side, name),),
@@ -505,7 +519,7 @@ class _Naming:
                 if not resolved:
                     self.finding(
                         "unknown_member",
-                        f"merge_manifests: {side} {kind} {spelled!r} not in {side} "
+                        f"unknown {kind} member: {spelled!r} is not in the {side} "
                         f"manifest{did_you_mean(spelled, known)}",
                         subjects=(subject(side, spelled),),
                         check=f"unknown {kind} member",
@@ -616,7 +630,7 @@ class _Naming:
         # merge error still names every one of them at once.
         for entry in entries:
             self.from_refusal(
-                _dangling_refusal((entry,), names=self.names[side]), kind="dangling"
+                dangling_refusal((entry,), names=self.names[side]), kind="dangling"
             )
 
     def _renames(self) -> None:
@@ -638,7 +652,7 @@ class _Naming:
                         continue
                     self.finding(
                         "dangling",
-                        f"renames.{side}.{'vertices' if kind == 'vertex' else 'relations'} "
+                        f"dangling entry: renames.{side}.{'vertices' if kind == 'vertex' else 'relations'} "
                         f"renames {source!r}, which the {side} manifest does not "
                         f"declare{did_you_mean(source, known)}",
                         subjects=(subject(side, source),),
@@ -651,7 +665,7 @@ class _Naming:
                 if cls not in self.names[side].vertices:
                     self.finding(
                         "dangling",
-                        f"renames.{side}.properties is keyed by {cls!r}, which the "
+                        f"dangling entry: renames.{side}.properties is keyed by {cls!r}, which the "
                         f"{side} manifest does not declare"
                         f"{did_you_mean(cls, self.names[side].vertices)}",
                         subjects=(subject(side, cls),),
@@ -663,7 +677,7 @@ class _Naming:
                 if resource not in resources:
                     self.finding(
                         "dangling",
-                        f"renames.{side}.resources renames {resource!r}, which the "
+                        f"dangling entry: renames.{side}.resources renames {resource!r}, which the "
                         f"{side} manifest does not declare"
                         f"{did_you_mean(resource, resources)}",
                         check="dangling entry",
@@ -746,7 +760,7 @@ class _Naming:
         if len(intos) > 1:
             self.finding(
                 "disagreement",
-                f"merge refused ({kind} into disagreement): the equivalences of one "
+                f"{kind} into disagreement: the equivalences of one "
                 f"group {left} ~ {right} name it {intos}; one group has one name",
                 subjects=(*members, *(subject("merged", n) for n in intos)),
                 repairs=tuple(self._set_into(component, name) for name in intos),
@@ -755,6 +769,7 @@ class _Naming:
             return None
         if intos:
             (name,) = intos
+            component.into = name
             overridden = [t for t in targets if t != name]
             if overridden:
                 self.note(
@@ -770,7 +785,7 @@ class _Naming:
         if len(targets) > 1:
             self.finding(
                 "unnamed_cluster",
-                f"merge refused (unnamed {kind} cluster): the vocabularies name the "
+                f"unnamed {kind} cluster: the vocabularies name the "
                 f"members of {left} ~ {right} differently ({targets}); give the "
                 "equivalence `into`",
                 subjects=members,
@@ -783,7 +798,7 @@ class _Naming:
             return spellings[0]
         self.finding(
             "unnamed_cluster",
-            f"merge refused (unnamed {kind} cluster): {left} ~ {right} has no merged "
+            f"unnamed {kind} cluster: {left} ~ {right} has no merged "
             "name — its members are spelled differently and no vocabulary names "
             "them. Give the equivalence `into`.",
             subjects=members,
@@ -810,7 +825,11 @@ class _Naming:
     def _completion(
         self,
         kind: Literal[
-            "extend_cluster", "set_into", "add_key_source", "declare_equivalences"
+            "extend_cluster",
+            "set_into",
+            "add_key_source",
+            "declare_equivalences",
+            "acknowledge",
         ],
         category: Kind,
         payload: dict[str, Any],
@@ -877,39 +896,35 @@ class _Naming:
                 )
             return {}
         if policy == "error":
-            kind = "vertex" if "vertex" in shared else "relation"
-            names = [name for name, _l, _r in shared[kind]]
-            self.finding(
-                "name_collision",
-                f"merge is incomplete ({kind} name collision): {names} exist on both "
-                "sides and no equivalence merges them. Declare the equivalences the "
-                "completion carries, set name_conflict='union_right' to union by "
-                "name, or name_conflict='prefix_right' to keep them apart.",
-                severity="incomplete",
-                subjects=tuple(subject("merged", n) for n in names),
-                repairs=(
-                    Completion(
-                        kind="declare_equivalences",
-                        vertex_equivalences=tuple(
-                            {
-                                "left": _members_field(l),
-                                "right": _members_field(r),
-                                "into": n,
-                            }
-                            for n, l, r in shared.get("vertex", [])
-                        ),
-                        relation_equivalences=tuple(
-                            {
-                                "left": _members_field(l),
-                                "right": _members_field(r),
-                                "into": n,
-                            }
-                            for n, l, r in shared.get("relation", [])
+            for kind, groups in shared.items():
+                names = [name for name, _l, _r in groups]
+                payloads = tuple(
+                    {
+                        "left": _members_field(left),
+                        "right": _members_field(right),
+                        "into": name,
+                    }
+                    for name, left, right in groups
+                )
+                self.finding(
+                    "name_collision",
+                    f"{kind} name collision: {names} exist on both sides and no "
+                    "equivalence merges them. Declare the equivalences the "
+                    "completion carries, set name_conflict='union_right' to union "
+                    "by name, or name_conflict='prefix_right' to keep them apart.",
+                    severity="incomplete",
+                    subjects=tuple(subject("merged", n) for n in names),
+                    repairs=(
+                        Completion(
+                            kind="declare_equivalences",
+                            vertex_equivalences=payloads if kind == "vertex" else (),
+                            relation_equivalences=(
+                                payloads if kind == "relation" else ()
+                            ),
                         ),
                     ),
-                ),
-                check=f"{kind} name collision",
-            )
+                    check=f"{kind} name collision",
+                )
             return {}
         out: dict[Kind, list[_Declaration]] = {}
         for kind, groups in shared.items():
@@ -968,7 +983,7 @@ class _Naming:
             hint = "VertexEquivalence" if kind == "vertex" else "RelationEquivalence"
             self.finding(
                 "near_collision",
-                f"merge_manifests: {listed} denote the same concept under different "
+                f"{kind} near collision: {listed} denote the same concept under different "
                 f"naming conventions, so they would merge into two unrelated {kind} "
                 f"types with the source data split between them. Declare a {hint} "
                 "to combine them, or name_conflict='prefix_right' to keep them apart.",
@@ -1018,7 +1033,7 @@ class _Naming:
                 for side in _SIDES:
                     on_side = [c for c in ungrouped if side in c.sides()]
                     if len(on_side) > 1:
-                        self._same_side(kind, name, side, on_side, taken)
+                        self._same_side(kind, name, side, on_side, taken, set(by_name))
 
     def _shared_into(
         self,
@@ -1030,7 +1045,7 @@ class _Naming:
         described = " and ".join(f"{g.on('left')} ~ {g.on('right')}" for g in groups)
         self.finding(
             "shared_into",
-            f"{kind} equivalence: two groups, {described}, both arrive at {name!r}; "
+            f"shared into: two {kind} groups, {described}, both arrive at {name!r}; "
             "nothing links them — name one differently, or declare them as one "
             "equivalence",
             subjects=(
@@ -1094,7 +1109,7 @@ class _Naming:
         if by_vocabulary:
             self.finding(
                 "incomplete",
-                f"merge is incomplete ({kind} joining a merged class): the canonical "
+                f"{kind} joining a merged class: the canonical "
                 f"map sends {described} onto {name!r}, the name of the group "
                 f"{group.on('left')} ~ {group.on('right')}, without declaring it a "
                 f"member. A {kind} joining a merged class is governed by the group's "
@@ -1107,7 +1122,7 @@ class _Naming:
             return
         self.finding(
             "occupied_into",
-            f"{kind} equivalence: {name!r} would receive the group "
+            f"occupied into: {kind} {name!r} would receive the group "
             f"{group.on('left')} ~ {group.on('right')} and {described}, which nothing "
             f"links — rename {described} away, pick a different `into`, or add it to "
             "the group",
@@ -1123,30 +1138,42 @@ class _Naming:
         side: Side,
         components: Sequence[_Component],
         taken: Collection[str],
+        union_names: Collection[str],
     ) -> None:
+        """Refuse ungrouped classes of one side that all arrive at *name*.
+
+        A class that arrived through a rename or the vocabulary can keep its own
+        name, unless another class already arrives there; a class already called
+        *name* is renamed away.
+        """
         nodes = [n for c in components for _k, s, n in c.nodes if s == side]
+        field_name = "vertices" if kind == "vertex" else "relations"
+
+        def rename(n: str, to: str, label: str) -> Completion:
+            return Completion(
+                kind="rename_away",
+                side=side,
+                renames={side: {field_name: {n: to}}},
+                label=label,
+            )
+
+        keep = [
+            rename(n, n, f"keep {side}:{n} as {n!r}")
+            for n in nodes
+            if n != name and n not in union_names
+        ]
+        away = [
+            rename(n, _free_name(n, taken, side), f"rename {side}:{n} away")
+            for n in nodes
+            if n == name
+        ]
         self.finding(
             "occupied_into",
-            f"{side} {kind}s {nodes} would all be called {name!r}, and nothing merges "
-            "them; rename one away, or merge them with a vocabulary that sets "
-            "allow_merges",
+            f"occupied into: {side} {kind}s {nodes} would all be called {name!r}, "
+            "and nothing merges them; keep or rename one apart, or declare them "
+            "one group",
             subjects=(subject("merged", name), *(subject(side, n) for n in nodes)),
-            repairs=tuple(
-                Completion(
-                    kind="rename_away",
-                    side=side,
-                    renames={
-                        side: {
-                            "vertices" if kind == "vertex" else "relations": {
-                                n: _free_name(n, taken, side)
-                            }
-                        }
-                    },
-                    label=f"rename {side}:{n} away",
-                )
-                for n in nodes
-                if n == name or self.renames[kind][side].get(n) == name
-            ),
+            repairs=(*keep, *away),
             check="occupied into",
         )
 
@@ -1171,7 +1198,7 @@ class _Naming:
                     )
                     self.finding(
                         "double_home",
-                        f"renames.{side} renames {side}:{source} to {target!r}, but it "
+                        f"double home: renames.{side} renames {side}:{source} to {target!r}, but it "
                         f"belongs to the group named {component.name!r}, which {by} "
                         "names — a name is declared in one place",
                         subjects=(subject(side, source), subject("merged", target)),
@@ -1183,7 +1210,7 @@ class _Naming:
                 if component is not None and component.grouped:
                     self.finding(
                         "double_home",
-                        f"renames.{side}.properties renames attributes of {side}:{cls}, "
+                        f"double home: renames.{side}.properties renames attributes of {side}:{cls}, "
                         f"a member of the group {component.name!r}; align a member's "
                         "attributes with the equivalence's `properties`",
                         subjects=(subject(side, cls),),
@@ -1211,7 +1238,7 @@ class _Naming:
                 if cls in group_names:
                     self.finding(
                         "dangling",
-                        f"merge contradicts the canonical map (dangling entry): the "
+                        f"dangling entry: the "
                         f"canonical map's {side} attribute map is keyed by {cls!r}, a "
                         "merged name. `properties` is keyed by the source class: key "
                         "the attribute map by the member it applies to.",
@@ -1232,16 +1259,22 @@ class _Naming:
     # ── lowering ────────────────────────────────────────────────────────────
 
     def _clusters(self, components: Sequence[_Component]) -> list[Cluster[Any]]:
+        """The groups as clusters, in the order their equivalences are declared.
+
+        The union lists merged types in this order, ahead of the sides' other
+        types.
+        """
         out: list[Cluster[Any]] = []
-        for component in components:
-            if not component.grouped or component.name is None:
-                continue
+        grouped = sorted(
+            (c for c in components if c.grouped and c.name is not None),
+            key=lambda c: min(d.position for d in c.declarations),
+        )
+        for component in grouped:
             ordered = self._ordered_members(component)
             aliases = self._aliases(component, ordered)
             effective = self._effective(component, ordered, aliases)
             if effective is None:
                 continue
-            first = component.declarations[0]
             declared = {
                 side: tuple(
                     dict.fromkeys(
@@ -1255,7 +1288,7 @@ class _Naming:
                 "right": tuple(ordered["right"]),
                 "into": component.name,
                 "aliases": aliases,
-                "declared_into": first.declaration.into,
+                "declared_into": component.into,
                 "synthesized": all(d.synthesized for d in component.declarations),
                 "declared_left": declared["left"],
                 "declared_right": declared["right"],
@@ -1327,7 +1360,7 @@ class _Naming:
         if len(keyed) > 1:
             self.finding(
                 "identity_disagreement",
-                f"merged vertex {component.name!r} takes its key from one "
+                f"identity disagreement: merged vertex {component.name!r} takes its key from one "
                 f"equivalence, but #{keyed[0].position} and #{keyed[1].position} "
                 "both declare `identity`; keep it on one",
                 subjects=(
@@ -1346,7 +1379,7 @@ class _Naming:
                 if prior is not None and prior != path:
                     self.finding(
                         "disagreement",
-                        f"merged vertex {component.name!r}: derive_at for resource "
+                        f"derive_at disagreement: merged vertex {component.name!r}: derive_at for resource "
                         f"{resource!r} is {prior} in one equivalence and {path} in another",
                         subjects=(subject("merged", component.name),),
                         check="derive_at disagreement",
@@ -1364,6 +1397,8 @@ class _Naming:
             isinstance(b, DerivedBranch | LocalKeyBranch) for b in identity
         ):
             identity = self._with_own_keys(component, identity, ordered, aliases)
+        elif identity is not None:
+            self._property_key_coverage(component, identity, ordered, properties)
         try:
             return VertexEquivalence(
                 left=list(ordered["left"]),
@@ -1406,7 +1441,7 @@ class _Naming:
                         if member not in ordered[side]:
                             self.finding(
                                 "unknown_member",
-                                f"property equivalence into {pe.into!r} names "
+                                f"unknown key member: property equivalence into {pe.into!r} names "
                                 f"{side}:{key}, which is not a member of the group "
                                 f"{component.name!r} ({list(ordered[side])})",
                                 subjects=(subject(side, key),),
@@ -1450,6 +1485,93 @@ class _Naming:
             }
         return out
 
+    def _producing(
+        self, side: Side, member: str, resource_names: Mapping[Side, Mapping[str, str]]
+    ) -> list[str]:
+        """The resources of *side* that produce *member*, under their union names."""
+        from .merge import _steps_producing
+
+        manifest = self.manifests[side]
+        ingestion, schema = manifest.ingestion_model, manifest.graph_schema
+        if ingestion is None or schema is None:
+            return []
+        known = schema.core_schema.vertex_config.vertex_set
+        return [
+            resource_names[side].get(resource.name, resource.name)
+            for resource in ingestion.resources
+            if _steps_producing(resource.pipeline, member, known_vertices=known)
+        ]
+
+    def _property_key_coverage(
+        self,
+        component: _Component,
+        identity: Sequence[IdentityBranchDecl],
+        ordered: Mapping[Side, Sequence[str]],
+        properties: Sequence[PropertyEquivalence],
+    ) -> None:
+        """Refuse a vocabulary-joined member that completes no branch of a property-only key.
+
+        Such a member keeps its own key only under a funnel, so the repair
+        carries the ``local_key`` branch to append to ``identity``. A declared
+        member is left to the schema union, which names the property to map.
+        """
+        assert component.name is not None
+        branches = [set(branch_fields(branch)) for branch in identity]
+        declared = {
+            side: {m for d in component.declarations for m in d.members[side]}
+            for side in _SIDES
+        }
+        resource_names = self._resource_names()
+        for side in _SIDES:
+            schema = self.manifests[side].graph_schema
+            if schema is None:
+                continue
+            vertex_config = schema.core_schema.vertex_config
+            for member in ordered[side]:
+                if member in declared[side] or member not in vertex_config.vertex_set:
+                    continue
+                renames = dict(self.declared[side].properties.get(member, {}))
+                for pe in properties:
+                    spec = pe.left if side == "left" else pe.right
+                    if isinstance(spec, dict) and member in spec:
+                        renames[spec[member]] = pe.into
+                carried = {
+                    renames.get(name, name)
+                    for name in vertex_config.property_names(member)
+                }
+                if any(branch <= carried for branch in branches):
+                    continue
+                own = list(vertex_config[member].identity)
+                tag = f"{side}:{member}"
+                entry = {
+                    "local_key": {
+                        resource: {member: {"field": "|".join(own) or "?", "tag": tag}}
+                        for resource in self._producing(side, member, resource_names)
+                    }
+                }
+                self.finding(
+                    "identity_coverage",
+                    f"identity coverage: merged vertex {component.name!r} is keyed "
+                    f"on {[sorted(b) for b in branches]}, which {side}:{member} "
+                    "cannot complete; the vocabulary joins it to the group, so its "
+                    "records would have no key. A member the vocabulary joins keeps "
+                    "its own key only when the identity is a funnel: append the "
+                    "local_key branch the repair carries to `identity`",
+                    subjects=(
+                        subject("merged", component.name),
+                        subject(side, member),
+                    ),
+                    repairs=(
+                        Completion(
+                            kind="add_key_source",
+                            side=side,
+                            vertex_equivalences=(entry,),
+                            label=f"key {side}:{member} on its own key",
+                        ),
+                    ),
+                    check="identity coverage",
+                )
+
     def _with_own_keys(
         self,
         component: _Component,
@@ -1468,8 +1590,6 @@ class _Naming:
         whose resource has no entry is left to merge, which turns that
         resource into a lookup of the merged class.
         """
-        from .merge import _steps_producing
-
         assert component.name is not None
         resource_names = self._resource_names()
         stepped = [b for b in identity if isinstance(b, DerivedBranch | LocalKeyBranch)]
@@ -1479,20 +1599,12 @@ class _Naming:
         }
         additions: dict[str, dict[str, LocalKeySource]] = {}
         for side in _SIDES:
-            manifest = self.manifests[side]
-            ingestion, schema = manifest.ingestion_model, manifest.graph_schema
-            if ingestion is None or schema is None:
+            schema = self.manifests[side].graph_schema
+            if schema is None:
                 continue
             vertex_config = schema.core_schema.vertex_config
             for member in ordered[side]:
-                for resource in ingestion.resources:
-                    if not _steps_producing(
-                        resource.pipeline,
-                        member,
-                        known_vertices=vertex_config.vertex_set,
-                    ):
-                        continue
-                    union_name = resource_names[side].get(resource.name, resource.name)
+                for union_name in self._producing(side, member, resource_names):
 
                     def applies(
                         entry: Any, side: Side = side, member: str = member
@@ -1559,7 +1671,7 @@ class _Naming:
                     }
                     self.finding(
                         "identity_coverage",
-                        f"merged vertex {component.name!r} is keyed by a derived "
+                        f"identity coverage: merged vertex {component.name!r} is keyed by a derived "
                         f"identity, but resource {union_name!r} derives nothing for "
                         f"{side}:{member}, whose own key {list(vertex.identity)} is "
                         "not one field, so it cannot be keyed on it automatically; add "
@@ -1624,30 +1736,140 @@ class _Naming:
                 for sources in [list(mapping.values())]
             )
             properties = self._side_properties(side, index)
-            allow = {
-                value
-                for cluster in index.vertices
-                if cluster.members(side)
-                for value in cluster.declaration.allow
-            }
-            vocabulary = self.declared[side]
-            if vocabulary.allow_self_relations:
-                allow.add("self_relations")
-            if vocabulary.allow_observation_fusion:
-                allow.add("observation_fusion")
             try:
+                # Each group's self-relations and fused observations were
+                # judged against its own acknowledgement in _consequences.
                 maps[side] = CanonicalizeOp(
                     vertices=mappings["vertex"],
                     relations=mappings["relation"],
                     properties=properties,
                     allow_merges=merges,
-                    allow_self_relations="self_relations" in allow,
-                    allow_observation_fusion="observation_fusion" in allow,
+                    allow_self_relations=True,
+                    allow_observation_fusion=True,
                 )
             except ValueError as exc:
                 self.from_refusal(exc, kind="disagreement")
                 maps[side] = CanonicalizeOp(allow_merges=True)
         return SideMaps(left=maps["left"], right=maps["right"])
+
+    def _consequences(self, components: Sequence[_Component]) -> None:
+        """Refuse a self-relation or fused observation a group makes unacknowledged.
+
+        Judged per group and per side, on that side's manifest before the
+        relabel. A group accepts what one of its equivalences lists in
+        ``allow``; a side's vocabulary accepts, through its own flags, what a
+        merge it makes causes.
+        """
+        from .apply import merge_fused_slots, merge_self_relations
+
+        for component in components:
+            if component.kind != "vertex" or component.name is None:
+                continue
+            accepted = {
+                value
+                for d in component.declarations
+                if isinstance(d.declaration, VertexEquivalence)
+                for value in d.declaration.allow
+            }
+            for side in _SIDES:
+                members = component.on(side)
+                if len(members) < 2:
+                    continue
+                manifest = self.manifests[side]
+                schema = manifest.graph_schema
+                if schema is None:
+                    continue
+                vocabulary = self.declared[side]
+                targets = [self._vocab_target(("vertex", side, m)) for m in members]
+                by_vocabulary = any(
+                    t is not None and targets.count(t) > 1 for t in targets
+                )
+                mapping = dict.fromkeys(members, component.name)
+                resources = (
+                    manifest.ingestion_model.resources
+                    if manifest.ingestion_model is not None
+                    else []
+                )
+                checks: tuple[
+                    tuple[
+                        Literal["self_relations", "observation_fusion"], list[str], bool
+                    ],
+                    ...,
+                ] = (
+                    (
+                        "self_relations",
+                        merge_self_relations(
+                            schema.core_schema.edge_config.edges, mapping
+                        ),
+                        vocabulary.allow_self_relations,
+                    ),
+                    (
+                        "observation_fusion",
+                        merge_fused_slots(
+                            resources, merged=component.name, mapping=mapping
+                        ),
+                        vocabulary.allow_observation_fusion,
+                    ),
+                )
+                for value, found, flag in checks:
+                    if not found or value in accepted or (by_vocabulary and flag):
+                        continue
+                    self._unacknowledged(component, side, members, value, found)
+
+    def _unacknowledged(
+        self,
+        component: _Component,
+        side: Side,
+        members: Sequence[str],
+        value: Literal["self_relations", "observation_fusion"],
+        found: Sequence[str],
+    ) -> None:
+        assert component.name is not None
+        name = component.name
+        if value == "self_relations":
+            kind, check = "self_relation", "self-relation"
+            detail = (
+                f"turns edges into self-relations: {list(found)}. Both endpoints "
+                "then land on one vertex"
+            )
+            flag = "allow_self_relations"
+        else:
+            kind, check = "observation_fusion", "observation fusion"
+            detail = (
+                f"leaves pipeline slots producing {name!r} more than once: "
+                f"{list(found)}. One document that yields both members then fuses "
+                "them into a single node; give each step its own `role`, or accept it"
+            )
+            flag = "allow_observation_fusion"
+        repairs: tuple[Completion, ...] = ()
+        if component.grouped:
+            first = component.declarations[0]
+            payload = self._payload(first)
+            payload["allow"] = sorted({*payload.get("allow", []), value})
+            repairs = (
+                self._completion(
+                    "acknowledge",
+                    "vertex",
+                    payload,
+                    side=side,
+                    label=f"accept {value.replace('_', ' ')}",
+                    replaces=None if first.synthesized else first.position,
+                ),
+            )
+            how = f"add `allow: [{value}]` to the equivalence"
+        else:
+            how = f"set `{flag}: true` on the {side} canonical map"
+        self.finding(
+            kind,
+            f"{check}: {side} {list(members)} become {name!r}, which {detail}. "
+            f"To accept it, {how}.",
+            subjects=(
+                subject("merged", name),
+                *(subject(side, m) for m in members),
+            ),
+            repairs=repairs,
+            check=check,
+        )
 
     def _side_properties(
         self, side: Side, index: ClusterIndex
@@ -1667,7 +1889,7 @@ class _Naming:
                 if existing is not None and existing != new:
                     self.finding(
                         "property_disagreement",
-                        f"merge contradicts the canonical map (property disagreement): "
+                        f"property disagreement: "
                         f"the canonical map says {side}:{cls}.{old} -> {new!r}, but the "
                         f"equivalence maps it to {existing!r}. The two declarations "
                         "must agree on where an attribute goes; fix one of them.",
@@ -1697,7 +1919,7 @@ class _Naming:
         for cluster in index.vertices:
             for side in _SIDES:
                 try:
-                    _check_property_fields_exist(
+                    check_property_fields_exist(
                         self.manifests[side],
                         cluster,
                         side=side,
@@ -1706,7 +1928,7 @@ class _Naming:
                 except MergeCanonicalConflictError as exc:
                     self.from_refusal(exc, kind="unknown_property")
                 try:
-                    _check_attribute_fixed_points(
+                    check_attribute_fixed_points(
                         cluster, side=side, declared=self.declared[side]
                     )
                 except MergeCanonicalConflictError as exc:
@@ -1715,16 +1937,13 @@ class _Naming:
             for member, attr_map in side_maps[side].properties.items():
                 one = CanonicalizeOp(properties={member: attr_map}, allow_merges=True)
                 try:
-                    _check_property_maps_against_manifest(
+                    check_property_maps_against_manifest(
                         self.manifests[side], one, side=side
                     )
                 except MergeCanonicalConflictError as exc:
-                    kind = (
-                        "property_collision"
-                        if "collision" in (exc.check or "")
-                        else "unknown_property"
+                    self.from_refusal(
+                        exc, kind=_PROPERTY_MAP_KINDS.get(exc.check, "unknown_property")
                     )
-                    self.from_refusal(exc, kind=kind)
 
     # ── the graph ───────────────────────────────────────────────────────────
 

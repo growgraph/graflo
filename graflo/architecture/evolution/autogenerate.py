@@ -143,7 +143,7 @@ class RenameHints(ConfigBaseModel):
         validate_rename_map_is_injective(
             self.resources,
             kind="rename hint: resources",
-            merge_hint="MergeManifestsOp with explicit resource_renames",
+            merge_hint="MergeManifestsOp renames.<side>.resources",
         )
         for vertex_name, field_renames in self.vertex_properties.items():
             validate_rename_map_is_injective(

@@ -778,7 +778,7 @@ class RenameResourcesOp(ConfigBaseModel):
         validate_rename_map_is_injective(
             self.renames,
             kind="rename_resources",
-            merge_hint="MergeManifestsOp with explicit resource_renames",
+            merge_hint="MergeManifestsOp renames.<side>.resources",
         )
         return self
 

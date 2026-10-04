@@ -826,18 +826,12 @@ def test_a_preview_survives_a_round_trip_through_json(case, left, right, canonic
 @pytest.mark.parametrize(
     ("check", "expected"),
     [
-        ("vertex disagreement", "disagreement"),
-        ("relation disagreement", "disagreement"),
-        ("ambiguous vertex member", "ambiguity"),
-        ("unnamed vertex cluster", "unnamed_cluster"),
-        ("dangling entry", "dangling"),
-        ("vertex joining a merged class", "incomplete"),
-        ("vertex name collision", "name_collision"),
-        # Longest match wins, or this would read as a plain collision.
-        ("property rename collision", "property_collision"),
-        ("property re-target", "property_retarget"),
-        ("unknown property", "unknown_property"),
-        ("cluster overlap", "cluster_overlap"),
+        ("vertex near collision", "near_collision"),
+        ("vertex canonical split", "name_collision"),
+        ("ambiguous reference", "ambiguity"),
+        ("identity disagreement", "identity_disagreement"),
+        ("identity coverage", "identity_coverage"),
+        ("identity collision", "identity_collision"),
         # What the schema union refuses.
         ("field type conflict", "type_conflict"),
         ("field units conflict", "unit_conflict"),
@@ -850,6 +844,17 @@ def test_a_preview_survives_a_round_trip_through_json(case, left, right, canonic
 )
 def test_a_refusals_check_phrase_names_its_finding_kind(check, expected):
     assert kind_for_check(check) == expected
+
+
+def test_a_naming_refusal_carries_the_kind_of_every_problem():
+    """Classified by its findings, never by its message."""
+    outcome = MergeOutcome(
+        status="refused",
+        error_type="MergeNamingError",
+        message="2 problems with the declarations",
+        kinds=["unnamed_cluster", "dangling"],
+    )
+    assert expected_kinds(outcome) == frozenset({"unnamed_cluster", "dangling"})
 
 
 def test_an_unclassifiable_refusal_asserts_nothing():

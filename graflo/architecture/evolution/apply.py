@@ -463,6 +463,44 @@ def _fused_slots(
     return hits
 
 
+def merge_self_relations(
+    edges: Sequence[Edge], mapping: Mapping[str, str]
+) -> list[str]:
+    """Edges between two distinct vertices that *mapping* sends to one name.
+
+    *edges* are the pre-merge schema edges. Each such edge becomes an edge from
+    the merged vertex to itself.
+    """
+    return sorted(
+        f"({edge.source}, {edge.target}, {edge.relation}) -> "
+        f"({mapping.get(edge.source, edge.source)}, "
+        f"{mapping.get(edge.target, edge.target)}, {edge.relation})"
+        for edge in edges
+        if edge.source != edge.target
+        and mapping.get(edge.source, edge.source)
+        == mapping.get(edge.target, edge.target)
+    )
+
+
+def merge_fused_slots(
+    resources: Sequence[Any], *, merged: str, mapping: Mapping[str, str]
+) -> list[str]:
+    """Accumulator slots of the pre-merge *resources* where *merged* would fuse two members.
+
+    One source document then yields two members that land in one slot, and
+    assembly folds them into a single node.
+    """
+    out: list[str] = []
+    for resource in resources:
+        out.extend(
+            f"{resource.name}: {hit}"
+            for hit in _fused_slots(
+                resource.pipeline, merged=merged, mapping=dict(mapping)
+            )
+        )
+    return out
+
+
 def _describe_merge_impact(
     manifest: GraphManifest,
     *,
@@ -480,22 +518,8 @@ def _describe_merge_impact(
     is judged on which *members* land in one slot, and after the relabel the
     pipeline no longer says which member a step produced.
     """
-    self_relations = sorted(
-        f"({edge.source}, {edge.target}, {edge.relation}) -> "
-        f"({mapping.get(edge.source, edge.source)}, "
-        f"{mapping.get(edge.target, edge.target)}, {edge.relation})"
-        for edge in before_edges
-        if edge.source != edge.target
-        and mapping.get(edge.source, edge.source)
-        == mapping.get(edge.target, edge.target)
-    )
-
-    fused_levels: list[str] = []
-    for resource in before_resources:
-        fused_levels.extend(
-            f"{resource.name}: {hit}"
-            for hit in _fused_slots(resource.pipeline, merged=merged, mapping=mapping)
-        )
+    self_relations = merge_self_relations(before_edges, mapping)
+    fused_levels = merge_fused_slots(before_resources, merged=merged, mapping=mapping)
 
     advisories: list[str] = []
     schema = manifest.graph_schema

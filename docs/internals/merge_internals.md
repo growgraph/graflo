@@ -91,16 +91,24 @@ The checks are predicates on that graph:
 | a name is declared in one place | `cluster_overlap` (one type in two equivalences), `double_home` (a `renames` entry for a group member) |
 | every declared name exists | `unknown_member`, `dangling` |
 | a group has one identity | `identity_disagreement` |
+| a vocabulary-joined member can fill a property-only key | `identity_coverage`, repaired by a `local_key` branch that makes the key a funnel |
+| a group's merge is acknowledged | `self_relation`, `observation_fusion`; see below |
 | a name both sides carry, no group | `name_collision` under `error`, synthesized under `union_right`, prefixed later under `prefix_right` |
 | two spellings of one name | `near_collision` under `error` and `union_right`; kept apart under `prefix_right` |
 
 Each finding carries the names it is about and its repairs, safest first:
 `rename_away`, `set_into`, `extend_cluster` (which fuses entities),
-`add_key_source`, `declare_equivalences`. `suggest_merge_op` applies the
-first repair an op edit can express, repeatedly. The attribute-level checks
-(`_check_property_fields_exist`, `_check_attribute_fixed_points`,
-`_check_property_maps_against_manifest` in `canonical.py`) run per group, and
-their refusals are collected as findings.
+`add_key_source`, `acknowledge`, `declare_equivalences`. `suggest_merge_op`
+applies the first repair an op edit can express, repeatedly; it never applies
+`add_key_source` or `acknowledge`, because each decides which records fuse.
+The attribute-level checks (`check_property_fields_exist`,
+`check_attribute_fixed_points`, `check_property_maps_against_manifest` in
+`canonical.py`) run per group, and their refusals are collected as findings.
+
+Every finding's message starts with its `check` phrase. A `MergeNamingError`
+carries its findings, so the preview classifies it by their kinds
+(`MergeOutcome.kinds`); `kind_for_check` reads only the phrases of refusals
+raised after naming.
 
 ### Lowering a group
 
@@ -153,8 +161,12 @@ the right side's properties are unioned rather than dropped.
 The observation-fusion guard is judged per accumulator slot, which is what the
 runtime fuses on: a vertex step stores at its `role` sub-slot when it has one
 and at the bare level otherwise, and a router at its `role` (or `type_field`).
-A group's `allow` sets `allow_self_relations` and `allow_observation_fusion` on
-the per-side `CanonicalizeOp` of each side it has members on.
+Both guards are judged per group and per side in the naming pass, on that
+side's manifest before the relabel (`merge_self_relations`, `merge_fused_slots`
+in `apply.py`). A group accepts what one of its equivalences lists in `allow`.
+A side's vocabulary accepts, through `allow_self_relations` and
+`allow_observation_fusion`, only the merges it makes itself. The per-side
+`CanonicalizeOp` then sets both flags, since the judgement is already made.
 
 ## Words for combining things
 

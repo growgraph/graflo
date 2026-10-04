@@ -489,7 +489,9 @@ class TestValidateAndCompleteCanonicalMap:
     def test_a_map_merge_closes_the_group_over_the_vocabulary(self) -> None:
         """The map merges Firm and Deal; an equivalence naming Firm takes both."""
         cm = CanonicalMap(
-            vertices={"Firm": "Company", "Deal": "Company"}, allow_merges=True
+            vertices={"Firm": "Company", "Deal": "Company"},
+            allow_merges=True,
+            allow_self_relations=True,
         )
         op = MergeManifestsOp(
             vertex_equivalences=[VertexEquivalence(left="Firm", right="Org")]
@@ -847,7 +849,7 @@ class TestValidateAndCompleteCanonicalMap:
             MergeManifestsOp.model_validate({"allow_merges": True})
 
     def test_right_collapse_lowers_and_validates(self) -> None:
-        op = self._right_collapse_op()
+        op = self._right_collapse_op(allow_self_relations=True)
         side_maps = validate_and_complete_canonical_map(
             op,
             left=self._canonical_a(),
@@ -888,7 +890,10 @@ class TestValidateAndCompleteCanonicalMap:
         op = MergeManifestsOp(
             vertex_equivalences=[
                 VertexEquivalence(
-                    left=["Company", "Deal"], right=["Org", "Branch"], into="Company"
+                    left=["Company", "Deal"],
+                    right=["Org", "Branch"],
+                    into="Company",
+                    allow=["self_relations"],
                 )
             ],
         )
@@ -1193,17 +1198,19 @@ class TestCaseTable:
         )
         with pytest.raises(MergeIncompleteError, match="vertex name collision") as exc:
             merge_manifests(_source_a_manifest(), right, op)
-        completion = exc.value.completion
+        vertex, relation = exc.value.findings
+        assert "relation name collision" in relation.message
+        (completion,) = vertex.repairs
         assert completion.kind == "declare_equivalences"
         assert completion.vertex_equivalences == (
             {"left": "Deal", "right": "Deal", "into": "Deal"},
         )
-        assert completion.relation_equivalences == (
+        assert completion.relation_equivalences == ()
+        (relation_completion,) = relation.repairs
+        assert relation_completion.relation_equivalences == (
             {"left": "signs", "right": "signs", "into": "signs"},
         )
-        assert completion.to_dict()["vertex_equivalences"] == [
-            {"left": "Deal", "right": "Deal", "into": "Deal"}
-        ]
+        assert exc.value.completion == completion
 
     def test_union_right_unions_shared_names_through_a_cluster(self) -> None:
         right = _manifest(

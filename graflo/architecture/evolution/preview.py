@@ -51,6 +51,7 @@ from pydantic import Field as PydanticField
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.contract.manifest import GraphManifest
+from graflo.architecture.refusal import Refusal
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.identity_funnel import IdentityFunnel
 from graflo.architecture.schema.vertex import FieldMergeError, Vertex
@@ -139,47 +140,40 @@ FindingKind = Literal[
     "double_home",
     "vocabulary_override",
     "auto_local_key",
+    "self_relation",
+    "observation_fusion",
 ]
 
-#: A refusal's ``check`` phrase to the finding kind it is an instance of. The
-#: keys are matched as substrings of ``check``, longest first, so the
-#: ``vertex`` / ``relation`` prefix the messages carry needs no entry of its
-#: own.
+#: The ``check`` phrase of a refusal raised after naming, to the finding kind
+#: it is an instance of. A naming refusal carries its findings' kinds itself
+#: (:attr:`MergeOutcome.kinds`), so none of its phrases is listed. The keys are
+#: matched as substrings of ``check``, longest first, so the ``vertex`` /
+#: ``relation`` prefix the messages carry needs no entry of its own.
 _KIND_BY_CHECK: dict[str, FindingKind] = {
-    "cluster overlap": "cluster_overlap",
-    "shared into": "shared_into",
-    "occupied into": "occupied_into",
-    "double home": "double_home",
-    "unknown vertex member": "unknown_member",
-    "unknown relation member": "unknown_member",
-    "joining a merged class": "incomplete",
-    "name collision": "name_collision",
     "near collision": "near_collision",
     "canonical split": "name_collision",
-    "property disagreement": "property_disagreement",
-    "property rename collision": "property_collision",
-    "property re-target": "property_retarget",
-    "unknown property": "unknown_property",
-    "canonical property clash": "property_disagreement",
-    "ambiguous": "ambiguity",
-    "unnamed": "unnamed_cluster",
-    "dangling entry": "dangling",
-    "disagreement": "disagreement",
-    "re-target": "disagreement",
-    "clash": "disagreement",
+    "ambiguous reference": "ambiguity",
     "identity disagreement": "identity_disagreement",
     "identity coverage": "identity_coverage",
     "identity collision": "identity_collision",
-    "cluster conflict": "cluster_overlap",
-    # What the schema union refuses. ``edge type disagreement`` has to outrank
-    # the bare ``disagreement`` above, which longest-match already guarantees;
-    # a bare ``conflict`` key would swallow all five and must never be added.
+    # What the schema union refuses. A bare ``conflict`` key would swallow all
+    # six and must never be added.
     "field type conflict": "type_conflict",
     "field units conflict": "unit_conflict",
     "identity mode conflict": "identity_mode_conflict",
     "identity funnel conflict": "identity_funnel_conflict",
     "secondary identity conflict": "secondary_identity_conflict",
     "edge type disagreement": "edge_conflict",
+}
+
+#: The caption a suggested edge carries, per repair kind: what applying it does.
+_SUGGESTED_LABEL: dict[str, str] = {
+    "declare_equivalences": "declare",
+    "set_into": "into",
+    "rename_away": "rename",
+    "extend_cluster": "fuses entities",
+    "add_key_source": "key",
+    "acknowledge": "accept",
 }
 
 #: Refusals that carry no ``check`` are classified by type alone. A value of
@@ -204,6 +198,8 @@ _KINDS_BY_TYPE: dict[type[BaseException], frozenset[FindingKind]] = {
             "property_collision",
             "property_retarget",
             "unknown_property",
+            "self_relation",
+            "observation_fusion",
         }
     ),
     MergeIncompleteError: frozenset({"incomplete", "name_collision"}),
@@ -285,7 +281,7 @@ class PreviewCluster(ConfigBaseModel):
         default=None, description="Merged name; None when it could not be resolved."
     )
     declared_into: str | None = PydanticField(
-        default=None, description="`into` as the author spelled it, before translation."
+        default=None, description="`into` as the author wrote it, if any."
     )
     left: list[str] = PydanticField(default_factory=list, description="Left members.")
     right: list[str] = PydanticField(default_factory=list, description="Right members.")
@@ -342,6 +338,12 @@ class MergeOutcome(ConfigBaseModel):
     )
     check: str | None = PydanticField(
         default=None, description="The rule that refused."
+    )
+    kinds: list[FindingKind] = PydanticField(
+        default_factory=list,
+        description=(
+            "For a naming refusal, the kind of every problem it lists, in order."
+        ),
     )
     completion: dict[str, Any] | None = PydanticField(
         default=None,
@@ -415,7 +417,9 @@ class MergePreview(ConfigBaseModel):
 
         known = {n.id for n in self.nodes}
         refusal = MergeFinding(
-            kind=kind_for_check(outcome.check, outcome.error_type),
+            kind=outcome.kinds[0]
+            if outcome.kinds
+            else kind_for_check(outcome.check, outcome.error_type),
             severity="refusal",
             message=outcome.message or "merge refused",
             source="merge",
@@ -530,6 +534,8 @@ def expected_kinds(outcome: MergeOutcome) -> frozenset[FindingKind]:
     """
     if outcome.status != "refused":
         return frozenset()
+    if outcome.kinds:
+        return frozenset(outcome.kinds)
     if outcome.check:
         return frozenset({kind_for_check(outcome.check, outcome.error_type)})
     by_type = _KINDS_BY_TYPE_NAME.get(outcome.error_type or "")
@@ -540,17 +546,31 @@ def outcome_from_exception(
     exc: BaseException,
 ) -> tuple[MergeOutcome, tuple[str, ...]]:
     """The outcome a refusal is, and the node ids it names."""
-    completion = getattr(exc, "completion", None)
+    refusal = exc if isinstance(exc, Refusal) else None
+    completion = _completion_of(exc)
+    kinds: list[FindingKind] = (
+        [cast(FindingKind, finding.kind) for finding in exc.findings]
+        if isinstance(exc, MergeNamingError)
+        else []
+    )
     return (
         MergeOutcome(
             status="refused",
             error_type=type(exc).__name__,
             message=str(exc),
-            check=getattr(exc, "check", "") or None,
+            check=(refusal.check if refusal is not None else "") or None,
+            kinds=kinds,
             completion=completion.to_dict() if completion is not None else None,
         ),
-        tuple(getattr(exc, "subjects", ()) or ()),
+        refusal.subjects if refusal is not None else (),
     )
+
+
+def _completion_of(exc: BaseException) -> Completion | None:
+    """The declaration that would settle *exc*, when it carries one."""
+    if isinstance(exc, MergeNamingError | MergeIncompleteError):
+        return exc.completion
+    return None
 
 
 def outcome_from_manifest(manifest: GraphManifest) -> MergeOutcome:
@@ -700,9 +720,14 @@ class _Builder:
         self, exc: BaseException, *, fallback: FindingKind, nodes: Sequence[str] = ()
     ) -> None:
         """Record a refusal raised by one unit of the real resolution."""
-        check = getattr(exc, "check", "") or None
-        completion = getattr(exc, "completion", None)
-        subjects = [s for s in getattr(exc, "subjects", ()) or () if s in self.nodes]
+        refusal = exc if isinstance(exc, Refusal) else None
+        check = (refusal.check if refusal is not None else "") or None
+        completion = _completion_of(exc)
+        subjects = [
+            s
+            for s in (refusal.subjects if refusal is not None else ())
+            if s in self.nodes
+        ]
         self.finding(
             kind_for_check(check, type(exc).__name__) if check else fallback,
             str(exc),
@@ -829,8 +854,8 @@ class _Builder:
                         left=list(cluster.left),
                         right=list(cluster.right),
                         synthesized=cluster.synthesized,
-                        declared_identity=getattr(declaration, "identity", None)
-                        is not None,
+                        declared_identity=isinstance(declaration, VertexEquivalence)
+                        and declaration.identity is not None,
                         derived_identity=isinstance(declaration, VertexEquivalence)
                         and declaration.has_derivation,
                     )
@@ -939,7 +964,7 @@ class _Builder:
                         subject(side, member),
                         target,
                         "suggested",
-                        label=repair.kind,
+                        label=_SUGGESTED_LABEL[repair.kind],
                         declared_by="completion",
                     )
         for side_name, fragment in repair.renames.items():
@@ -955,7 +980,7 @@ class _Builder:
                         subject(side, old),
                         target,
                         "suggested",
-                        label=repair.kind,
+                        label=_SUGGESTED_LABEL[repair.kind],
                         declared_by="completion",
                     )
 

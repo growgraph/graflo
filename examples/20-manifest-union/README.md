@@ -134,7 +134,7 @@ of this merge says so, as a `lookup_demotion` note.
 **The combined type has no name.** [`merge_no_name.yaml`](merge_no_name.yaml) holds step 2 alone. Run step 4 with `--op merge_no_name.yaml`:
 
 ```text
-merge refused: MergeNamingError: merge refused (unnamed vertex cluster): ['Asset'] ~ ['Device'] has no merged name — its members are spelled differently and no vocabulary names them. Give the equivalence `into`.
+merge refused: MergeNamingError: unnamed vertex cluster: ['Asset'] ~ ['Device'] has no merged name — its members are spelled differently and no vocabulary names them. Give the equivalence `into`.
 naming (vertex):
   merged     left       right   via
   ?          Asset      Device  equivalence
