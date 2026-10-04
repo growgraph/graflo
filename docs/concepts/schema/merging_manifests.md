@@ -596,9 +596,9 @@ combined:
   must agree: `LIST<STRING>` and `LIST<INT>` conflict. Two different units
   (`m/s` and `km/h`) conflict too, because one property would then hold values
   that cannot be compared. The union refuses both, naming every conflicting
-  property at once; retype one side first with
-  [`change_field_types`](manifest_evolution.md#properties). Descriptions from both
-  sides are kept. Grounding unions its `exact_match` and `synonyms`; two
+  property at once and, for a type, every member on each side that carries
+  each type; declare the merged type with `field_types` (below). Descriptions
+  from both sides are kept. Grounding unions its `exact_match` and `synonyms`; two
   different `iri` values are cleared rather than choosing one.
 - **Edges** of the same source, target and relation combine by the same rules.
 - **Schema metadata**: the name becomes `left+right` unless the op sets `name`,
@@ -612,6 +612,25 @@ combined:
   sides register under one name must have the same body. The ingestion model's
   write policies (`edges_on_duplicate`, `endpoints_on_ambiguous`) are the left
   side's.
+
+### How do I settle a property type the members disagree on?
+
+Declare the merged type on the op, keyed by the merged type (or relation) and
+the merged property name:
+
+```yaml
+field_types:
+  vertices:
+    Machine: {ram: {type: INT}}
+  edges:
+    has: {speed: {type: FLOAT}}
+```
+
+Before folding, the union retypes every member, on either side, that carries
+the property, under whatever spelling a rename sends to it. Members without the
+property are left alone. A `LIST` takes its `item_type`. An entry that no
+member reaches is refused. The declaration is part of the recorded merge, so it
+follows the vocabulary as members join or leave it.
 
 A manifest may carry only an ingestion model or only bindings, such as a new
 source wired onto an existing vocabulary. Such a side is a valid union input:

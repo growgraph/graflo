@@ -61,7 +61,7 @@ does, and whether it can be [undone](#undoing-ops).
 | `add_edge_properties` | Adds properties to every edge of a relation. | yes |
 | `remove_edge_properties` | Removes properties from every edge of a relation. | yes, when the relation's edges agreed on the property |
 | `rename_edge_properties` | Renames properties of a relation, in the schema, profile and edge steps. | yes |
-| `change_field_types` | Sets the type of vertex or edge properties. Checked against the target database, and refuses to make a key property a `LIST`. | no |
+| `change_field_types` | Sets the type of vertex or edge properties. An edge entry retypes every edge of the relation that declares the property. Checked against the target database, and refuses to make a key property a `LIST`. | no |
 
 ### Edges and relations
 

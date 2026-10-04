@@ -21,7 +21,7 @@ import ast
 import json
 import logging
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping, Sequence
 from typing import Any, Literal, TypeAlias
 
 from pydantic import (
@@ -365,13 +365,24 @@ class FieldMergeConflict(Refusal):
     ``field`` and ``conflict`` are the same two facts in structured form: which
     property, and whether the disagreement is about types or about units. A
     caller classifying the refusal reads those rather than the prose.
+    ``origins`` maps each type label to the declarations that carry it, when
+    the caller knows them (a merge does; a single model validator does not).
     """
 
-    def __init__(self, owner: str, reason: str, remedy: str, *, field: str) -> None:
+    def __init__(
+        self,
+        owner: str,
+        reason: str,
+        remedy: str,
+        *,
+        field: str,
+        origins: Mapping[str, Sequence[str]] | None = None,
+    ) -> None:
         self.reason = reason
         self.remedy = remedy
         self.owner = owner
         self.field = field
+        self.origins = {label: tuple(o) for label, o in (origins or {}).items()}
         self.conflict = _conflict_kind([reason])
         super().__init__(
             f"{_conflict_heading([reason], owner)}, {reason}. {remedy}",
@@ -444,7 +455,9 @@ def _fold_field_description(left: str | None, right: str | None) -> str | None:
     return left or right
 
 
-def merge_fields(a: Field, b: Field, *, owner: str) -> Field:
+def merge_fields(
+    a: Field, b: Field, *, owner: str, retype_remedy: str | None = None
+) -> Field:
     """Merge two same-named fields, refusing a genuine disagreement.
 
     ``type`` and ``item_type`` are compared **and carried as a unit**: ``LIST``
@@ -461,6 +474,7 @@ def merge_fields(a: Field, b: Field, *, owner: str) -> Field:
     ``owner`` is a rendered label -- ``vertex 'party'``, ``edge ('order',
     'invoice', 'places')`` -- so a merge kernel keyed by ``into`` name and a
     model validator keyed by ``self.name`` raise the same sentence.
+    ``retype_remedy`` is the fix a type clash suggests; a merge passes its own.
     """
     if (a.type, a.item_type) != (b.type, b.item_type):
         if a.type is not None and b.type is not None:
@@ -468,7 +482,7 @@ def merge_fields(a: Field, b: Field, *, owner: str) -> Field:
                 owner,
                 f"property {a.name!r}: {format_field_type_label(a)!r} vs "
                 f"{format_field_type_label(b)!r}",
-                _RETYPE_REMEDY,
+                retype_remedy or _RETYPE_REMEDY,
                 field=a.name,
             )
         # Exactly one side is typed: its (type, item_type) pair carries whole.
@@ -502,7 +516,9 @@ def merge_fields(a: Field, b: Field, *, owner: str) -> Field:
     )
 
 
-def union_field_lists(fields: Iterable[Field], *, owner: str) -> list[Field]:
+def union_field_lists(
+    fields: Iterable[Field], *, owner: str, retype_remedy: str | None = None
+) -> list[Field]:
     """Fold same-named fields into one, preserving first-declaration order.
 
     Every conflicting property is reported together: merging two large schemas
@@ -520,7 +536,9 @@ def union_field_lists(fields: Iterable[Field], *, owner: str) -> list[Field]:
             order.append(field.name)
             continue
         try:
-            merged[field.name] = merge_fields(existing, field, owner=owner)
+            merged[field.name] = merge_fields(
+                existing, field, owner=owner, retype_remedy=retype_remedy
+            )
         except FieldMergeConflict as conflict:
             # Collected, not raised: a clash on one property must not hide the
             # next one from an author who has to fix them all anyway.

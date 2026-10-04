@@ -21,6 +21,8 @@ from graflo.architecture.evolution.ops import (
     CanonicalMap,
     DerivationSpec,
     DerivedBranch,
+    FieldTypeSpec,
+    MergeFieldTypes,
     MergeManifestsOp,
     PropertyEquivalence,
     VertexEquivalence,
@@ -32,6 +34,7 @@ from graflo.architecture.evolution.preview import (
     kind_for_check,
     preview_merge,
 )
+from graflo.architecture.schema.vertex import FieldType
 
 #: Two manifests with overlapping vertex types, a canonical map and an op.
 FIXTURES = Path(__file__).resolve().parents[1] / "data" / "merge_union"
@@ -738,6 +741,30 @@ def _clean_cases() -> dict[str, tuple[GraphManifest, GraphManifest, MergeManifes
             "identity": ["p"],
         },
         {"name": "B", "properties": ["p"], "identity": ["p"]},
+    )
+    type_left, type_right, type_op = _union_cases()["type-clash"]
+    cases["type-clash-declared"] = (
+        type_left,
+        type_right,
+        type_op.model_copy(
+            update={
+                "field_types": MergeFieldTypes(
+                    vertices={"Party": {"p": FieldTypeSpec(type=FieldType.INT)}}
+                )
+            }
+        ),
+    )
+    edge_left, edge_right, edge_op = _union_cases()["edge-property-type-clash"]
+    cases["edge-type-clash-declared"] = (
+        edge_left,
+        edge_right,
+        edge_op.model_copy(
+            update={
+                "field_types": MergeFieldTypes(
+                    edges={"r": {"w": FieldTypeSpec(type=FieldType.INT)}}
+                )
+            }
+        ),
     )
     return cases
 

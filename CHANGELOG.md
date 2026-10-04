@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [Unreleased]
+
+### Added
+
+- **`MergeManifestsOp.field_types`** declares a merged property's type by merged names
+  (`{vertices: {C: {ram: {type: INT}}}, edges: {…}}`); every member carrying the property is
+  retyped before the fold, in the merge, the merge commit and the preview.
+
+### Changed
+
+- **A property type clash in a merge** is refused before any fold, listing the members on each side
+  that carry each type and the `field_types` entry that settles it.
+- **`change_field_types` on an edge relation** retypes the edges of the relation that declare the
+  property, and refuses only a property none of them declares.
+
 ## [1.16.0]
 
 ### Breaking

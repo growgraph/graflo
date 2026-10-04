@@ -1400,6 +1400,32 @@ class ChangeFieldTypesOp(ConfigBaseModel):
         return self
 
 
+class MergeFieldTypes(ConfigBaseModel):
+    """The type of a merged property, declared on the merge by its merged names.
+
+    Keyed by the class or relation name and the property name the **merged**
+    manifest carries. The merge retypes every member, on either side, that
+    carries the property (under whatever spelling it is renamed from) before
+    folding it, so members that disagree on a type merge into the declared one.
+    Members that do not carry the property are left alone.
+    """
+
+    vertices: dict[str, dict[str, FieldTypeSpec]] = PydanticField(
+        default_factory=dict,
+        description="``{merged_vertex: {merged_property: {type, item_type}}}``.",
+    )
+    edges: dict[str, dict[str, FieldTypeSpec]] = PydanticField(
+        default_factory=dict,
+        description="``{merged_relation: {property: {type, item_type}}}``.",
+    )
+
+    @model_validator(mode="after")
+    def _require_a_target(self) -> MergeFieldTypes:
+        if not self.vertices and not self.edges:
+            raise ValueError("field_types requires at least one of vertices or edges")
+        return self
+
+
 class AddVertexIndexesOp(ConfigBaseModel):
     """Author secondary indexes on vertices in the database profile."""
 
@@ -2248,7 +2274,8 @@ class PropertyEquivalence(ConfigBaseModel):
     boundary rename, ``merge_vertex_models`` unions fields by spelling, so a
     property present under the same name on every member fuses for free.
     Declare an equivalence only to rename or to pick a different ``into``; the
-    merged key is declared on the :class:`VertexEquivalence`.
+    merged key is declared on the :class:`VertexEquivalence`, the merged type
+    in :attr:`MergeManifestsOp.field_types`.
     """
 
     left: str | dict[str, str] | None = PydanticField(
@@ -2734,6 +2761,14 @@ class MergeManifestsOp(ConfigBaseModel):
                 "it for the whole group."
             ),
         )
+    )
+    field_types: MergeFieldTypes | None = PydanticField(
+        default=None,
+        description=(
+            "Merged property types, keyed by merged names: every member that "
+            "carries the property is retyped before the fold, so members that "
+            "disagree on a type merge into this one."
+        ),
     )
 
     @model_validator(mode="before")

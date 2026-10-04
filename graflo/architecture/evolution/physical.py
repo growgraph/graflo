@@ -95,19 +95,32 @@ def apply_change_field_types(manifest: GraphManifest, op: ChangeFieldTypesOp) ->
                 f"change_field_types: unknown relations: {unknown_relations}"
             )
 
-        for edge in schema.core_schema.edge_config.edges:
+        # A relation can join several endpoint pairs, each declaring its own
+        # properties: a field is retyped on every edge of the relation that
+        # declares it, and refused only when none does.
+        edges = schema.core_schema.edge_config.edges
+        for relation, changes in op.edges.items():
+            declared = {
+                field.name
+                for edge in edges
+                if edge.relation == relation
+                for field in edge.properties
+            }
+            missing = sorted(set(changes) - declared)
+            if missing:
+                raise ValueError(
+                    f"change_field_types: edge '{relation}' does not declare {missing}"
+                )
+
+        for edge in edges:
             changes = op.edges.get(edge.relation) if edge.relation else None
             if not changes:
                 continue
             declared = {field.name for field in edge.properties}
-            missing = sorted(set(changes) - declared)
-            if missing:
-                raise ValueError(
-                    f"change_field_types: edge '{edge.relation}' does not declare "
-                    f"{missing}"
-                )
             identity_tokens = {token for key in edge.identities for token in key}
             for field_name, spec in changes.items():
+                if field_name not in declared:
+                    continue
                 if spec.type == FieldType.LIST and field_name in identity_tokens:
                     raise ValueError(
                         f"change_field_types: edge '{edge.relation}' field "

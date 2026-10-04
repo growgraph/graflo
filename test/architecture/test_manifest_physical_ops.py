@@ -132,6 +132,34 @@ class TestChangeFieldTypes:
                 [ChangeFieldTypesOp(vertices={"party": {"ghost": {"type": "STRING"}}})],
             )
 
+    def test_a_relation_is_retyped_on_the_edges_that_carry_the_field(self):
+        """One relation joining two endpoint pairs, only one carrying ``qty``."""
+        edges = [
+            {
+                "source": "party",
+                "target": "asset",
+                "relation": "holds",
+                "properties": ["qty"],
+            },
+            {"source": "party", "target": "party", "relation": "holds"},
+        ]
+        out = apply_evolution(
+            _manifest(edges=edges),
+            [ChangeFieldTypesOp(edges={"holds": {"qty": {"type": "FLOAT"}}})],
+        )
+
+        assert out.graph_schema is not None
+        carrier, other = out.graph_schema.core_schema.edge_config.edges
+        assert [(f.name, f.type) for f in carrier.properties] == [("qty", "FLOAT")]
+        assert other.properties == []
+
+    def test_a_field_no_edge_of_the_relation_declares_is_rejected(self):
+        with pytest.raises(ValueError, match="does not declare"):
+            apply_evolution(
+                _manifest(),
+                [ChangeFieldTypesOp(edges={"holds": {"ghost": {"type": "FLOAT"}}})],
+            )
+
     def test_unknown_relation_is_rejected(self):
         with pytest.raises(ValueError, match="unknown relations"):
             apply_evolution(

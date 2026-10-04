@@ -56,6 +56,12 @@ from .merge_core import (
     merge_edge_pair,
     merge_vertex_models,
 )
+from .merge_types import (
+    MERGE_RETYPE_REMEDY,
+    UnionNames,
+    field_type_clashes,
+    field_type_ops,
+)
 from .ops import (
     AddSecondaryIdentitiesOp,
     CanonicalizeOp,
@@ -1345,7 +1351,11 @@ def _union_schema(
                 f"{missing_side} after alignment (left={list(cluster.left)!r}, "
                 f"right={list(cluster.right)!r})"
             )
-        merged = merge_vertex_models([left_by_name[name], right_by_name[name]], name)
+        merged = merge_vertex_models(
+            [left_by_name[name], right_by_name[name]],
+            name,
+            retype_remedy=MERGE_RETYPE_REMEDY,
+        )
         identity, declared = _composed_identity(cluster, merged, member_keys)
         declaration = cluster.declaration
         assert isinstance(declaration, VertexEquivalence)
@@ -1397,7 +1407,9 @@ def _union_schema(
     ):
         eid = edge.edge_id
         if eid in by_id:
-            by_id[eid] = merge_edge_pair(by_id[eid], edge)
+            by_id[eid] = merge_edge_pair(
+                by_id[eid], edge, retype_remedy=MERGE_RETYPE_REMEDY
+            )
         else:
             by_id[eid] = edge
 
@@ -1688,6 +1700,24 @@ def _merge_manifests(
     index = resolution.index
     side_maps = resolution.side_maps
 
+    # Declared merged types, lowered onto each side's own names, and every
+    # clash no declaration settles -- both conflict points (one side's fold,
+    # the union) at once, before either runs.
+    union_names = UnionNames.of(
+        {"left": out_left, "right": out_right},
+        side_maps,
+        index=index,
+        name_conflict=op.name_conflict,
+    )
+    retypes = field_type_ops(
+        op.field_types, {"left": out_left, "right": out_right}, union_names
+    )
+    clash = field_type_clashes(
+        op.field_types, {"left": out_left, "right": out_right}, union_names
+    )
+    if clash is not None:
+        raise clash
+
     member_keys, member_property_names = _capture_all_member_state(
         index, left_schema, right_schema, side_maps
     )
@@ -1711,7 +1741,9 @@ def _merge_manifests(
     }
 
     for manifest, side in ((out_left, "left"), (out_right, "right")):
-        apply_manifest_ops_inplace(manifest, canonicalize_ops(side_maps[side]))
+        apply_manifest_ops_inplace(
+            manifest, [*retypes[side], *canonicalize_ops(side_maps[side])]
+        )
 
     _apply_right_schema_collision_policy(out_left, out_right, op, index)
 
