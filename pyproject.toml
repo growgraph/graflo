@@ -45,7 +45,7 @@ license-files = ["LICENSE", "NOTICE"]
 name = "graflo"
 readme = "README.md"
 requires-python = ">=3.11"
-version = "1.16.1"
+version = "1.16.2"
 
 [project.optional-dependencies]
 dev = [
@@ -66,7 +66,9 @@ docs = [
   "properdocs>=1.6.7"
 ]
 plot = [
-  "pygraphviz>=2.0,<3"
+  "pypdfium2>=5,<6",
+  "svglib>=2.2,<3",
+  "wasi-graphviz[wasmtime]>=0.1.4,<0.2"
 ]
 
 [project.scripts]

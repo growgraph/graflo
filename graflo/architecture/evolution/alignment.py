@@ -56,7 +56,8 @@ from typing import Any, Literal
 
 from graflo.architecture.contract.ingestion.resource import (
     find_vertex_producing_levels,
-    is_open_router,
+    is_pass_through_router,
+    is_unbounded_router,
     resolve_pipeline_level,
     step_looks_up,
     step_produces_vertices,
@@ -320,7 +321,8 @@ def _resolve_member_production(
             "A member key names a class the resource produces on its side — "
             "through merge, by its own name or its canonical one: "
             f"{sorted(_produced_vertices(pipeline, known_vertices=known))}. "
-            "A vertex_router routes any class the side's schema declares.",
+            "A vertex_router routes any class the side's schema declares, or "
+            "only those its vertex_types lists.",
         )
     if resource in plan.at:
         path = list(plan.at[resource])
@@ -574,22 +576,26 @@ def _producing_steps(
     explicit = [step for step in steps if vertex in step_produces_vertices(step)]
     if explicit or vertex not in _vertex_set(manifest):
         return explicit
-    return [step for step in steps if is_open_router(step)]
+    return [step for step in steps if is_unbounded_router(step)]
 
 
 def _routed_values(routers: list[dict], vertex: str) -> tuple[str, ...]:
     """Discriminator values *routers* send onto *vertex*.
 
-    The ``type_map`` keys mapping to it. An open router without such an entry
-    routes the raw value that *is* the class name, so that is the value which
-    reaches it; a closed one reaches it only through its table.
+    Per router: the ``type_map`` keys mapping to it, and -- for an open router
+    whose table does not key it -- the raw value that *is* the class name,
+    which passes through to it. A closed one reaches it only through its
+    table; one whose ``vertex_types`` leaves *vertex* out, not at all.
     """
     values: set[str] = set()
     for step in routers:
+        bound = step.get("vertex_types")
+        if bound is not None and vertex not in bound:
+            continue
         type_map = step.get("type_map") or {}
         values.update(key for key, target in type_map.items() if target == vertex)
-    if not values:
-        values.add(vertex)
+        if is_pass_through_router(step) and vertex not in type_map:
+            values.add(vertex)
     return tuple(sorted(values))
 
 

@@ -10,7 +10,8 @@ from typing import Any
 from graflo.architecture.contract.ingestion.resource import (
     EdgeInferSpec,
     ResourceConfig,
-    pipeline_has_open_router,
+    pipeline_has_unbounded_router,
+    role_reach,
 )
 from graflo.architecture.contract.ingestion.transform import ProtoTransform
 from graflo.architecture.graph_types.context import ResourceCastResult
@@ -185,17 +186,18 @@ class ResourceRuntime:
     def collect_vertex_names(self) -> set[str]:
         """Vertex types this resource can produce.
 
-        The names its pipeline states, plus every class in scope when an open
-        ``vertex_router`` is among the steps: it routes an unmapped
+        The names its pipeline states, plus every class in scope when an
+        unbounded ``vertex_router`` is among the steps: it routes an unmapped
         discriminator value as the class name, so the classes it can reach are
         the schema's, not its table's. A closed one (``type_map_only``) reaches
-        only the classes its table states.
+        only the classes its table states, a bounded one those its
+        ``vertex_types`` lists.
         """
         return self._producible_vertex_names(self._vertex_config)
 
     def _producible_vertex_names(self, vertex_config: VertexConfig) -> set[str]:
         names = self.config.collect_vertex_names()
-        if pipeline_has_open_router(self.config.pipeline):
+        if pipeline_has_unbounded_router(self.config.pipeline):
             names |= set(vertex_config.vertex_set)
         return names
 
@@ -325,6 +327,7 @@ class ResourceRuntime:
             fail_fast=self.config.fail_fast,
             tolerate_transform_errors=self.config.tolerate_transform_errors,
             target_db_flavor=target_db_flavor,
+            role_reach=role_reach(self.config.pipeline),
         )
 
     def _propagate_dynamic_edges(

@@ -39,7 +39,7 @@ from graflo.architecture.schema.context.graph import SchemaGraph
 from graflo.architecture.schema.document import Schema
 from graflo.architecture.schema.edge import Edge
 from graflo.onto import BaseEnum
-from graflo.plot.render import draw
+from graflo.plot.render import draw, to_dot
 
 logger = logging.getLogger(__name__)
 
@@ -268,7 +268,7 @@ def assemble_tree(
     g.add_nodes_from(nodes.items())
 
     if fig_path is not None:
-        ag = nx.nx_agraph.to_agraph(g)
+        ag = to_dot(g)
         draw(ag, fig_path, output_format=output_format, dpi=output_dpi)
         return None
     else:
@@ -673,7 +673,7 @@ class ManifestPlotter:
         self._style_nodes(g, force_labels=True)
         self._style_edges(g)
 
-        ag = nx.nx_agraph.to_agraph(g)
+        ag = to_dot(g)
 
         for k in vconf.vertex_set:
             level_index = [
@@ -687,10 +687,10 @@ class ManifestPlotter:
                 for item in vconf.identity_fields(k)
             ]
             index_subgraph = ag.add_subgraph(level_index, name=f"cluster_{k}:def")
-            index_subgraph.node_attr["style"] = "filled"
-            index_subgraph.node_attr["label"] = "definition"
+            index_subgraph.graph_attr["style"] = "filled"
+            index_subgraph.graph_attr["label"] = "definition"
 
-        ag = ag.unflatten("-l 5 -f -c 3")
+        ag = ag.unflatten(levels=5, fans=True, chain=3)
         self._draw(ag, self._versioned_stem(f"{self.prefix}_vc2fields"))
 
     def plot_resources(self):
@@ -730,7 +730,7 @@ class ManifestPlotter:
         self._style_nodes(g, force_labels=True)
         self._style_edges(g)
 
-        ag = nx.nx_agraph.to_agraph(g)
+        ag = to_dot(g)
         ag.graph_attr["rankdir"] = "LR"
         ag.graph_attr["splines"] = "spline"
 
@@ -776,6 +776,8 @@ class ManifestPlotter:
                     _add(vertex_name, "VertexRouterActor(type_map)")
                 for vertex_name in actor.vertex_from_map:
                     _add(vertex_name, "VertexRouterActor(vertex_from_map)")
+                for vertex_name in actor.config.vertex_types or []:
+                    _add(vertex_name, "VertexRouterActor(vertex_types)")
 
         return vertex_reasons
 
@@ -788,7 +790,7 @@ class ManifestPlotter:
             self._style_nodes(g, force_labels=True)
             self._style_edges(g)
 
-            ag = nx.nx_agraph.to_agraph(g)
+            ag = to_dot(g)
             ag.graph_attr["rankdir"] = "LR"
             self._draw(
                 ag,
@@ -930,7 +932,7 @@ class ManifestPlotter:
         )
         self._style_edges(g, source_type_style_map=EDGE_STYLE_BY_SOURCE_TYPE)
 
-        ag = nx.nx_agraph.to_agraph(g)
+        ag = to_dot(g)
         if group_by_partition and effective_partition:
             self._add_partition_subgraphs(ag, g, effective_partition)
 

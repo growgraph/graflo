@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Annotated, Any, Literal, cast
 
 from pydantic import Field as PydanticField
-from pydantic import TypeAdapter, model_validator
+from pydantic import TypeAdapter, field_validator, model_validator
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.contract.ingestion.transform import DressConfig
@@ -906,6 +906,16 @@ class VertexRouterActorConfig(VertexExtractionOptionsConfig):
             "side's own classes."
         ),
     )
+    vertex_types: list[VertexName] | None = PydanticField(
+        default=None,
+        description=(
+            "The classes the router may produce: a value that resolves, after "
+            "type_map, to any other class is skipped. Unset, the router may "
+            "produce any class the schema declares. type_map_only restricts the "
+            "raw values instead; with both set a row must pass both. A set, kept "
+            "sorted."
+        ),
+    )
     lookup_only: bool | list[VertexName] = PydanticField(
         default=False,
         description=(
@@ -922,6 +932,21 @@ class VertexRouterActorConfig(VertexExtractionOptionsConfig):
             return vertex in self.lookup_only
         return self.lookup_only
 
+    def admits(self, vertex: VertexName) -> bool:
+        """Whether *vertex* is among the classes the router may produce."""
+        return self.vertex_types is None or vertex in self.vertex_types
+
+    @field_validator("vertex_types")
+    @classmethod
+    def _vertex_types_as_set(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        if not value:
+            raise ValueError(
+                "vertex_types must name at least one class; omit it to route any class"
+            )
+        return sorted(set(value))
+
     @model_validator(mode="before")
     @classmethod
     def set_type(cls, data: Any) -> Any:
@@ -934,6 +959,25 @@ class VertexRouterActorConfig(VertexExtractionOptionsConfig):
     def normalize_role(self) -> VertexRouterActorConfig:
         if self.role is None:
             object.__setattr__(self, "role", self.type_field)
+        return self
+
+    @model_validator(mode="after")
+    def _settings_within_vertex_types(self) -> VertexRouterActorConfig:
+        # A per-class setting for a class the router never produces is dead.
+        if self.vertex_types is None:
+            return self
+        allowed = set(self.vertex_types)
+        lookup = self.lookup_only if isinstance(self.lookup_only, list) else []
+        for name, classes in (
+            ("lookup_only", lookup),
+            ("vertex_from_map", list(self.vertex_from_map or {})),
+        ):
+            outside = sorted(set(classes) - allowed)
+            if outside:
+                raise ValueError(
+                    f"vertex_router on {self.type_field!r}: {name} names "
+                    f"{outside}, which vertex_types {self.vertex_types} excludes"
+                )
         return self
 
 

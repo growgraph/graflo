@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from graflo.architecture.contract.bindings import Bindings
 from graflo.architecture.contract.ingestion import IngestionModel
 from graflo.architecture.contract.ingestion.resource import (
-    pipeline_has_open_router,
+    pipeline_has_pass_through_router,
     step_looks_up,
     step_produces_vertices,
 )
@@ -775,8 +775,9 @@ def _members_produced(
 ) -> tuple[Side, list[str]] | None:
     """The side *resource* comes from, and the members of *cluster* it produced there.
 
-    Judged on the side manifest, before the relabel: a router produces every
-    class of its side by pass-through, so it produces every member there.
+    Judged on the side manifest, before the relabel: an unbounded router
+    produces every class of its side by pass-through, so it produces every
+    member there; a closed or bounded one, the members in its reach.
     """
     for side in ("left", "right"):
         side_manifest = sides[side]
@@ -1001,9 +1002,13 @@ def _close_side_routers(
     router routes exactly what it did before the merge. The self-entries are
     load-bearing: a closed router skips any value its table does not name,
     and the static analyses read the table as the classes the router
-    produces. This runs last, so the derived-identity lowering and the
-    reference conversion see routers as they always have. ``router_scope:
-    union`` skips it.
+    produces. A router with ``vertex_types`` is closed too -- a listed class
+    renamed onto the other side's name would otherwise pass that name through
+    -- with self-entries for its listed classes only. This runs last, so the
+    derived-identity lowering and the reference conversion see routers as
+    they always have. ``router_scope: union`` skips it; a relabel that merges
+    a listed class with an unlisted one closes the router regardless (see
+    ``evolve_router``).
     """
     from .rewrite import close_routers_in_pipeline
 
@@ -1013,7 +1018,7 @@ def _close_side_routers(
     open_routers = {
         resource.name
         for resource in ingestion.resources
-        if pipeline_has_open_router(resource.pipeline)
+        if pipeline_has_pass_through_router(resource.pipeline)
     }
     vocabulary_of: dict[str, frozenset[str]] = {}
     for side in ("left", "right"):

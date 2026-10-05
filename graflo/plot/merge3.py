@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 import networkx as nx
 
 from graflo.architecture.evolution.preview import Merge3Preview, SlotNode
-from graflo.plot.render import draw, escape, sanitize_id, to_agraph
+from graflo.plot.render import draw, header_band, record_escape, sanitize_id, to_dot
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from collections.abc import Collection
@@ -34,6 +34,9 @@ SLOT_COLOR: dict[str, str] = {
     "clean": "#7F8C8D",
     "base": "#5D6D7E",
 }
+
+#: Point size of the slot records; the header band is computed from it.
+FONT_SIZE = 11
 
 #: Per side, matching the merge preview so the two figures read alike.
 SIDE_COLOR: dict[str, str] = {"left": "#B7D1DF", "right": "#BEDFC8"}
@@ -47,52 +50,43 @@ COMMIT_SHAPE: dict[str, str] = {
 }
 
 
-def _ops_row(label: str, ops: Collection[str], colour: str) -> str:
-    """One branch's ops on a contested slot, as a row."""
+def _ops_field(label: str, ops: Collection[str]) -> list[str]:
+    """One branch's ops on a slot, as a field; none when it did nothing."""
     if not ops:
-        return ""
-    listed = escape(", ".join(sorted(set(ops))))
-    return (
-        f'<TR><TD ALIGN="RIGHT"><FONT POINT-SIZE="9" COLOR="{colour}">'
-        f'{escape(label)}</FONT></TD><TD ALIGN="LEFT">'
-        f'<FONT POINT-SIZE="9">{listed}</FONT></TD></TR>'
-    )
+        return []
+    listed = ", ".join(sorted(set(ops)))
+    return [f"{record_escape(f'{label}: {listed}')}\\l"]
 
 
-def _slot_table(node: SlotNode) -> str:
-    """A slot as a table: its segment, and what happened to it.
+def _slot_node(node: SlotNode) -> dict[str, str]:
+    """A slot as a record: its segment, and what happened to it.
 
     A settled slot shows only what the merge applied; a contested one shows
     both branches and the ancestor's keys, because "what did this look like
     before either change" is the question a decision actually turns on and the
     one a two-way diff cannot answer.
     """
-    colour = SLOT_COLOR["contested" if node.contested else "clean"]
-    header = escape(node.segment)
+    fields = [record_escape(node.segment)]
     if node.contested:
-        header = f"<B>{header}</B>"
-    rows = ""
-    if node.contested:
-        rows += _ops_row("left", node.left_ops, SIDE_COLOR["left"])
-        rows += _ops_row("right", node.right_ops, SIDE_COLOR["right"])
+        fields += _ops_field("left", node.left_ops)
+        fields += _ops_field("right", node.right_ops)
         if node.base_excerpt:
-            keys = escape(", ".join(sorted(node.base_excerpt)))
-            rows += (
-                f'<TR><TD ALIGN="RIGHT"><FONT POINT-SIZE="9" '
-                f'COLOR="{SLOT_COLOR["base"]}">base</FONT></TD>'
-                f'<TD ALIGN="LEFT"><FONT POINT-SIZE="9">{keys}</FONT></TD></TR>'
-            )
+            fields += _ops_field("base", node.base_excerpt)
     else:
-        rows += _ops_row("applied", node.clean_ops, SLOT_COLOR["clean"])
-    span = "2" if rows else "1"
-    fill = "#F5B7B1" if node.contested else "#FFFFFF"
-    width = "2" if node.contested else "1"
-    return (
-        f'<<TABLE BORDER="{width}" CELLBORDER="0" CELLSPACING="0" CELLPADDING="3" '
-        f'COLOR="{colour}">'
-        f'<TR><TD COLSPAN="{span}" BGCOLOR="{fill}">{header}</TD></TR>'
-        f"{rows}</TABLE>>"
-    )
+        fields += _ops_field("applied", node.clean_ops)
+    return {
+        "shape": "record",
+        "label": "|".join(fields),
+        "style": "rounded,filled",
+        **header_band(
+            "#F5B7B1" if node.contested else "#FFFFFF",
+            header_lines=1,
+            rows=len(fields) - 1,
+            fontsize=FONT_SIZE,
+        ),
+        "color": SLOT_COLOR["contested" if node.contested else "clean"],
+        "penwidth": "2" if node.contested else "1",
+    }
 
 
 def build_merge3_graph(preview: Merge3Preview) -> nx.DiGraph:
@@ -115,14 +109,14 @@ def build_merge3_graph(preview: Merge3Preview) -> nx.DiGraph:
         "labelloc": "t",
         "label": f"three-way merge — {verdict}",
     }
-    graph.graph["node"] = {"fontname": "Helvetica", "shape": "plain"}
+    graph.graph["node"] = {"fontname": "Helvetica", "fontsize": str(FONT_SIZE)}
     graph.graph["edge"] = {"fontname": "Helvetica", "color": "#95A5A6"}
 
     taken: dict[str, str] = {}
     for node in preview.nodes:
         graph.add_node(
             sanitize_id(node.id, taken),
-            label=_slot_table(node),
+            **_slot_node(node),
             slot=node.id,
             contested=str(node.contested).lower(),
         )
@@ -159,7 +153,7 @@ def plot_merge3_preview(
         The path written.
     """
     graph = build_merge3_graph(preview)
-    return draw(to_agraph(graph), path, output_format=output_format, prog=prog, dpi=dpi)
+    return draw(to_dot(graph), path, output_format=output_format, prog=prog, dpi=dpi)
 
 
 def build_history_graph(
@@ -252,7 +246,7 @@ def plot_history(
         The path written.
     """
     graph = build_history_graph(history, heads=heads, merge_base=merge_base)
-    return draw(to_agraph(graph), path, output_format=output_format, prog=prog, dpi=dpi)
+    return draw(to_dot(graph), path, output_format=output_format, prog=prog, dpi=dpi)
 
 
 __all__ = [

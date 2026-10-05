@@ -170,7 +170,7 @@ A step that runs a nested pipeline on one part of the record: the value under `k
 
 ### vertex router
 
-A step that reads the vertex type from a field of the record, for a table that holds several kinds of things. `type_field` names the field and `type_map` translates its values; a value with no entry is used as the type name unless `type_map_only: true`.
+A step that reads the vertex type from a field of the record, for a table that holds several kinds of things. `type_field` names the field and `type_map` translates its values; a value with no entry is used as the type name unless `type_map_only: true`. `vertex_types` limits the types it may produce.
 
 ```yaml
 - vertex_router:

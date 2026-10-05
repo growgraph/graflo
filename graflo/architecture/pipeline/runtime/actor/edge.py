@@ -68,6 +68,15 @@ def _link_to_edge_actor_config(link: EdgeLinkConfig) -> EdgeActorConfig:
     return EdgeActorConfig.model_validate(data)
 
 
+def _held(
+    roles: dict[str, frozenset[str] | None], role: str | None
+) -> frozenset[str] | None:
+    """What *role* can hold, ``None`` when any class or unknown."""
+    if role is None:
+        return None
+    return roles.get(role)
+
+
 class EdgeActor(Actor):
     """Actor for processing edge data.
 
@@ -369,7 +378,7 @@ class EdgeActor(Actor):
         the selectors are recorded as a rule over every relation.
         """
         source_type, target_type, _ = edge_id
-        self._validate_selectors(source_type, target_type)
+        self._validate_selectors(init_ctx, source_type, target_type)
         if not self._selects_endpoints():
             return
         if self._relation_from_data():
@@ -396,7 +405,7 @@ class EdgeActor(Actor):
         *source* / *target* are the endpoints fixed at config time, ``None``
         for one a router role fills.
         """
-        self._validate_selectors(source, target)
+        self._validate_selectors(init_ctx, source, target)
         if self._selects_endpoints():
             self._add_endpoint_rule(init_ctx, source, target)
 
@@ -437,19 +446,38 @@ class EdgeActor(Actor):
             )
         )
 
-    def _validate_selectors(self, source: str | None, target: str | None) -> None:
-        self._validate_selector("source_match", self.derivation.source_match, source)
-        self._validate_selector("target_match", self.derivation.target_match, target)
+    def _validate_selectors(
+        self, init_ctx: ActorInitContext, source: str | None, target: str | None
+    ) -> None:
+        roles = init_ctx.role_reach
+        self._validate_selector(
+            "source_match",
+            self.derivation.source_match,
+            source,
+            _held(roles, self._source_slot_key),
+        )
+        self._validate_selector(
+            "target_match",
+            self.derivation.target_match,
+            target,
+            _held(roles, self._target_slot_key),
+        )
 
     def _validate_selector(
-        self, name: str, selector: EndpointSelector | None, endpoint: str | None
+        self,
+        name: str,
+        selector: EndpointSelector | None,
+        endpoint: str | None,
+        held: frozenset[str] | None,
     ) -> None:
         """Refuse a selector no class this endpoint can be declares.
 
         *endpoint* is the class fixed at config time, ``None`` for one a router
-        role fills. A plain selector on such an endpoint is resolved against
-        each routed class when the edge is rendered; a per-class one is checked
-        here, entry by entry, and on a fixed endpoint may name only that class.
+        role fills; *held* is what that role can hold, ``None`` for any class.
+        A plain selector on such an endpoint is resolved against each routed
+        class when the edge is rendered; a per-class one is checked here, entry
+        by entry: on a fixed endpoint it may name only that class, on a role
+        only the classes the role can hold.
 
         Raises:
             ValueError: naming the selector, the class and what it declares.
@@ -461,7 +489,8 @@ class EdgeActor(Actor):
             unknown = sorted(set(selector) - vertex_config.vertex_set)
             if unknown:
                 raise ValueError(
-                    f"{name} names {unknown}, which the schema does not declare"
+                    f"{name} names {unknown}, which are not among the classes "
+                    "this resource can produce"
                 )
             if endpoint is not None:
                 foreign = sorted(set(selector) - {endpoint})
@@ -469,6 +498,13 @@ class EdgeActor(Actor):
                     raise ValueError(
                         f"{name} names {foreign}, but the endpoint is always "
                         f"{endpoint!r}"
+                    )
+            elif held is not None:
+                foreign = sorted(set(selector) - held)
+                if foreign:
+                    raise ValueError(
+                        f"{name} names {foreign}, which the role can never hold; "
+                        f"it holds {sorted(held)}"
                     )
             for vertex, plain in selector.items():
                 # Raises with the declared alternatives when a selector is unknown.

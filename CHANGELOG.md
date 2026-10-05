@@ -6,6 +6,47 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [Unreleased]
+
+### Added
+
+- **`vertex_router.vertex_types`** lists the classes a router may produce; a value resolving to any
+  other class is skipped, so routers on one column can split its classes. Evolution ops keep it in
+  step, and close a router where a merge would make it admit values it used to skip.
+
+### Changed
+
+- **Plotting** no longer needs pygraphviz or any system package: the `plot` extra renders with
+  Graphviz compiled to WebAssembly (`wasi-graphviz`), converts SVG to PDF (`svglib`) and PDF to PNG
+  (`pypdfium2`), and ships the Liberation fonts, so PDF and PNG text covers Latin, Greek and
+  Cyrillic. Alpine needs `libgcc`.
+- **Merge and three-way merge previews** draw classes and slots as records instead of HTML tables:
+  identity rows read `(key)`, finding numbers sit on the rows they concern, and the legend is a
+  boxed list naming each finding's severity.
+- **Merging a class a router only looks up with one it writes** is refused instead of turning the
+  written rows into lookups.
+- **Removing classes** drops a router left with nothing to route, and every edge step addressing a
+  role no step fills any more.
+- **Per-class `source_match` / `target_match`** on a role endpoint may name only classes the role
+  can hold.
+- **Merging classes a router projects differently** splits it into one closed router per projection,
+  on the same `type_field` and `role`, instead of unioning their column maps or refusing.
+- **`vertex_from_map`** no longer makes a router an explicit producer of a class when a pipeline
+  level is resolved; only `type_map` and `vertex_types` do.
+
+### Fixed
+
+- **Renaming a class** renames a shorthand router's `vertex_from_map`.
+- **Removing a router's table entry** no longer lets the raw value pass through as a class name.
+- **Derived-identity guards** admit the raw value an open router passes through as the class name.
+- **`merge_vertices` observation fusion** counts the classes an open router reaches by pass-through.
+- **`ensure_extracted_fields`** widens only routers that can produce the class.
+- **RDF export** links shorthand routers, and routers' `vertex_from_map` classes, to their vertices.
+- **Renaming or removing a vertex property** reaches routers: the class gets its own
+  `vertex_from_map` entry, so the classes sharing the router's `from` keep theirs.
+- **`merge_vertices`, `canonicalize` and `remove_vertices`** reach the endpoints of an edge step's
+  `links`; a step whose links are all removed, by class, role or relation, goes.
+
 ## [1.16.1]
 
 ### Breaking

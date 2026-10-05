@@ -186,7 +186,8 @@ A secondary identity written as a bare field list, without `name`, is named
 When the endpoint is filled by a [vertex router](../glossary.md#vertex-router),
 its rows belong to several vertex types, which need not declare the same
 secondary identity. Give a mapping from type to selector. A type the mapping
-does not name is matched on its primary identity. Here a maintenance log names
+does not name is matched on its primary identity, and the mapping may name only
+types the role can hold. Here a maintenance log names
 either a machine, by its asset tag, or a sensor, by its primary key:
 
 ```yaml

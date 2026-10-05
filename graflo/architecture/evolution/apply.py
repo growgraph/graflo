@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from typing import Any, Literal
 
 from graflo.architecture.contract.ingestion import IngestionModel
+from graflo.architecture.contract.ingestion.resource import (
+    router_reach,
+    step_produces_vertices,
+)
 from graflo.architecture.contract.ingestion.steps.normalize import normalize_actor_step
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.graph_types import EdgeId
@@ -143,7 +147,7 @@ def _prune_ingestion_for_removed_vertices(
     """
     from graflo.architecture.contract.ingestion.resource import (
         Resource,
-        pipeline_has_open_router,
+        pipeline_has_unbounded_router,
     )
 
     def _names_removed(spec: Any) -> bool:
@@ -153,10 +157,12 @@ def _prune_ingestion_for_removed_vertices(
     had_resources = bool(im.resources)
     resources: list[Resource] = []
     for resource in im.resources:
-        pipeline = rewrite_remove_vertices_in_pipeline(resource.pipeline, removed)
+        pipeline = rewrite_remove_vertices_in_pipeline(
+            resource.pipeline, removed, declared=surviving | removed
+        )
         if not (
             pipeline_mentions_any_vertex(pipeline, surviving)
-            or pipeline_has_open_router(pipeline)
+            or pipeline_has_unbounded_router(pipeline)
         ):
             continue
         payload = resource.to_dict(skip_defaults=False)
@@ -374,13 +380,17 @@ def _build_merged_vertex_config(
     )
 
 
-def _rewrite_ingestion_for_merge(im: IngestionModel, mapping: dict[str, str]) -> None:
+def _rewrite_ingestion_for_merge(
+    im: IngestionModel, mapping: dict[str, str], *, declared: Collection[str]
+) -> None:
     from graflo.architecture.contract.ingestion.resource import Resource
 
     new_resources: list[Resource] = []
     for r in im.resources:
         d = r.to_dict(skip_defaults=False)
-        d["pipeline"] = rewrite_vertex_names_in_pipeline(r.pipeline, mapping)
+        d["pipeline"] = rewrite_vertex_names_in_pipeline(
+            r.pipeline, mapping, declared=declared
+        )
         if d.get("infer_edge_only"):
             d["infer_edge_only"] = rewrite_vertex_names_in_value(
                 d["infer_edge_only"], mapping
@@ -408,8 +418,9 @@ def _fused_slots(
     assembly merges one ``(vertex, lindex)`` bucket at a time. So two steps at
     one level share a slot only when their roles agree (or both are bare).
 
-    A slot is reported when it holds more than one producing step *and* those
-    steps came from more than one pre-merge name: one source document then
+    A router produces its :func:`router_reach` -- an unbounded one every
+    member, by pass-through. A slot is reported when it holds more than one
+    producing step *and* those steps came from more than one pre-merge name: one source document then
     yields both members, and after the merge they share the bucket, so
     ``assemble`` folds them into a single node — two real-world entities
     become one. A slot that already repeated a single name is pre-existing
@@ -428,16 +439,14 @@ def _fused_slots(
             if isinstance(name, str) and mapping.get(name, name) == merged:
                 slots.setdefault(normalized.get("role"), []).append({name})
         elif step_type == "vertex_router":
-            type_map = normalized.get("type_map")
-            if isinstance(type_map, dict):
-                members = {
-                    value
-                    for value in type_map.values()
-                    if isinstance(value, str) and mapping.get(value, value) == merged
+            reach = router_reach(normalized)
+            if reach is None:
+                # Unbounded: the table's classes, and every member by
+                # pass-through.
+                reach = frozenset(step_produces_vertices(normalized)) | {
+                    name for name, target in mapping.items() if target == merged
                 }
-            else:
-                # No type_map: the router can emit every declared class.
-                members = {merged}
+            members = {name for name in reach if mapping.get(name, name) == merged}
             if members:
                 slot = normalized.get("role") or normalized.get("type_field")
                 slots.setdefault(slot, []).append(members)
@@ -582,7 +591,9 @@ def apply_merge_vertices(
         # The rewrite rebuilds the resource list from dicts and never mutates
         # the old Resource objects, so holding them keeps the pre-merge view.
         before_resources = list(manifest.ingestion_model.resources)
-        _rewrite_ingestion_for_merge(manifest.ingestion_model, m)
+        _rewrite_ingestion_for_merge(
+            manifest.ingestion_model, m, declared=core.vertex_config.vertex_set
+        )
         manifest.ingestion_model = IngestionModel.model_validate(
             manifest.ingestion_model.to_dict(skip_defaults=False)
         )
@@ -745,7 +756,11 @@ def _rewrite_relation_names_in_value(value: Any, relation_map: dict[str, str]) -
 
 
 def _rewrite_ingestion_for_canonicalize(
-    im: IngestionModel, vertex_map: dict[str, str], relation_map: dict[str, str]
+    im: IngestionModel,
+    vertex_map: dict[str, str],
+    relation_map: dict[str, str],
+    *,
+    declared: Collection[str] | None,
 ) -> None:
     """One pass over every name slot of the ingestion block, against original names."""
     from graflo.architecture.contract.ingestion.resource import Resource
@@ -756,7 +771,9 @@ def _rewrite_ingestion_for_canonicalize(
         # The vertex rewriter unions colliding `vertex_from_map` entries, which
         # a merge needs; relations live in disjoint slots and follow in a
         # second pass that reads each slot once.
-        pipeline = rewrite_vertex_names_in_pipeline(resource.pipeline, vertex_map)
+        pipeline = rewrite_vertex_names_in_pipeline(
+            resource.pipeline, vertex_map, declared=declared
+        )
         rewrite_entity_names_in_pipeline(pipeline, edges=relation_map)
         d["pipeline"] = pipeline
         for key in ("infer_edge_only", "infer_edge_except", "extra_weights"):
@@ -791,7 +808,7 @@ def apply_canonicalize(manifest: GraphManifest, op: CanonicalizeOp) -> None:
             raise ValueError("canonicalize: properties require graph_schema")
         if work.ingestion_model is not None and (vertex_map or relation_map):
             _rewrite_ingestion_for_canonicalize(
-                work.ingestion_model, vertex_map, relation_map
+                work.ingestion_model, vertex_map, relation_map, declared=None
             )
             manifest.ingestion_model = IngestionModel.model_validate(
                 work.ingestion_model.to_dict(skip_defaults=False)
@@ -856,7 +873,10 @@ def apply_canonicalize(manifest: GraphManifest, op: CanonicalizeOp) -> None:
 
         if work.ingestion_model is not None:
             _rewrite_ingestion_for_canonicalize(
-                work.ingestion_model, vertex_map, relation_map
+                work.ingestion_model,
+                vertex_map,
+                relation_map,
+                declared=core.vertex_config.vertex_set,
             )
             work.ingestion_model = IngestionModel.model_validate(
                 work.ingestion_model.to_dict(skip_defaults=False)
@@ -1116,7 +1136,11 @@ def apply_rename_vertex_properties(
 
     _rebuild_ingestion_with_pipeline_rewrite(
         manifest,
-        lambda pipeline: rewrite_vertex_field_names_in_pipeline(pipeline, op.renames),
+        lambda pipeline: rewrite_vertex_field_names_in_pipeline(
+            pipeline,
+            op.renames,
+            declared=schema.core_schema.vertex_config.vertex_set,
+        ),
         vertex_field_renames=op.renames,
     )
 
@@ -1229,7 +1253,9 @@ def apply_remove_vertex_properties(
         _rebuild_ingestion_with_pipeline_rewrite(
             manifest,
             lambda pipeline: rewrite_remove_vertex_properties_in_pipeline(
-                pipeline, removals
+                pipeline,
+                removals,
+                declared=schema.core_schema.vertex_config.vertex_set,
             ),
         )
         for resource in manifest.ingestion_model.resources:
@@ -1266,6 +1292,11 @@ def _apply_rename_entities(
     resource_map: dict[str, str] | None = None,
 ) -> None:
     """Rename logical vertices/relations/resources across manifest payload blocks."""
+    declared = (
+        set(manifest.graph_schema.core_schema.vertex_config.vertex_set)
+        if manifest.graph_schema is not None
+        else None
+    )
     payload = manifest.to_dict(skip_defaults=False)
 
     vertex_map = vertex_map or {}
@@ -1346,6 +1377,7 @@ def _apply_rename_entities(
                         pipeline,
                         vertices=vertex_map,
                         edges=edge_map,
+                        declared=declared,
                     )
 
                 for spec_key in ("infer_edge_only", "infer_edge_except"):

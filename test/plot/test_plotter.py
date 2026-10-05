@@ -1,7 +1,7 @@
+from pathlib import Path
 from types import MethodType, SimpleNamespace
 from typing import Any, cast
 
-import networkx as nx
 import pytest
 
 from graflo.architecture.contract.ingestion.steps import EdgeActorConfig
@@ -13,6 +13,8 @@ from graflo.architecture.pipeline.runtime.actor import (
 from graflo.architecture.pipeline.runtime.actor.wrapper import ActorWrapper
 from graflo.architecture.schema.context.graph import SchemaGraph
 from graflo.architecture.schema.edge import Edge
+from graflo.plot import plotter as plotter_module
+from graflo.plot.dot import DotGraph
 from graflo.plot.plotter import ManifestPlotter, assemble_tree, fillcolor_palette
 
 
@@ -47,31 +49,35 @@ class _VertexConfigStub:
         return self._property_names_by_vertex.get(vertex_name, [])
 
 
-class _AgraphStub:
-    def __init__(self, graph):
-        self.graph = graph
-        self.graph_attr = {}
-        self.subgraphs: list[dict[str, object]] = []
-        self.draw_calls: list[dict[str, str]] = []
+class _Capture:
+    """What a plot handed to the writer: the networkx graph, its DOT, the draws."""
 
-    def add_subgraph(self, nodes, name, rank=None, label=None):
-        self.subgraphs.append(
-            {
-                "nodes": list(nodes),
-                "name": name,
-                "rank": rank,
-                "label": label,
-            }
-        )
-        return SimpleNamespace(node_attr={})
+    def __init__(self) -> None:
+        self.graph: Any = None
+        self.dot: DotGraph | None = None
+        self.draws: list[dict[str, Any]] = []
 
-    def unflatten(self, _args):
-        return self
+    def subgraph_names(self) -> set[str]:
+        assert self.dot is not None
+        return {subgraph.name for subgraph in self.dot.subgraphs}
 
-    def draw(self, path: str, output_format: str, prog: str = "dot"):
-        self.draw_calls.append(
-            {"path": path, "output_format": output_format, "prog": prog}
-        )
+
+def _capture(monkeypatch) -> _Capture:
+    """Record what the plotter draws instead of rendering it."""
+    captured = _Capture()
+
+    def _to_dot(graph):
+        captured.graph = graph
+        captured.dot = DotGraph.from_networkx(graph)
+        return captured.dot
+
+    def _draw(dot, path, **kwargs):
+        captured.draws.append({"path": str(Path(path)), **kwargs})
+        return Path(path)
+
+    monkeypatch.setattr(plotter_module, "to_dot", _to_dot)
+    monkeypatch.setattr(plotter_module, "draw", _draw)
+    return captured
 
 
 class _ActorWrapperStub:
@@ -131,18 +137,12 @@ def test_plot_vc2vc_filters_unknown_endpoints_and_logs_error(monkeypatch, caplog
         ),
     )
 
-    captured = {}
-
-    def _fake_to_agraph(graph):
-        captured["ag"] = _AgraphStub(graph)
-        return captured["ag"]
-
-    monkeypatch.setattr(nx.nx_agraph, "to_agraph", _fake_to_agraph)
+    captured = _capture(monkeypatch)
 
     with caplog.at_level("ERROR"):
         plotter.plot_vc2vc(include_all_vertices=False)
 
-    graph = captured["ag"].graph
+    graph = captured.graph
     assert "vertex:ghost" not in graph.nodes
     assert ("vertex:a", "vertex:b", 0) in graph.edges
     assert "ignored 1 edge(s) with unknown vertices" in caplog.text
@@ -190,13 +190,7 @@ def test_plot_vc2vc_preserves_labels_and_partition_grouping(monkeypatch):
         MethodType(_discover_edges, plotter),
     )
 
-    captured = {}
-
-    def _fake_to_agraph(graph):
-        captured["ag"] = _AgraphStub(graph)
-        return captured["ag"]
-
-    monkeypatch.setattr(nx.nx_agraph, "to_agraph", _fake_to_agraph)
+    captured = _capture(monkeypatch)
 
     plotter.plot_vc2vc(
         include_all_vertices=False,
@@ -205,13 +199,13 @@ def test_plot_vc2vc_preserves_labels_and_partition_grouping(monkeypatch):
         group_by_partition=True,
     )
 
-    graph = captured["ag"].graph
+    graph = captured.graph
     assert graph.edges["vertex:a", "vertex:b", 0]["label"] == "[edge_kind]"
     assert graph.edges["vertex:b", "vertex:c", 0]["label"] == "[key]"
     assert graph.nodes["vertex:a"]["fillcolor"]
     assert graph.nodes["vertex:c"]["fillcolor"]
 
-    subgraph_names = {entry["name"] for entry in captured["ag"].subgraphs}
+    subgraph_names = captured.subgraph_names()
     assert "cluster_partition_left" in subgraph_names
     assert "cluster_partition_right" in subgraph_names
 
@@ -233,16 +227,10 @@ def test_plot_vc2vc_appends_schema_version_to_stem(monkeypatch):
         "_discover_edges_from_resources",
         lambda: ({}, {}, {}),
     )
-    captured = {}
-
-    def _fake_to_agraph(graph):
-        captured["ag"] = _AgraphStub(graph)
-        return captured["ag"]
-
-    monkeypatch.setattr(nx.nx_agraph, "to_agraph", _fake_to_agraph)
+    captured = _capture(monkeypatch)
     plotter.plot_vc2vc(include_all_vertices=False)
 
-    assert captured["ag"].draw_calls[0]["path"] == "test_schema_vc2vc-v2.3.4.pdf"
+    assert captured.draws[0]["path"] == "test_schema_vc2vc-v2.3.4.pdf"
 
 
 def test_plot_vc2fields_appends_schema_version_to_stem(monkeypatch):
@@ -253,16 +241,10 @@ def test_plot_vc2fields_appends_schema_version_to_stem(monkeypatch):
         property_names_by_vertex={"a": ["id", "name"]},
     )
     plotter.schema.metadata.version = "2.3.4"
-    captured = {}
-
-    def _fake_to_agraph(graph):
-        captured["ag"] = _AgraphStub(graph)
-        return captured["ag"]
-
-    monkeypatch.setattr(nx.nx_agraph, "to_agraph", _fake_to_agraph)
+    captured = _capture(monkeypatch)
     plotter.plot_vc2fields()
 
-    assert captured["ag"].draw_calls[0]["path"] == "test_schema_vc2fields-v2.3.4.pdf"
+    assert captured.draws[0]["path"] == "test_schema_vc2fields-v2.3.4.pdf"
 
 
 def test_assemble_tree_styles_router_actor_classes():

@@ -442,17 +442,40 @@ matching type.
   `type_map` at all.
 - `type_map_only: true`: skip values that are not in `type_map`, so the router
   produces only the listed types.
+- `vertex_types`: the types the router may produce. A value that resolves,
+  after `type_map`, to any other type is skipped. Unlike `type_map_only`, it
+  bounds the types rather than the raw values, so unmapped values still pass
+  through as type names.
 - `from`, `keep_fields`, `extraction_scope`: as on the vertex step, applied to
   every routed type. `vertex_from_map: {type: {property: field}}` replaces
-  `from` for one type.
+  `from` for one type; it says how a type is projected, not that the router
+  produces it.
 - `role`: the name an edge step uses in `source_role` / `target_role`.
   Defaults to the name given in `type_field`.
 - `lookup_only`: `true` for every routed type, or a list of the types to look
   up without writing.
 
-A router without `type_map_only` can produce any vertex type the schema
-declares, so GraFlo treats its resource as producing all of them. Two
-examples show the two shapes: [a type map](../../examples/vertex-router-type-map/index.md)
+A router without `type_map_only` or `vertex_types` can produce any vertex type
+the schema declares, so GraFlo treats its resource as producing all of them.
+
+Two routers can split one column between them, each with its own `role`:
+
+```yaml
+- vertex_router: {type_field: kind, role: plant, vertex_types: [machine, line]}
+- vertex_router: {type_field: kind, role: probe, type_map: {S: sensor}, vertex_types: [sensor]}
+```
+
+Schema changes keep what a router routes: each value still reaches its type,
+renamed, or nothing once the type is removed. When merging types would make a
+router admit values it used to skip, the change closes the router instead
+(`type_map_only` over the values it accepted). Merging types the router
+projects differently splits it into one closed router per projection, on the
+same `type_field` and `role`. A property rename or removal gives the type its
+own `vertex_from_map` entry. Merging a type the router only looks up with one
+it writes is refused. A router left with no type to produce
+is removed, together with the edge steps that address its role.
+
+Two examples show the two shapes: [a type map](../../examples/vertex-router-type-map/index.md)
 (7) and [rows that name their own types](../../examples/vertex-router-flat-rows/index.md)
 (8).
 

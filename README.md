@@ -114,8 +114,8 @@ Optional extras (see the
 
 - `dev`: pytest and its plugins, hypothesis, ty, pre-commit
 - `docs`: ProperDocs and its plugins, for building the documentation site
-- `plot`: `pygraphviz` for `graflo plot-manifest` and the `--plot` figures of
-  `graflo merge` and `graflo merge3`
+- `plot`: draws `graflo plot-manifest` and the `--plot` figures of `graflo merge`
+  and `graflo merge3` (SVG, PDF, PNG); no system Graphviz or fonts needed
 
 ```bash
 pip install "graflo[dev,docs,plot]"

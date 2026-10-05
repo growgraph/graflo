@@ -44,7 +44,7 @@ The extras add tooling only; they do not switch ingestion features on or off.
 |-------|--------------|
 | `dev` | Tests and checks: `pytest` and its plugins, `hypothesis`, `ty`, `pre-commit` |
 | `docs` | Building this site: ProperDocs and its plugins |
-| `plot` | `pygraphviz`, which draws the diagrams of `graflo plot-manifest` and the `--plot` figures of `graflo merge` and `graflo merge3` |
+| `plot` | Drawing the diagrams of `graflo plot-manifest` and the `--plot` figures of `graflo merge` and `graflo merge3`, as SVG, PDF or PNG |
 
 With pip, name the extras you want:
 
@@ -60,7 +60,11 @@ removes the extras you leave out:
 uv sync --extra dev --extra docs --extra plot
 ```
 
-The `plot` extra needs no system Graphviz: the `pygraphviz` wheels include it.
+The `plot` extra needs no system packages: Graphviz runs as WebAssembly inside
+Python, and PDF and PNG text uses fonts shipped with graflo, so it works the
+same on a desktop and in a slim container image. Those fonts cover Latin, Greek
+and Cyrillic; other scripts show in SVG, which leaves text to the viewer's fonts.
+On Alpine, install `libgcc` (`apk add libgcc`) for the WebAssembly runtime.
 
 ## Check the installation
 

@@ -32,23 +32,20 @@ def collect_vertex_names_from_pipeline(steps: list[Any]) -> set[str]:
         if step_type == "vertex" and isinstance(normalized.get("vertex"), str):
             names.add(normalized["vertex"])
         elif step_type == "vertex_router":
-            type_map = normalized.get("type_map")
-            if isinstance(type_map, dict):
-                for value in type_map.values():
-                    if isinstance(value, str):
-                        names.add(value)
+            names |= _router_table_targets(normalized)
             vertex_from_map = normalized.get("vertex_from_map")
             if isinstance(vertex_from_map, dict):
-                for key in vertex_from_map:
-                    if isinstance(key, str):
-                        names.add(key)
+                names |= {key for key in vertex_from_map if isinstance(key, str)}
+            names |= _router_bound(normalized) or frozenset()
         elif step_type == "edge":
-            source = normalized.get("source") or normalized.get("from")
-            target = normalized.get("target") or normalized.get("to")
-            if isinstance(source, str):
-                names.add(source)
-            if isinstance(target, str):
-                names.add(target)
+            links = normalized.get("links")
+            for payload in [
+                normalized,
+                *(link for link in links or [] if isinstance(link, dict)),
+            ]:
+                for key in ("source", "from", "target", "to"):
+                    if isinstance(endpoint := payload.get(key), str):
+                        names.add(endpoint)
             vertex_weights = normalized.get("vertex_weights")
             if isinstance(vertex_weights, list):
                 for weight in vertex_weights:
@@ -67,26 +64,21 @@ def step_produces_vertices(
     """Vertex names a single (non-recursive) actor step *produces*.
 
     Production, not reference: an ``edge`` step names endpoints it looks up, so
-    it is not counted. A ``vertex_router`` produces every type its ``type_map``
-    can select and every type its ``vertex_from_map`` projects — its *explicit*
-    targets. An open router also routes an unmapped discriminator value as-is,
-    as the class name, so with *known_vertices* (the schema's declared classes)
-    it produces every one of them by pass-through as well: that is how a router
-    without a ``type_map`` works at all, and the static picture must not say
-    it produces nothing. A closed router (``type_map_only``) routes only the
-    values its table lists, so it produces exactly the table's classes.
+    it is not counted. A ``vertex_router`` produces its :func:`router_reach`.
+    For an unbounded router without *known_vertices* that is unknown, and the
+    answer is its *explicit* targets -- the classes its ``type_map`` selects.
+    A ``vertex_from_map`` key is not one: it projects a class the router
+    reaches, and naming it does not make the router produce it.
     """
     normalized = normalize_actor_step(dict(step))
     step_type = normalized.get("type")
     if step_type == "vertex" and isinstance(normalized.get("vertex"), str):
         return {normalized["vertex"]}
     if step_type == "vertex_router":
-        if normalized.get("type_map_only"):
+        reach = router_reach(normalized, known_vertices=known_vertices)
+        if reach is None:
             return _router_table_targets(normalized)
-        names = _router_explicit_targets(normalized)
-        if known_vertices is not None:
-            names |= set(known_vertices)
-        return names
+        return set(reach)
     return set()
 
 
@@ -102,23 +94,131 @@ def step_looks_up(step: dict[str, Any], vertex: str) -> bool:
     if normalized.get("type") == "vertex":
         return normalized.get("vertex") == vertex and flag is True
     if normalized.get("type") == "vertex_router":
-        return flag is True or (isinstance(flag, list) and vertex in flag)
+        if flag is True:
+            bound = _router_bound(normalized)
+            return bound is None or vertex in bound
+        return isinstance(flag, list) and vertex in flag
     return False
 
 
-def _router_table_targets(normalized: dict[str, Any]) -> set[str]:
+def route_discriminator(
+    step: dict[str, Any], raw: Any, declared: Collection[str]
+) -> str | None:
+    """The class a ``vertex_router`` sends a record with discriminator *raw* to.
+
+    The runtime's rule: a closed router (``type_map_only``) skips a value its
+    table lacks; ``type_map`` translates, and an unmapped value stands for the
+    class of that name; a class *declared* lacks, or ``vertex_types``
+    excludes, is skipped. ``None`` for a skipped record.
+    """
+    normalized = normalize_actor_step(dict(step))
+    table = _router_table(normalized)
+    if normalized.get("type_map_only") and raw not in table:
+        return None
+    vertex = table.get(raw, raw)
+    if not isinstance(vertex, str) or vertex not in declared:
+        return None
+    bound = _router_bound(normalized)
+    if bound is not None and vertex not in bound:
+        return None
+    return vertex
+
+
+def router_reach(
+    step: dict[str, Any], *, known_vertices: Collection[str] | None = None
+) -> frozenset[str] | None:
+    """The classes a ``vertex_router`` step can produce; ``None`` for any class.
+
+    A closed router (``type_map_only``) reaches the classes its table names.
+    An open one also routes an unmapped value as the class of that name, so it
+    reaches every class *known_vertices* declares -- or, without them, any
+    class. ``vertex_types`` bounds either: an open router with it reaches
+    exactly the listed classes, known or not.
+    """
+    normalized = normalize_actor_step(dict(step))
+    if normalized.get("type") != "vertex_router":
+        return frozenset()
+    bound = _router_bound(normalized)
+    if normalized.get("type_map_only"):
+        reach = frozenset(_router_table_targets(normalized))
+        return reach if bound is None else reach & bound
+    if bound is not None:
+        return bound
+    if known_vertices is None:
+        return None
+    return frozenset(_router_table_targets(normalized)) | frozenset(known_vertices)
+
+
+def is_pass_through_router(step: dict[str, Any]) -> bool:
+    """Whether *step* is a ``vertex_router`` routing an unmapped value as itself."""
+    normalized = normalize_actor_step(dict(step))
+    return normalized.get("type") == "vertex_router" and not normalized.get(
+        "type_map_only"
+    )
+
+
+def is_unbounded_router(step: dict[str, Any]) -> bool:
+    """Whether *step* is a ``vertex_router`` that can produce any declared class.
+
+    It passes unmapped values through and has no ``vertex_types``.
+    """
+    normalized = normalize_actor_step(dict(step))
+    return is_pass_through_router(normalized) and _router_bound(normalized) is None
+
+
+def role_reach(pipeline: Any) -> dict[str, frozenset[str] | None]:
+    """What each accumulator role in *pipeline* can hold, at any level.
+
+    A ``vertex`` step with a ``role`` holds its class; a router's role (its
+    ``role``, else its ``type_field``) holds its :func:`router_reach`, ``None``
+    when that is any class. Several producers of one role add up.
+    """
+    roles: dict[str, frozenset[str] | None] = {}
+
+    def hold(role: str, classes: frozenset[str] | None) -> None:
+        if role in roles and roles[role] is None:
+            return
+        roles[role] = (
+            None if classes is None else roles.get(role, frozenset()) | classes
+        )
+
+    def walk(item: Any) -> None:
+        if isinstance(item, list):
+            for sub in item:
+                walk(sub)
+            return
+        if not isinstance(item, dict):
+            return
+        step = normalize_actor_step(dict(item))
+        step_type = step.get("type")
+        if step_type == "vertex" and isinstance(step.get("role"), str):
+            vertex = step.get("vertex")
+            hold(step["role"], frozenset({vertex} if isinstance(vertex, str) else ()))
+        elif step_type == "vertex_router":
+            role = step.get("role") or step.get("type_field")
+            if isinstance(role, str):
+                hold(role, router_reach(step))
+        elif step_type == "descend":
+            walk(step.get("pipeline"))
+
+    walk(pipeline)
+    return roles
+
+
+def _router_table(normalized: dict[str, Any]) -> dict[Any, Any]:
     type_map = normalized.get("type_map")
-    if not isinstance(type_map, dict):
-        return set()
-    return {v for v in type_map.values() if isinstance(v, str)}
+    return type_map if isinstance(type_map, dict) else {}
 
 
-def _router_explicit_targets(normalized: dict[str, Any]) -> set[str]:
-    names = _router_table_targets(normalized)
-    vertex_from_map = normalized.get("vertex_from_map")
-    if isinstance(vertex_from_map, dict):
-        names |= {k for k in vertex_from_map if isinstance(k, str)}
-    return names
+def _router_bound(normalized: dict[str, Any]) -> frozenset[str] | None:
+    bound = normalized.get("vertex_types")
+    if not isinstance(bound, list):
+        return None
+    return frozenset(v for v in bound if isinstance(v, str))
+
+
+def _router_table_targets(normalized: dict[str, Any]) -> set[str]:
+    return {v for v in _router_table(normalized).values() if isinstance(v, str)}
 
 
 def _level_produces(level: list[Any], vertex: str) -> bool:
@@ -128,16 +228,14 @@ def _level_produces(level: list[Any], vertex: str) -> bool:
     )
 
 
-def is_open_router(step: dict[str, Any]) -> bool:
-    """Whether *step* is a ``vertex_router`` that passes unmapped values through."""
-    normalized = normalize_actor_step(dict(step))
-    return normalized.get("type") == "vertex_router" and not normalized.get(
-        "type_map_only"
+def _level_has_unbounded_router(level: list[Any]) -> bool:
+    return any(isinstance(step, dict) and is_unbounded_router(step) for step in level)
+
+
+def _level_has_pass_through_router(level: list[Any]) -> bool:
+    return any(
+        isinstance(step, dict) and is_pass_through_router(step) for step in level
     )
-
-
-def _level_has_open_router(level: list[Any]) -> bool:
-    return any(isinstance(step, dict) and is_open_router(step) for step in level)
 
 
 def find_vertex_producing_levels(
@@ -154,32 +252,38 @@ def find_vertex_producing_levels(
     with no ancestor fallback, so a derivation appended at the root is invisible
     to a vertex produced under a ``descend``.
 
-    Two tiers. Levels with an *explicit* producer — a ``vertex`` step or a
-    router whose table names the class — decide when any exist. Only when none
-    does, and *known_vertices* declares the class, every level holding an
-    open ``vertex_router`` counts: the router routes the raw discriminator
-    value as the class name, which is the whole mechanism of a router without
-    a ``type_map``. An explicit table outranks pass-through so that adding one
-    dynamic router elsewhere never turns a resolved level ambiguous. A closed
-    router (``type_map_only``) passes nothing through.
+    Two tiers. Levels with an *explicit* producer — a ``vertex`` step, a
+    router whose table names the class, or one whose ``vertex_types`` lists
+    it — decide when any exist. Only when none does, and *known_vertices*
+    declares the class, every level holding an unbounded ``vertex_router``
+    counts: the router routes the raw discriminator value as the class name,
+    which is the whole mechanism of a router without a ``type_map``. An
+    explicit table outranks pass-through so that adding one dynamic router
+    elsewhere never turns a resolved level ambiguous.
     """
     explicit = _walk_levels(steps, lambda level: _level_produces(level, vertex))
     if explicit or known_vertices is None or vertex not in known_vertices:
         return explicit
-    return _walk_levels(steps, _level_has_open_router)
+    return _walk_levels(steps, _level_has_unbounded_router)
 
 
-def pipeline_has_open_router(steps: list[Any]) -> bool:
-    """Whether any level of *steps* holds a router that passes values through.
+def pipeline_has_unbounded_router(steps: list[Any]) -> bool:
+    """Whether any level of *steps* holds a router that can produce any class.
 
-    An open router routes an unmapped discriminator value as the class name,
-    so a pipeline holding one can produce any class the schema declares — not
-    only the names its steps state. Anything scoping a schema to a resource by
-    the names its pipeline mentions must widen to every class when this is
-    true, or the router silently drops each record whose class it did not
-    name. A closed router's classes are the ones its table names.
+    An unbounded router routes an unmapped discriminator value as the class
+    name, so a pipeline holding one can produce any class the schema declares
+    — not only the names its steps state. Anything scoping a schema to a
+    resource by the names its pipeline mentions must widen to every class when
+    this is true, or the router silently drops each record whose class it did
+    not name. A closed or bounded router's classes are its
+    :func:`router_reach`, which the pipeline names.
     """
-    return bool(_walk_levels(steps, _level_has_open_router))
+    return bool(_walk_levels(steps, _level_has_unbounded_router))
+
+
+def pipeline_has_pass_through_router(steps: list[Any]) -> bool:
+    """Whether any level of *steps* holds a router routing unmapped values as-is."""
+    return bool(_walk_levels(steps, _level_has_pass_through_router))
 
 
 def _walk_levels(
