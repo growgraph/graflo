@@ -127,7 +127,7 @@ To install from a clone:
 
 ```shell
 git clone git@github.com:growgraph/graflo.git && cd graflo
-uv sync --extra dev
+uv sync --extra dev --extra plot
 ```
 
 See the [Contributing Guide](https://growgraph.github.io/graflo/contributing/) for the full workflow.

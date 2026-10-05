@@ -31,8 +31,8 @@ jobs:
                 path: ~/.cache/pre-commit
                 key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
 
-        -   name: Install dependencies (including dev)
-            run: uv sync --extra dev
+        -   name: Install dependencies (dev, and plot for the ty hook)
+            run: uv sync --extra dev --extra plot
 
         -   name: Run pre-commit
             run: uv run pre-commit run --all-files
