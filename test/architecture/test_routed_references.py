@@ -385,13 +385,15 @@ class TestClosedRouters:
         router, _edge = _router_and_edge(renamed)
         assert router["type_map"] == {"a": "Asset", "c": "ClassC"}
 
-    def test_a_removal_can_empty_the_table(self) -> None:
+    def test_a_removal_that_empties_the_table_drops_the_router_and_its_edges(
+        self,
+    ) -> None:
+        """A closed router left routing nothing goes, with the edges on its role."""
         from graflo.architecture.evolution import RemoveVerticesOp, apply_evolution
 
         closed = _routed(
             {**KEYED_ROUTER, "type_map": {"a": "ClassA"}, "type_map_only": True}
         )
         trimmed = apply_evolution(closed, [RemoveVerticesOp(names=["ClassA"])])
-        router, _edge = _router_and_edge(trimmed)
-        assert not router.get("type_map")
-        assert router["type_map_only"] is True
+        steps = trimmed.require_ingestion_model().resources[0].pipeline
+        assert [s.get("vertex") for s in steps] == ["WorkOrder"]

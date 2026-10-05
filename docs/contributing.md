@@ -35,10 +35,11 @@ check cannot match the commit to your acceptance.
 2. Clone your fork locally
 3. From the repository root (where `pyproject.toml` lives), install development dependencies:
    ```bash
-   uv sync --extra dev
+   uv sync --extra dev --extra plot
    ```
-   Add `--extra docs` in the same command if you will build the documentation
-   site locally: `uv sync` removes the extras you leave out.
+   The `ty` pre-commit hook type-checks `graflo/plot`, which imports the `plot`
+   extra. Add `--extra docs` in the same command if you will build the
+   documentation site locally: `uv sync` removes the extras you leave out.
 4. Install pre-commit hooks:
    ```bash
    uv run pre-commit install
@@ -86,7 +87,7 @@ check cannot match the commit to your acceptance.
 To build and preview the docs site locally:
 
 ```bash
-uv sync --extra dev --extra docs
+uv sync --extra dev --extra plot --extra docs
 uv run properdocs serve
 ```
 

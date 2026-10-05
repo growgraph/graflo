@@ -2,16 +2,16 @@
 
 Everything here asserts against the networkx graph, never against a rendered
 file — ``build_preview_graph`` / ``build_merge3_graph`` are separate from the
-drawing for exactly this reason, so the suite needs no Graphviz. The one test
-that reaches the writer stubs ``to_agraph`` the way ``test_plotter.py`` does.
+drawing for exactly this reason, so the suite needs no Graphviz. The tests that
+reach the writer replace the SVG renderer with a stub.
 """
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
-import networkx as nx
 import pytest
 
 from graflo.architecture.evolution.preview import (
@@ -25,34 +25,20 @@ from graflo.architecture.evolution.preview import (
 )
 from graflo.plot import merge as merge_plot
 from graflo.plot import merge3 as merge3_plot
+from graflo.plot import render as render_module
 from graflo.plot.merge import (
+    HEADER_COLOR,
     SEVERITY_COLOR,
     build_preview_graph,
     plot_merge_preview,
 )
 from graflo.plot.merge3 import build_history_graph, build_merge3_graph
-from graflo.plot.render import escape, resolve_format, sanitize_id
-
-
-class _AgraphStub:
-    """Enough of a pygraphviz AGraph for the writer to be exercised."""
-
-    def __init__(self, graph):
-        self.graph = graph
-        self.graph_attr: dict[str, str] = {}
-        self.subgraphs: list[dict] = []
-        self.draw_calls: list[dict] = []
-        self.written: list[str] = []
-
-    def add_subgraph(self, nodes, name, **kwargs):
-        self.subgraphs.append({"nodes": list(nodes), "name": name, **kwargs})
-        return SimpleNamespace(node_attr={})
-
-    def draw(self, path, output_format, prog="dot"):
-        self.draw_calls.append({"path": path, "format": output_format, "prog": prog})
-
-    def write(self, path):
-        self.written.append(path)
+from graflo.plot.render import (
+    header_band,
+    record_escape,
+    resolve_format,
+    sanitize_id,
+)
 
 
 def _preview(**updates) -> MergePreview:
@@ -145,10 +131,12 @@ def test_ids_that_sanitize_alike_are_still_told_apart():
     assert sanitize_id("a:b", taken) == first, "stable for the same input"
 
 
-def test_markup_in_a_name_is_escaped():
-    """An unescaped ``&`` or ``<`` makes Graphviz reject the whole label."""
-    assert escape("a & b") == "a &amp; b"
-    assert escape("<b>") == "&lt;b&gt;"
+def test_record_syntax_in_a_name_is_escaped():
+    """An unescaped ``|``, brace or angle bracket splits or breaks a record field."""
+    assert record_escape("a|b") == "a\\|b"
+    assert record_escape("{x} <p>") == "\\{x\\} \\<p\\>"
+    assert record_escape("back\\slash") == "back\\\\slash"
+    assert record_escape("two\nlines") == "two\\nlines"
 
 
 @pytest.mark.parametrize("suffix", [".svg", ".pdf", ".png", ".dot"])
@@ -176,14 +164,35 @@ def test_an_identity_attribute_is_marked_in_its_row():
     graph = build_preview_graph(_preview())
 
     label = graph.nodes["left_Firm"]["label"]
-    assert "<B><U>firm_id</U></B>" in label
-    assert "<B><U>note</U></B>" not in label
+    assert "<p_firm_id> firm_id (key)" in label
+    assert "note (key)" not in label
 
 
 def test_a_declared_type_reaches_the_row():
     graph = build_preview_graph(_preview())
 
     assert "STRING" in graph.nodes["left_Firm"]["label"]
+
+
+def test_only_the_header_field_is_coloured():
+    """A record fills whole; a hard two-stop gradient colours just its header."""
+    graph = build_preview_graph(_preview())
+
+    node = graph.nodes["left_Firm"]
+    colour, rest = node["fillcolor"].split(";")
+    assert colour == HEADER_COLOR["left"]
+    assert rest.endswith(":white")
+    assert node["gradientangle"] == "270", "the band starts at the top"
+
+
+def test_the_header_band_is_the_headers_share_of_the_height():
+    # Graphviz: a field is lines * fontsize * 1.2 + 8 points high.
+    band = header_band("#ABCDEF", header_lines=2, rows=3, fontsize=10)
+    header, row = 2 * 12 + 8, 12 + 8
+    assert band["fillcolor"] == f"#ABCDEF;{header / (header + 3 * row):.4f}:white"
+    assert header_band("#ABCDEF", header_lines=1, rows=0, fontsize=10) == {
+        "fillcolor": "#ABCDEF"
+    }
 
 
 def test_a_property_edge_lands_on_the_rows_it_renames():
@@ -237,7 +246,7 @@ def test_a_finding_colours_what_it_names_and_earns_a_badge():
     )
     graph = build_preview_graph(preview)
 
-    assert SEVERITY_COLOR["possible"] in graph.nodes["left_Firm"]["label"]
+    assert graph.nodes["left_Firm"]["color"] == SEVERITY_COLOR["possible"]
     assert "[1]" in graph.nodes["left_Firm"]["label"]
     assert "identity_disagreement" in graph.nodes["legend"]["label"]
 
@@ -264,7 +273,7 @@ def test_a_refusal_outranks_a_possible_finding_on_the_same_node():
     )
     graph = build_preview_graph(preview)
 
-    assert SEVERITY_COLOR["refusal"] in graph.nodes["left_Firm"]["label"]
+    assert graph.nodes["left_Firm"]["color"] == SEVERITY_COLOR["refusal"]
 
 
 def test_an_empty_findings_list_still_gets_a_legend():
@@ -313,7 +322,7 @@ def test_a_wide_class_is_trimmed_and_says_so():
 
     label = graph.nodes["left_Wide"]["label"]
     assert "more" in label
-    assert label.count("<TR") <= 8  # header, five rows, the summary, slack
+    assert len(label.split("|")) == 7  # header, five rows, the summary
 
 
 def test_trimming_never_drops_an_attribute_the_reader_came_for():
@@ -344,69 +353,76 @@ def test_no_budget_draws_everything():
 # ── the writer ──────────────────────────────────────────────────────────────
 
 
+def _stub_svg(monkeypatch) -> list[dict[str, str]]:
+    """Replace the WebAssembly renderer; record what it was asked to draw."""
+    calls: list[dict[str, str]] = []
+
+    def _render(source: str, *, prog: str = "dot") -> bytes:
+        calls.append({"source": source, "prog": prog})
+        return b"<svg xmlns='http://www.w3.org/2000/svg'/>"
+
+    monkeypatch.setattr(render_module, "render_svg", _render)
+    return calls
+
+
 def test_drawing_creates_the_directory_and_picks_the_format(monkeypatch, tmp_path):
-    captured: dict[str, _AgraphStub] = {}
-
-    def _fake(graph):
-        captured["ag"] = _AgraphStub(graph)
-        return captured["ag"]
-
-    monkeypatch.setattr(nx.nx_agraph, "to_agraph", _fake)
+    calls = _stub_svg(monkeypatch)
     target = tmp_path / "nested" / "deeper" / "preview.svg"
 
     written = plot_merge_preview(_preview(), target)
 
     assert written == target
     assert target.parent.is_dir(), "a missing directory is created, not raised on"
-    assert captured["ag"].draw_calls == [
-        {"path": str(target), "format": "svg", "prog": "dot"}
-    ]
+    assert target.read_bytes().startswith(b"<svg")
+    assert [call["prog"] for call in calls] == ["dot"]
 
 
 def test_dot_is_written_as_source_rather_than_laid_out(monkeypatch, tmp_path):
-    captured: dict[str, _AgraphStub] = {}
-    monkeypatch.setattr(
-        nx.nx_agraph,
-        "to_agraph",
-        lambda graph: captured.setdefault("ag", _AgraphStub(graph)),
-    )
+    calls = _stub_svg(monkeypatch)
     target = tmp_path / "preview.dot"
 
     plot_merge_preview(_preview(), target)
 
-    assert captured["ag"].written == [str(target)]
-    assert not captured["ag"].draw_calls, "dot needs no layout run"
+    assert target.read_text().startswith("digraph")
+    assert not calls, "dot needs no layout run"
 
 
-def test_each_side_becomes_its_own_column(monkeypatch, tmp_path):
-    captured: dict[str, _AgraphStub] = {}
-    monkeypatch.setattr(
-        nx.nx_agraph,
-        "to_agraph",
-        lambda graph: captured.setdefault("ag", _AgraphStub(graph)),
-    )
+def test_each_side_becomes_its_own_column(tmp_path):
+    target = tmp_path / "preview.dot"
 
-    plot_merge_preview(_preview(), tmp_path / "preview.svg")
+    plot_merge_preview(_preview(), target)
 
-    names = {sub["name"] for sub in captured["ag"].subgraphs}
-    assert names == {"cluster_left", "cluster_merged", "cluster_right"}
+    source = target.read_text()
+    for name in ("cluster_left", "cluster_merged", "cluster_right"):
+        assert f'subgraph "{name}"' in source
 
 
-def test_an_unsupported_plot_format_is_refused(monkeypatch, tmp_path):
-    monkeypatch.setattr(nx.nx_agraph, "to_agraph", lambda graph: _AgraphStub(graph))
-
+def test_an_unsupported_plot_format_is_refused(tmp_path):
     with pytest.raises(ValueError, match="unsupported output format"):
         plot_merge_preview(_preview(), tmp_path / "preview.gif")
 
 
-def test_a_missing_pygraphviz_says_what_to_install(monkeypatch, tmp_path):
-    def _boom(graph):
-        raise ImportError("No module named 'pygraphviz'")
+def test_a_missing_plot_extra_says_what_to_install(monkeypatch, tmp_path):
+    monkeypatch.setitem(sys.modules, "wasi_graphviz", None)
 
-    monkeypatch.setattr(nx.nx_agraph, "to_agraph", _boom)
-
-    with pytest.raises(RuntimeError, match=r"graflo\[plot\]"):
+    with pytest.raises(RuntimeError, match=r"graflo\[plot\].*") as caught:
         plot_merge_preview(_preview(), tmp_path / "preview.svg")
+    assert "wasi_graphviz" in str(caught.value)
+
+
+def test_a_runtime_that_cannot_load_says_what_to_install(monkeypatch, tmp_path):
+    wasi_graphviz = pytest.importorskip("wasi_graphviz")
+
+    def _boom(*args, **kwargs):
+        raise OSError("Error loading shared library libgcc_s.so.1: No such file")
+
+    monkeypatch.setattr(wasi_graphviz, "render", _boom)
+
+    with pytest.raises(RuntimeError) as caught:
+        plot_merge_preview(_preview(), tmp_path / "preview.svg")
+    message = str(caught.value)
+    assert "libgcc_s.so.1" in message
+    assert "apk add libgcc" in message
 
 
 # ── the merge figures ───────────────────────────────────────────────────────

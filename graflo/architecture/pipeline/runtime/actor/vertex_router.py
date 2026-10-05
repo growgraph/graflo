@@ -47,7 +47,8 @@ class VertexRouterActor(VertexProducingActor):
 
     ``lookup_only`` (every routed class, or the listed ones) is handed to the
     vertex actor of each class it covers, so those rows locate edge endpoints
-    and are never written.
+    and are never written. ``vertex_types`` bounds the classes it produces: a
+    value resolving to any other class is skipped.
     """
 
     def __init__(self, config: VertexRouterActorConfig):
@@ -83,36 +84,54 @@ class VertexRouterActor(VertexProducingActor):
             items["vertex_from_map"] = self.vertex_from_map
         if self.config.type_map_only:
             items["type_map_only"] = True
+        if self.config.vertex_types is not None:
+            items["vertex_types"] = self.config.vertex_types
         if self.config.lookup_only:
             items["lookup_only"] = self.config.lookup_only
-        items["vertex_types"] = sorted(self._vertex_actors.keys())
+        items["routed_types"] = sorted(self._vertex_actors.keys())
         return items
 
     def finish_init(self, init_ctx: ActorInitContext) -> None:
         self.vertex_config = init_ctx.vertex_config
         self._init_ctx = init_ctx
         self._vertex_actors.clear()
-        if isinstance(self.config.lookup_only, list):
-            unknown = sorted(
-                set(self.config.lookup_only) - self.vertex_config.vertex_set
-            )
-            if unknown:
-                raise ValueError(
-                    f"vertex_router on {self.type_field!r}: lookup_only names "
-                    f"{unknown}, which the schema does not declare"
-                )
+        for field, named in (
+            ("lookup_only", self.config.lookup_only),
+            ("vertex_types", self.config.vertex_types),
+        ):
+            if isinstance(named, list):
+                unknown = sorted(set(named) - self.vertex_config.vertex_set)
+                if unknown:
+                    raise ValueError(
+                        f"vertex_router on {self.type_field!r}: {field} names "
+                        f"{unknown}, which the schema does not declare"
+                    )
         if init_ctx.strict_references:
-            # Checked for the classes the router names; one it routes to by
-            # pass-through is known only per record, and gets the declared
-            # part of the map (see `_get_or_create_wrapper`).
+            # Checked for the classes the router names; one an unbounded router
+            # routes to by pass-through is known only per record, and gets the
+            # declared part of the map (see `_get_or_create_wrapper`).
             for vertex_type, from_doc in self.vertex_from_map.items():
                 refuse_undeclared_mapping(self.vertex_config, vertex_type, from_doc)
             if self.from_doc:
-                for vertex_type in sorted(set(self.type_map.values())):
+                for vertex_type in sorted(self._named_classes()):
                     if vertex_type not in self.vertex_from_map:
                         refuse_undeclared_mapping(
                             self.vertex_config, vertex_type, self.from_doc
                         )
+
+    def _named_classes(self) -> set[str]:
+        """The classes the router can produce that its config names.
+
+        The table's classes, bounded by ``vertex_types``; an open bounded router
+        reaches every listed class by pass-through as well.
+        """
+        table = set(self.type_map.values())
+        bound = self.config.vertex_types
+        if bound is None:
+            return table
+        if self.config.type_map_only:
+            return table & set(bound)
+        return set(bound)
 
     def _get_or_create_wrapper(self, vertex_type: str) -> ActorWrapper | None:
         from .wrapper import ActorWrapper
@@ -211,6 +230,14 @@ class VertexRouterActor(VertexProducingActor):
             )
             return ctx
         vtype = self.type_map.get(raw_vtype, raw_vtype)
+        if not self.config.admits(vtype):
+            logger.debug(
+                "VertexRouterActor: vertex type %r (from field '%s') is outside "
+                "vertex_types, skipping",
+                vtype,
+                self.type_field,
+            )
+            return ctx
 
         wrapper = self._get_or_create_wrapper(vtype)
         if wrapper is None:

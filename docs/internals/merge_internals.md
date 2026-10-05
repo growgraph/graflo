@@ -290,7 +290,20 @@ themselves, and sets `type_map_only`. The self-entries carry meaning: a closed
 router skips any value its table does not name, so a pass-through router with
 no table would skip every row, and the static analyses
 (`step_produces_vertices`, `find_vertex_producing_levels`, the lookup-only
-rewrite) read the table as the types the router produces.
+rewrite) read the table as the types the router produces. A router with
+`vertex_types` gets self-entries only for the types it lists.
+
+**Routers evolve through one rewrite.** Rename, merge, canonicalize and removal
+all pass a router through `evolve_router`, which maps its table, list,
+projections and lookups, then checks every value whose route the op can change
+(table keys, listed and mapped types, the op's names) against the router before
+the op. When the rewritten fields route a value differently -- a list that
+cannot tell merged members apart, a removed table entry whose key names a type
+-- it closes the router over the values it accepted and rewrites that instead.
+A merge of types the router projects differently (each its own
+`vertex_from_map` entry, or the shared `from`) cannot keep one projection per
+type, so the router is split into closed routers by projection; their values
+stay disjoint, so no row is routed twice.
 
 ## What to read next
 

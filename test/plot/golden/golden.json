@@ -1,0 +1,20 @@
+{
+    "dpi": 96,
+    "versions": {
+        "wasi-graphviz": "0.1.4",
+        "svglib": "2.2.0",
+        "reportlab": "5.0.1",
+        "pypdfium2": "5.14.0"
+    },
+    "figures": [
+        "family.resource-family",
+        "family_source2vc",
+        "family_vc2fields",
+        "family_vc2vc",
+        "history",
+        "merge3",
+        "merge_example",
+        "merge_findings",
+        "scripts"
+    ]
+}

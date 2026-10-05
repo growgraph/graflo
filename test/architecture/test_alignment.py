@@ -707,7 +707,7 @@ class TestExplicitGuard:
         assert by_output == {
             "match_key": {"field": "kind", "in": ["firm"]},
             # The unguarded local key still gets the derived class guard.
-            "local_key": {"field": "kind", "in": ["firm", "shop"]},
+            "local_key": {"field": "kind", "in": ["Company", "firm", "shop"]},
         }
 
     def test_a_member_keyed_spec_may_not_carry_when(self) -> None:
@@ -807,7 +807,8 @@ class TestRouterDelivery:
         # match_key and local_key: one step each.
         assert len(routed) == 2
         assert all(
-            s["transform"]["when"] == {"field": "kind", "in": ["firm", "shop"]}
+            s["transform"]["when"]
+            == {"field": "kind", "in": ["Company", "firm", "shop"]}
             for s in routed
         )
         plain = _transforms_op(ops).additions["r_b"]
@@ -1144,8 +1145,8 @@ class TestMemberKeyedLowering:
 
         match = [s for s in steps if s["call"]["output"] == ["match_key"]]
         assert [s["when"] for s in match] == [
-            {"field": "kind", "in": ["firm"]},
-            {"field": "kind", "in": ["shop"]},
+            {"field": "kind", "in": ["Company", "firm"]},
+            {"field": "kind", "in": ["Shop", "shop"]},
         ]
         assert [s["call"]["params"]["prefix"] for s in match] == ["abc_", "def_"]
         assert [s["call"]["input"] for s in match] == [["secondary_key"]] * 2
@@ -1156,7 +1157,10 @@ class TestMemberKeyedLowering:
 
         local = [s for s in steps if s["call"]["output"] == ["local_key"]]
         assert [s["call"]["foo"] for s in local] == ["tagged_key", "tagged_key"]
-        assert [s["when"]["in"] for s in local] == [["firm"], ["shop"]]
+        assert [s["when"]["in"] for s in local] == [
+            ["Company", "firm"],
+            ["Shop", "shop"],
+        ]
 
     def test_an_unkeyed_resource_is_lowered_as_before(self) -> None:
         steps = self._calls(_member_ops(), "r_b")
@@ -1174,7 +1178,7 @@ class TestMemberKeyedLowering:
             for s in steps
             if "prefix" in s["call"]["params"]
         }
-        assert by_prefix["abc_"]["when"] == {"field": "kind", "in": ["firm"]}
+        assert by_prefix["abc_"]["when"] == {"field": "kind", "in": ["Company", "firm"]}
         assert "when" not in by_prefix["def_"]
 
     def test_the_lowered_steps_are_valid_pipeline_steps(self) -> None:
@@ -1351,8 +1355,8 @@ class TestDynamicRouterMembers:
 
         assert _transforms_op(ops).at == {"r_view": [1]}
         assert self._match_guards(ops) == [
-            {"field": "kind", "in": ["firm"]},
-            {"field": "kind", "in": ["shop"]},
+            {"field": "kind", "in": ["Company", "firm"]},
+            {"field": "kind", "in": ["Shop", "shop"]},
         ]
 
     def test_bare_routers_at_two_levels_are_ambiguous_until_at_picks_one(self) -> None:

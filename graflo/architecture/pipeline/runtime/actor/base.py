@@ -40,6 +40,8 @@ class ActorInitContext:
     fail_fast: bool = False
     tolerate_transform_errors: bool = True
     target_db_flavor: DBType | None = None
+    #: What each accumulator role of the resource can hold; ``None`` for any class.
+    role_reach: dict[str, frozenset[VertexName] | None] = field(default_factory=dict)
 
 
 class Actor(ABC):

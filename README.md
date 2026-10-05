@@ -114,8 +114,8 @@ Optional extras (see the
 
 - `dev`: pytest and its plugins, hypothesis, ty, pre-commit
 - `docs`: ProperDocs and its plugins, for building the documentation site
-- `plot`: `pygraphviz` for `graflo plot-manifest` and the `--plot` figures of
-  `graflo merge` and `graflo merge3`
+- `plot`: draws `graflo plot-manifest` and the `--plot` figures of `graflo merge`
+  and `graflo merge3` (SVG, PDF, PNG); no system Graphviz or fonts needed
 
 ```bash
 pip install "graflo[dev,docs,plot]"
@@ -127,7 +127,7 @@ To install from a clone:
 
 ```shell
 git clone git@github.com:growgraph/graflo.git && cd graflo
-uv sync --extra dev
+uv sync --extra dev --extra plot
 ```
 
 See the [Contributing Guide](https://growgraph.github.io/graflo/contributing/) for the full workflow.

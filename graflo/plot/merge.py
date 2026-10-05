@@ -3,14 +3,15 @@
 The picture a
 :class:`~graflo.architecture.evolution.preview.MergePreview` is asking to be:
 each side's classes down its own column, the merged names between them, and
-every declaration as an edge. Classes are drawn as tables — one row per
+every declaration as an edge. Classes are drawn as records — one field per
 attribute, each its own Graphviz port — so a property rename lands on the row
 it renames rather than somewhere on the box. That is the whole reason to draw
 this at all: ``class_A - attr_a - attr_b - class_B`` is a statement about
 attributes, and a diagram that only draws classes cannot show it.
 
-Findings colour what they name and are numbered into a legend, so the picture
-says *where* as well as *what*. A refusal — the one merge actually raised —
+Findings colour the border of what they name and are numbered into a legend,
+the number repeated on the class or row it concerns, so the picture says
+*where* as well as *what*. A refusal — the one merge actually raised —
 is red; everything the structural pass found on its own is amber; the
 declarations a completion suggests are dashed green, because a refusal that
 carries its own fix should look like one.
@@ -33,10 +34,12 @@ from graflo.architecture.evolution.preview import (
     MergePreview,
     PreviewNode,
 )
-from graflo.plot.render import draw, escape, sanitize_id, to_agraph
+from graflo.plot.render import draw, header_band, record_escape, sanitize_id, to_dot
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from collections.abc import Sequence
+
+    from graflo.plot.dot import DotGraph
 
 #: Header colour per column, from the palette the schema plots already use.
 HEADER_COLOR: dict[str, str] = {
@@ -67,6 +70,9 @@ EDGE_STYLE: dict[str, dict[str, str]] = {
     "suggested": {"style": "dashed", "color": "#1E8449", "penwidth": "1.2"},
 }
 
+#: Point size of the class records; the header band is computed from it.
+FONT_SIZE = 11
+
 _PORT_PREFIX = "p_"
 
 
@@ -75,79 +81,67 @@ def _port(attribute: str) -> str:
     return _PORT_PREFIX + sanitize_id(attribute)
 
 
-def _row(node: PreviewNode, *, flagged: str | None, typed: bool) -> str:
-    """One attribute row: its name, its type, and whether it keys the class.
+def _marks(badges: Sequence[int]) -> str:
+    """Finding numbers as `` [1] [3]``, or nothing."""
+    return "".join(f" [{index}]" for index in badges)
 
-    *typed* says whether this table has a type column at all -- a schema that
-    declares no field types would otherwise get an empty column down every
-    box, which is three millimetres of nothing on every class in the diagram.
+
+def _row(node: PreviewNode, *, typed: bool, badges: Sequence[int]) -> str:
+    """One attribute field: its port, its name, whether it keys the class, its type.
+
+    *typed* says whether this class shows types at all -- a schema that
+    declares no field types would otherwise get a dangling separator on every
+    row.
     """
-    name = escape(node.name)
+    text = node.name
     if node.identity:
-        name = f"<B><U>{name}</U></B>"
-    cells = [f'<TD PORT="{_port(node.name)}" ALIGN="LEFT">{name}</TD>']
-    if typed:
-        # An empty <FONT> is a Graphviz syntax error, and a label that fails
-        # to parse silently loses its ports, so an untyped row in a typed
-        # table gets a bare cell rather than an empty font run.
-        cells.append(
-            f'<TD ALIGN="RIGHT"><FONT POINT-SIZE="9">'
-            f"{escape(node.field_type)}</FONT></TD>"
-            if node.field_type
-            else "<TD></TD>"
-        )
-    colour = f' BGCOLOR="{SEVERITY_COLOR[flagged]}22"' if flagged else ""
-    return f"<TR{colour}>{''.join(cells)}</TR>"
+        text += " (key)"
+    if typed and node.field_type:
+        text += f": {node.field_type}"
+    text += _marks(badges)
+    return f"<{_port(node.name)}> {record_escape(text)}\\l"
 
 
-def _table(
+def _class_node(
     node: PreviewNode,
     rows: Sequence[PreviewNode],
     *,
-    badges: Sequence[int],
+    badges: dict[str, list[int]],
     flagged: str | None,
     row_flags: dict[str, str],
     max_rows: int,
-) -> str:
-    """A class as a table: a header, then one row per attribute.
+) -> dict[str, str]:
+    """A class as a record: a header field, then one field per attribute.
 
     Rows an edge or a finding touches are always kept; the rest are trimmed to
     *max_rows* and summarised, because a class with sixty attributes drawn in
     full makes the whole diagram unreadable and none of those rows is what the
-    reader came for.
+    reader came for. ``rankdir=LR`` stacks a record's top-level fields, so the
+    fields read top to bottom.
     """
     kept, hidden = _trim(rows, row_flags=row_flags, max_rows=max_rows)
     typed = any(row.field_type for row in kept)
-    span = "2" if typed else "1"
-    header = escape(node.name)
-    if badges:
-        marks = " ".join(f"[{index}]" for index in badges)
-        header = f'{header} <FONT POINT-SIZE="9">{escape(marks)}</FONT>'
-    if node.kind == "ghost":
-        header = f"<I>{header}</I>"
-    subtitle = ""
+    header = record_escape(node.name + _marks(badges.get(node.id, [])))
+    header_lines = 1
     if node.identity_mode and node.kind == "class":
-        subtitle = (
-            f'<TR><TD COLSPAN="{span}" ALIGN="LEFT"><FONT POINT-SIZE="8">'
-            f"{escape(node.identity_mode)}</FONT></TD></TR>"
-        )
-    body = "".join(
-        _row(row, flagged=row_flags.get(row.id), typed=typed) for row in kept
-    )
+        header += "\\n" + record_escape(node.identity_mode)
+        header_lines = 2
+    fields = [f"<head> {header}"]
+    fields += [_row(row, typed=typed, badges=badges.get(row.id, [])) for row in kept]
     if hidden:
-        body += (
-            f'<TR><TD COLSPAN="{span}" ALIGN="LEFT"><FONT POINT-SIZE="8">'
-            f"+{hidden} more</FONT></TD></TR>"
-        )
+        fields.append(f"+{hidden} more\\l")
+    style = "rounded,filled,dashed" if node.kind == "ghost" else "rounded,filled"
     colour = HEADER_COLOR.get(node.kind if node.side is None else node.side, "#FFFFFF")
-    border = SEVERITY_COLOR[flagged] if flagged else "#2C3E50"
-    width = "2" if flagged else "1"
-    return (
-        f'<<TABLE BORDER="{width}" CELLBORDER="1" CELLSPACING="0" '
-        f'CELLPADDING="3" COLOR="{border}">'
-        f'<TR><TD COLSPAN="{span}" PORT="head" BGCOLOR="{colour}">'
-        f"<B>{header}</B></TD></TR>{subtitle}{body}</TABLE>>"
-    )
+    return {
+        "shape": "record",
+        "label": "|".join(fields),
+        "style": style,
+        **header_band(
+            colour, header_lines=header_lines, rows=len(fields) - 1, fontsize=FONT_SIZE
+        ),
+        "color": SEVERITY_COLOR[flagged] if flagged else "#2C3E50",
+        "penwidth": "2" if flagged else "1",
+    }
 
 
 def _trim(
@@ -202,24 +196,22 @@ def _numbered(preview: MergePreview) -> list[MergeFinding]:
     return sorted(preview.findings, key=lambda f: (order[f.severity], f.kind))
 
 
-def _legend(preview: MergePreview) -> str:
-    """The findings, numbered, as one table."""
-    rows = []
+def _legend(preview: MergePreview) -> dict[str, str]:
+    """The findings, numbered, as one record: a header, then a field per finding."""
+    fields = ["findings"]
     for number, finding in enumerate(_numbered(preview), start=1):
-        colour = SEVERITY_COLOR[finding.severity]
-        rows.append(
-            f'<TR><TD ALIGN="RIGHT"><FONT COLOR="{colour}"><B>[{number}]</B></FONT>'
-            f'</TD><TD ALIGN="LEFT"><FONT COLOR="{colour}">'
-            f"{escape(finding.kind)}</FONT></TD>"
-            f'<TD ALIGN="LEFT">{escape(_wrap(finding.message))}</TD></TR>'
+        line = (
+            f"[{number}] {finding.severity}  {finding.kind}: {_wrap(finding.message)}"
         )
-    if not rows:
-        rows.append('<TR><TD COLSPAN="3" ALIGN="LEFT">no conflicts found</TD></TR>')
-    return (
-        '<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="2" CELLPADDING="2">'
-        '<TR><TD COLSPAN="3" ALIGN="LEFT"><B>findings</B></TD></TR>'
-        f"{''.join(rows)}</TABLE>>"
-    )
+        fields.append(f"{record_escape(line)}\\l")
+    if len(fields) == 1:
+        fields.append("no conflicts found\\l")
+    return {
+        "shape": "record",
+        "label": "|".join(fields),
+        "style": "rounded",
+        "color": "#B0B0B0",
+    }
 
 
 def _wrap(message: str, width: int = 88) -> str:
@@ -240,7 +232,7 @@ def build_preview_graph(
     Args:
         preview: What :func:`~graflo.architecture.evolution.preview.preview_merge` returned.
         max_rows: Attribute rows to draw per class before summarising the rest.
-        legend: Whether to include the findings table.
+        legend: Whether to include the findings legend.
 
     Returns:
         A graph whose node and edge attributes are Graphviz attributes.
@@ -253,7 +245,7 @@ def build_preview_graph(
         "labelloc": "t",
         "label": _title(preview),
     }
-    graph.graph["node"] = {"fontname": "Helvetica", "shape": "plain"}
+    graph.graph["node"] = {"fontname": "Helvetica", "fontsize": str(FONT_SIZE)}
     graph.graph["edge"] = {"fontname": "Helvetica", "fontsize": "9"}
 
     node_flags, edge_flags, badges = _flags(preview)
@@ -274,10 +266,10 @@ def build_preview_graph(
         safe = sanitize_id(node.id, taken)
         graph.add_node(
             safe,
-            label=_table(
+            **_class_node(
                 node,
                 attributes.get(node.id, []),
-                badges=badges.get(node.id, []),
+                badges=badges,
                 flagged=node_flags.get(node.id),
                 row_flags=row_flags_by_owner.get(node.id, {}),
                 max_rows=max_rows,
@@ -327,9 +319,7 @@ def build_preview_graph(
             graph.add_edge(taken[tail], taken[head], **attrs)
 
     if legend:
-        graph.add_node(
-            "legend", label=_legend(preview), kind="legend", preview_id="legend"
-        )
+        graph.add_node("legend", **_legend(preview), kind="legend", preview_id="legend")
     return graph
 
 
@@ -343,7 +333,7 @@ def _title(preview: MergePreview) -> str:
     return f"{preview.left_name} + {preview.right_name} — {verdict}"
 
 
-def _columns(graph: nx.MultiDiGraph, agraph: Any) -> None:
+def _columns(graph: nx.MultiDiGraph, dot: DotGraph) -> None:
     """Put each side in its own cluster, so the picture reads left to right."""
     groups: dict[str, list[str]] = {}
     for name, data in graph.nodes(data=True):
@@ -357,7 +347,7 @@ def _columns(graph: nx.MultiDiGraph, agraph: Any) -> None:
         members = groups.get(key)
         if not members:
             continue
-        agraph.add_subgraph(
+        dot.add_subgraph(
             members,
             name=f"cluster_{key}",
             label=label,
@@ -386,19 +376,19 @@ def plot_merge_preview(
         prog: Graphviz layout program.
         dpi: Raster resolution, for ``png``.
         max_rows: Attribute rows per class before the rest are summarised.
-        legend: Whether to draw the findings table.
+        legend: Whether to draw the findings legend.
 
     Returns:
         The path written.
 
     Raises:
-        RuntimeError: pygraphviz is not installed or cannot be loaded.
+        RuntimeError: Rendering is unavailable or failed; the message says why.
         ValueError: The format is not one this can write.
     """
     graph = build_preview_graph(preview, max_rows=max_rows, legend=legend)
-    agraph = to_agraph(graph)
-    _columns(graph, agraph)
-    return draw(agraph, path, output_format=output_format, prog=prog, dpi=dpi)
+    dot = to_dot(graph)
+    _columns(graph, dot)
+    return draw(dot, path, output_format=output_format, prog=prog, dpi=dpi)
 
 
 __all__ = [

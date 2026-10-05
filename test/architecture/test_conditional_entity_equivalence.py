@@ -1003,17 +1003,36 @@ class TestDynamicRouterFusion:
         return normalize_actor_step(dict(descend["pipeline"][0]))
 
     def test_the_renames_are_written_into_the_table(self) -> None:
-        router = self._router(_build_dynamic_member_union())
+        from graflo.architecture.contract.ingestion.steps.normalize import (
+            normalize_actor_step,
+        )
 
-        assert router["type_map"] == {
-            "Firm": "Company",
-            "Shop": "Company",
+        pipeline = (
+            _build_dynamic_member_union()
+            .require_ingestion_model()
+            .resources[0]
+            .pipeline
+        )
+        descend = normalize_actor_step(dict(pipeline[0]))
+        routers = [
+            step
+            for step in map(normalize_actor_step, map(dict, descend["pipeline"]))
+            if step.get("type") == "vertex_router"
+        ]
+
+        # Firm projects company_id from firm_id and Shop does not, so merging
+        # them splits the router: one closed router per projection.
+        assert [r["type_map"] for r in routers] == [
             # Merge then closes the router over the left side as handed in:
             # its other classes, as themselves.
-            "Company": "Company",
-            "Person": "Person",
-        }
-        assert router["type_map_only"] is True
+            {"Firm": "Company", "Company": "Company", "Person": "Person"},
+            {"Shop": "Company"},
+        ]
+        assert [r.get("vertex_from_map") for r in routers] == [
+            {"Company": {"company_id": "firm_id"}},
+            None,
+        ]
+        assert all(r["type_map_only"] is True for r in routers)
 
     def test_each_member_fuses_through_its_own_marker(self) -> None:
         union = _build_dynamic_member_union()

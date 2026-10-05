@@ -13,6 +13,7 @@ from __future__ import annotations
 import copy
 
 from graflo.architecture.contract.ingestion import IngestionModel
+from graflo.architecture.contract.ingestion.resource import router_reach
 from graflo.architecture.contract.ingestion.steps.models import TransformActorConfig
 from graflo.architecture.contract.ingestion.steps.normalize import (
     normalize_actor_step,
@@ -228,15 +229,19 @@ def _widen_router_projection(step: dict, vertex: str, fields: list[str]) -> dict
     """Return *step* widened so *fields* survive extraction for *vertex*.
 
     ``None`` when nothing needs widening — a plain ``vertex`` step (it reads the
-    transform buffer directly), or a router that restricts neither
-    ``keep_fields`` nor ``extraction_scope``. Every router at the level is
-    widened, not only one whose table names *vertex*: a router routes an
-    unmapped discriminator value as the class name, so one without an entry
-    for *vertex* still produces it, and a derived field it does not keep is
-    written and then discarded without a word.
+    transform buffer directly), a router that cannot produce *vertex*, or one
+    that restricts neither ``keep_fields`` nor ``extraction_scope``. A router
+    produces *vertex* when it is in its :func:`router_reach` -- an open router
+    without ``vertex_types`` routes an unmapped discriminator value as the
+    class name, so one without an entry for *vertex* still produces it, and a
+    derived field it does not keep is written and then discarded without a
+    word.
     """
     normalized = normalize_actor_step(dict(step))
     if normalized.get("type") != "vertex_router":
+        return None
+    reach = router_reach(normalized)
+    if reach is not None and vertex not in reach:
         return None
 
     keep_fields = normalized.get("keep_fields")

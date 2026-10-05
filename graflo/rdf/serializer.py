@@ -8,6 +8,7 @@ from rdflib import RDF, BNode, Graph, Literal, URIRef
 from rdflib.namespace import XSD
 
 from graflo.architecture.contract.bindings.core import AnyConnector
+from graflo.architecture.contract.ingestion.resource import step_produces_vertices
 from graflo.architecture.contract.ingestion.transform import (
     DressConfig,
     KeySelectionConfig,
@@ -705,13 +706,11 @@ class ManifestRdfSerializer:
                     (step_node, ns.targetsVertex, vertex_uri_by_name[vertex_name])
                 )
         if step_type == "vertex_router" and vertex_uri_by_name is not None:
-            type_map = step.get("type_map")
-            if isinstance(type_map, dict):
-                for mapped in type_map.values():
-                    if isinstance(mapped, str) and mapped in vertex_uri_by_name:
-                        graph.add(
-                            (step_node, ns.targetsVertex, vertex_uri_by_name[mapped])
-                        )
+            # The classes the router names: its reach when that is bounded, its
+            # table's targets when it routes any class.
+            for mapped in sorted(step_produces_vertices(step)):
+                if mapped in vertex_uri_by_name:
+                    graph.add((step_node, ns.targetsVertex, vertex_uri_by_name[mapped]))
         if step_type == "edge" and edge_uri_by_id is not None:
 
             def _link_edge(source: str, target: str, relation: str | None) -> None:

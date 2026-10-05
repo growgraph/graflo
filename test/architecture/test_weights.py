@@ -21,14 +21,14 @@ def test_act_openalex(resource_openalex_authors, vc_openalex, sample_openalex_au
         )
     )
     ctx = anw(ctx, doc=sample_openalex_authors)
-    # Try to generate tree visualization if graphviz is available
+    # Try to generate tree visualization if the plot extra is installed
     try:
         from graflo.plot.plotter import assemble_tree
 
         assemble_tree(anw, Path("test/figs/openalex_authors.pdf"))
-    except ImportError:
-        # graphviz/pygraphviz not available, skip visualization
-        logger.debug("graphviz not available, skipping tree visualization")
+    except (ImportError, RuntimeError):
+        # the plot extra is not installed: skip the figure
+        logger.debug("plot extra not installed, skipping tree visualization")
     acc = anw.assemble(ctx)
     edge = acc[("author", "institution", None)][0]
     assert edge[-1] == {

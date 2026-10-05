@@ -679,8 +679,11 @@ side never modeled, and skipped, would start writing the other side's type. So
 by default (`router_scope: side`) the union closes each router over its own
 side's types: it lists them in the router's `type_map`, under their merged
 names, and sets `type_map_only`. The router then routes exactly what it routed
-before. Set `router_scope: union` for sources that share type names and ids,
-where a value naming the other side's type should reach it.
+before. A router with `vertex_types` is closed over the types it lists. Set
+`router_scope: union` for sources that share type names and ids, where a value
+naming the other side's type should reach it. A router whose `vertex_types`
+lists one member of a merged type and not another is closed in either scope,
+since its list can no longer tell the two apart.
 
 ## When a union refuses
 
