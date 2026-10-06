@@ -1393,11 +1393,18 @@ class _Naming:
             }
         )
         identity = source.identity
-        if identity is not None and any(
-            isinstance(b, DerivedBranch | LocalKeyBranch) for b in identity
+        derive = source.derive if identity is not None else None
+        if identity is not None and (
+            derive
+            or any(isinstance(b, DerivedBranch | LocalKeyBranch) for b in identity)
         ):
             identity = self._with_own_keys(
-                component, identity, ordered, aliases, derive_at
+                component,
+                identity,
+                ordered,
+                aliases,
+                derive_at,
+                derive=source.derive_attributes(),
             )
         elif identity is not None:
             self._property_key_coverage(
@@ -1410,6 +1417,7 @@ class _Naming:
                 into=component.name,
                 properties=properties,
                 identity=identity,
+                derive=derive,
                 digest_field=source.digest_field,
                 derive_at=derive_at if identity is not None else {},
                 retire=source.retire,
@@ -1626,6 +1634,8 @@ class _Naming:
         ordered: Mapping[Side, Sequence[str]],
         aliases: Mapping[Side, Mapping[str, str]],
         derive_at: Mapping[str, Sequence[int]],
+        *,
+        derive: Sequence[DerivedBranch] = (),
     ) -> list[IdentityBranchDecl]:
         """*identity* plus a tagged own key for each member a producing resource leaves unkeyed.
 
@@ -1642,7 +1652,10 @@ class _Naming:
         """
         assert component.name is not None
         resource_names = self._resource_names()
-        stepped = [b for b in identity if isinstance(b, DerivedBranch | LocalKeyBranch)]
+        stepped = [
+            *derive,
+            *(b for b in identity if isinstance(b, DerivedBranch | LocalKeyBranch)),
+        ]
         declared = {
             side: {m for d in component.declarations for m in d.members[side]}
             for side in _SIDES

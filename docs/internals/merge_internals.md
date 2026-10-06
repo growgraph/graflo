@@ -237,10 +237,11 @@ union path carries, mapped to a finding kind in `preview.py`.
 ## How a derived identity is lowered
 
 `identity_to_ops` (`graflo/architecture/evolution/alignment.py`) turns an
-`IdentityPlan` -- the equivalence's branches, and `derive_at` -- into basic
-ops, in this order:
+`IdentityPlan` -- the equivalence's branches, its `derive` attributes, and
+`derive_at` -- into basic ops, in this order:
 
-1. `AddVertexPropertiesOp`: declare the derived attributes and the local key.
+1. `AddVertexPropertiesOp`: declare the derived attributes (`derive` entries,
+   then derived branches) and the local key.
 2. `AddResourceTransformsOp`: the derivation steps per resource, with inline
    calls.
 3. `EnsureExtractedFieldsOp`, when a producing router restricts `keep_fields`

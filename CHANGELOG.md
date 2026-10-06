@@ -5,11 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-
 ## [1.16.3]
+
+### Added
+
+- **`VertexEquivalence.derive`**: attributes each source derives, keyed on by name or by a composite
+  branch such as `[host_key, group_key]`, which fires only when every part is derived.
 
 ### Fixed
 
+- **Merge** no longer makes a closed router refuse to load where the open one only skipped a
+  router-level `from` target a pass-through class does not declare.
 - **Merge** keys merged classes by member keys, not router paths through vocabulary joins
   (`reference_only`). Derivations that produce a class via routers in several roles are refused with
   a named repair.

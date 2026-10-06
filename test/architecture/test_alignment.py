@@ -209,6 +209,112 @@ class TestModel:
         assert reloaded == equivalence
 
 
+def _parts() -> dict:
+    """``derive`` for a key over two parts, each source with its own columns."""
+    return {
+        "host_key": {
+            "r_a": {"input": ["host"]},
+            "r_b": {"input": ["hostname"]},
+        },
+        "group_key": {
+            "r_a": {"input": ["group"]},
+            "r_b": {"input": ["group_id"]},
+        },
+    }
+
+
+class TestDeriveModel:
+    """``derive``: attributes each source computes, keyed on by name or composite."""
+
+    def test_a_composite_over_derived_attributes_is_a_funnel(self) -> None:
+        equivalence = _equivalence([["host_key", "group_key"]], derive=_parts())
+
+        assert equivalence.has_derivation
+        assert not equivalence.is_natural_key
+        assert [d.name for d in equivalence.derivations()] == [
+            "host_key",
+            "group_key",
+        ]
+
+    def test_derive_round_trips_and_an_op_without_it_does_not_emit_it(self) -> None:
+        equivalence = _equivalence([["host_key", "group_key"]], derive=_parts())
+        assert VertexEquivalence.model_validate(equivalence.to_dict()) == equivalence
+
+        plain = _equivalence([_match_key(), _local_key()])
+        assert "derive" not in plain.to_dict()
+
+    def test_derive_without_identity_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="no identity keys on them"):
+            VertexEquivalence.model_validate(
+                {"left": "Firm", "right": "Org", "derive": _parts()}
+            )
+
+    def test_an_empty_derive_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="derive lists no attribute"):
+            _equivalence(["company_id"], derive={})
+
+    def test_an_attribute_no_branch_keys_on_is_refused(self) -> None:
+        with pytest.raises(ValueError, match=r"no identity branch keys on them"):
+            _equivalence(["host_key"], derive=_parts())
+
+    def test_a_composite_mixing_derived_and_property_fields_is_refused(
+        self,
+    ) -> None:
+        parts = _parts()
+        del parts["group_key"]
+        with pytest.raises(ValueError, match=r"mixes derived attributes"):
+            _equivalence([["host_key", "group_id"]], derive=parts)
+
+    def test_an_attribute_named_like_a_derived_branch_is_refused(self) -> None:
+        parts = {**_parts(), "match_key": _parts()["host_key"]}
+        with pytest.raises(ValueError, match="both name"):
+            _equivalence([["host_key", "group_key"], _match_key()], derive=parts)
+
+    def test_a_guard_on_a_member_keyed_attribute_is_refused(self) -> None:
+        parts = _parts()
+        parts["host_key"]["r_b"] = {
+            "Org": {"input": ["hostname"], "when": {"field": "kind", "in": ["x"]}}
+        }
+        with pytest.raises(ValueError, match="when"):
+            _equivalence([["host_key", "group_key"]], derive=parts)
+
+    def test_the_plan_lowers_each_part_and_one_composite_branch(self) -> None:
+        equivalence = _equivalence(
+            [["host_key", "group_key"], _local_key()], derive=_parts()
+        )
+        assert equivalence.identity is not None
+        plan = IdentityPlan(
+            vertex="Company",
+            branches=tuple(equivalence.identity),
+            derive=tuple(equivalence.derive_attributes()),
+        )
+
+        ops = identity_to_ops(plan)
+
+        props = ops[0]
+        assert isinstance(props, AddVertexPropertiesOp)
+        assert props.additions == {"Company": ["host_key", "group_key", "local_key"]}
+        steps = ops[1]
+        assert isinstance(steps, AddResourceTransformsOp)
+        assert [
+            (s["transform"]["call"]["output"], s["transform"]["call"]["input"])
+            for s in steps.additions["r_b"]
+        ] == [
+            (["host_key"], ["hostname"]),
+            (["group_key"], ["group_id"]),
+            (["local_key"], ["org_id"]),
+        ]
+        identity = ops[-1]
+        assert isinstance(identity, ReplaceIdentityOp)
+        target = identity.replacements["Company"].to
+        assert isinstance(target, FunnelIdentityTarget)
+        assert [(b.id, b.fields) for b in target.funnel.branches] == [
+            ("host_key_group_key", ["host_key", "group_key"]),
+            ("local_key", ["local_key"]),
+        ]
+        assert plan.raw == []
+
+
 class TestComposedOps:
     def test_op_list_shape_and_order(self) -> None:
         ops = identity_to_ops(_plan())

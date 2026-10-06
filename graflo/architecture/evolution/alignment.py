@@ -141,17 +141,24 @@ class IdentityPlan:
 
     ``branches`` are in funnel order, as :attr:`VertexEquivalence.identity`
     declares them; ``at`` is :attr:`VertexEquivalence.derive_at`;
-    ``digest_field`` is :attr:`VertexEquivalence.digest_field`.
+    ``digest_field`` is :attr:`VertexEquivalence.digest_field`; ``derive``
+    holds :attr:`VertexEquivalence.derive`, one derivation per attribute, which
+    name and composite branches key on.
     """
 
     vertex: str
     branches: tuple[IdentityBranchDecl, ...]
     at: Mapping[str, list[int]] = dataclasses.field(default_factory=dict)
     digest_field: str = "id"
+    derive: tuple[DerivedBranch, ...] = ()
 
     def __post_init__(self) -> None:
         try:
-            check_identity_branches(self.branches, label=f"identity of {self.vertex!r}")
+            check_identity_branches(
+                self.branches,
+                label=f"identity of {self.vertex!r}",
+                derived=[d.name for d in self.derive],
+            )
         except ValueError as exc:
             raise _conflict(
                 "identity branches", str(exc), "Reorder or rename the branches."
@@ -159,8 +166,11 @@ class IdentityPlan:
 
     @property
     def derived(self) -> list[DerivedBranch]:
-        """The derived branches, in priority order."""
-        return [b for b in self.branches if isinstance(b, DerivedBranch)]
+        """Every derived attribute: the ``derive`` entries, then derived branches."""
+        return [
+            *self.derive,
+            *(b for b in self.branches if isinstance(b, DerivedBranch)),
+        ]
 
     @property
     def local_key(self) -> LocalKeyBranch | None:
@@ -177,9 +187,16 @@ class IdentityPlan:
 
     @property
     def raw(self) -> list[tuple[str, ...]]:
-        """Branches over properties the members carry, as field tuples."""
+        """Branches over properties the members carry, as field tuples.
+
+        A name or composite branch over ``derive`` attributes is not one: its
+        fields are derived, never all derived and properties at once.
+        """
+        attributes = {d.name for d in self.derive}
         return [
-            tuple(branch_fields(b)) for b in self.branches if isinstance(b, str | list)
+            tuple(branch_fields(b))
+            for b in self.branches
+            if isinstance(b, str | list) and branch_fields(b)[0] not in attributes
         ]
 
     def derived_names(self) -> list[str]:
@@ -516,7 +533,10 @@ def rekey_members(
         elif isinstance(branch, LocalKeyBranch):
             branch = branch.model_copy(update={"local_key": _rekeyed(branch.local_key)})
         branches.append(branch)
-    return dataclasses.replace(plan, branches=tuple(branches))
+    derive = tuple(
+        d.model_copy(update={"sources": _rekeyed(d.sources)}) for d in plan.derive
+    )
+    return dataclasses.replace(plan, branches=tuple(branches), derive=derive)
 
 
 def _require_sides(
@@ -1032,7 +1052,10 @@ def _check_derivation_signatures(plan: IdentityPlan) -> None:
                         f"{spec.foo}{signature} cannot take ({exc})",
                         "Give `input` one field per positional parameter — "
                         "`normalized_key` (the default) takes one, "
-                        "`gated_normalized_key` a gate and a value.",
+                        "`gated_normalized_key` a gate and a value. A key "
+                        "over several columns derives each part as its own "
+                        "attribute in `derive` and lists them as one "
+                        "composite branch.",
                     ) from exc
 
 

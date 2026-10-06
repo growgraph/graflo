@@ -421,12 +421,13 @@ merge refused: MergeIdentityError: merge_manifests: merged vertex 'Machine' has 
 You declare the key as `identity` on the equivalence: a list of branches in
 priority order. A record keys on the first branch it completes, and two records
 become one vertex when they complete the same branch with the same values. A
-branch is one of three things:
+branch is one of these:
 
 | Branch | Written as | Keys a record on |
 |---|---|---|
 | a property | `serial_number`, or `[plant, tag]` for a composite | the value of a property the members carry, under its canonical name |
 | a derived branch | `{name: match_key, sources: {...}}` | an attribute each resource computes from its own columns; see [Deriving the key per source](#deriving-the-key-per-source) |
+| derived attributes | `[host_key, group_key]`, with both in `derive` | several attributes each resource computes, all required; see [A key over several columns](#a-key-over-several-columns) |
 | a local key | `{local_key: {...}}`, always last | the record's own key behind a per-source tag |
 
 One property branch is a plain natural key. Any other list is an
@@ -438,6 +439,7 @@ One property branch is a plain natural key. Any other list is an
 | `[serial_number]` | that natural key | every member carries the field, under its canonical name |
 | `[asset_id, device_id]` | a funnel, one branch per member's own key | the members stay distinct records under one type |
 | a derived branch, then a `local_key` | a funnel over derived attributes | the key must be normalized, filtered or namespaced per source |
+| `[host_key, group_key]` from `derive`, then a `local_key` | a funnel over a composite of derived attributes | that key spans several columns |
 
 For example, keying on a property the sensor feed spells differently:
 
@@ -551,6 +553,39 @@ over the branches, in the order declared. Each member's own key becomes a
 secondary identity, as described in
 [Keying the merged type](#keying-the-merged-type).
 
+### A key over several columns
+
+When the key spans several columns, such as a host name and the group it
+belongs to, declare each part in `derive` and list the parts as one composite
+branch:
+
+```yaml
+    derive:
+        host_key:
+            inventory: {foo: affix_gated_key, input: [host], params: {prefix: "h_"}}
+            api_vertex: {input: [hostname]}
+        group_key:
+            inventory: {input: [group]}
+            api_vertex: {input: [group_id]}
+    identity:
+    -   [host_key, group_key]
+    -   local_key:
+            inventory: {field: host_id, tag: inventory}
+            api_vertex: {field: vertex_id, tag: api}
+```
+
+- `derive` is keyed by attribute name, and each entry has the shape of a derived
+  branch's `sources`: per resource, one derivation or one per member.
+- A branch lists the attributes it keys on. It fires only when every part is
+  derived, and the digest joins the parts, so no function has to glue them.
+- A filter on one part is a function that returns nothing for that part, such
+  as `affix_gated_key` above. The record then falls through to the next branch.
+- A derived branch `{name, sources}` is the same as `derive: {name: sources}`
+  with the branch `name`.
+
+A property branch `[hostname, group_id]` keys on the same columns without
+normalizing them, and only when every member carries them under one name.
+
 ### A resource that produces several members
 
 When one resource produces several members of the merged type, for example
@@ -594,7 +629,10 @@ The union refuses a derived branch (`AlignmentConflictError`) when:
 - a resource it names produces the type through routers in several roles at one
   level, such as a link table whose source and target routers both reach it:
   one level's transform buffer cannot hold a derived value per role;
-- a function does not accept its `input` and `params`.
+- a function does not accept its `input` and `params`;
+- a `derive` attribute is keyed on by no branch, shares its name with a derived
+  or local-key branch, or sits in a composite beside a property: derive that
+  property too.
 
 A resource that writes the merged type, appears in no derived branch, and whose
 records complete no property branch could never fill any branch of the new
@@ -694,6 +732,11 @@ before. A router with `vertex_types` is closed over the types it lists. Set
 naming the other side's type should reach it. A router whose `vertex_types`
 lists one member of a merged type and not another is closed in either scope,
 since its list can no longer tell the two apart.
+
+Closing does not change what the router writes. An open router maps its `from`
+onto a type it reaches by pass-through only where that type declares the
+target. The union keeps that: such a type gets a `vertex_from_map` entry holding
+the part of `from` it declares, under its merged name.
 
 ## When a union refuses
 

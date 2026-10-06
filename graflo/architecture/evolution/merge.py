@@ -1010,7 +1010,7 @@ def _close_side_routers(
     a listed class with an unlisted one closes the router regardless (see
     ``evolve_router``).
     """
-    from .rewrite import close_routers_in_pipeline
+    from .rewrite import close_routers_in_pipeline, pass_through_classes
 
     ingestion = manifest.ingestion_model
     if ingestion is None:
@@ -1021,6 +1021,7 @@ def _close_side_routers(
         if pipeline_has_pass_through_router(resource.pipeline)
     }
     vocabulary_of: dict[str, frozenset[str]] = {}
+    pass_through_of: dict[str, set[str]] = {}
     for side in ("left", "right"):
         side_ingestion = sides[side].ingestion_model
         side_schema = sides[side].graph_schema
@@ -1030,13 +1031,39 @@ def _close_side_routers(
         for resource in side_ingestion.resources:
             if resource.name in open_routers:
                 vocabulary_of.setdefault(resource.name, vocabulary)
+                pass_through_of.setdefault(
+                    resource.name,
+                    pass_through_classes(list(resource.pipeline), vocabulary),
+                )
 
-    def _closing(vocabulary: frozenset[str]) -> Callable[[list[Any]], list[Any]]:
-        return lambda pipeline: close_routers_in_pipeline(pipeline, vocabulary)
+    # A class the router reached by pass-through keeps the part of the
+    # router-level `from` it declares in the union, as it did when open --
+    # under whatever name the relabel gave it.
+    union_schema = manifest.graph_schema
+    declared: dict[str, list[str]] | None = None
+    if union_schema is not None:
+        union_vertices = union_schema.core_schema.vertex_config
+        declared = {
+            name: list(union_vertices.property_names(name))
+            for name in union_vertices.vertex_set
+        }
+
+    def _closing(
+        vocabulary: frozenset[str], pass_through: set[str]
+    ) -> Callable[[list[Any]], list[Any]]:
+        return lambda pipeline: close_routers_in_pipeline(
+            pipeline,
+            vocabulary,
+            declared_properties=declared,
+            pass_through=pass_through,
+        )
 
     _rebuild_pipelines(
         manifest,
-        {name: _closing(vocabulary) for name, vocabulary in vocabulary_of.items()},
+        {
+            name: _closing(vocabulary, pass_through_of[name])
+            for name, vocabulary in vocabulary_of.items()
+        },
     )
 
 
@@ -1897,9 +1924,7 @@ def _completable_branches(
     declaration = cluster.declaration
     derived: set[str] = set()
     if isinstance(declaration, VertexEquivalence):
-        stepped: list[DerivedBranch | LocalKeyBranch] = [
-            *declaration.derived_branches()
-        ]
+        stepped: list[DerivedBranch | LocalKeyBranch] = [*declaration.derivations()]
         local_key = declaration.local_key_branch()
         if local_key is not None:
             stepped.append(local_key)
@@ -2006,6 +2031,7 @@ def _apply_derived_identities(
                 branches=tuple(declaration.identity),
                 at=dict(declaration.derive_at),
                 digest_field=declaration.digest_field,
+                derive=tuple(declaration.derive_attributes()),
             ),
             sides=sides,
             resolve=cluster.resolved,

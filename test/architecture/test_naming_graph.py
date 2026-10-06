@@ -279,6 +279,24 @@ class TestVocabularyGroupWithPartialEquivalence:
         (note,) = _notes(resolution.findings, "auto_local_key")
         assert "left:Bench" in note.subjects
 
+    def test_a_derive_attribute_is_keyed_like_the_derived_branch(self) -> None:
+        derived, local = _TRIAGE
+        assert isinstance(derived, DerivedBranch)
+        op = _engineer_op(
+            derive={"match_key": derived.sources}, identity=["match_key", local]
+        )
+
+        resolution = resolve_clusters(
+            op, left=_register_manifest(), right=_devices_manifest()
+        )
+        (note,) = _notes(resolution.findings, "auto_local_key")
+        assert "left:Bench" in note.subjects
+        union = merge_manifests(_register_manifest(), _devices_manifest(), op)
+        reference = merge_manifests(
+            _register_manifest(), _devices_manifest(), _engineer_op()
+        )
+        assert union.to_dict() == reference.to_dict()
+
     @pytest.mark.parametrize(
         "equivalence",
         [
