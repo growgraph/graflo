@@ -351,6 +351,11 @@ no key source for its resource keeps its own key behind the tag `side:Type`,
 such as `left:Bench:B1`. Its records belong to `Machine`, but never fuse with a
 device. The preview lists each such key as an `auto_local_key` note, and
 [`--suggest`](#suggesting-the-declarations) writes it out so you can edit it.
+A resource that produces the member through routers in several roles, such as
+a link table whose source and target routers both reach it, gets no such key:
+one level has one transform buffer, which cannot hold a derived value per role.
+The union turns its steps into lookups of the merged type instead
+(a `reference_only` note).
 
 A plain property key, such as `identity: [serial_number]`, has no place for an
 own key. A member the map joins that does not carry the key is refused
@@ -586,13 +591,18 @@ The union refuses a derived branch (`AlignmentConflictError`) when:
   level without `derive_at`;
 - a member it names is not a member of that side, or its resource does not
   produce it;
+- a resource it names produces the type through routers in several roles at one
+  level, such as a link table whose source and target routers both reach it:
+  one level's transform buffer cannot hold a derived value per role;
 - a function does not accept its `input` and `params`.
 
 A resource that writes the merged type, appears in no derived branch, and whose
 records complete no property branch could never fill any branch of the new
 key. The union turns its steps for that type into lookups, points its edges at
 the demoted key, and logs a warning that its records of that type are no longer
-written. That is right for a source that only refers to the type. If the
+written. That is right for a source that only refers to the type, and it is the
+only path for a resource that produces the type through routers in several
+roles. If the
 resource was meant to own records of the type, add it to a derived branch's
 `sources`. When no member key was demoted for such a resource to look the type
 up by, for example under `retire: keep`, the union refuses instead

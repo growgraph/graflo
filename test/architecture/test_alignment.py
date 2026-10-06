@@ -16,6 +16,7 @@ from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.evolution.alignment import (
     AlignmentConflictError,
     IdentityPlan,
+    hosts_member_derivation,
     identity_to_ops,
     validate_identity,
 )
@@ -814,11 +815,33 @@ class TestRouterDelivery:
         plain = _transforms_op(ops).additions["r_b"]
         assert plain and all("when" not in s["transform"] for s in plain)
 
-    def test_the_refusal_remains_where_no_guard_can_be_derived(self) -> None:
-        # Two routers reading different discriminators at one level: one guard
-        # cannot admit both, so the derivation lowers unguarded.
+    def test_routers_on_two_discriminators_cannot_host_a_derivation(self) -> None:
+        # Two routers reading different discriminators at one level share one
+        # transform buffer: one derived value would reach both their vertices.
         manifest = _dynamic_union(
             [_nested(_BARE, {"vertex_router": {"type_field": "cls"}})],
+            sibling_props=["match_key"],
+        )
+
+        with pytest.raises(AlignmentConflictError, match="shared by every router"):
+            identity_to_ops(_routed_plan(), manifest=manifest)
+
+    def test_the_sibling_refusal_remains_beside_a_plain_vertex_step(self) -> None:
+        # A plain vertex step producing the class beside a router: no guard can
+        # be derived, the derivation lowers unguarded, and a sibling the router
+        # routes to that declares the attribute is refused.
+        manifest = _dynamic_union(
+            [
+                _nested(
+                    {"vertex": "Company"},
+                    {
+                        "vertex_router": {
+                            "type_field": "kind",
+                            "type_map": {"firm": "Company", "person": "Person"},
+                        }
+                    },
+                )
+            ],
             sibling_props=["match_key"],
         )
 
@@ -1433,3 +1456,33 @@ class TestDynamicRouterUnion:
             "match_key",
             "local_key",
         ]
+
+
+# --------------------------------------------------------------------------- #
+# Role routers: two open routers at one level, one transform buffer.
+# --------------------------------------------------------------------------- #
+
+
+_ROLE_ROUTERS = [
+    {"vertex_router": {"role": "source", "type_field": "source_type"}},
+    {"vertex_router": {"role": "target", "type_field": "target_type"}},
+]
+
+
+class TestRoleRouters:
+    """An edge-shaped resource reaches every class through both of its roles."""
+
+    def test_such_a_resource_hosts_no_derivation(self) -> None:
+        assert not hosts_member_derivation(
+            _side_with(_ROLE_ROUTERS), "r_view", "Company"
+        )
+
+    def test_one_router_per_level_does(self) -> None:
+        assert hosts_member_derivation(_side_with([_BARE]), "r_view", "Company")
+        assert hosts_member_derivation(
+            _side_with([_nested(_BARE)]), "r_view", "Company", at=[0]
+        )
+
+    def test_a_member_keyed_source_on_it_is_refused(self) -> None:
+        with pytest.raises(AlignmentConflictError, match="shared by every router"):
+            _dynamic_ops(_ROLE_ROUTERS)

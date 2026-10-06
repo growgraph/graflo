@@ -147,6 +147,7 @@ FindingKind = Literal[
     "double_home",
     "vocabulary_override",
     "auto_local_key",
+    "reference_only",
     "self_relation",
     "observation_fusion",
 ]

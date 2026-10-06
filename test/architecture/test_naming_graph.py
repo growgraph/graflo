@@ -14,6 +14,9 @@ from typing import Literal
 
 import pytest
 
+from graflo.architecture.contract.ingestion.steps.normalize import (
+    normalize_actor_step,
+)
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.evolution import (
     CanonicalMap,
@@ -28,6 +31,7 @@ from graflo.architecture.evolution import (
     merge_manifests,
     resolve_clusters,
 )
+from graflo.architecture.evolution.alignment import AlignmentConflictError
 from graflo.architecture.evolution.naming_graph import (
     MergeNamingError,
     NamingFinding,
@@ -878,6 +882,175 @@ class TestAnAcknowledgementIsPerGroup:
         )
 
         assert [f.kind for f in preview.blocking] == ["self_relation"]
+
+
+# --------------------------------------------------------------------------- #
+# An edge resource whose role routers reach a member the vocabulary joins.
+# --------------------------------------------------------------------------- #
+
+
+def _links_manifest() -> GraphManifest:
+    """Presses and benches, plus a link table routing both ends by type.
+
+    The link resource's two open routers reach every class of the side, so
+    the pipeline says it produces ``Bench``; but one level has one transform
+    buffer, which cannot hold a different derived value per role.
+    """
+    manifest = GraphManifest.from_config(
+        {
+            "schema": {
+                "metadata": {"name": "plant", "version": "1.0.0"},
+                "graph": {
+                    "vertex_config": {
+                        "vertices": [
+                            {
+                                "name": name,
+                                "properties": ["asset_id", "name"],
+                                "identity": ["asset_id"],
+                            }
+                            for name in ("Press", "Bench")
+                        ]
+                    },
+                    "edge_config": {
+                        "edges": [
+                            {"source": "Press", "target": "Bench", "relation": "feeds"}
+                        ]
+                    },
+                },
+            },
+            "ingestion_model": {
+                "resources": [
+                    {"name": "presses", "pipeline": [{"vertex": "Press"}]},
+                    {"name": "benches", "pipeline": [{"vertex": "Bench"}]},
+                    {
+                        "name": "links",
+                        "pipeline": [
+                            {
+                                "vertex_router": {
+                                    "role": "source",
+                                    "type_field": "source_type",
+                                    "from": {"asset_id": "source_id"},
+                                }
+                            },
+                            {
+                                "vertex_router": {
+                                    "role": "target",
+                                    "type_field": "target_type",
+                                    "from": {"asset_id": "target_id"},
+                                }
+                            },
+                            {
+                                "edge": {
+                                    "source_role": "source",
+                                    "target_role": "target",
+                                    "relation_field": "relation",
+                                }
+                            },
+                        ],
+                    },
+                ],
+                "transforms": [],
+            },
+        }
+    )
+    manifest.finish_init()
+    return manifest
+
+
+_LINKS_VOCABULARY = CanonicalMap(
+    vertices={"Press": "Machine", "Bench": "Machine"}, allow_merges=True
+)
+
+
+def _links_op(
+    identity: list[object] | None = None,
+    **local_key: LocalKeySource | dict[str, LocalKeySource],
+) -> MergeManifestsOp:
+    """``Press, Bench -> Machine``; ``[Press] ~ Device`` keyed on own keys."""
+    if identity is None:
+        identity = [
+            LocalKeyBranch(
+                local_key={
+                    "presses": LocalKeySource(field="asset_id", tag="press"),
+                    "devices": LocalKeySource(field="device_id", tag="device"),
+                    **local_key,
+                }
+            )
+        ]
+    return MergeManifestsOp(
+        vertex_equivalences=[
+            VertexEquivalence.model_validate(
+                {
+                    "left": ["Press"],
+                    "right": "Device",
+                    "into": "Machine",
+                    "allow": ["self_relations"],
+                    "identity": identity,
+                }
+            )
+        ],
+        canonical_maps={"left": _LINKS_VOCABULARY},
+    )
+
+
+def _links_steps(union: GraphManifest) -> list[dict]:
+    resource = next(
+        r for r in union.require_ingestion_model().resources if r.name == "links"
+    )
+    return [normalize_actor_step(dict(step)) for step in resource.pipeline]
+
+
+class TestAnEdgeResourceReferencesAJoinedMember:
+    def test_the_edge_resource_gets_no_automatic_key(self) -> None:
+        resolution = resolve_clusters(
+            _links_op(), left=_links_manifest(), right=_devices_manifest()
+        )
+
+        (cluster,) = resolution.index.vertices
+        (branch,) = cluster.declaration.identity or []
+        assert isinstance(branch, LocalKeyBranch)
+        assert set(branch.local_key) == {"presses", "devices", "benches"}
+        (note,) = _notes(resolution.findings, "reference_only")
+        assert "left:Bench" in note.subjects
+        assert "links" in note.message
+
+    def test_the_union_looks_the_merged_class_up_from_both_roles(self) -> None:
+        union = merge_manifests(_links_manifest(), _devices_manifest(), _links_op())
+
+        source, target, edge = _links_steps(union)
+        assert source["lookup_only"] == ["Machine"]
+        assert target["lookup_only"] == ["Machine"]
+        assert edge["source_match"] == {"Machine": "by_asset_id"}
+        assert edge["target_match"] == {"Machine": "by_asset_id"}
+        presses = _cast(union, "presses", [{"asset_id": "P1"}], "Machine")
+        assert [p["local_key"] for p in presses] == ["press:P1"]
+
+    def test_keying_the_edge_resource_by_member_is_refused(self) -> None:
+        op = _links_op(links={"Bench": LocalKeySource(field="source_id", tag="link")})
+
+        with pytest.raises(AlignmentConflictError, match="shared by every router"):
+            merge_manifests(_links_manifest(), _devices_manifest(), op)
+
+    def test_a_property_key_repair_does_not_name_the_edge_resource(self) -> None:
+        result = build_naming(
+            _links_op(identity=["device_id"]),
+            left=_links_manifest(),
+            right=_devices_manifest(),
+        )
+
+        finding = next(
+            f
+            for f in result.blocking
+            if f.kind == "identity_coverage" and "left:Bench" in f.subjects
+        )
+        (repair,) = finding.repairs
+        assert repair.vertex_equivalences == (
+            {
+                "local_key": {
+                    "benches": {"Bench": {"field": "asset_id", "tag": "left:Bench"}}
+                }
+            },
+        )
 
 
 # --------------------------------------------------------------------------- #

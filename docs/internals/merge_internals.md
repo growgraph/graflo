@@ -123,8 +123,10 @@ every resource that produces it and that its stepped branches do not key for
 it: a resource whose entries are keyed by other members, a member-keyed local
 key that skips it, or, for a member the vocabulary joins, a resource with no
 entry at all. A member an equivalence lists whose resource has no entry is
-left to the reference conversion of step 12. Each automatic key is an
-`auto_local_key` note. Downstream code iterates `cluster.members(side)` and
+left to the reference conversion of step 12, as is a resource that produces
+the member through routers in several roles (`hosts_member_derivation` is
+false: one level's transform buffer cannot hold a derived value per role; a
+`reference_only` note). Each automatic key is an `auto_local_key` note. Downstream code iterates `cluster.members(side)` and
 needs nothing else.
 
 The composite rename per side sends every node of a multi-node component, self
@@ -265,9 +267,13 @@ whichever type the router picks, every derivation behind a router is guarded:
 member-keyed ones per member, an unkeyed one on the discriminator values that
 route onto the type (the `type_map` keys, or its own name for pass-through).
 A sibling type declaring the same attribute name is then never handed the
-derived value. A refusal remains only where no guard can be derived and the
-spec sets none: a plain `vertex` step producing the type beside the router, or
-routers reading different discriminators at one level.
+derived value. A refusal remains where no guard can be derived and the spec
+sets none: a plain `vertex` step producing the type beside the router. Routers
+reading different discriminators at one level, the roles of an edge resource,
+are refused outright, `when` or not: the level's transform buffer is shared by
+every router at it, so one derived attribute cannot hold a different value per
+role. Such a resource stays out of the sources and is converted into a
+reference (step 12).
 
 **The guard is derived from the sides.** After the per-side rename, the union
 cannot say which router key produced which member, but the snapshots from step

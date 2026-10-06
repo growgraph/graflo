@@ -1396,9 +1396,13 @@ class _Naming:
         if identity is not None and any(
             isinstance(b, DerivedBranch | LocalKeyBranch) for b in identity
         ):
-            identity = self._with_own_keys(component, identity, ordered, aliases)
+            identity = self._with_own_keys(
+                component, identity, ordered, aliases, derive_at
+            )
         elif identity is not None:
-            self._property_key_coverage(component, identity, ordered, properties)
+            self._property_key_coverage(
+                component, identity, ordered, properties, derive_at
+            )
         try:
             return VertexEquivalence(
                 left=list(ordered["left"]),
@@ -1490,6 +1494,15 @@ class _Naming:
         self, side: Side, member: str, resource_names: Mapping[Side, Mapping[str, str]]
     ) -> list[str]:
         """The resources of *side* that produce *member*, under their union names."""
+        return [
+            union_name
+            for _, union_name in self._producing_pairs(side, member, resource_names)
+        ]
+
+    def _producing_pairs(
+        self, side: Side, member: str, resource_names: Mapping[Side, Mapping[str, str]]
+    ) -> list[tuple[str, str]]:
+        """``(side name, union name)`` of each resource of *side* producing *member*."""
         from .merge import _steps_producing
 
         manifest = self.manifests[side]
@@ -1498,9 +1511,37 @@ class _Naming:
             return []
         known = schema.core_schema.vertex_config.vertex_set
         return [
-            resource_names[side].get(resource.name, resource.name)
+            (resource.name, resource_names[side].get(resource.name, resource.name))
             for resource in ingestion.resources
             if _steps_producing(resource.pipeline, member, known_vertices=known)
+        ]
+
+    def _keyable(
+        self,
+        side: Side,
+        member: str,
+        resource_names: Mapping[Side, Mapping[str, str]],
+        derive_at: Mapping[str, Sequence[int]],
+    ) -> list[tuple[str, str]]:
+        """The producing resources that can derive a key for *member*'s records.
+
+        A resource producing the member through routers in several roles — an
+        edge resource — is left out: one level's transform buffer cannot hold
+        a derived value per role, so it references the merged class instead.
+        """
+        from .alignment import hosts_member_derivation
+
+        return [
+            (resource_name, union_name)
+            for resource_name, union_name in self._producing_pairs(
+                side, member, resource_names
+            )
+            if hosts_member_derivation(
+                self.manifests[side],
+                resource_name,
+                member,
+                at=derive_at.get(union_name),
+            )
         ]
 
     def _property_key_coverage(
@@ -1509,6 +1550,7 @@ class _Naming:
         identity: Sequence[IdentityBranchDecl],
         ordered: Mapping[Side, Sequence[str]],
         properties: Sequence[PropertyEquivalence],
+        derive_at: Mapping[str, Sequence[int]],
     ) -> None:
         """Refuse a vocabulary-joined member that completes no branch of a property-only key.
 
@@ -1546,8 +1588,12 @@ class _Naming:
                 tag = f"{side}:{member}"
                 entry = {
                     "local_key": {
-                        resource: {member: {"field": "|".join(own) or "?", "tag": tag}}
-                        for resource in self._producing(side, member, resource_names)
+                        union_name: {
+                            member: {"field": "|".join(own) or "?", "tag": tag}
+                        }
+                        for _, union_name in self._keyable(
+                            side, member, resource_names, derive_at
+                        )
                     }
                 }
                 self.finding(
@@ -1579,6 +1625,7 @@ class _Naming:
         identity: Sequence[IdentityBranchDecl],
         ordered: Mapping[Side, Sequence[str]],
         aliases: Mapping[Side, Mapping[str, str]],
+        derive_at: Mapping[str, Sequence[int]],
     ) -> list[IdentityBranchDecl]:
         """*identity* plus a tagged own key for each member a producing resource leaves unkeyed.
 
@@ -1589,7 +1636,9 @@ class _Naming:
         resource with no entry at all would otherwise be turned into a lookup.
         Both get the member's own key behind ``side:Member``. A declared member
         whose resource has no entry is left to merge, which turns that
-        resource into a lookup of the merged class.
+        resource into a lookup of the merged class — as is a resource that
+        produces the member through routers in several roles, which no
+        derivation at its level can serve (:func:`_keyable`).
         """
         assert component.name is not None
         resource_names = self._resource_names()
@@ -1605,7 +1654,9 @@ class _Naming:
                 continue
             vertex_config = schema.core_schema.vertex_config
             for member in ordered[side]:
-                for union_name in self._producing(side, member, resource_names):
+                producing = self._producing_pairs(side, member, resource_names)
+                keyable = dict(self._keyable(side, member, resource_names, derive_at))
+                for resource_name, union_name in producing:
 
                     def applies(
                         entry: Any, side: Side = side, member: str = member
@@ -1635,6 +1686,20 @@ class _Naming:
                         all(entry is None for entry in entries)
                         and member in declared[side]
                     ):
+                        continue
+                    if resource_name not in keyable:
+                        self.note(
+                            "reference_only",
+                            f"{side}:{member} joins {component.name!r}; resource "
+                            f"{union_name!r} produces it through routers in several "
+                            "roles, which one derivation cannot serve, so it gets no "
+                            "key there: its steps reference the merged class by the "
+                            "member's own key",
+                            subjects=(
+                                subject(side, member),
+                                subject("merged", component.name),
+                            ),
+                        )
                         continue
                     vertex = vertex_config[member]
                     plain = not (
