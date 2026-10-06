@@ -11,7 +11,7 @@ the other.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from typing import Annotated, Any, Literal
 
 from pydantic import AliasChoices, field_validator, model_validator
@@ -2228,7 +2228,10 @@ def identity_branches_funnel(branches: Sequence[IdentityBranchDecl]) -> Identity
 
 
 def check_identity_branches(
-    branches: Sequence[IdentityBranchDecl], *, label: str
+    branches: Sequence[IdentityBranchDecl],
+    *,
+    label: str,
+    derived: Collection[str] = (),
 ) -> None:
     """Refuse a branch list no funnel can be built from, naming *label*.
 
@@ -2236,6 +2239,11 @@ def check_identity_branches(
     every record completes it, so a branch after it never fires; unique
     branch ids, since they take part in the digest; and no derived name that
     a property branch keys on, which the derivation would overwrite.
+
+    *derived* names the attributes a ``derive`` block computes. A name or
+    composite branch may key on them, but a composite is all derived or all
+    properties, every derived attribute is keyed on, and none shares a name
+    with a derived or local-key branch.
     """
     if not branches:
         raise ValueError(
@@ -2260,14 +2268,37 @@ def check_identity_branches(
     raw_fields = {
         f for b in branches if isinstance(b, str | list) for f in branch_fields(b)
     }
-    derived = [
+    stepped = {
         b.name for b in branches if isinstance(b, DerivedBranch | LocalKeyBranch)
-    ]
-    shadowing = sorted(set(derived) & raw_fields)
+    }
+    shadowing = sorted(stepped & raw_fields)
     if shadowing:
         raise ValueError(
             f"{label}: derived branches {shadowing} are named like properties "
             "another branch keys on; the derivation would overwrite them"
+        )
+    attributes = set(derived)
+    clashing = sorted(attributes & stepped)
+    if clashing:
+        raise ValueError(
+            f"{label}: derive and the identity branches both name {clashing}; "
+            "two derivations would write one attribute"
+        )
+    for branch in branches:
+        if not isinstance(branch, list):
+            continue
+        properties = [f for f in branch if f not in attributes]
+        if properties and len(properties) < len(branch):
+            raise ValueError(
+                f"{label}: branch {branch} mixes derived attributes with the "
+                f"properties {properties}; derive {properties} too, e.g. with "
+                "`normalized_key`, so every part of the branch is derived"
+            )
+    unused = sorted(attributes - raw_fields)
+    if unused:
+        raise ValueError(
+            f"{label}: derive computes {unused}, but no identity branch keys "
+            "on them; list them in a branch or drop them"
         )
 
 
@@ -2354,6 +2385,12 @@ class VertexEquivalence(ConfigBaseModel):
     property branch keys the class on that natural key; anything else keys it
     on a funnel, where a record keys on its first complete branch. A funnel's
     digest is stored in ``digest_field`` (``id`` by default).
+
+    ``derive`` declares attributes each source computes, without making each
+    one a branch: a name or composite branch in ``identity`` keys on them, so
+    ``[host_key, group_key]`` fires only when both are derived and the digest
+    joins them. A ``DerivedBranch`` ``{name, sources}`` is the same as
+    ``derive: {name: sources}`` with the branch ``name``.
     """
 
     left: str | list[str] = PydanticField(
@@ -2386,6 +2423,18 @@ class VertexEquivalence(ConfigBaseModel):
             "unset, identity is carried through only if every member agrees; "
             "disagreement raises `MergeIdentityError`."
         ),
+    )
+    derive: dict[str, dict[str, DerivationSpec | dict[str, DerivationSpec]]] | None = (
+        PydanticField(
+            default=None,
+            description=(
+                "Attributes each source derives from its own columns, keyed by "
+                "attribute name; each entry has the shape of `DerivedBranch."
+                "sources`. Identity branches key on them by name: a composite "
+                "``[a, b]`` of derived attributes fires only when every part is "
+                "derived. Requires `identity`."
+            ),
+        )
     )
     digest_field: str = PydanticField(
         default="id",
@@ -2459,6 +2508,17 @@ class VertexEquivalence(ConfigBaseModel):
         """The derived branches of ``identity``, in priority order."""
         return [b for b in self.identity or [] if isinstance(b, DerivedBranch)]
 
+    def derive_attributes(self) -> list[DerivedBranch]:
+        """The ``derive`` entries, each as the derivation of one attribute."""
+        return [
+            DerivedBranch(name=name, sources=sources)
+            for name, sources in (self.derive or {}).items()
+        ]
+
+    def derivations(self) -> list[DerivedBranch]:
+        """Every derived attribute: the ``derive`` entries, then derived branches."""
+        return [*self.derive_attributes(), *self.derived_branches()]
+
     def local_key_branch(self) -> LocalKeyBranch | None:
         """The ``local_key`` branch of ``identity``, if declared."""
         return next(
@@ -2467,8 +2527,8 @@ class VertexEquivalence(ConfigBaseModel):
 
     @property
     def has_derivation(self) -> bool:
-        """Whether ``identity`` needs pipeline steps: a derived or local-key branch."""
-        return any(
+        """Whether the key needs pipeline steps: ``derive``, a derived or local-key branch."""
+        return bool(self.derive) or any(
             isinstance(b, DerivedBranch | LocalKeyBranch) for b in self.identity or []
         )
 
@@ -2533,6 +2593,18 @@ class VertexEquivalence(ConfigBaseModel):
 
     @model_validator(mode="after")
     def _validate_identity(self) -> VertexEquivalence:
+        if self.derive is not None:
+            if not self.derive:
+                raise ValueError(
+                    "VertexEquivalence: derive lists no attribute; omit it"
+                )
+            if self.identity is None:
+                raise ValueError(
+                    f"VertexEquivalence: derive computes {sorted(self.derive)}, "
+                    "but no identity keys on them; declare identity"
+                )
+            # Each entry is validated as a derived branch's sources are.
+            self.derive_attributes()
         if self.identity is None:
             if self.derive_at:
                 raise ValueError(
@@ -2546,7 +2618,9 @@ class VertexEquivalence(ConfigBaseModel):
                     "identity's digest is stored"
                 )
             return self
-        check_identity_branches(self.identity, label="VertexEquivalence")
+        check_identity_branches(
+            self.identity, label="VertexEquivalence", derived=list(self.derive or {})
+        )
         if self.derive_at and not self.has_derivation:
             raise ValueError(
                 "VertexEquivalence: derive_at is set but no identity branch "

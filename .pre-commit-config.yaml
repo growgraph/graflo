@@ -1,6 +1,20 @@
-fail_fast: false
-
 repos:
+  # Repository hygiene and JSON formatting. Env files, fixture data and vendored
+  # font files are excluded: their bytes are kept as committed.
+-   repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+    -   id: check-merge-conflict
+    -   id: check-added-large-files
+        args: [--maxkb=2000]
+    -   id: end-of-file-fixer
+        exclude: (^|/)(\.env|data/)|^graflo/plot/fonts/|\.svg$
+    -   id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+        exclude: (^|/)(\.env|data/)|^graflo/plot/fonts/|\.svg$
+    -   id: pretty-format-json
+        args: [--autofix, --indent, '4', --no-sort-keys]
+
   # Python linting and formatting
 -   repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.16.10
@@ -9,16 +23,30 @@ repos:
         args: [--fix]
     -   id: ruff-format
 
-  # Type checking
 -   repo: local
     hooks:
+    # Type checking
     -   id: ty
         name: ty check
-        entry: bash -c 'uv run ty check graflo test'
+        entry: uv run --frozen ty check graflo test
         language: system
+        types: [python]
         pass_filenames: false
-        always_run: true
 
+    # Regenerate the ontology visualization when the meta-ontology changes
+    -   id: ontology-viz
+        name: rebuild ontology viz
+        entry: uv run --frozen python docs/_build/scripts/build_ontology_viz.py
+        language: system
+        files: ^graflo/rdf/ontology/graflo\.ttl$
+        pass_filenames: false
+
+    # Package docs must not point outside this repository
+    -   id: no-external-doc-paths
+        name: no external doc paths
+        language: pygrep
+        entry: '(?i)docs/(design|reports|ISSUES|ROADMAP|PLANNING)|benchmarking/|papers/|platform-demos/|\bworkspace\b'
+        files: \.md$
 
   # YAML formatting
 -   repo: https://github.com/macisamuele/language-formatters-pre-commit-hooks
@@ -26,13 +54,6 @@ repos:
     hooks:
     -   id: pretty-format-yaml
         args: [--autofix, --indent, '4', --preserve-quotes]
-
-  # JSON formatting
--   repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v6.0.0
-    hooks:
-    -   id: pretty-format-json
-        args: [--autofix, --indent, '4', --no-sort-keys]
 
   # TOML formatting and sorting. One tool only: pretty-format-toml is built on the
   # toml-sort library, and its hook environment pins whatever toml-sort was current

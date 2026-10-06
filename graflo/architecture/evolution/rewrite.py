@@ -797,7 +797,11 @@ def rewrite_endpoint_selectors_in_pipeline(
 
 
 def close_routers_in_pipeline(
-    pipeline: list[dict[str, Any]], vocabulary: Collection[str]
+    pipeline: list[dict[str, Any]],
+    vocabulary: Collection[str],
+    *,
+    declared_properties: Mapping[str, Collection[str]] | None = None,
+    pass_through: Collection[str] | None = None,
 ) -> list[dict[str, Any]]:
     """*pipeline* with every open router closed over *vocabulary*.
 
@@ -808,16 +812,90 @@ def close_routers_in_pipeline(
     with ``vertex_types`` gets entries only for the classes it lists. Entries
     already there, authored or written by a rename, are kept. Steps keep their
     authored spelling, at every level.
+
+    A class the router reached only by pass-through took the part of the
+    router-level ``from`` it declares; a listed class must declare all of it.
+    Given *declared_properties* (property names per class), every class such
+    a value routes to after closing that lacks a target gets that declared
+    part as its ``vertex_from_map`` entry, so closing never refuses a
+    projection the open router accepted. *pass_through* names those values
+    when the table was rewritten since (see :func:`pass_through_classes`);
+    by default they are the values closing itself lists.
     """
     out = deepcopy(pipeline)
-    _close_routers(out, sorted(vocabulary))
+    _close_routers(out, sorted(vocabulary), declared_properties, pass_through)
     return out
 
 
-def _close_routers(step: Any, vocabulary: list[str]) -> None:
+def pass_through_classes(
+    pipeline: list[dict[str, Any]], vocabulary: Collection[str]
+) -> set[str]:
+    """Classes of *vocabulary* the routers of *pipeline* reach only by pass-through.
+
+    Empty unless some router is open and unbounded. A class any router names
+    -- a table target, or a ``vertex_types`` entry -- is excluded: the router
+    already checked its ``from`` against that class at load.
+    """
+    named: set[str] = set()
+    unbounded = False
+
+    def walk(step: Any) -> None:
+        nonlocal unbounded
+        if isinstance(step, list):
+            for item in step:
+                walk(item)
+            return
+        if not isinstance(step, dict):
+            return
+        normalized = normalize_actor_step(dict(step))
+        if normalized.get("type") == "vertex_router":
+            named.update((normalized.get("type_map") or {}).values())
+            named.update(normalized.get("vertex_types") or ())
+            if not normalized.get("type_map_only") and not normalized.get(
+                "vertex_types"
+            ):
+                unbounded = True
+        for container in (step.get("descend"), step):
+            if isinstance(container, dict):
+                for key in ("apply", "pipeline"):
+                    walk(container.get(key))
+
+    walk(pipeline)
+    return set(vocabulary) - named if unbounded else set()
+
+
+def _keep_pass_through_projection(
+    payload: dict[str, Any],
+    classes: Collection[str],
+    declared_properties: Mapping[str, Collection[str]],
+) -> None:
+    """Pin each of *classes* to the part of the router's ``from`` it declares."""
+    from_doc = payload.get("from", payload.get("from_doc"))
+    if not isinstance(from_doc, dict) or not from_doc:
+        return
+    per_class = dict(payload.get("vertex_from_map") or {})
+    for name in sorted(classes):
+        declared = declared_properties.get(name)
+        if declared is None or name in per_class:
+            continue
+        part = {
+            target: column for target, column in from_doc.items() if target in declared
+        }
+        if len(part) < len(from_doc):
+            per_class[name] = part
+    if per_class:
+        payload["vertex_from_map"] = per_class
+
+
+def _close_routers(
+    step: Any,
+    vocabulary: list[str],
+    declared_properties: Mapping[str, Collection[str]] | None = None,
+    pass_through: Collection[str] | None = None,
+) -> None:
     if isinstance(step, list):
         for item in step:
-            _close_routers(item, vocabulary)
+            _close_routers(item, vocabulary, declared_properties, pass_through)
         return
     if not isinstance(step, dict):
         return
@@ -831,19 +909,31 @@ def _close_routers(step: Any, vocabulary: list[str]) -> None:
         payload = nested if isinstance(nested, dict) else step
         bound = normalized.get("vertex_types")
         table = dict(payload.get("type_map") or {})
+        # What the open router checked its `from` against at load: the
+        # classes its table sends to, or every class it is bounded to.
+        named = set(table.values()) if bound is None else set(bound)
+        listed: list[str] = []
         for name in vocabulary:
             if bound is None or name in bound:
+                if name not in table and name not in named:
+                    listed.append(name)
                 table.setdefault(name, name)
         payload["type_map"] = table
         payload["type_map_only"] = True
+        if declared_properties is not None and bound is None:
+            values = listed if pass_through is None else pass_through
+            targets = {table[value] for value in values if value in table}
+            _keep_pass_through_projection(payload, targets, declared_properties)
 
     descend_payload = step.get("descend")
     if isinstance(descend_payload, dict):
         for key in ("apply", "pipeline"):
-            _close_routers(descend_payload.get(key), vocabulary)
+            _close_routers(
+                descend_payload.get(key), vocabulary, declared_properties, pass_through
+            )
     for key in ("apply", "pipeline"):
         if isinstance(step.get(key), list):
-            _close_routers(step[key], vocabulary)
+            _close_routers(step[key], vocabulary, declared_properties, pass_through)
 
 
 def mark_lookup_only_in_pipeline(

@@ -147,6 +147,7 @@ FindingKind = Literal[
     "double_home",
     "vocabulary_override",
     "auto_local_key",
+    "reference_only",
     "self_relation",
     "observation_fusion",
 ]
@@ -1011,7 +1012,7 @@ class _Builder:
                 declared_identity = {
                     f for fields in declaration.raw_branches() for f in fields
                 }
-                derived = [b.name for b in declaration.derived_branches()]
+                derived = [b.name for b in declaration.derivations()]
                 local_key = declaration.local_key_branch()
                 if local_key is not None:
                     derived.append(local_key.name)

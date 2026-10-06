@@ -1067,3 +1067,330 @@ class TestDynamicRouterFusion:
         assert [p["person_id"] for p in people] == ["p1"]
         assert "match_key" not in people[0]
         assert "local_key" not in people[0]
+
+
+# --------------------------------------------------------------------------- #
+# Composite keys over derived attributes: an inventory router on one side,
+# one open router for every class on the other.
+# --------------------------------------------------------------------------- #
+
+
+def _inventory_manifest() -> GraphManifest:
+    """Left: one router for hosts and devices, each keyed by its own id."""
+    member = {"properties": ["aid", "host", "group"], "identity": ["aid"]}
+    return GraphManifest.from_config(
+        {
+            "schema": {
+                "metadata": {"name": "inventory", "version": "1.0.0"},
+                "graph": {
+                    "vertex_config": {
+                        "vertices": [
+                            {"name": "HostA", **member},
+                            {"name": "DevA", **member},
+                        ]
+                    },
+                    "edge_config": {"edges": []},
+                },
+            },
+            "ingestion_model": {
+                "resources": [
+                    {
+                        "name": "all_classes",
+                        "pipeline": [
+                            {
+                                "vertex_router": {
+                                    "type_field": "cls",
+                                    "type_map": {"h": "HostA", "d": "DevA"},
+                                }
+                            }
+                        ],
+                    }
+                ]
+            },
+        }
+    )
+
+
+def _api_manifest(*, extra_vertices: list[dict] | None = None) -> GraphManifest:
+    """Right: one open router reads every class from ``_class``."""
+    member = {
+        "properties": ["key", "hostname", "group_id", "name"],
+        "identity": ["key"],
+    }
+    vertices = [
+        {"name": "Server", **member},
+        {"name": "Switch", **member},
+        {"name": "Other", "properties": ["key", "name"], "identity": ["key"]},
+        *(extra_vertices or []),
+    ]
+    return GraphManifest.from_config(
+        {
+            "schema": {
+                "metadata": {"name": "api", "version": "1.0.0"},
+                "graph": {
+                    "vertex_config": {"vertices": vertices},
+                    "edge_config": {"edges": []},
+                },
+            },
+            "ingestion_model": {
+                "resources": [
+                    {
+                        "name": "api_vertex",
+                        "pipeline": [
+                            {
+                                "vertex_router": {
+                                    "role": "source",
+                                    "type_field": "_class",
+                                    "from": {"key": "vertex_id"},
+                                }
+                            }
+                        ],
+                        "infer_edges": False,
+                    }
+                ]
+            },
+        }
+    )
+
+
+def _physical_equivalence(left: str, right: str, into: str, marker: str):
+    """*left* and *right* are one *into*, matched on host and group together.
+
+    The inventory marks the hosts that take part with *marker* on the host
+    value; the API reports plain values.
+    """
+    return VertexEquivalence(
+        left=left,
+        right=right,
+        into=into,
+        derive={
+            "host_key": {
+                "all_classes": {
+                    left: DerivationSpec(
+                        foo="affix_gated_key", input=["host"], params={"prefix": marker}
+                    )
+                },
+                "api_vertex": DerivationSpec(input=["hostname"]),
+            },
+            "group_key": {
+                "all_classes": {left: DerivationSpec(input=["group"])},
+                "api_vertex": DerivationSpec(input=["group_id"]),
+            },
+        },
+        identity=[
+            ["host_key", "group_key"],
+            LocalKeyBranch(
+                local_key={
+                    "all_classes": {left: LocalKeySource(field="aid", tag="inventory")},
+                    "api_vertex": LocalKeySource(field="vertex_id", tag="api"),
+                }
+            ),
+        ],
+    )
+
+
+def _physical_union(right: GraphManifest | None = None) -> GraphManifest:
+    op = MergeManifestsOp(
+        vertex_equivalences=[
+            _physical_equivalence("HostA", "Server", "Host", "h_"),
+            _physical_equivalence("DevA", "Switch", "Dev", "d_"),
+        ]
+    )
+    return merge_manifests(
+        _inventory_manifest(), right if right is not None else _api_manifest(), op
+    )
+
+
+def _cast_all(
+    manifest: GraphManifest, resource: str, rows: list[dict]
+) -> dict[str, list[dict]]:
+    caster = DocumentCaster(manifest.require_ingestion_model())
+    result = asyncio.run(caster.cast_batch(rows, resource, params=IngestionParams()))
+    return {name: list(docs) for name, docs in result.graph.vertices.items()}
+
+
+def _normalized_steps(union: GraphManifest, resource: str) -> list[dict]:
+    from graflo.architecture.contract.ingestion.steps.normalize import (
+        normalize_actor_step,
+    )
+
+    found = next(
+        r for r in union.require_ingestion_model().resources if r.name == resource
+    )
+    return [normalize_actor_step(dict(step)) for step in found.pipeline]
+
+
+def _derivations(steps: list[dict]) -> list[tuple[str, dict]]:
+    return [
+        (step["call"]["output"][0], step["when"])
+        for step in steps
+        if step.get("type") == "transform"
+    ]
+
+
+_INVENTORY_ROWS = [
+    {"cls": "h", "aid": "a1", "host": "h_Web-01", "group": "AG-7"},
+    {"cls": "h", "aid": "a2", "host": "x_web-01", "group": "AG-7"},
+    {"cls": "d", "aid": "a3", "host": "d_SW-01", "group": "AG-7"},
+]
+
+_API_ROWS = [
+    {"_class": "Server", "vertex_id": "v1", "hostname": "web-01", "group_id": "ag-7"},
+    {"_class": "Server", "vertex_id": "v2", "hostname": "db-02"},
+    {"_class": "Switch", "vertex_id": "v3", "hostname": "sw-01", "group_id": "ag-7"},
+    {"_class": "Other", "vertex_id": "v4", "name": "other"},
+]
+
+
+class TestCompositeDerivedKey:
+    """``derive`` computes each part; one composite branch keys on all of them."""
+
+    def test_the_funnel_branch_spans_every_derived_part(self) -> None:
+        union = _physical_union()
+        vc = union.require_schema().core_schema.vertex_config
+
+        for name in ("Host", "Dev"):
+            funnel = vc[name].identity_funnel
+            assert funnel is not None
+            assert [(b.id, b.fields) for b in funnel.branches] == [
+                ("host_key_group_key", ["host_key", "group_key"]),
+                ("local_key", ["local_key"]),
+            ]
+
+    def test_each_part_is_derived_behind_its_member_and_class_guard(self) -> None:
+        union = _physical_union()
+
+        host = {"field": "cls", "in": ["HostA", "h"]}
+        dev = {"field": "cls", "in": ["DevA", "d"]}
+        assert _derivations(_normalized_steps(union, "all_classes")) == [
+            ("host_key", host),
+            ("group_key", host),
+            ("local_key", host),
+            ("host_key", dev),
+            ("group_key", dev),
+            ("local_key", dev),
+        ]
+        server = {"field": "_class", "in": ["Host", "Server"]}
+        switch = {"field": "_class", "in": ["Dev", "Switch"]}
+        assert _derivations(_normalized_steps(union, "api_vertex")) == [
+            ("host_key", server),
+            ("group_key", server),
+            ("local_key", server),
+            ("host_key", switch),
+            ("group_key", switch),
+            ("local_key", switch),
+        ]
+
+    def test_records_fuse_when_every_part_matches(self) -> None:
+        union = _physical_union()
+
+        inventory = _cast_all(union, "all_classes", _INVENTORY_ROWS)
+        api = _cast_all(union, "api_vertex", _API_ROWS)
+
+        hosts = {doc["aid"]: doc for doc in inventory["Host"]}
+        servers = {doc["key"]: doc for doc in api["Host"]}
+        assert hosts["a1"]["id"] == servers["v1"]["id"]
+        assert inventory["Dev"][0]["id"] == api["Dev"][0]["id"]
+        assert servers["v1"]["id"] != api["Dev"][0]["id"]
+
+    def test_a_record_failing_a_part_falls_back_to_its_local_key(self) -> None:
+        union = _physical_union()
+
+        inventory = _cast_all(union, "all_classes", _INVENTORY_ROWS)
+        api = _cast_all(union, "api_vertex", _API_ROWS)
+
+        unmarked = next(doc for doc in inventory["Host"] if doc["aid"] == "a2")
+        assert unmarked.get("host_key") is None
+        assert unmarked["local_key"] == "inventory:a2"
+        partial = next(doc for doc in api["Host"] if doc["key"] == "v2")
+        assert partial.get("group_key") is None
+        assert partial["local_key"] == "api:v2"
+        ids = [doc["id"] for doc in [*inventory["Host"], *api["Host"]]]
+        assert len(set(ids)) == 3
+
+    def test_a_class_in_no_equivalence_keeps_its_own_key(self) -> None:
+        union = _physical_union()
+
+        others = _cast_all(union, "api_vertex", _API_ROWS)["Other"]
+
+        assert others == [{"key": "v4", "name": "other"}]
+
+    def test_a_derived_branch_is_one_attribute_and_a_name_branch(self) -> None:
+        spec = DerivationSpec(input=["hostname"])
+        sources = {"all_classes": {"HostA": DerivationSpec(input=["host"])}}
+        sources["api_vertex"] = spec  # type: ignore[assignment]
+        local = LocalKeyBranch(
+            local_key={
+                "all_classes": {"HostA": LocalKeySource(field="aid", tag="inventory")},
+                "api_vertex": LocalKeySource(field="vertex_id", tag="api"),
+            }
+        )
+
+        def union(equivalence: VertexEquivalence) -> dict:
+            op = MergeManifestsOp(vertex_equivalences=[equivalence])
+            return merge_manifests(_inventory_manifest(), _api_manifest(), op).to_dict()
+
+        as_branch = union(
+            VertexEquivalence(
+                left="HostA",
+                right="Server",
+                into="Host",
+                identity=[DerivedBranch(name="host_key", sources=sources), local],
+            )
+        )
+        as_derive = union(
+            VertexEquivalence(
+                left="HostA",
+                right="Server",
+                into="Host",
+                derive={"host_key": sources},
+                identity=["host_key", local],
+            )
+        )
+        assert as_branch == as_derive
+
+    def test_a_routed_class_without_the_shared_from_target_still_loads(
+        self,
+    ) -> None:
+        rack = {
+            "name": "Rack",
+            "properties": ["rack_no", "name"],
+            "identity": ["rack_no"],
+        }
+        _api_manifest(extra_vertices=[rack]).finish_init(strict_references=True)
+
+        union = _physical_union(_api_manifest(extra_vertices=[rack]))
+        union.finish_init(strict_references=True)
+
+        router = _normalized_steps(union, "api_vertex")[0]
+        assert router["vertex_from_map"] == {"Rack": {}}
+        racks = _cast_all(
+            union,
+            "api_vertex",
+            [{"_class": "Rack", "vertex_id": "v9", "rack_no": "r1", "name": "rack"}],
+        )["Rack"]
+        assert racks == [{"rack_no": "r1", "name": "rack"}]
+
+    def test_a_renamed_routed_class_without_the_target_still_loads(self) -> None:
+        rack = {
+            "name": "Rack",
+            "properties": ["rack_no", "name"],
+            "identity": ["rack_no"],
+        }
+        op = MergeManifestsOp.model_validate(
+            {
+                "vertex_equivalences": [
+                    _physical_equivalence("HostA", "Server", "Host", "h_").to_dict()
+                ],
+                "renames": {"right": {"vertices": {"Rack": "Shelf"}}},
+            }
+        )
+
+        union = merge_manifests(
+            _inventory_manifest(), _api_manifest(extra_vertices=[rack]), op
+        )
+        union.finish_init(strict_references=True)
+
+        router = _normalized_steps(union, "api_vertex")[0]
+        assert router["type_map"]["Rack"] == "Shelf"
+        assert router["vertex_from_map"] == {"Shelf": {}}

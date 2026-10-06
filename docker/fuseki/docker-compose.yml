@@ -1,14 +1,16 @@
 services:
+    # The volume holds only FUSEKI_BASE (/fuseki/run: datasets, config, shiro.ini);
+    # the server jar and entrypoint stay in the image, so an image upgrade takes
+    # effect and a fresh volume starts cleanly.
     fix-perms:
         image: alpine
         user: "0:0"
         volumes:
-        -   fuseki_data:/fuseki
-        command: chown -R 10000:10000 /fuseki
+        -   fuseki_data:/fuseki/run
+        command: chown -R 1000:1000 /fuseki/run
 
     fuseki:
         image: ${IMAGE_VERSION}
-        user: "10000:10000"
         restart: "unless-stopped"
         depends_on:
             fix-perms:
@@ -18,15 +20,17 @@ services:
         -   "${TS_PORT}:3030"
         container_name: ${CONTAINER_NAME}
         volumes:
-        -   fuseki_data:/fuseki
+        -   fuseki_data:/fuseki/run
         -   ./shiro.ini:/fuseki/shiro.ini.template:ro
         environment:
         -   TS_USERNAME=${TS_USERNAME}
         -   TS_PASSWORD=${TS_PASSWORD}
+        # Drop UI files extracted by an earlier image so they match the jar.
         entrypoint: >
             /bin/sh -c "
+            rm -rf /fuseki/run/webapp &&
             sed \"s/TS_USER_PLACEHOLDER/$$TS_USERNAME/g; s/TS_PASS_PLACEHOLDER/$$TS_PASSWORD/g\"  /fuseki/shiro.ini.template > /fuseki/run/shiro.ini &&
-            ./entrypoint.sh
+            exec ./entrypoint.sh
             "
 volumes:
     fuseki_data:

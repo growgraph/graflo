@@ -16,6 +16,7 @@ from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.evolution.alignment import (
     AlignmentConflictError,
     IdentityPlan,
+    hosts_member_derivation,
     identity_to_ops,
     validate_identity,
 )
@@ -206,6 +207,112 @@ class TestModel:
 
         reloaded = VertexEquivalence.model_validate(equivalence.to_dict())
         assert reloaded == equivalence
+
+
+def _parts() -> dict:
+    """``derive`` for a key over two parts, each source with its own columns."""
+    return {
+        "host_key": {
+            "r_a": {"input": ["host"]},
+            "r_b": {"input": ["hostname"]},
+        },
+        "group_key": {
+            "r_a": {"input": ["group"]},
+            "r_b": {"input": ["group_id"]},
+        },
+    }
+
+
+class TestDeriveModel:
+    """``derive``: attributes each source computes, keyed on by name or composite."""
+
+    def test_a_composite_over_derived_attributes_is_a_funnel(self) -> None:
+        equivalence = _equivalence([["host_key", "group_key"]], derive=_parts())
+
+        assert equivalence.has_derivation
+        assert not equivalence.is_natural_key
+        assert [d.name for d in equivalence.derivations()] == [
+            "host_key",
+            "group_key",
+        ]
+
+    def test_derive_round_trips_and_an_op_without_it_does_not_emit_it(self) -> None:
+        equivalence = _equivalence([["host_key", "group_key"]], derive=_parts())
+        assert VertexEquivalence.model_validate(equivalence.to_dict()) == equivalence
+
+        plain = _equivalence([_match_key(), _local_key()])
+        assert "derive" not in plain.to_dict()
+
+    def test_derive_without_identity_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="no identity keys on them"):
+            VertexEquivalence.model_validate(
+                {"left": "Firm", "right": "Org", "derive": _parts()}
+            )
+
+    def test_an_empty_derive_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="derive lists no attribute"):
+            _equivalence(["company_id"], derive={})
+
+    def test_an_attribute_no_branch_keys_on_is_refused(self) -> None:
+        with pytest.raises(ValueError, match=r"no identity branch keys on them"):
+            _equivalence(["host_key"], derive=_parts())
+
+    def test_a_composite_mixing_derived_and_property_fields_is_refused(
+        self,
+    ) -> None:
+        parts = _parts()
+        del parts["group_key"]
+        with pytest.raises(ValueError, match=r"mixes derived attributes"):
+            _equivalence([["host_key", "group_id"]], derive=parts)
+
+    def test_an_attribute_named_like_a_derived_branch_is_refused(self) -> None:
+        parts = {**_parts(), "match_key": _parts()["host_key"]}
+        with pytest.raises(ValueError, match="both name"):
+            _equivalence([["host_key", "group_key"], _match_key()], derive=parts)
+
+    def test_a_guard_on_a_member_keyed_attribute_is_refused(self) -> None:
+        parts = _parts()
+        parts["host_key"]["r_b"] = {
+            "Org": {"input": ["hostname"], "when": {"field": "kind", "in": ["x"]}}
+        }
+        with pytest.raises(ValueError, match="when"):
+            _equivalence([["host_key", "group_key"]], derive=parts)
+
+    def test_the_plan_lowers_each_part_and_one_composite_branch(self) -> None:
+        equivalence = _equivalence(
+            [["host_key", "group_key"], _local_key()], derive=_parts()
+        )
+        assert equivalence.identity is not None
+        plan = IdentityPlan(
+            vertex="Company",
+            branches=tuple(equivalence.identity),
+            derive=tuple(equivalence.derive_attributes()),
+        )
+
+        ops = identity_to_ops(plan)
+
+        props = ops[0]
+        assert isinstance(props, AddVertexPropertiesOp)
+        assert props.additions == {"Company": ["host_key", "group_key", "local_key"]}
+        steps = ops[1]
+        assert isinstance(steps, AddResourceTransformsOp)
+        assert [
+            (s["transform"]["call"]["output"], s["transform"]["call"]["input"])
+            for s in steps.additions["r_b"]
+        ] == [
+            (["host_key"], ["hostname"]),
+            (["group_key"], ["group_id"]),
+            (["local_key"], ["org_id"]),
+        ]
+        identity = ops[-1]
+        assert isinstance(identity, ReplaceIdentityOp)
+        target = identity.replacements["Company"].to
+        assert isinstance(target, FunnelIdentityTarget)
+        assert [(b.id, b.fields) for b in target.funnel.branches] == [
+            ("host_key_group_key", ["host_key", "group_key"]),
+            ("local_key", ["local_key"]),
+        ]
+        assert plan.raw == []
 
 
 class TestComposedOps:
@@ -814,11 +921,33 @@ class TestRouterDelivery:
         plain = _transforms_op(ops).additions["r_b"]
         assert plain and all("when" not in s["transform"] for s in plain)
 
-    def test_the_refusal_remains_where_no_guard_can_be_derived(self) -> None:
-        # Two routers reading different discriminators at one level: one guard
-        # cannot admit both, so the derivation lowers unguarded.
+    def test_routers_on_two_discriminators_cannot_host_a_derivation(self) -> None:
+        # Two routers reading different discriminators at one level share one
+        # transform buffer: one derived value would reach both their vertices.
         manifest = _dynamic_union(
             [_nested(_BARE, {"vertex_router": {"type_field": "cls"}})],
+            sibling_props=["match_key"],
+        )
+
+        with pytest.raises(AlignmentConflictError, match="shared by every router"):
+            identity_to_ops(_routed_plan(), manifest=manifest)
+
+    def test_the_sibling_refusal_remains_beside_a_plain_vertex_step(self) -> None:
+        # A plain vertex step producing the class beside a router: no guard can
+        # be derived, the derivation lowers unguarded, and a sibling the router
+        # routes to that declares the attribute is refused.
+        manifest = _dynamic_union(
+            [
+                _nested(
+                    {"vertex": "Company"},
+                    {
+                        "vertex_router": {
+                            "type_field": "kind",
+                            "type_map": {"firm": "Company", "person": "Person"},
+                        }
+                    },
+                )
+            ],
             sibling_props=["match_key"],
         )
 
@@ -1433,3 +1562,33 @@ class TestDynamicRouterUnion:
             "match_key",
             "local_key",
         ]
+
+
+# --------------------------------------------------------------------------- #
+# Role routers: two open routers at one level, one transform buffer.
+# --------------------------------------------------------------------------- #
+
+
+_ROLE_ROUTERS = [
+    {"vertex_router": {"role": "source", "type_field": "source_type"}},
+    {"vertex_router": {"role": "target", "type_field": "target_type"}},
+]
+
+
+class TestRoleRouters:
+    """An edge-shaped resource reaches every class through both of its roles."""
+
+    def test_such_a_resource_hosts_no_derivation(self) -> None:
+        assert not hosts_member_derivation(
+            _side_with(_ROLE_ROUTERS), "r_view", "Company"
+        )
+
+    def test_one_router_per_level_does(self) -> None:
+        assert hosts_member_derivation(_side_with([_BARE]), "r_view", "Company")
+        assert hosts_member_derivation(
+            _side_with([_nested(_BARE)]), "r_view", "Company", at=[0]
+        )
+
+    def test_a_member_keyed_source_on_it_is_refused(self) -> None:
+        with pytest.raises(AlignmentConflictError, match="shared by every router"):
+            _dynamic_ops(_ROLE_ROUTERS)

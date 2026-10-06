@@ -183,9 +183,9 @@ def fetch_fields_query(
     q0 = f"""
         FOR _cdoc in {collection_name}
             FOR _doc in @docs
-                FILTER {match_str} {extrac_filter_clause}      
-                COLLECT i = _doc['__i'] into _group = _cdoc 
-                LET gp = (for _x in _group return {keep_clause})                                
+                FILTER {match_str} {extrac_filter_clause}
+                COLLECT i = _doc['__i'] into _group = _cdoc
+                LET gp = (for _x in _group return {keep_clause})
                     RETURN {{'__i' : i, '_group': gp}}"""
     bind_vars.update(params.values)
     return q0, bind_vars

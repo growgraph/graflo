@@ -288,7 +288,7 @@ def sample_cross():
 def resource_cross():
     an = yaml.safe_load("""
     -   vertex: person
-    -   vertex: company 
+    -   vertex: company
     -   transform:
             rename:
                 name: id
@@ -371,7 +371,7 @@ def resource_openalex_authors():
                 -   _key
     -   key: last_known_institution
         apply:
-        -   vertex: institution   
+        -   vertex: institution
         -   transform:
                 call:
                     module: graflo.util.transform
@@ -567,7 +567,7 @@ def vc_ticker_filtered():
             filters:
             -   field: name
                 operator: __ne__
-                value: Volume                        
+                value: Volume
     """
     )
     return VertexConfig.from_dict(tc)

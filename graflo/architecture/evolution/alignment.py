@@ -41,9 +41,16 @@ router produces the class: ``when`` admits the discriminator values that route
 onto it — the ``type_map`` keys mapping to it, or its own name for
 pass-through — so the step runs for no other class's documents. An explicit
 ``when`` on the spec replaces that derived guard. Only a level where a plain
-``vertex`` step also produces the class, or whose routers read different
-discriminators, lowers unguarded; there a sibling class declaring a derived
-attribute name is refused, since the router would hand it the derived value.
+``vertex`` step also produces the class lowers unguarded; there a sibling
+class declaring a derived attribute name is refused, since the router would
+hand it the derived value.
+
+A level producing the class through routers that read *different*
+discriminators — the two roles of an edge resource — hosts no derivation at
+all, keyed or not: the level's transform buffer is shared by every router at
+it, so one derived attribute cannot hold one value per role. Such a resource
+stays out of the sources and references the class instead;
+:func:`hosts_member_derivation` tells the two apart.
 """
 
 from __future__ import annotations
@@ -99,6 +106,7 @@ VocabularyMap = CanonicalMap | CanonicalizeOp
 __all__ = [
     "AlignmentConflictError",
     "IdentityPlan",
+    "hosts_member_derivation",
     "identity_to_ops",
     "validate_identity",
 ]
@@ -133,17 +141,24 @@ class IdentityPlan:
 
     ``branches`` are in funnel order, as :attr:`VertexEquivalence.identity`
     declares them; ``at`` is :attr:`VertexEquivalence.derive_at`;
-    ``digest_field`` is :attr:`VertexEquivalence.digest_field`.
+    ``digest_field`` is :attr:`VertexEquivalence.digest_field`; ``derive``
+    holds :attr:`VertexEquivalence.derive`, one derivation per attribute, which
+    name and composite branches key on.
     """
 
     vertex: str
     branches: tuple[IdentityBranchDecl, ...]
     at: Mapping[str, list[int]] = dataclasses.field(default_factory=dict)
     digest_field: str = "id"
+    derive: tuple[DerivedBranch, ...] = ()
 
     def __post_init__(self) -> None:
         try:
-            check_identity_branches(self.branches, label=f"identity of {self.vertex!r}")
+            check_identity_branches(
+                self.branches,
+                label=f"identity of {self.vertex!r}",
+                derived=[d.name for d in self.derive],
+            )
         except ValueError as exc:
             raise _conflict(
                 "identity branches", str(exc), "Reorder or rename the branches."
@@ -151,8 +166,11 @@ class IdentityPlan:
 
     @property
     def derived(self) -> list[DerivedBranch]:
-        """The derived branches, in priority order."""
-        return [b for b in self.branches if isinstance(b, DerivedBranch)]
+        """Every derived attribute: the ``derive`` entries, then derived branches."""
+        return [
+            *self.derive,
+            *(b for b in self.branches if isinstance(b, DerivedBranch)),
+        ]
 
     @property
     def local_key(self) -> LocalKeyBranch | None:
@@ -169,9 +187,16 @@ class IdentityPlan:
 
     @property
     def raw(self) -> list[tuple[str, ...]]:
-        """Branches over properties the members carry, as field tuples."""
+        """Branches over properties the members carry, as field tuples.
+
+        A name or composite branch over ``derive`` attributes is not one: its
+        fields are derived, never all derived and properties at once.
+        """
+        attributes = {d.name for d in self.derive}
         return [
-            tuple(branch_fields(b)) for b in self.branches if isinstance(b, str | list)
+            tuple(branch_fields(b))
+            for b in self.branches
+            if isinstance(b, str | list) and branch_fields(b)[0] not in attributes
         ]
 
     def derived_names(self) -> list[str]:
@@ -217,6 +242,78 @@ def _vertex_set(manifest: GraphManifest) -> set[str]:
 
 def _guard_dict(guard: TransformGuardConfig) -> dict[str, Any]:
     return {"field": guard.field, "in": list(guard.values)}
+
+
+def _level_discriminators(steps: list[dict]) -> list[str] | None:
+    """The discriminators the routers among *steps* read, sorted.
+
+    ``None`` when a plain ``vertex`` step is among them: that step reads the
+    buffer for every document at its level, so no discriminator guards it.
+    """
+    if any(step.get("type") == "vertex" for step in steps):
+        return None
+    return sorted(
+        {
+            str(step.get("type_field"))
+            for step in steps
+            if step.get("type") == "vertex_router"
+        }
+    )
+
+
+def _across_roles(
+    resource: str, vertex: str, type_fields: list[str]
+) -> AlignmentConflictError:
+    """The refusal for a level that produces *vertex* through several roles."""
+    return _conflict(
+        "derivation across roles",
+        f"resource {resource!r} produces {vertex!r} at one level through routers "
+        f"reading {type_fields}; a level's transform buffer is shared by every "
+        "router at it, so one derived attribute cannot hold a different value "
+        "per role",
+        "Leave the resource out of the branch's sources — merge turns its steps "
+        "into lookups by the members' own keys — or produce each role in its "
+        "own resource.",
+    )
+
+
+def hosts_member_derivation(
+    manifest: GraphManifest,
+    resource: str,
+    member: str,
+    *,
+    at: Sequence[int] | None = None,
+) -> bool:
+    """Whether *resource* can derive an attribute for the records that become *member*.
+
+    ``False`` when the level producing *member* — *at*, or the one level that
+    does — produces it through routers reading more than one discriminator:
+    the level's transform buffer is shared by every router at it, so one
+    derived attribute cannot hold a different value per role, and a source
+    naming the resource, keyed or not, is refused. Merge gives such a resource
+    no automatic key; it references the class by the members' own keys.
+    ``True`` wherever the other validators decide — a resource or level that
+    does not produce the member, or several levels without *at*.
+    """
+    pipelines = _resource_pipelines(manifest)
+    if resource not in pipelines:
+        return True
+    pipeline = pipelines[resource]
+    if at is not None:
+        path = list(at)
+    else:
+        candidates = find_vertex_producing_levels(
+            pipeline, member, known_vertices=_vertex_set(manifest)
+        )
+        if len(candidates) != 1:
+            return True
+        path = candidates[0]
+    try:
+        steps = _producing_steps(manifest, resource, path, member)
+    except ValueError:
+        return True
+    type_fields = _level_discriminators(steps)
+    return type_fields is None or len(type_fields) <= 1
 
 
 # --------------------------------------------------------------------------- #
@@ -344,17 +441,12 @@ def _resolve_member_production(
         path = candidates[0]
 
     steps = _producing_steps(manifest, resource, path, member)
-    if any(step.get("type") == "vertex" for step in steps):
+    type_fields = _level_discriminators(steps)
+    if type_fields is None:
         return _MemberProduction(level=path, type_field=None, values=())
-    routers = [step for step in steps if step.get("type") == "vertex_router"]
-    type_fields = sorted({str(step.get("type_field")) for step in routers})
     if len(type_fields) != 1:
-        raise _conflict(
-            "ambiguous discriminator",
-            f"resource {resource!r} produces {member!r} through routers "
-            f"discriminated by {type_fields}",
-            "One guard reads one field; route the member through one router.",
-        )
+        raise _across_roles(resource, member, type_fields)
+    routers = [step for step in steps if step.get("type") == "vertex_router"]
     return _MemberProduction(
         level=path, type_field=type_fields[0], values=_routed_values(routers, member)
     )
@@ -441,7 +533,10 @@ def rekey_members(
         elif isinstance(branch, LocalKeyBranch):
             branch = branch.model_copy(update={"local_key": _rekeyed(branch.local_key)})
         branches.append(branch)
-    return dataclasses.replace(plan, branches=tuple(branches))
+    derive = tuple(
+        d.model_copy(update={"sources": _rekeyed(d.sources)}) for d in plan.derive
+    )
+    return dataclasses.replace(plan, branches=tuple(branches), derive=derive)
 
 
 def _require_sides(
@@ -605,17 +700,13 @@ def _class_guard(steps: list[dict], vertex: str) -> dict[str, Any] | None:
     ``None`` when no single guard can say so: a plain ``vertex`` step among
     the producers reads the buffer for every document at its level, and a
     guard on a discriminator those documents may not carry would suppress the
-    derivation; routers reading different discriminators need one guard each.
-    Unguarded is what the sibling-class check then covers.
+    derivation. Unguarded is what the sibling-class check then covers.
+    Routers reading different discriminators are refused before this is asked.
     """
-    if any(step.get("type") == "vertex" for step in steps):
+    type_fields = _level_discriminators(steps)
+    if type_fields is None or len(type_fields) != 1:
         return None
     routers = [step for step in steps if step.get("type") == "vertex_router"]
-    if not routers:
-        return None
-    type_fields = sorted({str(step.get("type_field")) for step in routers})
-    if len(type_fields) != 1:
-        return None
     return {"field": type_fields[0], "in": list(_routed_values(routers, vertex))}
 
 
@@ -783,6 +874,9 @@ def validate_identity(
 
     for resource, path in sorted(levels.items()):
         steps = _producing_steps(manifest, resource, path, plan.vertex)
+        type_fields = _level_discriminators(steps)
+        if type_fields is not None and len(type_fields) > 1:
+            raise _across_roles(resource, plan.vertex, type_fields)
         unguarded = (
             _unguarded_names(plan, resource)
             if _class_guard(steps, plan.vertex) is None
@@ -958,7 +1052,10 @@ def _check_derivation_signatures(plan: IdentityPlan) -> None:
                         f"{spec.foo}{signature} cannot take ({exc})",
                         "Give `input` one field per positional parameter — "
                         "`normalized_key` (the default) takes one, "
-                        "`gated_normalized_key` a gate and a value.",
+                        "`gated_normalized_key` a gate and a value. A key "
+                        "over several columns derives each part as its own "
+                        "attribute in `derive` and lists them as one "
+                        "composite branch.",
                     ) from exc
 
 

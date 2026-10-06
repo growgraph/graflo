@@ -14,4 +14,3 @@ alwaysApply: false
   - Pydantic model validation
   - Env config via `BaseSettings`
   - Error cases and edge cases
-

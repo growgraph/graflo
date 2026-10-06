@@ -5,117 +5,113 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.16.3]
+
+### Added
+
+- **`VertexEquivalence.derive`**: attributes each source derives, keyed on by name or by a composite
+  branch such as `[host_key, group_key]`, which fires only when every part is derived.
+
+### Fixed
+
+- **Merge** no longer makes a closed router refuse to load where the open one only skipped a
+  router-level `from` target a pass-through class does not declare.
+- **Merge** keys merged classes by member keys, not router paths through vocabulary joins
+  (`reference_only`). Derivations that produce a class via routers in several roles are refused with
+  a named repair.
+- **Docker fixtures**: Postgres mounts its volume at `/var/lib/postgresql`, as 18+ images require;
+  Fuseki's volume holds only `/fuseki/run`, so it starts on a fresh volume and picks up image upgrades.
+  Neo4j has a healthcheck, and `start-all.sh` waits for health checks before returning.
 
 ## [1.16.2]
 
 ### Added
 
-- **`vertex_router.vertex_types`** lists the classes a router may produce; a value resolving to any
-  other class is skipped, so routers on one column can split its classes. Evolution ops keep it in
-  step, and close a router where a merge would make it admit values it used to skip.
+- **`vertex_router.vertex_types`**: caps which classes a router may emit; evolution keeps it aligned
+  and closes routers when a merge would admit previously skipped values.
 
 ### Changed
 
-- **Plotting** no longer needs pygraphviz or any system package: the `plot` extra renders with
-  Graphviz compiled to WebAssembly (`wasi-graphviz`), converts SVG to PDF (`svglib`) and PDF to PNG
-  (`pypdfium2`), and ships the Liberation fonts, so PDF and PNG text covers Latin, Greek and
-  Cyrillic. Alpine needs `libgcc`.
-- **Merge and three-way merge previews** draw classes and slots as records instead of HTML tables:
-  identity rows read `(key)`, finding numbers sit on the rows they concern, and the legend is a
-  boxed list naming each finding's severity.
-- **Merging a class a router only looks up with one it writes** is refused instead of turning the
-  written rows into lookups.
-- **Removing classes** drops a router left with nothing to route, and every edge step addressing a
-  role no step fills any more.
-- **Per-class `source_match` / `target_match`** on a role endpoint may name only classes the role
-  can hold.
-- **Merging classes a router projects differently** splits it into one closed router per projection,
-  on the same `type_field` and `role`, instead of unioning their column maps or refusing.
-- **`vertex_from_map`** no longer makes a router an explicit producer of a class when a pipeline
-  level is resolved; only `type_map` and `vertex_types` do.
+- **Plotting** (`plot` extra): WebAssembly Graphviz (no pygraphviz); SVG→PDF→PNG with bundled fonts
+  (Latin, Greek, Cyrillic). Alpine needs `libgcc`.
+- **Merge and three-way merge previews**: record-style layout — `(key)` identity rows, findings on
+  affected rows, boxed severity legend.
+- **Merge** refuses lookup-only vs write class pairs instead of demoting writes to lookups.
+- **Class removal** drops empty routers and edge steps whose roles have no producer.
+- **Role `source_match` / `target_match`** limited to classes that role can hold.
+- **Router merge** splits differing projections into separate closed routers (same `type_field` /
+  `role`) instead of unioning maps or refusing.
+- **Pipeline resolve**: routers are not implicit producers via `vertex_from_map`; only `type_map`
+  and `vertex_types` declare production.
 
 ### Fixed
 
-- **Renaming a class** renames a shorthand router's `vertex_from_map`.
-- **Removing a router's table entry** no longer lets the raw value pass through as a class name.
-- **Derived-identity guards** admit the raw value an open router passes through as the class name.
-- **`merge_vertices` observation fusion** counts the classes an open router reaches by pass-through.
+- **Class rename** updates shorthand router `vertex_from_map`.
+- **Router table entry removal** no longer treats raw values as class names.
+- **Derived-identity guards** allow open-router pass-through values as class names.
+- **`merge_vertices` fusion** counts open-router pass-through targets.
 - **`ensure_extracted_fields`** widens only routers that can produce the class.
-- **RDF export** links shorthand routers, and routers' `vertex_from_map` classes, to their vertices.
-- **Renaming or removing a vertex property** reaches routers: the class gets its own
-  `vertex_from_map` entry, so the classes sharing the router's `from` keep theirs.
-- **`merge_vertices`, `canonicalize` and `remove_vertices`** reach the endpoints of an edge step's
-  `links`; a step whose links are all removed, by class, role or relation, goes.
+- **RDF export** links shorthand routers and `vertex_from_map` classes to vertices.
+- **Vertex property rename/remove** updates per-class `vertex_from_map` on shared routers.
+- **`merge_vertices` / `canonicalize` / `remove_vertices`** propagate to edge-step `links`; steps
+  with all links removed are dropped.
 
 ## [1.16.1]
 
 ### Breaking
 
-- **Filter leaves** spell the comparison `operator` (`operator: __gt__`); the `foo` key is refused
-  with that repair.
-- **`strict_references`** (on by default at ingest) closes the schema: a step writing an undeclared
-  edge, or mapping `from` onto an undeclared property, is refused at load; a relation found in the
-  data that no edge declares is skipped with a warning. A relation-less edge between the same
-  endpoints declares every relation read from the data.
+- **Filter leaves** require `operator: __gt__` (etc.); legacy comparison keys are refused with
+  repair text.
+- **`strict_references`** (default at ingest): undeclared edges and property mappings refused at
+  load; undeclared relations in data skipped with warning; relation-less edges between the same
+  endpoints declare every relation seen in data.
 
 ### Added
 
-- **`MergeManifestsOp.field_types`** declares a merged property's type by merged names
-  (`{vertices: {C: {ram: {type: INT}}}, edges: {…}}`); every member carrying the property is
-  retyped before the fold, in the merge, the merge commit and the preview.
-- **`VertexEquivalence.digest_field`** and **`FunnelIdentityTarget.digest_field`** name the property
-  a funnel's digest is stored in (default `id`), so a member's own `id` can stay an ordinary
-  property.
+- **`MergeManifestsOp.field_types`**: per-name property type overrides on vertices and edges;
+  members are retyped before fold (merge, commit, preview).
+- **`VertexEquivalence.digest_field` / `FunnelIdentityTarget.digest_field`**: property holding the
+  funnel digest (default `id`).
 
 ### Changed
 
-- **A funnel whose identity field is also a branch field** is refused, on a vertex, a funnel
-  target and a `VertexEquivalence`.
-
-- **A property type clash in a merge** is refused before any fold, listing the members on each side
-  that carry each type and the `field_types` entry that settles it.
-- **`change_field_types` on an edge relation** retypes the edges of the relation that declare the
-  property, and refuses only a property none of them declares.
+- **Funnel** refused when the identity field is also a branch field (vertex, funnel target,
+  `VertexEquivalence`).
+- **Merge property type clash** refused before fold, with members per type and applicable
+  `field_types`.
+- **`change_field_types` on an edge relation** retypes declaring edges; refuses properties none
+  declare.
 
 ### Fixed
 
-- **The merge preview's `lookup_demotion` note** lists only the branches a member's own resources
-  derive for it, so a vocabulary-joined member keyed by its own tag is no longer reported as
-  completing every derived branch.
-- **Schema drift against the file backend** is no longer flagged as sampled: its introspection reads
-  the `schema.yaml` catalogue, so a missing property is reported as a fact.
-- **World-model assertion 6** checks that some resource's edge steps write a provenance relation:
-  it warns when none does, and is `not_applicable` when the relation comes from the data.
-- **TigerGraph bulk loading** stages edges whose relation is read from the data, under the
-  relation-less edge that declares them; they were skipped without a word.
-- **A hash- or funnel-keyed vertex** always keys on its digest: a record's own `id` (a source
-  column, a `from` mapping or a transform output) is discarded at cast. Records sharing a source
-  `id` used to keep it and fold into one vertex.
+- **Merge preview `lookup_demotion`**: only branches derived by the member's own resources.
+- **File-backend schema drift** uses full `schema.yaml` catalogue, not sampled introspection.
+- **World-model assertion 6**: warns when no resource writes provenance; `not_applicable` when
+  relation comes from data.
+- **TigerGraph bulk load** stages data-read relations under the declaring relation-less edge.
+- **Hash/funnel-keyed vertices** always key on digest; source `id` values are discarded at cast.
 
 ## [1.16.0]
 
 ### Breaking
 
-- **Union naming** resolves in one pass over each manifest's names; equivalence groups include all
-  types a canonical map merges; per-member keys may name any type in the group. **`into`** is not
-  rewritten by a canonical map.
-- **`MergeManifestsOp`** drops `allow_merges`, self-relation/fusion flags, `resource_renames`, and
-  legacy aliases — use member lists, `allow` on equivalences or canonical maps, and
-  `renames.right.resources`; recorded recipes translate on read.
-- **`allow` and `name_conflict`** are scoped per group; `union_right` unions identical names only
-  (alternate spellings are refused).
-- **Merge naming refusals** are a single **`MergeNamingError`** with typed findings and repairs;
-  legacy cluster/naming helpers are removed.
+- **Union naming**: one pass per manifest; equivalence groups include all canonically merged types;
+  member keys may name any group type; **`into`** is not rewritten by canonical maps.
+- **`MergeManifestsOp`**: removed `allow_merges`, self-relation/fusion flags, `resource_renames`,
+  and legacy aliases — use member lists, equivalence `allow`, canonical maps, and
+  `renames.right.resources`; old recipes translate on read.
+- **`allow` / `name_conflict`** scoped per group; `union_right` unions identical names only.
+- **Merge naming** consolidated in **`MergeNamingError`** with typed findings; legacy helpers
+  removed.
 
 ### Added
 
 - **`renames: {left, right}`** on `MergeManifestsOp` for types, relations, properties, and
-  resources outside equivalences (reuse, chain, or swap names).
-- **Funnel merge keys:** mapped types without a resource key keep `side:Type` when needed;
-  property-only keys refuse unmappable types with a `local_key` repair hint.
+  resources outside equivalences.
+- **Funnel merge keys**: unmapped types without resource keys keep `side:Type`; property-only keys
+  refuse unmappable types with `local_key` hint.
 - **`MergeOutcome.kinds`**, **`build_naming`**, **`naming_table`**, **`suggest_merge_op`**;
-  **`graflo merge`** prints the naming table on refusal and `--dry-run`; **`--suggest FILE`**
-  writes a suggested op.
+  **`graflo merge`**: naming table on refusal, `--dry-run`, **`--suggest FILE`**.
 
 ## [1.15.1]
 
@@ -1714,7 +1710,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 
 ### Added
 
-- 
+-
 - **`IngestionParams.connectors`** — optional subset filter for ingestion bindings (connector name or hash, same refs as `resource_connector.connector`). Intersects with `resources` when both are set; `RegistryBuilder` registers only matching connectors as data sources.
 - **`Bindings.resolve_connector_refs_to_hashes()`** — resolves connector refs for validation and registry filtering.
 - **On-disk layout** — `schema.yaml`, `INDEX.json`, and gzip JSONL chunks under `vertices/` and `edges/` (`graflo.architecture.backend`: **`GraFloIndex`**, **`GraFloLayout`**, **`GraFloBackendWriter`**, **`GraFloBackendReader`**).
@@ -2687,7 +2683,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 ### Removed
 - `pyTigergraph` dependence remove
 
-### Added 
+### Added
 - reserved Tigergraph words are modified during automated schema generation
 
 ## [1.3.11] - 2026-01-12
@@ -3146,12 +3142,12 @@ Package renamed from `graphcast` to `graflo`.
 - In `EdgeConfig`
   - `main` became `edges`
   - `extra` became `extra_edges`
-- In `MapperNode` 
+- In `MapperNode`
   - edge is now defined under `edge` attribute of `MapperNode` instead of being a union with it
   - `maps` key becomes `children`
   - `type`: `dict` becomes `type`: `vertex`
-  
-    
+
+
 ### Added
 
 - `cli/plot_schema.py` became a standalone script available with the package installation
@@ -3191,9 +3187,9 @@ Package renamed from `graphcast` to `graflo`.
 
 ### Changed
 
-- in `ingest_json_files`: ncores -> n_threads 
+- in `ingest_json_files`: ncores -> n_threads
 - schema config changes:
-    - `type` specification removed in Transform (field mapping) specification, whenever ambiguous, `image` is used   
+    - `type` specification removed in Transform (field mapping) specification, whenever ambiguous, `image` is used  
 - `ConnectionConfigType` -> `DBConnectionConfig`
 
 ## [0.11.5] - 2023-08-30
@@ -3243,4 +3239,3 @@ Package renamed from `graphcast` to `graflo`.
 
 [//]: # ()
 [//]: # (### Fixed)
-

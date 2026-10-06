@@ -15,6 +15,14 @@ services:
         -   NEO4JLABS_PLUGINS=${NEO4J_PLUGINS}
         -   NEO4J_dbms_security_procedures_unrestricted=apoc.*,gds.*
         -   NEO4J_dbms_security_procedures_allowlist=apoc.*,gds.*
+        # Plugins are fetched on every start, so Bolt opens well after the
+        # container is up; HTTP comes up right after Bolt.
+        healthcheck:
+            test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:7474 || exit 1"]
+            interval: 5s
+            timeout: 5s
+            retries: 30
+            start_period: 60s
 
 volumes:
     neo4j_data:

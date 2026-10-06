@@ -7,7 +7,7 @@ authors:
 - affiliation: GrowGraph
   family-names: Belikov
   given-names: Alexander
-  orcid: https://orcid.org/0000-0002-5649-0913  
+  orcid: https://orcid.org/0000-0002-5649-0913
 cff-version: 1.2.0
 date-released: '2026-10-01'
 license: "Apache-2.0"

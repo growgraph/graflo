@@ -446,6 +446,31 @@ def test_a_derived_branch_settles_it(left, right, canonical_map):
     assert "identity_disagreement" not in {f.kind for f in preview.findings}
 
 
+def test_derived_attributes_are_identity_attributes_of_the_merged_class(
+    left, right, canonical_map
+):
+    """A composite over ``derive`` attributes keys the class on both of them."""
+    op = MergeManifestsOp(
+        vertex_equivalences=[
+            VertexEquivalence(
+                left=["Firm", "Shop"],
+                right=["Org", "Branch"],
+                derive={
+                    "part_a": {"r_a": DerivationSpec(input=["shared_raw"])},
+                    "part_b": {"r_a": DerivationSpec(input=["firm_id"])},
+                },
+                identity=[["part_a", "part_b"]],
+            )
+        ],
+        canonical_maps={"left": canonical_map},
+    )
+    preview = preview_merge(left, right, op, attempt=False)
+
+    assert "identity_disagreement" not in {f.kind for f in preview.findings}
+    keyed = {n.name for n in preview.attributes_of("merged:Company") if n.identity}
+    assert {"part_a", "part_b"} <= keyed
+
+
 def test_a_property_every_member_carries_settles_it(left, right, canonical_map):
     op = MergeManifestsOp(
         vertex_equivalences=[

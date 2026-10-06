@@ -45,6 +45,7 @@ from graflo.architecture.evolution.rewrite import (
     close_routers_in_pipeline,
     evolve_router,
     mark_lookup_only_in_pipeline,
+    pass_through_classes,
 )
 from graflo.hq.document_caster import DocumentCaster
 from graflo.hq.ingestion_parameters import IngestionParams
@@ -546,3 +547,104 @@ class TestOps:
             {"kind": "Line", "obj": "x", "line_no": "l1"},
         ]
         assert _cast(merged, rows) == {"Unit": ["l1", "m1"]}
+
+
+#: An open router mapping one shared ``from`` onto every class it routes.
+_SHARED_FROM = {
+    "type": "vertex_router",
+    "type_field": "kind",
+    "from": {"key": "vertex_id", "label": "name"},
+}
+
+_DECLARED = {
+    "Server": ["key", "label"],
+    "Rack": ["rack_no", "label"],
+    "Cable": ["cable_no"],
+}
+
+
+class TestClosingKeepsPassThroughProjections:
+    """Closing never refuses a ``from`` target the open router skipped per class."""
+
+    def test_a_class_lacking_a_target_keeps_the_part_it_declares(self) -> None:
+        closed = close_routers_in_pipeline(
+            [_SHARED_FROM], sorted(_DECLARED), declared_properties=_DECLARED
+        )[0]
+
+        assert closed["type_map_only"] is True
+        assert closed["vertex_from_map"] == {
+            "Rack": {"label": "name"},
+            "Cable": {},
+        }
+
+    def test_a_class_the_table_already_names_is_left_alone(self) -> None:
+        router = {**_SHARED_FROM, "type_map": {"rack": "Rack"}}
+
+        closed = close_routers_in_pipeline(
+            [router], sorted(_DECLARED), declared_properties=_DECLARED
+        )[0]
+
+        assert closed["vertex_from_map"] == {"Cable": {}}
+
+    def test_an_authored_entry_is_kept(self) -> None:
+        router = {**_SHARED_FROM, "vertex_from_map": {"Cable": {"cable_no": "id"}}}
+
+        closed = close_routers_in_pipeline(
+            [router], sorted(_DECLARED), declared_properties=_DECLARED
+        )[0]
+
+        assert closed["vertex_from_map"] == {
+            "Cable": {"cable_no": "id"},
+            "Rack": {"label": "name"},
+        }
+
+    def test_a_bounded_router_already_checked_its_classes(self) -> None:
+        router = {**_SHARED_FROM, "vertex_types": ["Server", "Rack"]}
+
+        closed = close_routers_in_pipeline(
+            [router], sorted(_DECLARED), declared_properties=_DECLARED
+        )[0]
+
+        assert "vertex_from_map" not in closed
+
+    def test_a_router_under_descend_is_closed_the_same_way(self) -> None:
+        pipeline = [{"descend": {"key": "items", "apply": [dict(_SHARED_FROM)]}}]
+
+        closed = close_routers_in_pipeline(
+            pipeline, ["Server", "Cable"], declared_properties=_DECLARED
+        )[0]
+
+        nested = closed["descend"]
+        router = (nested.get("apply") or nested["pipeline"])[0]
+        assert router["vertex_from_map"] == {"Cable": {}}
+
+    def test_without_declared_properties_only_the_table_is_closed(self) -> None:
+        closed = close_routers_in_pipeline([_SHARED_FROM], sorted(_DECLARED))[0]
+
+        assert "vertex_from_map" not in closed
+        assert closed["type_map"] == {name: name for name in sorted(_DECLARED)}
+
+    def test_values_the_side_passed_through_are_followed_through_a_rename(
+        self,
+    ) -> None:
+        router = {**_SHARED_FROM, "type_map": {"Rack": "Shelf"}}
+        declared = {**_DECLARED, "Shelf": ["rack_no"]}
+
+        closed = close_routers_in_pipeline(
+            [router],
+            ["Server", "Rack"],
+            declared_properties=declared,
+            pass_through={"Server", "Rack"},
+        )[0]
+
+        assert closed["vertex_from_map"] == {"Shelf": {}}
+
+    def test_the_side_pass_through_classes_exclude_named_ones(self) -> None:
+        bounded = {**_SHARED_FROM, "vertex_types": ["Server"], "role": "b"}
+        named = {**_SHARED_FROM, "type_map": {"rack": "Rack"}, "role": "a"}
+
+        assert pass_through_classes([named], sorted(_DECLARED)) == {
+            "Server",
+            "Cable",
+        }
+        assert pass_through_classes([bounded], sorted(_DECLARED)) == set()
