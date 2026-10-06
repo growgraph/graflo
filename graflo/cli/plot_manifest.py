@@ -27,17 +27,17 @@ from graflo.plot.plotter import ManifestPlotter
 
 """
 
-graphviz attributes 
+graphviz attributes
 
 https://renenyffenegger.ch/notes/tools/Graphviz/attributes/index
 https://rsms.me/graphviz/
 https://graphviz.readthedocs.io/en/stable/examples.html
 https://graphviz.org/doc/info/attrs.html
 
-usage: 
+usage:
     color='red',style='filled', fillcolor='blue',shape='square'
 
-to keep 
+to keep
 level_one = [node1, node2]
 sg_one = ag.add_subgraph(level_one, rank='same')
 

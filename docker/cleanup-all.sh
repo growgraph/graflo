@@ -76,16 +76,16 @@ for db in "${DATABASES[@]}"; do
         echo -e "${YELLOW}Warning: Directory $db not found, skipping...${NC}"
         continue
     fi
-    
+
     echo -e "${GREEN}Cleaning up $db...${NC}"
     cd "$db"
-    
+
     # Check if .env file exists
     if [ -f ".env" ]; then
         # Extract SPEC from .env file (default to 'graflo' if not found)
         SPEC=$(grep -E "^SPEC=" .env 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "graflo")
         PROFILE="${SPEC}.${db}"
-        
+
         # Build docker compose command
         COMPOSE_CMD="docker compose --env-file .env --profile $PROFILE"
     else
@@ -93,7 +93,7 @@ for db in "${DATABASES[@]}"; do
         PROFILE="graflo.${db}"
         COMPOSE_CMD="docker compose --profile $PROFILE"
     fi
-    
+
     # Remove containers and optionally volumes
     if [ "$REMOVE_VOLUMES" = true ]; then
         echo "  Removing containers and volumes..."
@@ -106,7 +106,7 @@ for db in "${DATABASES[@]}"; do
             echo -e "${YELLOW}  No containers to remove for $db${NC}"
         }
     fi
-    
+
     # Remove images if requested
     if [ "$REMOVE_IMAGES" = true ]; then
         echo "  Removing images..."
@@ -119,7 +119,7 @@ for db in "${DATABASES[@]}"; do
                 }
             fi
         fi
-        
+
         # Special handling for nebula (multiple images)
         if [ "$db" = "nebula" ] && [ -f ".env" ]; then
             NEBULA_VERSION=$(grep -E "^NEBULA_VERSION=" .env 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "")
@@ -131,7 +131,7 @@ for db in "${DATABASES[@]}"; do
                 done
             fi
         fi
-        
+
         # Special handling for postgres (hardcoded image)
         if [ "$db" = "postgres" ]; then
             docker rmi "postgres:16-alpine" 2>/dev/null || {
@@ -139,7 +139,7 @@ for db in "${DATABASES[@]}"; do
             }
         fi
     fi
-    
+
     cd ..
     echo ""
 done
@@ -149,4 +149,3 @@ if [ "$REMOVE_IMAGES" = false ]; then
     echo ""
     echo "Note: Images were preserved. Use --images flag to remove them."
 fi
-

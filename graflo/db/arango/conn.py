@@ -965,7 +965,7 @@ class ArangoConnection(Connection):
         q_update = f"""FOR doc in {docs_json}
                             {upsert_clause}
                             INSERT doc
-                            {update_clause} 
+                            {update_clause}
                                 IN {class_name} {options}"""
         if not dry:
             self.execute(q_update)
@@ -1403,7 +1403,7 @@ class ArangoConnection(Connection):
                 )
             return_clause = """{ '_value' : value }"""
 
-        q = f"""FOR doc IN {class_name} 
+        q = f"""FOR doc IN {class_name}
                     {filter_clause}
                     {collect_clause}
                     RETURN {return_clause}"""

@@ -323,7 +323,7 @@ def test_a_changed_default_bumps_the_canon_version() -> None:
     current = _contract_defaults()
     if os.environ.get("GRAFLO_WRITE_CANON_DEFAULTS") == "1":
         CANON_DEFAULTS.write_text(
-            json.dumps({"canon": CANON_VERSION, "defaults": current}, indent=2) + "\n"
+            json.dumps({"canon": CANON_VERSION, "defaults": current}, indent=4) + "\n"
         )
     snapshot = json.loads(CANON_DEFAULTS.read_text())
     recorded: dict[str, typing.Any] = snapshot["defaults"]

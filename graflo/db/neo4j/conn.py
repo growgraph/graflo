@@ -529,10 +529,10 @@ class Neo4jConnection(Connection):
 
         index_str = ", ".join([f"{k}: row.{k}" for k in match_keys])
         q = f"""
-            WITH $batch AS batch 
-            UNWIND batch as row 
-            MERGE (n:{class_name} {{ {index_str} }}) 
-            ON MATCH set n += row 
+            WITH $batch AS batch
+            UNWIND batch as row
+            MERGE (n:{class_name} {{ {index_str} }})
+            ON MATCH set n += row
             ON CREATE set n += row
         """
         if not dry:
@@ -598,13 +598,13 @@ class Neo4jConnection(Connection):
             merge_pattern = f"(source)-[r:{relation_name}]->(target)"
 
         q = f"""
-            WITH $batch AS batch 
-            UNWIND batch as row 
-            MATCH (source:{source_class}), 
-                  (target:{target_class}) {match_clause} 
+            WITH $batch AS batch
+            UNWIND batch as row
+            MATCH (source:{source_class}),
+                  (target:{target_class}) {match_clause}
                         MERGE {merge_pattern}
                 SET r += row[2]
-        
+
         """
         if not dry:
             self.execute(q, batch=docs_edges)

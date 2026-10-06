@@ -392,7 +392,7 @@ def extract_ontology_graph(graph: Graph | None = None) -> dict[str, Any]:
 
 
 def graph_to_json(graph_data: dict[str, Any]) -> str:
-    return json.dumps(graph_data, indent=2, sort_keys=True)
+    return json.dumps(graph_data, indent=4, sort_keys=True)
 
 
 def escape_json_for_html(json_text: str) -> str:

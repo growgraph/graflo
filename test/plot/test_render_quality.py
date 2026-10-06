@@ -365,7 +365,7 @@ def test_images_match_the_golden_ones(rendered, tmp_path):
         manifest_path.write_text(
             json.dumps(
                 {"dpi": GOLDEN_DPI, "versions": _versions(), "figures": _ids(rendered)},
-                indent=2,
+                indent=4,
             )
             + "\n"
         )

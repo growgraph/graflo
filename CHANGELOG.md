@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Merge** keys merged classes by member keys, not router paths through vocabulary joins
   (`reference_only`). Derivations that produce a class via routers in several roles are refused with
   a named repair.
+- **Docker fixtures**: Postgres mounts its volume at `/var/lib/postgresql`, as 18+ images require;
+  Fuseki's volume holds only `/fuseki/run`, so it starts on a fresh volume and picks up image upgrades.
+  Neo4j has a healthcheck, and `start-all.sh` waits for health checks before returning.
 
 ## [1.16.2]
 
@@ -1707,7 +1710,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 
 ### Added
 
-- 
+-
 - **`IngestionParams.connectors`** — optional subset filter for ingestion bindings (connector name or hash, same refs as `resource_connector.connector`). Intersects with `resources` when both are set; `RegistryBuilder` registers only matching connectors as data sources.
 - **`Bindings.resolve_connector_refs_to_hashes()`** — resolves connector refs for validation and registry filtering.
 - **On-disk layout** — `schema.yaml`, `INDEX.json`, and gzip JSONL chunks under `vertices/` and `edges/` (`graflo.architecture.backend`: **`GraFloIndex`**, **`GraFloLayout`**, **`GraFloBackendWriter`**, **`GraFloBackendReader`**).
@@ -2680,7 +2683,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 ### Removed
 - `pyTigergraph` dependence remove
 
-### Added 
+### Added
 - reserved Tigergraph words are modified during automated schema generation
 
 ## [1.3.11] - 2026-01-12
@@ -3139,12 +3142,12 @@ Package renamed from `graphcast` to `graflo`.
 - In `EdgeConfig`
   - `main` became `edges`
   - `extra` became `extra_edges`
-- In `MapperNode` 
+- In `MapperNode`
   - edge is now defined under `edge` attribute of `MapperNode` instead of being a union with it
   - `maps` key becomes `children`
   - `type`: `dict` becomes `type`: `vertex`
-  
-    
+
+
 ### Added
 
 - `cli/plot_schema.py` became a standalone script available with the package installation
@@ -3184,9 +3187,9 @@ Package renamed from `graphcast` to `graflo`.
 
 ### Changed
 
-- in `ingest_json_files`: ncores -> n_threads 
+- in `ingest_json_files`: ncores -> n_threads
 - schema config changes:
-    - `type` specification removed in Transform (field mapping) specification, whenever ambiguous, `image` is used   
+    - `type` specification removed in Transform (field mapping) specification, whenever ambiguous, `image` is used  
 - `ConnectionConfigType` -> `DBConnectionConfig`
 
 ## [0.11.5] - 2023-08-30
@@ -3236,4 +3239,3 @@ Package renamed from `graphcast` to `graflo`.
 
 [//]: # ()
 [//]: # (### Fixed)
-

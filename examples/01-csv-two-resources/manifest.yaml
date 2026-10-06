@@ -43,4 +43,3 @@ bindings:
     -   regex: "^dep.*\\.csv$"
         sub_path: data
         resource_name: departments
-

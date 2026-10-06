@@ -55,7 +55,7 @@ docker compose --env-file .env up <container_spec> -d
 to stop containers from docker compose
 
 ```shell
-docker compose stop <container_name> 
+docker compose stop <container_name>
 ```
 
 to bash into a container
