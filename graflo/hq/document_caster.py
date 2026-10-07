@@ -69,6 +69,11 @@ def filter_graph_container_by_vertices_inplace(
         for vcol, items in gc.vertices.items()
         if vcol in allowed_vertex_names
     }
+    gc.attached = {
+        vcol: items
+        for vcol, items in gc.attached.items()
+        if vcol in allowed_vertex_names
+    }
     gc.edges = {
         (vfrom, vto, rel): items
         for (vfrom, vto, rel), items in gc.edges.items()
@@ -98,7 +103,9 @@ def filter_graph_container_drop_empty_identity_inplace(
 
     An endpoint declared by a secondary identity is judged on *that* field-set:
     it carries no primary key by construction, so checking the primary identity
-    would discard exactly the edges this resolution path exists to write.
+    would discard exactly the edges this resolution path exists to write. An
+    attached document (a ``find`` step) is judged on the fields it is found by,
+    for the same reason.
 
     Whatever is removed is logged: a keyless document usually means a
     resource references the vertex rather than owning it, and dropping its
@@ -120,12 +127,32 @@ def filter_graph_container_drop_empty_identity_inplace(
             logger.warning(
                 "Cast dropped %s '%s' document(s) with no value for its identity "
                 "%s. Mark the step lookup_only if the resource only references "
-                "this vertex.",
+                "this vertex, or give it find to write onto the vertex a "
+                "secondary identity finds.",
                 len(docs) - len(kept_docs),
                 vcol,
                 id_fields,
             )
         gc.vertices[vcol] = kept_docs
+
+    for vcol, docs in list(gc.attached.items()):
+        selector = gc.attached_by.get(vcol)
+        if vcol not in vertex_set or selector is None:
+            continue
+        find_fields = vertex_config.match_fields(vcol, selector)
+        kept_docs = [
+            d for d in docs if not _vertex_doc_has_empty_identity(d, find_fields)
+        ]
+        if len(kept_docs) < len(docs):
+            logger.warning(
+                "Cast dropped %s attached '%s' document(s) with no value for the "
+                "fields find %r locates them by (%s).",
+                len(docs) - len(kept_docs),
+                vcol,
+                selector,
+                find_fields,
+            )
+        gc.attached[vcol] = kept_docs
 
     for edge_id, docs in list(gc.edges.items()):
         vfrom, vto, _rel = edge_id
@@ -384,6 +411,7 @@ class DocumentCaster:
                     return await self._cast_batch_in_processes(
                         spec,
                         docs,
+                        attached_by=runtime.attached_selectors,
                         workers=workers,
                         resolved_name=resolved_name,
                         vertex_filter=vertex_filter,
@@ -419,8 +447,11 @@ class DocumentCaster:
             params=params,
         )
 
+        done = [r for r in cast_results if isinstance(r, ResourceCastResult)]
         graph = GraphContainer.from_docs_list(
-            [r.entities for r in cast_results if isinstance(r, ResourceCastResult)]
+            [r.entities for r in done],
+            attached=[r.attached for r in done],
+            attached_by=runtime.attached_selectors,
         )
         filter_graph_container_by_vertices_inplace(
             graph, allowed_vertex_names=vertex_filter
@@ -552,6 +583,7 @@ class DocumentCaster:
         spec: CastSpec,
         docs: list[dict[str, Any]],
         *,
+        attached_by: dict[str, str],
         workers: int,
         resolved_name: str,
         vertex_filter: set[str] | None,
@@ -597,11 +629,21 @@ class DocumentCaster:
         vertices: dict[str, list] = {}
         edges: dict[Any, list] = {}
         linear: list[Any] = []
+        attached: dict[str, list] = {}
         failures: list[DocCastFailure] = []
         for offset, part in zip(offsets, parts):
-            part_vertices, part_edges, part_linear, transform_failures, errors = part
+            (
+                part_vertices,
+                part_edges,
+                part_linear,
+                transform_failures,
+                errors,
+                part_attached,
+            ) = part
             for k, v in part_vertices.items():
                 vertices.setdefault(k, []).extend(v)
+            for k, v in part_attached.items():
+                attached.setdefault(k, []).extend(v)
             for k, v in part_edges.items():
                 edges.setdefault(k, []).extend(v)
             linear.extend(part_linear)
@@ -635,7 +677,13 @@ class DocumentCaster:
                     )
                 )
 
-        graph = GraphContainer(vertices=vertices, edges=edges, linear=linear)
+        graph = GraphContainer(
+            vertices=vertices,
+            edges=edges,
+            linear=linear,
+            attached=attached,
+            attached_by=dict(attached_by),
+        )
         return CastBatchResult(graph=graph, failures=failures)
 
     async def _cast_documents(

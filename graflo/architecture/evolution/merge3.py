@@ -138,7 +138,8 @@ def op_slots(op: ManifestOp) -> set[Slot]:
     Dispatch is on the op *class*, not on its ``op`` string literal. Two
     reasons: a type checker can narrow it, so a field read against the wrong op
     model is caught at check time rather than at merge time; and a literal
-    renamed in ``ops.py`` cannot silently fall through to the catch-all here.
+    renamed in the ``ops`` package cannot silently fall through to the
+    catch-all here.
 
     Total over the op vocabulary. An op reaching the fallback is treated as
     touching the whole manifest, which conflicts with everything -- the safe

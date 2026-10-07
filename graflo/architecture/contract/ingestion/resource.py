@@ -101,6 +101,73 @@ def step_looks_up(step: dict[str, Any], vertex: str) -> bool:
     return False
 
 
+def step_finds(step: dict[str, Any], vertex: str) -> str | None:
+    """The secondary identity *step* finds *vertex* by; ``None`` when it does not.
+
+    A ``vertex`` step names it in ``find``; a ``vertex_router`` in its per-class
+    ``find`` map, for a class the router can reach.
+    """
+    normalized = normalize_actor_step(dict(step))
+    if normalized.get("type") == "vertex":
+        selector = normalized.get("find")
+        if normalized.get("vertex") == vertex and isinstance(selector, str):
+            return selector
+        return None
+    if normalized.get("type") == "vertex_router":
+        table = normalized.get("find")
+        selector = table.get(vertex) if isinstance(table, dict) else None
+        reach = router_reach(normalized)
+        if isinstance(selector, str) and (reach is None or vertex in reach):
+            return selector
+    return None
+
+
+def pipeline_find_selectors(
+    pipeline: Any, *, known_vertices: Collection[str] | None = None
+) -> dict[str, str]:
+    """The secondary identity each class is found by, over every level of *pipeline*.
+
+    Raises:
+        ValueError: A class gets two different selectors, or is produced both
+            by a ``find`` step and by a step without ``find`` (a plain write or
+            a ``lookup_only`` reference by primary identity): edges to it would
+            have no single selector.
+    """
+    found: dict[str, set[str]] = {}
+    plain: set[str] = set()
+
+    def walk(level: Any) -> None:
+        if not isinstance(level, list):
+            return
+        for item in level:
+            if not isinstance(item, dict):
+                continue
+            step = normalize_actor_step(dict(item))
+            for vertex in step_produces_vertices(step, known_vertices=known_vertices):
+                selector = step_finds(step, vertex)
+                if selector is None:
+                    plain.add(vertex)
+                else:
+                    found.setdefault(vertex, set()).add(selector)
+            if step.get("type") == "descend":
+                walk(step.get("pipeline"))
+
+    walk(pipeline)
+    for vertex, selectors in sorted(found.items()):
+        if len(selectors) > 1:
+            raise ValueError(
+                f"vertex {vertex!r} is found by several identities "
+                f"{sorted(selectors)}; a resource finds a class by one"
+            )
+        if vertex in plain:
+            raise ValueError(
+                f"vertex {vertex!r} is produced both by a find step "
+                f"({min(selectors)!r}) and by a step without find; "
+                "declare explicit edge selectors or split the resource"
+            )
+    return {vertex: next(iter(sel)) for vertex, sel in found.items()}
+
+
 def route_discriminator(
     step: dict[str, Any], raw: Any, declared: Collection[str]
 ) -> str | None:

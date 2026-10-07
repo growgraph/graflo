@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Breaking
+
+- **Merge** names each demoted member key by its side's origin: property `maintenance__asset_id`,
+  lookup identity `maintenance`. `origins` on the op sets the origins (default: each schema's name);
+  `local_key.tag` is optional and defaults to the origin. A property rename of a demoted key is refused.
+
+### Added
+
+- **`find`** on vertex steps (`find: maintenance`) and routers (`find: {Machine: maintenance}`):
+  write onto the vertex a secondary identity finds, never creating one; with `lookup_only`, a
+  reference by it.
+- **`merge_manifests_with_report`**: the merged manifest and a `MergeReport` of owners, attached
+  resources, pinned references, shared key spaces and unmet resource order.
+- **`graflo merge --dry-run`** prints a routing table: each resource producing a merged class, its
+  role and its key.
+- **`DBWriter.stats`**: attached, unmatched and ambiguous records per class, logged after ingest.
+
+### Changed
+
+- **Evolution ops** `graflo.architecture.evolution.ops` is a package split by what each op
+  touches (`vertices`, `edges`, `identities`, `merge`, …); every name still imports from `ops`.
+- **Merge** attaches resources that cannot compute a merged class's key (`find` by the demoted key)
+  instead of dropping their records, and orders the union's resources owners first.
+- **Merge preview** notes `attached`, `shared_key_space` and `attach_order` replace
+  `reference_conversion`.
+
 ## [1.16.3]
 
 ### Added

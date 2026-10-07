@@ -312,6 +312,11 @@ Two rules explain most results:
   write it. Set it on resources that only add edges and whose records carry
   another identifier than the vertex's primary key, because writing such a
   record would create a vertex without its key.
+- `find: <name>`: find the existing vertex by the named
+  [secondary identity](../glossary.md#secondary-identity) and write the
+  record's properties onto it; a record that finds none is skipped, never
+  created. Edges built from the step match that end on the same identity. With
+  `lookup_only: true` the step only finds the vertex for edges.
 
 ### The `edge` step
 
@@ -454,6 +459,8 @@ matching type.
   Defaults to the name given in `type_field`.
 - `lookup_only`: `true` for every routed type, or a list of the types to look
   up without writing.
+- `find`: per type, the secondary identity its rows find an existing vertex
+  by, as on the vertex step: `find: {machine: by_tag}`.
 
 A router without `type_map_only` or `vertex_types` can produce any vertex type
 the schema declares, so GraFlo treats its resource as producing all of them.

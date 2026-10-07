@@ -174,3 +174,14 @@ class TestLookupOnlyObservations:
         ]
         merged = fuse_doc_basis(reps, ("isin",))
         assert all(rep.lookup_only for rep in merged)
+
+    def test_flags_survive_a_merge_of_keyless_observations(self) -> None:
+        """With no rep carrying the basis, all fold into one; it keeps their tags."""
+        reps = [
+            VertexRep(vertex={"name": "n1"}, lookup_only=True, find="by_isin"),
+            VertexRep(vertex={"note": "x"}, lookup_only=True, find="by_isin"),
+        ]
+        merged = fuse_doc_basis(reps, ("isin",))
+        assert len(merged) == 1
+        assert merged[0].vertex == {"name": "n1", "note": "x"}
+        assert merged[0].lookup_only is True and merged[0].find == "by_isin"

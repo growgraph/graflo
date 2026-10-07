@@ -178,9 +178,6 @@ def test_boundary_client_customer_with_explicit_identity() -> None:
                 right="Customer",
                 into="Person",
                 properties=[
-                    PropertyEquivalence(
-                        left="client_id", right="customer_id", into="id"
-                    ),
                     PropertyEquivalence(left="email", right="email_addr", into="email"),
                 ],
                 identity=["email"],
@@ -197,8 +194,8 @@ def test_boundary_client_customer_with_explicit_identity() -> None:
     person = next(v for v in vc.vertices if v.name == "Person")
     assert person.identity == ["email"]
     prop_names = {f.name for f in person.properties}
-    assert "id" in prop_names
-    assert "email" in prop_names
+    # Each demoted key is named by its origin, the side's schema name.
+    assert {"email", "left__client_id", "right__customer_id"} <= prop_names
     assert "client_id" not in prop_names
     assert "customer_id" not in prop_names
 
@@ -770,11 +767,9 @@ def test_a_derived_identity_applies_inside_compose() -> None:
     vc = merged.graph_schema.core_schema.vertex_config
     assert {"match_key", "local_key"} <= set(vc.property_names("Company"))
     assert vc.identity_fields("Company") == ["id"]
-    # Each member's own key, demoted beside the funnel.
-    assert {s.name for s in vc.secondary_identities("Company")} == {
-        "by_company_id",
-        "by_org_id",
-    }
+    # Each member's own key, demoted beside the funnel, named by its key
+    # space: the local_key tag (``a``, ``b``), not the origin (``l``, ``r``).
+    assert {s.name for s in vc.secondary_identities("Company")} == {"a", "b"}
 
 
 def test_an_equivalence_in_the_wrong_convention_says_what_to_use() -> None:
@@ -870,12 +865,14 @@ def test_nary_cluster_composes_schema_and_ingestion() -> None:
         "shared",
         "id",
     }
-    # Every member's own key stays addressable beside the synthetic primary.
-    assert {s.name for s in company.secondary_identities} == {
-        "by_company_id",
-        "by_shop_id",
-        "by_org_id",
-        "by_branch_id",
+    # Every member's own key stays addressable beside the synthetic primary,
+    # unprefixed (each is a branch), named by its origin and its fields since
+    # each origin contributes two.
+    assert {(s.name, tuple(s.fields)) for s in company.secondary_identities} == {
+        ("l__company_id", ("company_id",)),
+        ("l__shop_id", ("shop_id",)),
+        ("r__org_id", ("org_id",)),
+        ("r__branch_id", ("branch_id",)),
     }
     assert out.ingestion_model is not None
     assert {r.name for r in out.ingestion_model.resources} == {
@@ -1108,9 +1105,11 @@ def test_property_branches_lower_to_one_funnel_in_declared_order() -> None:
         ["company_id"],
         ["org_id"],
     ]
-    assert {s.name for s in company.secondary_identities} == {
-        "by_company_id",
-        "by_org_id",
+    # Each member's own key is demoted beside the funnel, unprefixed: a
+    # property branch names it.
+    assert {(s.name, tuple(s.fields)) for s in company.secondary_identities} == {
+        ("l", ("company_id",)),
+        ("r", ("org_id",)),
     }
 
 
@@ -1220,8 +1219,8 @@ def test_a_demoted_key_keeps_its_declared_field_order() -> None:
     assert out.graph_schema is not None
     company = out.graph_schema.core_schema.vertex_config["Company"]
     assert {(s.name, tuple(s.fields)) for s in company.secondary_identities} == {
-        ("by_b_a", ("b", "a")),
-        ("by_org_id", ("org_id",)),
+        ("l", ("l__b", "l__a")),
+        ("r", ("r__org_id",)),
     }
 
 

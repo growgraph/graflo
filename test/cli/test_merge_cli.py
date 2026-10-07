@@ -26,11 +26,14 @@ MANIFEST_B = FIXTURES / "manifest_b.yaml"
 CANONICAL_MAP = FIXTURES / "canonical_map.yaml"
 
 #: The n-ary boundary cluster of ``boundary_op.yaml``, in canonical names.
+#: The fixtures' schema names (``source-a``) are no identifiers, so the
+#: demoted member keys are named by the declared ``origins``.
 BOUNDARY_OP: dict = {
     "op": "merge_manifests",
     "vertex_equivalences": [
         {"left": ["Company", "Shop"], "right": ["Org", "Branch"], "into": "Company"}
     ],
+    "origins": {"left": "source_a", "right": "source_b"},
 }
 
 
@@ -559,3 +562,36 @@ class TestRecordingTheCompose:
         # Exit 2, not 1: the manifests merge fine, the store cannot name a
         # parent for them. The message is checked where it is emitted.
         assert result.exit_code == 2
+
+
+#: The manifest-union example: one key owner per side, and a work-order
+#: resource that only references the maintenance side's machines.
+EXAMPLE_UNION = (
+    pathlib.Path(__file__).resolve().parents[2] / "examples" / ("20-manifest-union")
+)
+
+
+def test_a_dry_run_prints_the_routing_table_after_the_naming_table() -> None:
+    result = CliRunner().invoke(
+        graflo,
+        [
+            "merge",
+            str(EXAMPLE_UNION / "manifest_maintenance.yaml"),
+            str(EXAMPLE_UNION / "manifest_sensors.yaml"),
+            "--op",
+            str(EXAMPLE_UNION / "merge.yaml"),
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    lines = result.stdout.splitlines()
+    assert lines.index("routing:") > lines.index("naming (vertex):")
+    rows = {
+        cells[-5]: cells[-4:]
+        for cells in (line.split() for line in lines[lines.index("routing:") + 1 :])
+        if len(cells) >= 5
+    }
+    assert rows["assets"] == ["left", "Asset", "owner", "id"]
+    assert rows["devices"] == ["right", "Device", "owner", "id"]
+    assert rows["work_orders"] == ["left", "Asset", "reference", "maintenance"]

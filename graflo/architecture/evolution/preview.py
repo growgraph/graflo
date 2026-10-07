@@ -58,6 +58,7 @@ from graflo.architecture.schema.vertex import FieldMergeError, Vertex
 
 from .apply import relabel_vertex_fields
 from .canonical import (
+    ClusterResolution,
     Completion,
     MergeCanonicalConflictError,
     MergeIncompleteError,
@@ -71,9 +72,18 @@ from .equivalence import (
     subject,
 )
 from .merge import (
+    AttachedProducer,
     DemotedKey,
     MergeIdentityError,
     MergeNameConflictError,
+    MergeReport,
+    OrderCycle,
+    SharedKeySpace,
+    _apply_resource_renames,
+    _apply_right_resource_policy,
+    ambiguous_reference_refusals,
+    key_space_refusals,
+    origin_refusals,
 )
 from .merge_core import (
     EdgeMergeError,
@@ -136,14 +146,18 @@ FindingKind = Literal[
     "identity_disagreement",
     "identity_coverage",
     "identity_collision",
+    "origin",
+    "key_space",
     "type_conflict",
     "unit_conflict",
     "identity_mode_conflict",
     "identity_funnel_conflict",
     "secondary_identity_conflict",
     "edge_conflict",
-    "reference_conversion",
     "lookup_demotion",
+    "attached",
+    "shared_key_space",
+    "attach_order",
     "double_home",
     "vocabulary_override",
     "auto_local_key",
@@ -164,6 +178,8 @@ _KIND_BY_CHECK: dict[str, FindingKind] = {
     "identity disagreement": "identity_disagreement",
     "identity coverage": "identity_coverage",
     "identity collision": "identity_collision",
+    "origin": "origin",
+    "key space": "key_space",
     # What the schema union refuses. A bare ``conflict`` key would swallow all
     # six and must never be added.
     "field type conflict": "type_conflict",
@@ -213,7 +229,14 @@ _KINDS_BY_TYPE: dict[type[BaseException], frozenset[FindingKind]] = {
     ),
     MergeIncompleteError: frozenset({"incomplete", "name_collision"}),
     MergeIdentityError: frozenset(
-        {"identity_disagreement", "identity_coverage", "identity_collision"}
+        {
+            "identity_disagreement",
+            "identity_coverage",
+            "identity_collision",
+            "origin",
+            "key_space",
+            "ambiguity",
+        }
     ),
     MergeNameConflictError: frozenset({"near_collision", "name_collision"}),
     # Inert while the union's refusals set ``check`` -- which they all do. Kept
@@ -369,6 +392,31 @@ class MergeOutcome(ConfigBaseModel):
     )
 
 
+#: How a resource reaches a merged class: ``owner`` computes the class's key
+#: and creates its nodes, ``attached`` finds a node by a demoted member key and
+#: writes onto it, ``reference`` only points edges at it by that key.
+RoutingRole = Literal["owner", "attached", "reference"]
+
+
+class RoutingRow(ConfigBaseModel):
+    """One resource producing a merged class, and the key its records reach it by."""
+
+    vertex: str = PydanticField(..., description="The merged class.")
+    resource: str = PydanticField(..., description="The union resource.")
+    side: Side = PydanticField(..., description="The side the resource came from.")
+    members: tuple[str, ...] = PydanticField(
+        ..., description="The members of that side it produces, in source names."
+    )
+    role: RoutingRole = PydanticField(..., description="How it reaches the class.")
+    key: str = PydanticField(
+        ...,
+        description=(
+            "The class's primary identity fields for an owner; the secondary "
+            "identity (key space) it finds the class by otherwise."
+        ),
+    )
+
+
 class MergePreview(ConfigBaseModel):
     """The declaration graph, everything wrong with it, and what merge did."""
 
@@ -387,6 +435,10 @@ class MergePreview(ConfigBaseModel):
     findings: list[MergeFinding] = PydanticField(default_factory=list)
     outcome: MergeOutcome = PydanticField(
         default_factory=lambda: MergeOutcome(status="not_attempted")
+    )
+    routing: list[RoutingRow] = PydanticField(
+        default_factory=list,
+        description="Every resource producing a merged class, once merge went through.",
     )
 
     @property
@@ -625,6 +677,7 @@ class _Builder:
         default_factory=lambda: ClusterIndex(vertices=(), relations=())
     )
     composite: dict[Side, CanonicalizeOp] = field(default_factory=dict)
+    resolution: ClusterResolution | None = None
 
     # ── registries ──────────────────────────────────────────────────────────
 
@@ -801,6 +854,7 @@ class _Builder:
             canonical_maps=self.canonical_maps,
         )
         resolution = result.resolution
+        self.resolution = resolution
         self.index = resolution.index
         self.declared = resolution.declared
         self.composite = {side: resolution.side_maps[side] for side in _SIDES}
@@ -1091,6 +1145,68 @@ class _Builder:
                     *(subject(s, m) for s, m, _k in keys),
                 ],
             )
+
+    def origin_checks(self) -> None:
+        """The origins the union names demoted keys and default tags by.
+
+        The rule of :func:`~graflo.architecture.evolution.merge.origin_refusals`,
+        over the sides the naming pass found an origin used on.
+        """
+        if self.resolution is None:
+            return
+        for refusal in origin_refusals(self.op, self.manifests, self.resolution):
+            self.from_refusal(refusal, fallback="origin")
+
+    def key_space_checks(self) -> None:
+        """The key spaces the union names demoted keys by.
+
+        The rule of
+        :func:`~graflo.architecture.evolution.merge.key_space_refusals`, over
+        the key spaces the naming pass assigned.
+        """
+        if self.resolution is None:
+            return
+        for refusal in key_space_refusals(self.resolution, self.manifests):
+            self.from_refusal(refusal, fallback="key_space")
+
+    def ambiguity_checks(self) -> None:
+        """Resources that would find one merged class by two demoted keys.
+
+        The rule of
+        :func:`~graflo.architecture.evolution.merge.ambiguous_reference_refusals`.
+        """
+        if self.resolution is None:
+            return
+        properties: dict[tuple[Side, str], set[str]] = {}
+        for cluster in self.index.vertices:
+            properties.update(self._member_identity_state(cluster)[1])
+        for refusal in ambiguous_reference_refusals(
+            self.resolution, self._sides_with_union_resource_names(), properties
+        ):
+            self.from_refusal(refusal, fallback="ambiguity")
+
+    def _sides_with_union_resource_names(self) -> Mapping[str, GraphManifest]:
+        """Both sides with their resources renamed as the union names them.
+
+        A declaration names a resource by its union name. A naming problem the
+        rename runs into is reported elsewhere; the sides are then read as
+        given.
+        """
+        copies: dict[str, GraphManifest] = {
+            side: self.manifests[side].model_copy(deep=True) for side in _SIDES
+        }
+        try:
+            _apply_resource_renames(copies["left"], self.op.renames.left.resources)
+            ingestion = copies["left"].ingestion_model
+            left_names = (
+                {r.name for r in ingestion.resources}
+                if ingestion is not None
+                else set()
+            )
+            _apply_right_resource_policy(copies["right"], self.op, left_names)
+        except (MergeNameConflictError, ValueError):
+            return {side: self.manifests[side] for side in _SIDES}
+        return copies
 
     def _digest_field_collision(
         self,
@@ -1388,6 +1504,9 @@ class _Builder:
         self.naming()
         self.composed_attributes()
         self.identity_checks()
+        self.origin_checks()
+        self.key_space_checks()
+        self.ambiguity_checks()
         self.merge_checks()
         self.edge_merge_checks()
         return MergePreview(
@@ -1606,11 +1725,12 @@ def preview_merge(
     ).build()
     if not attempt:
         return preview
-    outcome, subjects, notes = _attempt(left, right, op, canonical_maps)
+    outcome, subjects, notes, routing = _attempt(left, right, op, canonical_maps)
     preview = preview.with_outcome(outcome, subjects=subjects)
     known = {n.id for n in preview.nodes}
     return preview.model_copy(
         update={
+            "routing": routing,
             "findings": [
                 *preview.findings,
                 *(
@@ -1619,7 +1739,7 @@ def preview_merge(
                     )
                     for note in notes
                 ),
-            ]
+            ],
         }
     )
 
@@ -1629,14 +1749,14 @@ def _attempt(
     right: GraphManifest,
     op: MergeManifestsOp,
     canonical_maps: Sequence[tuple[Side, CanonicalMap]],
-) -> tuple[MergeOutcome, tuple[str, ...], list[MergeFinding]]:
+) -> tuple[MergeOutcome, tuple[str, ...], list[MergeFinding], list[RoutingRow]]:
     """Merge for real, and turn whichever way it went into an outcome.
 
-    A merge that went through may still have changed what a resource does:
-    each resource it turned from upserting a merged class into referencing it
-    writes none of those records any more, which is a ``note``. So is each
-    member key demoted beside a funnel of several branches: it no longer
-    deduplicates the member's own records.
+    A merge that went through may still have changed what a resource does,
+    each a ``note``: a member key demoted beside a funnel of several branches
+    no longer deduplicates the member's own records; a resource is attached to
+    a merged class; members of one side share a key space; a resource runs
+    before the one whose nodes it needs. It also has the routing rows.
     """
     from .alignment import AlignmentConflictError
     from .merge import (
@@ -1656,27 +1776,14 @@ def _attempt(
         AlignmentConflictError,
         ValueError,
     ) as exc:
-        return (*outcome_from_exception(exc), [])
+        return (*outcome_from_exception(exc), [], [])
     notes = [
-        MergeFinding(
-            kind="reference_conversion",
-            severity="note",
-            message=(
-                f"resource {ref.resource!r} upserted {ref.vertex!r} but no derived "
-                f"identity branch names it, so it now looks {ref.vertex!r} up by "
-                f"{ref.key!r} and writes none of those records; add it to a "
-                "derived branch's sources if its rows carry the inputs"
-            ),
-            source="merge",
-            nodes=[
-                subject("merged", ref.vertex),
-                *(subject(ref.side, member) for member in ref.members),
-            ],
-        )
-        for ref in report.converted
+        *_demotion_notes(report.demoted),
+        *_attached_notes(report.attached),
+        *_shared_key_space_notes(report.shared_key_spaces),
+        *_attach_order_notes(report.order_cycles),
     ]
-    notes.extend(_demotion_notes(report.demoted))
-    return outcome_from_manifest(merged), (), notes
+    return outcome_from_manifest(merged), (), notes, routing_rows(merged, report)
 
 
 def _demotion_notes(demoted: Sequence[DemotedKey]) -> list[MergeFinding]:
@@ -1707,6 +1814,166 @@ def _demotion_notes(demoted: Sequence[DemotedKey]) -> list[MergeFinding]:
     ]
 
 
+def _attached_notes(attached: Sequence[AttachedProducer]) -> list[MergeFinding]:
+    """A note per resource that now attaches to a merged class instead of creating it."""
+    return [
+        MergeFinding(
+            kind="attached",
+            severity="note",
+            message=(
+                f"{producer.side} resource {producer.resource!r} no longer creates "
+                f"{list(producer.members)}: its records find the {producer.vertex!r} "
+                f"node by the key {producer.key!r} and write onto it; a record "
+                "whose node no key owner has written is not stored"
+            ),
+            source="merge",
+            nodes=[
+                subject("merged", producer.vertex),
+                *(subject(producer.side, member) for member in producer.members),
+            ],
+        )
+        for producer in attached
+    ]
+
+
+def _shared_key_space_notes(shared: Sequence[SharedKeySpace]) -> list[MergeFinding]:
+    """A note per group of one side's members whose demoted keys are one identity."""
+    return [
+        MergeFinding(
+            kind="shared_key_space",
+            severity="note",
+            message=(
+                f"{space.side}:{list(space.members)} share the key {space.key!r} on "
+                f"{space.vertex!r}: an id of one finds a node of another"
+            ),
+            source="merge",
+            nodes=[
+                subject("merged", space.vertex),
+                *(subject(space.side, member) for member in space.members),
+            ],
+        )
+        for space in shared
+    ]
+
+
+def _attach_order_notes(cycles: Sequence[OrderCycle]) -> list[MergeFinding]:
+    """A note per resource order constraint a cycle left unmet."""
+    return [
+        MergeFinding(
+            kind="attach_order",
+            severity="note",
+            message=(
+                f"resource {cycle.resource!r} runs before {cycle.before!r}, which "
+                f"writes the {cycle.vertex!r} nodes it finds: the order constraints "
+                "form a cycle, so the declared order is kept and what it finds is "
+                "only what earlier resources wrote"
+            ),
+            source="merge",
+            nodes=[subject("merged", cycle.vertex)],
+        )
+        for cycle in cycles
+    ]
+
+
+def routing_rows(manifest: GraphManifest, report: MergeReport) -> list[RoutingRow]:
+    """Every resource producing a merged class, with its role and key there.
+
+    Rows are grouped by merged class and follow the union's resource order.
+
+    Args:
+        manifest: The merged manifest *report* describes.
+        report: The report returned beside it by
+            :func:`~graflo.architecture.evolution.merge.merge_manifests_with_report`.
+
+    Returns:
+        One :class:`RoutingRow` per key owner, attached producer and pinned
+        reference.
+    """
+    schema = manifest.graph_schema
+    ingestion = manifest.ingestion_model
+    position = (
+        {resource.name: i for i, resource in enumerate(ingestion.resources)}
+        if ingestion is not None
+        else {}
+    )
+
+    def primary(vertex: str) -> str:
+        if schema is None:
+            return "-"
+        return ", ".join(schema.core_schema.vertex_config.identity_fields(vertex))
+
+    rows = [
+        *(
+            RoutingRow(
+                vertex=owner.vertex,
+                resource=owner.resource,
+                side=owner.side,
+                members=owner.members,
+                role="owner",
+                key=primary(owner.vertex),
+            )
+            for owner in report.owners
+        ),
+        *(
+            RoutingRow(
+                vertex=producer.vertex,
+                resource=producer.resource,
+                side=producer.side,
+                members=producer.members,
+                role="attached",
+                key=producer.key,
+            )
+            for producer in report.attached
+        ),
+        *(
+            RoutingRow(
+                vertex=reference.vertex,
+                resource=reference.resource,
+                side=reference.side,
+                members=reference.members,
+                role="reference",
+                key=reference.key,
+            )
+            for reference in report.references
+        ),
+    ]
+    return sorted(
+        rows,
+        key=lambda row: (row.vertex, position.get(row.resource, len(position))),
+    )
+
+
+def routing_table(rows: Sequence[RoutingRow]) -> list[str]:
+    """The routing rows as text: one block per merged class, named on its first row.
+
+    Columns: ``merged resource side members role key``. No rows, no table.
+    """
+    if not rows:
+        return []
+    header = ("merged", "resource", "side", "members", "role", "key")
+    cells: list[tuple[str, ...]] = []
+    previous: str | None = None
+    for row in sorted(rows, key=lambda r: r.vertex):
+        cells.append(
+            (
+                row.vertex if row.vertex != previous else "",
+                row.resource,
+                row.side,
+                ", ".join(row.members) or "-",
+                row.role,
+                row.key,
+            )
+        )
+        previous = row.vertex
+    widths = [max(len(row[i]) for row in (header, *cells)) for i in range(len(header))]
+    return [
+        "  ".join(
+            cell.ljust(width) for cell, width in zip(row, widths, strict=True)
+        ).rstrip()
+        for row in (header, *cells)
+    ]
+
+
 __all__ = [
     "EdgeKind",
     "FindingKind",
@@ -1718,6 +1985,8 @@ __all__ = [
     "PreviewCluster",
     "PreviewEdge",
     "PreviewNode",
+    "RoutingRole",
+    "RoutingRow",
     "Severity",
     "SlotNode",
     "build_merge3_preview",
@@ -1726,4 +1995,6 @@ __all__ = [
     "outcome_from_exception",
     "outcome_from_manifest",
     "preview_merge",
+    "routing_rows",
+    "routing_table",
 ]

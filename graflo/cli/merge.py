@@ -5,8 +5,10 @@ shell: the merge op and its canonical maps are one recipe, resolved together
 in one pass over the two manifests' own names. A refusal names every problem
 at once and prints the naming table -- each merged name, the classes that
 arrive at it, and how -- so the picture is there when it is needed;
-``--dry-run`` prints it too. ``--suggest`` writes an op that settles what can
-be settled without guessing, for review.
+``--dry-run`` prints it too, then the routing table: each resource producing a
+merged class, whether it owns the key, is attached or only references, and
+the key it uses. ``--suggest`` writes an op that settles what can be settled
+without guessing, for review.
 
 Either side may carry no ``schema`` block: a manifest with only an
 ``ingestion_model`` and/or ``bindings`` is a new source wired onto an existing
@@ -38,7 +40,7 @@ from graflo.architecture.evolution.canonical import (
 from graflo.architecture.evolution.merge import (
     MergeIdentityError,
     MergeNameConflictError,
-    merge_manifests,
+    merge_manifests_with_report,
 )
 from graflo.architecture.evolution.naming_graph import (
     build_naming,
@@ -49,9 +51,12 @@ from graflo.architecture.evolution.ops import MergeManifestsOp
 from graflo.architecture.evolution.preview import (
     MergeOutcome,
     MergePreview,
+    RoutingRow,
     outcome_from_exception,
     outcome_from_manifest,
     preview_merge,
+    routing_rows,
+    routing_table,
 )
 from graflo.architecture.profile import check_manifest
 from graflo.cli._store import append_entry, store_option
@@ -289,18 +294,25 @@ def merge(
         else None
     )
 
-    def emit(outcome: MergeOutcome, subjects: tuple[str, ...] = ()) -> None:
+    def emit(
+        outcome: MergeOutcome,
+        subjects: tuple[str, ...] = (),
+        routing: list[RoutingRow] | None = None,
+    ) -> None:
         if preview is None:
             return
+        attempted = preview.with_outcome(outcome, subjects=subjects)
+        if routing:
+            attempted = attempted.model_copy(update={"routing": routing})
         _write_preview(
-            preview.with_outcome(outcome, subjects=subjects),
+            attempted,
             plot_path=plot_path,
             json_path=preview_json_path,
             max_rows=max_rows,
         )
 
     try:
-        merged = merge_manifests(
+        merged, report = merge_manifests_with_report(
             left_manifest,
             right_manifest,
             op,
@@ -335,7 +347,8 @@ def merge(
             _echo_naming(left_manifest, right_manifest, op, err=True)
         raise SystemExit(EXIT_REFUSED)
 
-    emit(outcome_from_manifest(merged))
+    routing = routing_rows(merged, report)
+    emit(outcome_from_manifest(merged), routing=routing)
     for line in _summary(merged):
         click.echo(line)
 
@@ -355,6 +368,11 @@ def merge(
 
     if dry_run:
         _echo_naming(left_manifest, right_manifest, op, err=False)
+        lines = routing_table(routing)
+        if lines:
+            click.echo("routing:")
+        for line in lines:
+            click.echo(f"  {line}")
         click.echo("dry run: nothing written")
         return
 

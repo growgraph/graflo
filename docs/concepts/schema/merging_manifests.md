@@ -96,7 +96,7 @@ first:
 |---|---|
 | `--op FILE` | The merge op. Without it, the manifests are unioned as they are, which works when no name is on both sides. |
 | `-o FILE` | Where to write the merged manifest. Without it, only a summary is printed. |
-| `--dry-run` | Run the union, print every finding and the [naming table](#the-naming-table), and write nothing. |
+| `--dry-run` | Run the union, print every finding, the [naming table](#the-naming-table) and the [routing table](#the-routing-table), and write nothing. |
 | `--suggest FILE` | Write an op that settles every problem a rename or an `into` can settle, and exit. See [Suggesting the declarations](#suggesting-the-declarations). |
 | `--plot FILE`, `--preview-json FILE` | Draw the declarations and every conflict, or write them as JSON. Both are written even when the union refuses. See [Previewing every conflict](#previewing-every-conflict). |
 | `--canonical-map SIDE=PATH` | Add a vocabulary for `left`, `right` or `both`, on top of the maps in the op. Repeatable. |
@@ -125,6 +125,9 @@ union = merge_manifests(left, right, op)
 problem with the names is raised as one `MergeNamingError` that lists every
 such problem; to see the schema-level ones too, such as two members that
 disagree on their key, use [`preview_merge`](#previewing-every-conflict).
+`merge_manifests_with_report(left, right, op)` returns the manifest and a
+`MergeReport`: the key owners, the attached resources, the pinned references,
+the shared key spaces and any unmet resource order.
 
 ## Naming the merged type
 
@@ -347,14 +350,14 @@ renaming it, so a derivation keyed by `Press` still runs only for the rows a
 router sends to `Press`.
 
 When the identity is a funnel, a member the map joins that the identity gives
-no key source for its resource keeps its own key behind the tag `side:Type`,
-such as `left:Bench:B1`. Its records belong to `Machine`, but never fuse with a
-device. The preview lists each such key as an `auto_local_key` note, and
+no key source for its resource keeps its own key behind the tag
+`<origin>:Type`, such as `maintenance:Bench:B1`. Its records belong to
+`Machine`, but never fuse with a device. The preview lists each such key as an `auto_local_key` note, and
 [`--suggest`](#suggesting-the-declarations) writes it out so you can edit it.
 A resource that produces the member through routers in several roles, such as
 a link table whose source and target routers both reach it, gets no such key:
 one level has one transform buffer, which cannot hold a derived value per role.
-The union turns its steps into lookups of the merged type instead
+The union attaches it to the merged type by the member's own key instead
 (a `reference_only` note).
 
 A plain property key, such as `identity: [serial_number]`, has no place for an
@@ -476,19 +479,51 @@ still has no identity: it is not written, and the cast logs a warning such as
 ['serial_number']`. In the example, the conveyor `A2` has no serial number. A
 `local_key` branch keeps such records.
 
-Once the merged type has its new key, each member's own key becomes a
-[secondary identity](../glossary.md#secondary-identity) named `by_<fields>`, such
-as `by_asset_id`. A secondary identity is a lookup key: it does not decide which
-records become one vertex, but it lets a source that knows only the old key
-still find the vertex. Set `retire: keep` on the equivalence to leave the old
-key fields as plain properties instead.
+Once the merged type has its new key, each member's own key is demoted to a
+[secondary identity](../glossary.md#secondary-identity) named after its side's
+**origin**: the side's schema name, unless the op sets `origins`. Each key field
+`f` becomes the property `<origin>__f`. In the example, `Machine` has three
+identities:
+
+| Identity | Fields | Used for |
+|---|---|---|
+| `id` | the funnel digest | deciding which records become one vertex |
+| `maintenance` | `maintenance__asset_id` | finding a machine by its asset id |
+| `sensors` | `sensors__device_id` | finding a machine by its device id |
+
+A secondary identity is a lookup key: it does not decide which records become
+one vertex, but it lets a source that knows only the old key still find the
+vertex. The prefix keeps the two sides' keys apart even when both are called
+`id`. To name the origins yourself:
+
+```yaml
+origins: {left: maintenance, right: sensors}
+```
+
+- An origin is a letter followed by letters, digits or single underscores. The
+  two must differ, and neither may name a secondary identity a member declares
+  (`origin`).
+- A member whose `local_key` tag differs from its origin is its own key space:
+  its key is named by the tag (`<tag>__f`, identity `<tag>`). Members of one
+  side with the same key field and the same key space share one identity.
+- When one key space brings two different key fields to one type, each
+  identity is named `<space>__<fields>`.
+- A key listed as a property branch of `identity` is not demoted and keeps its
+  name. A key a member already declares as a secondary identity keeps that one.
+- A demoted key is named by its origin, so renaming it in `properties` or a
+  canonical map is refused (`double_home`).
+- `<origin>__f` must fit the database's identifier limit; PostgreSQL
+  truncates names longer than 63 characters.
+
+Set `retire: keep` on the equivalence to leave the old key fields as plain
+properties instead.
 
 ### The old key no longer deduplicates
 
 Before the union, two maintenance records with `asset_id: A1` were one vertex.
 After it, a record keys on the first branch it completes, so `A1` read once with
 a serial number and once without becomes two machines, one keyed by the serial
-number and one by `maintenance:A1`, and `by_asset_id` finds both. The funnel
+number and one by `maintenance:A1`, and the `maintenance` key finds both. The funnel
 fuses records on the branch they reach first, not on any key they happen to
 share.
 
@@ -524,9 +559,11 @@ the same value:
 - `local_key` is the fallback: a record with no derived attribute is keyed by
   its own key behind a tag, so `A2` from the maintenance system becomes
   `maintenance:A2`. The tag keeps two sources whose own keys overlap apart.
-  `tag` is required; write `tag: null` only when the values are already unique
-  across every source of the type, such as UUIDs. `name` (default `local_key`)
-  and `sep` (default `:`) sit beside `local_key`.
+  `tag` defaults to the side's origin; write `tag: null` only when the values
+  are already unique across every source of the type, such as UUIDs. A tag
+  other than the origin also names the member's
+  [key space](#keying-the-merged-type). `name` (default `local_key`) and `sep`
+  (default `:`) sit beside `local_key`.
 - `when` (optional, on a derivation or a local-key source) runs it only for
   records whose raw column holds one of the listed values:
   `when: {field: kind, in: [firm]}`.
@@ -634,17 +671,43 @@ The union refuses a derived branch (`AlignmentConflictError`) when:
   or local-key branch, or sits in a composite beside a property: derive that
   property too.
 
-A resource that writes the merged type, appears in no derived branch, and whose
-records complete no property branch could never fill any branch of the new
-key. The union turns its steps for that type into lookups, points its edges at
-the demoted key, and logs a warning that its records of that type are no longer
-written. That is right for a source that only refers to the type, and it is the
-only path for a resource that produces the type through routers in several
-roles. If the
-resource was meant to own records of the type, add it to a derived branch's
-`sources`. When no member key was demoted for such a resource to look the type
-up by, for example under `retire: keep`, the union refuses instead
-(`uncovered producer`).
+Every resource that writes a re-keyed type is one of two kinds:
+
+| Kind | Which resources | Its records |
+|---|---|---|
+| key owner | named in a derived branch's `sources`, or completing a property branch | compute the new key, and create and fuse vertices |
+| attached | every other resource that writes the type | find the vertex by their side's demoted key and write their properties onto it |
+
+The union marks an attached resource's steps with `find: maintenance`, or
+`find: {Machine: maintenance}` on a router, in every role it produces the type
+in. Its edges follow the same key. If the resource was meant to own records of
+the type, add it to a derived branch's `sources`.
+
+The rules:
+
+- Owners run first. The union orders the resources so that a type's owners
+  run before the resources attached to it, and every resource that writes a
+  type runs before the ones that only find it. When these constraints form a
+  cycle, the declared order is kept.
+- An attached record never creates a vertex. One that finds no vertex is
+  skipped and counted; one that finds several follows the ingestion model's
+  `endpoints_on_ambiguous` (`all`, the default, writes onto each). The counts
+  are in `DBWriter.stats` and logged at the end of the ingest.
+- A resource finds a type by one key space. One whose members' keys were
+  demoted to different identities is refused (`ambiguous reference`): tag the
+  members alike, or produce each from its own resource.
+- Under `retire: keep` no key is demoted to find the type by, so a resource
+  that would be attached is refused (`uncovered producer`).
+
+The limits:
+
+- An attached record whose vertex has not been written yet is not stored: one
+  in an earlier batch than its owner's record, or from a source read in no
+  fixed order.
+- The old key [no longer deduplicates](#the-old-key-no-longer-deduplicates).
+- Each batch looks each attached type up once by its key, and once more when
+  its edges resolve their endpoints.
+- A `find` step is refused on the bulk ingest path.
 
 ## How definitions combine
 
@@ -700,8 +763,8 @@ the merged schema is the other side's schema, copied as it is.
 A resource that only refers to a type, such as the work orders that name an
 asset, uses a `lookup_only` vertex step: it finds the vertex for an edge
 without writing it. After the union re-keys the type, that resource still
-carries only the old key. So the union points its edge steps at the demoted
-secondary identity:
+carries only the old key. So the union points its edge steps at its side's
+demoted key:
 
 ```yaml
 - name: work_orders
@@ -709,15 +772,26 @@ secondary identity:
   - vertex: WorkOrder
   - vertex: Machine
     lookup_only: true
+    from: {maintenance__asset_id: asset_id}
   - source: WorkOrder
     target: Machine
     relation: targets
-    target_match: by_asset_id
+    target_match: maintenance
 ```
 
 `target_match` (and `source_match`) tells an edge step to match that end on a
 secondary identity instead of the primary key. A vertex router refers the same
 way when it sets `lookup_only: true`, or lists the types it only looks up.
+
+`find` names the secondary identity on the vertex step instead, and every edge
+built from that step follows it:
+
+| Vertex step | Means |
+|---|---|
+| `find: maintenance` | write onto the vertex found by `maintenance`; never create one |
+| `find: maintenance`, `lookup_only: true` | find the vertex by `maintenance` for edges; write nothing |
+
+A router takes `find` per type: `find: {Machine: maintenance}`.
 
 ## Routed sources
 
@@ -750,7 +824,7 @@ declarations that would settle it, safest first. The refusal also prints the
 | `unknown_member`, `dangling` | a declaration names a type, relation, property or resource the side does not declare | use the side's own spelling; the message names a near match |
 | `unnamed_cluster`, `disagreement` | a group with no name, or with two | add or align `into` |
 | `cluster_overlap`, `shared_into`, `occupied_into` | a type in two equivalences, two unlinked groups on one name, a group on an unrelated type's name | see [One type, one group](#one-type-one-group) |
-| `double_home` | a `renames` entry for a type a group names | name it on its equivalence |
+| `double_home` | a `renames` entry for a type a group names, or a rename of a key the union demotes | name the type on its equivalence; leave the key to its [origin](#keying-the-merged-type) |
 | `incomplete`, `name_collision` | a type a map sends onto a group's name, or a name both sides carry | add the declaration its completion prints; `MergeNamingIncompleteError` |
 | `near_collision` | two spellings of one name | declare an equivalence, or `prefix_right` |
 | `identity_disagreement`, `identity_coverage` | two equivalences of one group declaring `identity`, or a member no key can be derived for | keep one `identity`; add the key source the repair carries |
@@ -766,6 +840,9 @@ The schema union refuses on its own after the names are settled:
 | Refusal | Cause | What to do |
 |---|---|---|
 | `MergeIdentityError` | members disagree on their key, a declared key some member cannot fill, or a funnel over a member declaring its `digest_field` | [declare the key](#keying-the-merged-type), or set `digest_field` |
+| `MergeIdentityError` (`origin`) | an origin that is not a valid name, two sides with one origin, or an origin a member's secondary identity already uses | set `origins` on the op |
+| `MergeIdentityError` (`key space`) | a member tagged differently by two resources, a tag that is not a valid name or names a member's secondary identity, or one key space on both sides | give the member one tag, or another one |
+| `MergeIdentityError` (`ambiguous reference`, finding `ambiguity`) | a resource that would find one type by two demoted keys | tag the members alike, or produce each from its own resource |
 | type or unit conflict | a property declared with two types or two units | retype or re-ground one side first |
 | `AlignmentConflictError` | a derived branch breaks [its rules](#rules-a-derived-branch-must-follow) | fix the derivation |
 
@@ -786,6 +863,24 @@ joins to a group), `rename`, `union_right` or `own name`. Two rows on one
 merged name are one type; a `<- conflict` mark says nothing links them. In
 Python, `build_naming(op, left=..., right=...)` returns the graph and every
 finding without raising, and `naming_table(result.graph)` renders it.
+
+### The routing table
+
+When the union succeeds, `--dry-run` also prints, for each re-keyed type,
+every resource that produces it, its role and the key it uses:
+
+```text
+routing:
+  merged   resource     side   members  role       key
+  Machine  assets       left   Asset    owner      id
+           devices      right  Device   owner      id
+           work_orders  left   Asset    reference  maintenance
+```
+
+`role` is `owner`, `attached` or `reference`; an owner's key is the primary
+identity, the others name the secondary identity they find the type by. In
+Python, `preview_merge(...).routing` holds the rows, and
+`routing_table(rows)` renders them.
 
 ### Suggesting the declarations
 
@@ -816,7 +911,11 @@ for finding in preview.blocking:
 A finding has one of three severities: `refusal` is one the union raised,
 `possible` is one the preview found on its own, and `note` records an accepted
 default, such as an `into` overriding the vocabulary, an automatic own key, or
-a map entry taken as already applied. `blocking` lists the first two; an empty
+a map entry taken as already applied. Three notes describe resources a union
+changes: `attached` (a resource that now finds a type instead of creating it),
+`shared_key_space` (members of one side whose keys became one identity) and
+`attach_order` (a resource that runs before the one whose vertices it finds,
+because the order constraints form a cycle). `blocking` lists the first two; an empty
 list means the union would succeed. A finding that a declaration would settle
 carries it as `completion`. The preview also holds the declaration graph: each
 side's types and properties, the groups over them, and where each name goes.

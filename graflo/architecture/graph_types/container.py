@@ -57,6 +57,10 @@ class GraphContainer(ConfigBaseModel):
         vertices: Dictionary mapping vertex names to lists of vertex data
         edges: Dictionary mapping edge IDs to lists of edge data
         linear: List of default dictionaries containing linear data
+        attached: Documents written onto existing vertices found by a secondary
+            identity, never creating one, by class
+        attached_by: The secondary identity each class in ``attached`` is
+            found by
     """
 
     vertices: dict[VertexName, list] = Field(default_factory=dict)
@@ -64,6 +68,8 @@ class GraphContainer(ConfigBaseModel):
     linear: list[defaultdict[str | tuple[str, str, str | None], list[Any]]] = Field(
         default_factory=list
     )
+    attached: dict[VertexName, list] = Field(default_factory=dict)
+    attached_by: dict[VertexName, str] = Field(default_factory=dict)
 
     @field_serializer("edges", when_used="json-unless-none")
     def _serialize_edges(
@@ -106,20 +112,27 @@ class GraphContainer(ConfigBaseModel):
         return ItemsView(self)
 
     def pick_unique(self):
-        """Remove duplicate entries from vertices and edges."""
+        """Remove duplicate entries from vertices, attached documents and edges."""
         for k, v in self.vertices.items():
             self.vertices[k] = pick_unique_dict(v)
+        for k, v in self.attached.items():
+            self.attached[k] = pick_unique_dict(v)
         for k, v in self.edges.items():
             self.edges[k] = pick_unique_dict(v)
 
     @classmethod
     def from_docs_list(
-        cls, list_default_dicts: list[defaultdict[GraphEntity, list]]
+        cls,
+        list_default_dicts: list[defaultdict[GraphEntity, list]],
+        attached: list[dict[VertexName, list]] | None = None,
+        attached_by: dict[VertexName, str] | None = None,
     ) -> GraphContainer:
         """Create a GraphContainer from a list of default dictionaries.
 
         Args:
             list_default_dicts: List of default dictionaries containing vertex and edge data
+            attached: Per-document attached documents by class, folded in order
+            attached_by: The selector each attached class is found by
 
         Returns:
             New GraphContainer instance
@@ -144,8 +157,14 @@ class GraphContainer(ConfigBaseModel):
                             f"edge key must be (str, str, str|None), got {k}"
                         )
                     edict[k].extend(v)
+        adict: defaultdict[str, list] = defaultdict(list)
+        for per_doc in attached or ():
+            for k, v in per_doc.items():
+                adict[k].extend(v)
         return GraphContainer(
             vertices=dict(vdict.items()),
             edges=dict(edict.items()),
             linear=list_default_dicts,
+            attached=dict(adict.items()),
+            attached_by=dict(attached_by or {}),
         )

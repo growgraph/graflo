@@ -7,10 +7,10 @@ schema:
             vertices:
             -   name: Machine
                 properties:
-                -   name: asset_id
+                -   name: maintenance__asset_id
                 -   name: serial_number
                 -   name: name
-                -   name: device_id
+                -   name: sensors__device_id
                 -   name: model
                 -   name: match_key
                 -   name: local_key
@@ -26,12 +26,12 @@ schema:
                         fields:
                         -   local_key
                 secondary_identities:
-                -   name: by_asset_id
+                -   name: maintenance
                     fields:
-                    -   asset_id
-                -   name: by_device_id
+                    -   maintenance__asset_id
+                -   name: sensors
                     fields:
-                    -   device_id
+                    -   sensors__device_id
             -   name: ProductionLine
                 properties:
                 -   name: asset_id
@@ -43,11 +43,9 @@ schema:
         vertex_indexes:
             Machine:
             -   fields:
-                -   asset_id
-                unique: false
+                -   maintenance__asset_id
             -   fields:
-                -   device_id
-                unique: false
+                -   sensors__device_id
 ingestion_model:
     resources:
     -   name: register
@@ -59,6 +57,9 @@ ingestion_model:
                     line: ProductionLine
                     Machine: Machine
                     ProductionLine: ProductionLine
+                vertex_from_map:
+                    Machine:
+                        maintenance__asset_id: asset_id
                 type_map_only: true
         -   transform:
                 call:
@@ -72,6 +73,7 @@ ingestion_model:
                 when:
                     field: type
                     in:
+                    -   Machine
                     -   machine
         -   transform:
                 call:
@@ -87,6 +89,7 @@ ingestion_model:
                 when:
                     field: type
                     in:
+                    -   Machine
                     -   machine
     -   name: devices
         pipeline:
@@ -94,6 +97,7 @@ ingestion_model:
             type: vertex
             from:
                 serial_number: serial
+                sensors__device_id: device_id
         -   transform:
                 call:
                     module: graflo.util.transform

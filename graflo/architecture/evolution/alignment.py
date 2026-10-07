@@ -59,13 +59,14 @@ import dataclasses
 import logging
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from graflo.architecture.contract.ingestion.resource import (
     find_vertex_producing_levels,
     is_pass_through_router,
     is_unbounded_router,
     resolve_pipeline_level,
+    step_finds,
     step_looks_up,
     step_produces_vertices,
 )
@@ -271,8 +272,8 @@ def _across_roles(
         f"reading {type_fields}; a level's transform buffer is shared by every "
         "router at it, so one derived attribute cannot hold a different value "
         "per role",
-        "Leave the resource out of the branch's sources — merge turns its steps "
-        "into lookups by the members' own keys — or produce each role in its "
+        "Leave the resource out of the branch's sources — merge attaches it to "
+        "the class by the members' own keys — or produce each role in its "
         "own resource.",
     )
 
@@ -952,8 +953,9 @@ def uncovered_producers(
     property branch. *completes_property_branch* answers that per resource
     (merge knows each member's properties); without it, a plan with any
     property branch is taken to cover every resource. A resource whose steps
-    producing the class only look it up (``lookup_only``, on a vertex step or
-    a router) upserts nothing and is not listed.
+    producing the class only look it up (``lookup_only``) or find it by a
+    secondary identity (``find``), on a vertex step or a router, creates
+    nothing and is not listed.
     """
     covered = _referenced_resources(plan)
     known = _vertex_set(manifest)
@@ -963,6 +965,7 @@ def uncovered_producers(
             continue
         if not any(
             not step_looks_up(step, plan.vertex)
+            and step_finds(step, plan.vertex) is None
             for step in _steps_producing_anywhere(pipeline, plan.vertex, known)
         ):
             continue
@@ -990,9 +993,11 @@ def _check_uncovered_producers(
             "its identity branches there, so every record they upsert would "
             "complete no branch and be dropped",
             "Add a resource whose rows carry the inputs to a derived branch's "
-            "sources; mark the step of one that only references the class "
-            "`lookup_only` (on a vertex_router, `lookup_only: "
-            f"[{plan.vertex}]`). Merge does the latter itself.",
+            "sources; give the step of one that writes onto the class by "
+            "another key `find: <secondary identity>` (on a vertex_router, "
+            f"`find: {{{plan.vertex}: <secondary identity>}}`), and mark one "
+            "that only references it `lookup_only`. Merge attaches it by its "
+            "own key itself.",
         )
 
 
@@ -1181,6 +1186,7 @@ def identity_to_ops(
     member_identity: Collection[str] | None = None,
     uncovered_producers: Literal["refuse", "allow"] = "refuse",
     completes_property_branch: Callable[[str], bool] | None = None,
+    origins: Mapping[Side, str] | None = None,
 ) -> list[ManifestOp]:
     """Lower *plan* to an ordered list of fundamental ops.
 
@@ -1188,7 +1194,9 @@ def identity_to_ops(
     :func:`~graflo.architecture.evolution.apply.apply_evolution`. When
     *manifest* is given, :func:`validate_identity` runs first. Member-keyed
     sources need *sides* (the pre-merge manifests) to resolve how each
-    resource produces each member; ``merge_manifests`` passes them.
+    resource produces each member; ``merge_manifests`` passes them. A
+    ``local_key`` source with no ``tag`` is tagged with the origin of its
+    resource's side: *origins* keyed by side, resolved through *sides*.
     """
     if manifest is not None:
         validate_identity(
@@ -1234,6 +1242,8 @@ def identity_to_ops(
                     resource,
                     productions=productions,
                     class_guard=class_guards.get(resource),
+                    sides=sides,
+                    origins=origins,
                 )
             )
     if additions:
@@ -1303,12 +1313,29 @@ def _call_step(
     return {"transform": transform}
 
 
+def _origin_tag(
+    resource: str, sides: SideManifests | None, origins: Mapping[Side, str] | None
+) -> str:
+    """The tag an untagged ``local_key`` source of *resource* takes: its side's origin."""
+    if sides is None or origins is None:
+        raise _conflict(
+            "local key without a tag",
+            f"the local_key source for resource {resource!r} sets no tag, and "
+            "only a merge knows the origin it defaults to",
+            "Set `tag`, or `tag: null` to keep the raw values.",
+        )
+    side, _ = _side_of(resource, sides)
+    return origins[cast(Side, side)]
+
+
 def _branch_steps(
     branch: SteppedBranch,
     resource: str,
     *,
     productions: MemberProductions,
     class_guard: dict[str, Any] | None,
+    sides: SideManifests | None = None,
+    origins: Mapping[Side, str] | None = None,
 ) -> list[dict[str, Any]]:
     """The steps *resource* derives *branch*'s attribute with, in order.
 
@@ -1344,11 +1371,16 @@ def _branch_steps(
             )
         else:
             assert isinstance(branch, LocalKeyBranch)
+            tag = (
+                spec.tag
+                if spec.tag is not None
+                else _origin_tag(resource, sides, origins)
+            )
             steps.append(
                 _call_step(
                     module="graflo.util.transform",
                     foo="tagged_key",
-                    params={"tag": spec.tag, "sep": branch.sep},
+                    params={"tag": tag, "sep": branch.sep},
                     output=branch.name,
                     input_fields=[spec.field],
                     when=guard,

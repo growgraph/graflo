@@ -225,6 +225,26 @@ class TestRouterLookupOnly:
             _routed({**PER_CLASS_ROUTER, "lookup_only": ["Ghost"]})
 
 
+class TestRouterFind:
+    def test_found_classes_attach_and_the_rest_are_written(self) -> None:
+        manifest = _routed({**PER_CLASS_ROUTER, "find": {"ClassA": "by_code"}})
+        graph = _cast(manifest)
+        assert graph.attached["ClassA"] == [{"code": "K1"}]
+        assert graph.attached_by == {"ClassA": "by_code"}
+        assert not graph.vertices.get("ClassA")
+        assert [dict(d) for d in graph.vertices["ClassC"]] == [{"x_id": "k9"}]
+        assert _targets(graph, TARGETS_A) == [{"code": "K1"}]
+        assert _targets(graph, TARGETS_C) == [{"x_id": "k9"}]
+
+    def test_a_found_class_the_schema_does_not_declare_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="Ghost"):
+            _routed({**PER_CLASS_ROUTER, "find": {"Ghost": "by_code"}})
+
+    def test_a_selector_its_class_does_not_declare_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="ClassC.*by_code|by_code.*ClassC"):
+            _routed({**PER_CLASS_ROUTER, "find": {"ClassC": "by_code"}})
+
+
 def test_cast_logs_what_it_prunes_for_want_of_an_identity(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -289,6 +309,85 @@ class TestEvolutionKeepsRoutedReferences:
             apply_evolution(
                 self._referencing(),
                 [RemoveSecondaryIdentitiesOp(removals={"ClassA": ["by_code"]})],
+            )
+
+    @staticmethod
+    def _finding() -> GraphManifest:
+        return _routed({**PER_CLASS_ROUTER, "find": {"ClassA": "by_code"}})
+
+    @staticmethod
+    def _vertex_finding() -> GraphManifest:
+        return _manifest(
+            {"vertex": "ClassA", "find": "by_code"},
+            {"vertex": "WorkOrder"},
+            {"source": "WorkOrder", "target": "ClassA", "relation": "targets"},
+        )
+
+    def test_a_rename_reaches_a_routers_find(self) -> None:
+        from graflo.architecture.evolution import RenameVerticesOp, apply_evolution
+
+        renamed = apply_evolution(
+            self._finding(), [RenameVerticesOp(renames={"ClassA": "Asset"})]
+        )
+        router, _edge = _router_and_edge(renamed)
+        assert router["find"] == {"Asset": "by_code"}
+
+    def test_a_rename_keeps_a_vertex_steps_find(self) -> None:
+        from graflo.architecture.evolution import RenameVerticesOp, apply_evolution
+
+        renamed = apply_evolution(
+            self._vertex_finding(), [RenameVerticesOp(renames={"ClassA": "Asset"})]
+        )
+        step = renamed.require_ingestion_model().resources[0].pipeline[0]
+        assert step == {"vertex": "Asset", "find": "by_code"}
+
+    def test_renaming_the_secondarys_field_keeps_find_working(self) -> None:
+        from graflo.architecture.evolution import (
+            RenameVertexPropertiesOp,
+            apply_evolution,
+        )
+
+        renamed = apply_evolution(
+            self._finding(),
+            [RenameVertexPropertiesOp(renames={"ClassA": {"code": "asset_code"}})],
+        )
+        router, _edge = _router_and_edge(renamed)
+        assert router["find"] == {"ClassA": "by_code"}
+        assert _cast(renamed).attached["ClassA"] == [{"asset_code": "K1"}]
+
+    def test_a_removal_drops_the_class_from_find(self) -> None:
+        from graflo.architecture.evolution import RemoveVerticesOp, apply_evolution
+
+        trimmed = apply_evolution(self._finding(), [RemoveVerticesOp(names=["ClassA"])])
+        router, _edge = _router_and_edge(trimmed)
+        assert not router.get("find")
+
+    @pytest.mark.parametrize("manifest", ["_finding", "_vertex_finding"])
+    def test_a_secondary_a_find_uses_is_not_removed(self, manifest: str) -> None:
+        from graflo.architecture.evolution import (
+            RemoveSecondaryIdentitiesOp,
+            apply_evolution,
+        )
+
+        with pytest.raises(ValueError, match="still selected"):
+            apply_evolution(
+                getattr(self, manifest)(),
+                [RemoveSecondaryIdentitiesOp(removals={"ClassA": ["by_code"]})],
+            )
+
+    def test_merging_a_found_class_with_a_written_one_is_refused(self) -> None:
+        from graflo.architecture.evolution import MergeVerticesOp, apply_evolution
+
+        with pytest.raises(ValueError, match="finds by a secondary identity"):
+            apply_evolution(
+                self._finding(),
+                [
+                    MergeVerticesOp(
+                        sources=["ClassA", "ClassC"],
+                        into="Asset",
+                        allow_observation_fusion=True,
+                    )
+                ],
             )
 
     def test_pin_to_retired_reaches_a_role_endpoint_for_that_class_only(self) -> None:

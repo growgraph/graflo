@@ -31,4 +31,8 @@ class ActorExecutor:
         return self.root.assemble(assembly_ctx)
 
     def assemble_result(self, extraction_ctx: ExtractionContext) -> GraphAssemblyResult:
-        return GraphAssemblyResult(entities=self.assemble(extraction_ctx))
+        assembly_ctx = AssemblyContext.from_extraction(extraction_ctx)
+        entities = self.root.assemble(assembly_ctx)
+        return GraphAssemblyResult(
+            entities=entities, attached=dict(assembly_ctx.acc_attached)
+        )

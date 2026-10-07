@@ -67,6 +67,10 @@ class _FakeResource:
     def edge_derivation(self) -> EdgeDerivationRegistry:
         return EdgeDerivationRegistry()
 
+    @property
+    def attached_selectors(self) -> dict[str, str]:
+        return {}
+
     def collect_vertex_names(self) -> set[str]:
         return {"v_test"}
 

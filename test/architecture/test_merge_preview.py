@@ -22,6 +22,8 @@ from graflo.architecture.evolution.ops import (
     DerivationSpec,
     DerivedBranch,
     FieldTypeSpec,
+    LocalKeyBranch,
+    LocalKeySource,
     MergeFieldTypes,
     MergeManifestsOp,
     PropertyEquivalence,
@@ -33,6 +35,7 @@ from graflo.architecture.evolution.preview import (
     expected_kinds,
     kind_for_check,
     preview_merge,
+    routing_table,
 )
 from graflo.architecture.schema.vertex import FieldType
 
@@ -84,18 +87,24 @@ _EACH_OWN_KEY: list = ["company_id", "shop_id", "org_id", "branch_id"]
 
 
 def _keyed(canonical_map: CanonicalMap, **updates) -> MergeManifestsOp:
-    """The boundary cluster with its identity settled, so it merges."""
-    return MergeManifestsOp(
-        vertex_equivalences=[
+    """The boundary cluster with its identity settled, so it merges.
+
+    Each member's own key is demoted beside the funnel and named by its
+    origin; the fixtures' schema names (``source-a``) are not identifiers.
+    """
+    payload: dict = {
+        "vertex_equivalences": [
             VertexEquivalence(
                 left=["Firm", "Shop"],
                 right=["Org", "Branch"],
                 identity=_EACH_OWN_KEY,
             )
         ],
-        canonical_maps={"left": canonical_map},
+        "canonical_maps": {"left": canonical_map},
+        "origins": {"left": "source_a", "right": "source_b"},
         **updates,
-    )
+    }
+    return MergeManifestsOp(**payload)
 
 
 # ── the graph ───────────────────────────────────────────────────────────────
@@ -648,6 +657,108 @@ def _edge_pair(
     )
 
 
+def _rekeyed_pair(
+    left_name: str, right_name: str, *, left_vertex: dict | None = None
+) -> tuple[GraphManifest, GraphManifest, MergeManifestsOp]:
+    """``A ~ B`` re-keyed on ``q``: each member's ``p`` is named by its origin."""
+    return (
+        _schema_manifest(left_name, [left_vertex or _natural("A")], []),
+        _schema_manifest(right_name, [_natural("B")], []),
+        MergeManifestsOp(
+            vertex_equivalences=[
+                VertexEquivalence(left="A", right="B", into="Party", identity=["q"])
+            ]
+        ),
+    )
+
+
+def _key_space_pair(
+    left_tag: str,
+    other_left_tag: str,
+    *,
+    l1_secondaries: list[dict] | None = None,
+    both_router: bool = False,
+) -> tuple[GraphManifest, GraphManifest, MergeManifestsOp]:
+    """``[L1, L2] ~ R`` on a derived name; ``L1`` and ``L2`` key on ``lid``, tagged as given.
+
+    *both_router* adds ``r_both``, a router writing both left members that no
+    derived branch names: it is attached by their keys.
+    """
+
+    def side(
+        name: str, vertices: list[dict], extra: list[dict] | None = None
+    ) -> GraphManifest:
+        manifest = GraphManifest.from_config(
+            {
+                "schema": {
+                    "metadata": {"name": name, "version": "1.0.0"},
+                    "graph": {
+                        "vertex_config": {"vertices": vertices},
+                        "edge_config": {"edges": []},
+                    },
+                },
+                "ingestion_model": {
+                    "resources": [
+                        {
+                            "name": f"r_{v['name'].lower()}",
+                            "pipeline": [{"vertex": v["name"]}],
+                        }
+                        for v in vertices
+                    ]
+                    + (extra or [])
+                },
+            }
+        )
+        manifest.finish_init()
+        return manifest
+
+    def keyed(name: str, key: str, **extra: object) -> dict:
+        return {"name": name, "properties": [key, "name"], "identity": [key], **extra}
+
+    l1 = keyed("L1", "lid", secondary_identities=l1_secondaries or [])
+    router = {
+        "name": "r_both",
+        "pipeline": [
+            {
+                "vertex_router": {
+                    "type_field": "kind",
+                    "type_map": {"l1": "L1", "l2": "L2"},
+                    "type_map_only": True,
+                }
+            }
+        ],
+    }
+    return (
+        side("kl", [l1, keyed("L2", "lid")], [router] if both_router else None),
+        side("kr", [keyed("R", "rid")]),
+        MergeManifestsOp(
+            vertex_equivalences=[
+                VertexEquivalence(
+                    left=["L1", "L2"],
+                    right="R",
+                    into="Asset",
+                    identity=[
+                        DerivedBranch(
+                            name="name_key",
+                            sources={
+                                r: DerivationSpec(input=["name"])
+                                for r in ("r_l1", "r_l2", "r_r")
+                            },
+                        ),
+                        LocalKeyBranch(
+                            local_key={
+                                "r_l1": LocalKeySource(field="lid", tag=left_tag),
+                                "r_l2": LocalKeySource(field="lid", tag=other_left_tag),
+                                "r_r": LocalKeySource(field="rid"),
+                            }
+                        ),
+                    ],
+                )
+            ]
+        ),
+    )
+
+
 def _union_cases() -> dict[str, tuple[GraphManifest, GraphManifest, MergeManifestsOp]]:
     """One case per rule ``merge_core`` and ``union_field_lists`` refuse on."""
     shared_left, shared_right, union_op = _edge_pair(
@@ -709,6 +820,24 @@ def _union_cases() -> dict[str, tuple[GraphManifest, GraphManifest, MergeManifes
                 "identity": ["p"],
             },
         ),
+        # A local_key tag names the key space of a member's ids: `o:ne` cannot.
+        "key-space-invalid-tag": _key_space_pair("o:ne", "two"),
+        # A tag naming a secondary identity a member declares.
+        "key-space-named-like-a-secondary": _key_space_pair(
+            "sec", "sec", l1_secondaries=[{"name": "sec", "fields": ["name"]}]
+        ),
+        # A router writing members in two key spaces cannot find by one key.
+        "attached-across-key-spaces": _key_space_pair("one", "two", both_router=True),
+        # A re-keyed cluster demotes both members' `p`, named by the origins.
+        "origin-invalid-name": _rekeyed_pair("union-left", "union-right"),
+        "origin-equal-names": _rekeyed_pair("same", "same"),
+        "origin-named-like-a-secondary": _rekeyed_pair(
+            "l",
+            "r",
+            left_vertex=_natural(
+                "A", secondary_identities=[{"name": "l", "fields": ["q"]}]
+            ),
+        ),
         "edge-kind-clash": _edge_pair(
             {"source": "A", "target": "X", "relation": "r"},
             {
@@ -758,6 +887,14 @@ def _clean_cases() -> dict[str, tuple[GraphManifest, GraphManifest, MergeManifes
         _schema_manifest("union-left", [_natural("Same")], []),
         _schema_manifest("union-right", [_natural("Same")], []),
         MergeManifestsOp(name_conflict="prefix_right"),
+    )
+    cases["key-space-tags-agree"] = _key_space_pair("kl", "kl")
+    cases["key-space-tags-differ"] = _key_space_pair("one", "two")
+    rekeyed_left, rekeyed_right, rekeyed_op = _rekeyed_pair("same", "same")
+    cases["origin-equal-names-set-on-the-op"] = (
+        rekeyed_left,
+        rekeyed_right,
+        rekeyed_op.model_copy(update={"origins": {"left": "l", "right": "r"}}),
     )
     cases["untyped-side-gives-way"] = _pair(
         {
@@ -859,6 +996,50 @@ def test_whatever_compose_refuses_the_structural_pass_also_found(
     )
 
 
+@pytest.mark.parametrize(
+    "case",
+    ["origin-invalid-name", "origin-equal-names", "origin-named-like-a-secondary"],
+)
+def test_an_origin_no_demoted_key_can_be_named_by_is_refused_and_found(case):
+    case_left, case_right, op = _union_cases()[case]
+
+    attempted = preview_merge(case_left, case_right, op)
+    alone = preview_merge(case_left, case_right, op, attempt=False)
+
+    assert attempted.outcome.status == "refused"
+    assert attempted.outcome.check == "origin"
+    assert "origin" in {f.kind for f in alone.findings if f.severity == "possible"}
+
+
+def test_a_tag_that_cannot_name_a_key_space_is_refused_and_found():
+    case_left, case_right, op = _union_cases()["key-space-invalid-tag"]
+
+    attempted = preview_merge(case_left, case_right, op)
+    alone = preview_merge(case_left, case_right, op, attempt=False)
+
+    assert attempted.outcome.status == "refused"
+    assert attempted.outcome.check == "key space"
+    assert "key_space" in {f.kind for f in alone.findings if f.severity == "possible"}
+
+
+@pytest.mark.parametrize(
+    ("case", "check", "kind"),
+    [
+        ("key-space-named-like-a-secondary", "key space", "key_space"),
+        ("attached-across-key-spaces", "ambiguous reference", "ambiguity"),
+    ],
+)
+def test_a_key_space_refusal_is_found_without_merging(case, check, kind):
+    case_left, case_right, op = _union_cases()[case]
+
+    attempted = preview_merge(case_left, case_right, op)
+    alone = preview_merge(case_left, case_right, op, attempt=False)
+
+    assert attempted.outcome.status == "refused"
+    assert attempted.outcome.check == check
+    assert kind in {f.kind for f in alone.findings if f.severity == "possible"}
+
+
 @pytest.mark.parametrize("case", sorted(_cases(CanonicalMap())))
 def test_a_preview_survives_a_round_trip_through_json(case, left, right, canonical_map):
     """It is an API payload as much as a picture, so it has to serialize."""
@@ -870,6 +1051,169 @@ def test_a_preview_survives_a_round_trip_through_json(case, left, right, canonic
     assert restored.to_dict() == payload
     assert len(restored.nodes) == len(preview.nodes)
     assert restored.outcome.status == preview.outcome.status
+
+
+# ── attached producers and the routing table ────────────────────────────────
+
+
+def _attach_triple() -> tuple[GraphManifest, GraphManifest, MergeManifestsOp]:
+    """``[L1, L2] ~ R`` on a derived name, with a resource of every role.
+
+    ``r_l1``, ``r_l2`` and ``r_r`` own the key; ``r_both`` routes both left
+    members without a derived branch, so it is attached; ``r_ref`` only looks
+    ``L1`` up, so it is a pinned reference. ``r_both`` also writes ``Z``, which
+    ``r_l1`` looks up: owner before attacher and writer before referrer form a
+    cycle, so the declared order is kept.
+    """
+
+    def side(
+        name: str, vertices: list[dict], resources: list[dict], edges: list[dict]
+    ) -> GraphManifest:
+        manifest = GraphManifest.from_config(
+            {
+                "schema": {
+                    "metadata": {"name": name, "version": "1.0.0"},
+                    "graph": {
+                        "vertex_config": {"vertices": vertices},
+                        "edge_config": {"edges": edges},
+                    },
+                },
+                "ingestion_model": {"resources": resources},
+            }
+        )
+        manifest.finish_init()
+        return manifest
+
+    def keyed(name: str, key: str) -> dict:
+        return {"name": name, "properties": [key, "name"], "identity": [key]}
+
+    left = side(
+        "kl",
+        [keyed("L1", "lid"), keyed("L2", "lid"), keyed("Z", "zid")],
+        [
+            {
+                "name": "r_both",
+                "pipeline": [
+                    {
+                        "vertex_router": {
+                            "type_field": "kind",
+                            "type_map": {"l1": "L1", "l2": "L2"},
+                            "type_map_only": True,
+                        }
+                    },
+                    {"vertex": "Z"},
+                ],
+            },
+            {
+                "name": "r_l1",
+                "pipeline": [{"vertex": "L1"}, {"vertex": "Z", "lookup_only": True}],
+            },
+            {"name": "r_l2", "pipeline": [{"vertex": "L2"}]},
+            {
+                "name": "r_ref",
+                "pipeline": [
+                    {"vertex": "Z"},
+                    {"vertex": "L1", "lookup_only": True},
+                    {"source": "L1", "target": "Z"},
+                ],
+            },
+        ],
+        [{"source": "L1", "target": "Z"}],
+    )
+    right = side(
+        "kr", [keyed("R", "rid")], [{"name": "r_r", "pipeline": [{"vertex": "R"}]}], []
+    )
+    op = MergeManifestsOp(
+        vertex_equivalences=[
+            VertexEquivalence(
+                left=["L1", "L2"],
+                right="R",
+                into="Asset",
+                identity=[
+                    DerivedBranch(
+                        name="name_key",
+                        sources={
+                            r: DerivationSpec(input=["name"])
+                            for r in ("r_l1", "r_l2", "r_r")
+                        },
+                    ),
+                    LocalKeyBranch(
+                        local_key={
+                            "r_l1": LocalKeySource(field="lid"),
+                            "r_l2": LocalKeySource(field="lid"),
+                            "r_r": LocalKeySource(field="rid"),
+                        }
+                    ),
+                ],
+            )
+        ]
+    )
+    return left, right, op
+
+
+def test_an_attaching_merge_notes_attached_resources_shared_spaces_and_unmet_order():
+    left, right, op = _attach_triple()
+
+    preview = preview_merge(left, right, op)
+
+    assert preview.outcome.status == "merged", preview.outcome.message
+    assert not preview.blocking, [f.message for f in preview.blocking]
+    notes = {f.kind: f for f in preview.findings if f.severity == "note"}
+    assert "r_both" in notes["attached"].message
+    assert "'kl'" in notes["attached"].message
+    assert "L1" in notes["shared_key_space"].message
+    assert "L2" in notes["shared_key_space"].message
+    order = [f.message for f in preview.findings if f.kind == "attach_order"]
+    assert any(m.startswith("resource 'r_both' runs before 'r_l1'") for m in order)
+
+
+def test_a_merge_with_nothing_attached_carries_no_attach_notes(
+    left, right, canonical_map
+):
+    preview = preview_merge(left, right, _keyed(canonical_map))
+
+    assert preview.outcome.status == "merged", preview.outcome.message
+    kinds = {f.kind for f in preview.findings}
+    assert not kinds & {"attached", "shared_key_space", "attach_order"}
+
+
+def test_the_routing_table_names_every_producer_of_a_merged_class_by_role():
+    left, right, op = _attach_triple()
+
+    preview = preview_merge(left, right, op)
+
+    routes = {
+        (row.resource, row.side): (row.vertex, row.members, row.role, row.key)
+        for row in preview.routing
+    }
+    assert routes[("r_l1", "left")] == ("Asset", ("L1",), "owner", "id")
+    assert routes[("r_l2", "left")] == ("Asset", ("L2",), "owner", "id")
+    assert routes[("r_r", "right")] == ("Asset", ("R",), "owner", "id")
+    assert routes[("r_both", "left")] == ("Asset", ("L1", "L2"), "attached", "kl")
+    assert routes[("r_ref", "left")] == ("Asset", ("L1",), "reference", "kl")
+
+
+def test_the_routing_table_renders_one_block_per_merged_class():
+    left, right, op = _attach_triple()
+
+    lines = routing_table(preview_merge(left, right, op).routing)
+
+    assert lines[0].split() == ["merged", "resource", "side", "members", "role", "key"]
+    assert lines[1].split()[0] == "Asset", "a block opens with its class"
+    attached = next(line for line in lines if "r_both" in line)
+    assert attached.split()[-5:] == ["left", "L1,", "L2", "attached", "kl"]
+    assert routing_table([]) == []
+
+
+def test_routing_rows_survive_a_round_trip_through_json():
+    left, right, op = _attach_triple()
+    preview = preview_merge(left, right, op)
+
+    payload = preview.to_dict()
+    restored = MergePreview.model_validate(json.loads(json.dumps(payload)))
+
+    assert restored.routing == preview.routing
+    assert restored.to_dict() == payload
 
 
 # ── classification ──────────────────────────────────────────────────────────
@@ -884,6 +1228,8 @@ def test_a_preview_survives_a_round_trip_through_json(case, left, right, canonic
         ("identity disagreement", "identity_disagreement"),
         ("identity coverage", "identity_coverage"),
         ("identity collision", "identity_collision"),
+        ("origin", "origin"),
+        ("key space", "key_space"),
         # What the schema union refuses.
         ("field type conflict", "type_conflict"),
         ("field units conflict", "unit_conflict"),

@@ -116,6 +116,9 @@ the keys:
       line: ProductionLine
       Machine: Machine
       ProductionLine: ProductionLine
+    vertex_from_map:
+      Machine:
+        maintenance__asset_id: asset_id
     type_map_only: true
 - transform:
     call:
@@ -129,17 +132,20 @@ the keys:
     when:
       field: type
       in:
+      - Machine
       - machine
 # the step that computes local_key follows, with the same `when`
 ```
 
 The router is not split. GraFlo adds the type names themselves to `type_map`
 and closes the table with `type_map_only: true`, so the router accepts the same
-`type` values as before and no others.
+`type` values as before and no others. `vertex_from_map` stores a machine's
+`asset_id` as `maintenance__asset_id`, the lookup key `maintenance`, beside the
+device's `sensors__device_id`; a production line keeps `asset_id`.
 
-Each key step carries `when: {field: type, in: [machine]}`. GraFlo derived that
-condition from the router: the step runs only for the rows the router sends to
-`Machine`, and a production line row never gets a key.
+Each key step carries `when: {field: type, in: [Machine, machine]}`. GraFlo
+derived that condition from the router: the step runs only for the rows the
+router sends to `Machine`, and a production line row never gets a key.
 
 ## What you should see
 

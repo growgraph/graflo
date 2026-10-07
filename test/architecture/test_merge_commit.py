@@ -181,6 +181,72 @@ class TestReplay:
 
         assert manifest_hash(checkout(left, history, entry.id)) == manifest_hash(merged)
 
+    def test_a_rekeying_merge_replays_from_its_first_parent(self) -> None:
+        """The origin-named keys are part of the left relabel the commit records."""
+        left, right = _keyed("Machine", "plant"), _keyed("Device", "sensors")
+        op = MergeManifestsOp.model_validate(
+            {
+                "vertex_equivalences": [
+                    {
+                        "left": "Machine",
+                        "right": "Device",
+                        "into": "Machine",
+                        "identity": ["serial"],
+                    }
+                ]
+            }
+        )
+        merged = merge_manifests(left, right, op, bump_version=False)
+        assert "plant__machine_id" in (
+            merged.graph_schema.core_schema.vertex_config["Machine"].property_names
+            if merged.graph_schema is not None
+            else []
+        )
+
+        left_root = build_root_commit(left, scope="left")
+        right_root = build_root_commit(right, scope="right")
+        entry = build_merge_commit(
+            left,
+            merged,
+            parents=[left_root.id, right_root.id],
+            recipe=build_merge_recipe(left, right, op),
+            right=right,
+        )
+        history = History(commits=[left_root, right_root, entry])
+
+        assert manifest_hash(checkout(left, history, entry.id)) == manifest_hash(merged)
+
+
+def _keyed(vertex: str, schema_name: str) -> GraphManifest:
+    """*vertex* keyed on its own ``<vertex>_id``, carrying a shared ``serial``."""
+    key = f"{vertex.lower()}_id"
+    manifest = GraphManifest.from_config(
+        {
+            "schema": {
+                "metadata": {"name": schema_name, "version": "1.0.0"},
+                "graph": {
+                    "vertex_config": {
+                        "vertices": [
+                            {
+                                "name": vertex,
+                                "properties": [key, "serial"],
+                                "identity": [key],
+                            }
+                        ]
+                    },
+                    "edge_config": {"edges": []},
+                },
+            },
+            "ingestion_model": {
+                "resources": [
+                    {"name": f"r_{vertex.lower()}", "pipeline": [{"vertex": vertex}]}
+                ]
+            },
+        }
+    )
+    manifest.finish_init()
+    return manifest
+
 
 class TestFindingAParentByContent:
     def test_a_manifest_resolves_to_the_commit_that_produced_it(self) -> None:
@@ -246,3 +312,18 @@ class TestARecordedDeclarationStillLoads:
         assert equivalence.allow == ["self_relations"]
         assert op.renames.right.resources == {"r": "r_right"}
         assert op.name_conflict == "union_right"
+
+    def test_a_declaration_recorded_before_origins_loads_without_them(self) -> None:
+        from graflo.architecture.evolution.merge_commit import lift_recorded_merge_op
+
+        recorded = {
+            "op": "merge_manifests",
+            "vertex_equivalences": [
+                {"left": "A", "right": "B", "into": "C", "identity": ["k"]}
+            ],
+        }
+
+        op = MergeManifestsOp.model_validate(lift_recorded_merge_op(recorded))
+
+        assert op.origins is None
+        assert "origins" not in op.to_dict(skip_defaults=True)

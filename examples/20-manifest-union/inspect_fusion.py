@@ -21,10 +21,11 @@ from graflo.hq.document_caster import DocumentCaster
 from graflo.hq.ingestion_parameters import IngestionParams
 
 EXAMPLE_DIR = Path(__file__).resolve().parent
-#: Resource name, its file, and the column holding the record's own key.
+#: Resource name, its file, and the property holding the record's own key. The
+#: combined manifest names each source's own key by its origin.
 MACHINE_SOURCES = [
-    ("assets", "assets.csv", "asset_id"),
-    ("devices", "devices.csv", "device_id"),
+    ("assets", "assets.csv", "maintenance__asset_id"),
+    ("devices", "devices.csv", "sensors__device_id"),
 ]
 ID_WIDTH = 12
 
@@ -63,12 +64,16 @@ def main() -> None:
     print(f"{len(machines)} records -> {len(ids)} vertices")
 
     # A work order carries only an asset_id. The combined manifest matches it
-    # against the asset_id that each machine keeps as a lookup key.
-    by_asset_id = {doc["asset_id"]: doc for doc in machines if doc.get("asset_id")}
+    # against maintenance__asset_id, the lookup key `maintenance` of each machine.
+    by_asset_id = {
+        doc["maintenance__asset_id"]: doc
+        for doc in machines
+        if doc.get("maintenance__asset_id")
+    }
     edges = cast(caster, "work_orders", "work_orders.csv").edges
     for rows in edges.values():
         for work_order, target, _ in rows:
-            machine = by_asset_id[target["asset_id"]]
+            machine = by_asset_id[target["maintenance__asset_id"]]
             print(
                 f"{work_order['work_order_id']} -> {machine['name']} "
                 f"(vertex {machine['id'][:ID_WIDTH]})"

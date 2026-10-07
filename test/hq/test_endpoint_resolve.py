@@ -8,8 +8,13 @@ import pytest
 
 from graflo.hq.endpoint_resolve import (
     AmbiguousEndpointError,
+    AttachStats,
+    EndpointResolutionStats,
+    WriteStats,
     resolve_edge_endpoints,
+    select_matches,
 )
+from graflo.onto import EndpointAmbiguityPolicy
 
 
 class FakeConnection:
@@ -157,3 +162,76 @@ class TestStats:
         docs = [({"isin": "US001"}, {"iid": "I1"}, {})]
         _, stats = _resolve(db, docs, "all")
         assert not stats.has_findings()
+
+
+class TestSelectMatches:
+    """The policy shared by edge endpoints and attached vertices."""
+
+    FOUND = [{"sid": "S2", "extra": 1}, {"sid": "S1", "extra": 2}]
+
+    @staticmethod
+    def _describe(count: int) -> str:
+        return f"instrument on ['isin']=('US002',) matched {count} vertices."
+
+    def _select(
+        self, found: list[dict[str, Any]], policy: EndpointAmbiguityPolicy
+    ) -> list[dict]:
+        return select_matches(
+            found,
+            policy=policy,
+            identity_fields=["sid"],
+            describe=self._describe,
+        )
+
+    def test_no_match_selects_nothing(self) -> None:
+        assert self._select([], "all") == []
+
+    def test_one_match_is_projected_onto_the_identity(self) -> None:
+        policies: tuple[EndpointAmbiguityPolicy, ...] = (
+            "all",
+            "first",
+            "skip",
+            "error",
+        )
+        for policy in policies:
+            assert self._select([{"sid": "S1", "extra": 1}], policy) == [{"sid": "S1"}]
+
+    def test_all_selects_every_match(self) -> None:
+        assert self._select(self.FOUND, "all") == [{"sid": "S2"}, {"sid": "S1"}]
+
+    def test_first_selects_the_lowest_primary_identity(self) -> None:
+        assert self._select(self.FOUND, "first") == [{"sid": "S1"}]
+
+    def test_skip_selects_nothing_when_ambiguous(self) -> None:
+        assert self._select(self.FOUND, "skip") == []
+
+    def test_error_raises_with_the_callers_description(self) -> None:
+        with pytest.raises(AmbiguousEndpointError, match="US002.*matched 2 vertices"):
+            self._select(self.FOUND, "error")
+
+
+class TestWriteStats:
+    def test_attach_counts_accumulate_per_class(self) -> None:
+        stats = WriteStats()
+        stats.add_attached("ci", AttachStats(documents=2, attached=1, unmatched=1))
+        stats.add_attached("ci", AttachStats(documents=1, ambiguous=1, written=2))
+        ci = stats.attached["ci"]
+        counts = (ci.documents, ci.attached, ci.unmatched, ci.ambiguous, ci.written)
+        assert counts == (3, 1, 1, 1, 2)
+        assert ci.has_findings()
+        assert "ci" in stats.summary() and "unmatched=1" in stats.summary()
+
+    def test_endpoint_stats_accumulate_per_edge(self) -> None:
+        stats = WriteStats()
+        edge_id = ("instrument", "issuer", None)
+        stats.add_endpoints(edge_id, EndpointResolutionStats(documents=2, written=2))
+        stats.add_endpoints(
+            edge_id, EndpointResolutionStats(documents=1, unmatched=1, dropped=1)
+        )
+        merged = stats.endpoints[edge_id]
+        assert (merged.documents, merged.written, merged.unmatched) == (3, 2, 1)
+        assert not stats.is_empty()
+        assert "unmatched=1" in stats.summary()
+
+    def test_a_fresh_accumulator_is_empty(self) -> None:
+        assert WriteStats().is_empty()

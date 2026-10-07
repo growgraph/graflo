@@ -537,7 +537,9 @@ class ClusterResolution:
 
     ``declared`` is the folded vocabulary as seen from each side;
     ``side_maps`` is the composite — every group member onto its merged
-    name, every other class onto its rename or vocabulary name — one
+    name, every other class onto its rename or vocabulary name, every demoted
+    key field onto ``<space>__<field>`` (its ``local_key`` tag, else the
+    side's origin) — one
     :class:`~graflo.architecture.evolution.ops.CanonicalizeOp` per side.
     ``index`` includes any group merge synthesized; each cluster's members
     are the closed group. ``findings`` are the notes the resolution made
@@ -549,6 +551,22 @@ class ClusterResolution:
     declared: DeclaredMaps
     findings: tuple[Any, ...] = ()
     graph: Any = None
+    #: Each side's origin name, and the sides whose origin the union names
+    #: something by: a demoted key, or a ``local_key`` tag left to default.
+    origins: Mapping[Side, str] = field(
+        default_factory=lambda: {"left": "left", "right": "right"}
+    )
+    origin_sides: frozenset[Side] = frozenset()
+    #: Each re-keyed member whose own key is demoted, ``(side, member)``, to
+    #: that key's canonical fields before the origin prefix.
+    demoted_keys: Mapping[tuple[Side, str], tuple[str, ...]] = field(
+        default_factory=dict
+    )
+    #: Each of those members to the key space its key is named by: its
+    #: ``local_key`` tag, else its side's origin.
+    key_spaces: Mapping[tuple[Side, str], str] = field(default_factory=dict)
+    #: Each of those members the op tags, to every key space its tags name.
+    key_tags: Mapping[tuple[Side, str], tuple[str, ...]] = field(default_factory=dict)
 
 
 def fold_declared_maps(
@@ -688,6 +706,7 @@ def resolve_clusters(
     left: GraphManifest,
     right: GraphManifest,
     canonical_maps: Sequence[tuple[Side, CanonicalMap]] = (),
+    origins: Mapping[Side, str] | None = None,
 ) -> ClusterResolution:
     """Resolve *op*'s groups and build the per-side composite relabel.
 
@@ -695,7 +714,8 @@ def resolve_clusters(
     ``op.canonical_maps``. *left* / *right* are the manifests about to be
     merged, in their own names: the vocabulary, the equivalences and
     ``op.renames`` are resolved together over those names, in one pass (see
-    :mod:`~graflo.architecture.evolution.naming_graph`).
+    :mod:`~graflo.architecture.evolution.naming_graph`). *origins* default to
+    :func:`~graflo.architecture.evolution.naming_graph.merge_origins`.
 
     Raises:
         MergeNamingError: Every blocking problem with the declarations, at once
@@ -706,7 +726,9 @@ def resolve_clusters(
     """
     from .naming_graph import resolve_naming
 
-    return resolve_naming(op, left=left, right=right, canonical_maps=canonical_maps)
+    return resolve_naming(
+        op, left=left, right=right, canonical_maps=canonical_maps, origins=origins
+    )
 
 
 def validate_and_complete_canonical_map(

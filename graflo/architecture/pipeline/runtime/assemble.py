@@ -20,7 +20,7 @@ from graflo.architecture.schema.edge import (
     inverse_map,
 )
 from graflo.architecture.schema.vertex import VertexConfig
-from graflo.onto import DBType
+from graflo.onto import PRIMARY_IDENTITY_SELECTOR, DBType
 
 from .actor.edge_render import render_edge, render_weights
 
@@ -127,18 +127,31 @@ def _emit_edge_documents(
     carries, and after the relation is resolved, so it does not matter whether
     the relation was fixed, read from a field, mapped, or taken from a key.
     """
-    source_fields = vertex_config.match_fields(
-        edge.source,
+    source_selector = (
         selector_for(derivation.source_match, edge.source)
         if derivation is not None
-        else None,
+        else None
     )
-    target_fields = vertex_config.match_fields(
-        edge.target,
+    target_selector = (
         selector_for(derivation.target_match, edge.target)
         if derivation is not None
-        else None,
+        else None
     )
+    # An endpoint the step leaves on the primary identity is matched the way
+    # the writer will match it: by an attached class's selector, or by another
+    # step's selector registered for this edge.
+    registered = (
+        edge_derivation.endpoint_match_for(edge.edge_id)
+        if edge_derivation is not None
+        else None
+    )
+    if registered is not None:
+        if source_selector in (None, PRIMARY_IDENTITY_SELECTOR):
+            source_selector = registered.source
+        if target_selector in (None, PRIMARY_IDENTITY_SELECTOR):
+            target_selector = registered.target
+    source_fields = vertex_config.match_fields(edge.source, source_selector)
+    target_fields = vertex_config.match_fields(edge.target, target_selector)
     _fuse_vertices_for_edge(
         ctx,
         vertex_config,

@@ -25,6 +25,7 @@ from graflo.architecture.graph_types import (
     ExtractionContext,
     GraphEntity,
     LocationIndex,
+    VertexRep,
 )
 from graflo.architecture.graph_types.merge import fuse_doc_basis
 from graflo.architecture.schema.edge import EdgeConfig, inverse_map
@@ -191,22 +192,44 @@ class ActorWrapper:
                 # Lookup-only observations locate existing vertices for edge
                 # endpoints; they must not become writes. They stay in
                 # acc_vertex, which edge rendering reads, and are dropped here.
-                writable = [x.vertex for x in vertex_list if not x.lookup_only]
-                if not writable:
-                    continue
-                vertex_list_updated = fuse_doc_basis(
-                    writable,
-                    tuple(self.vertex_config.identity_fields(vertex_name)),
-                )
-                vertex_list_updated = pick_unique_dict(vertex_list_updated)
-                assembly_ctx.acc_global[vertex_name] += vertex_list_updated
+                writable = [
+                    x.vertex
+                    for x in vertex_list
+                    if not x.lookup_only and x.find is None
+                ]
+                if writable:
+                    vertex_list_updated = fuse_doc_basis(
+                        writable,
+                        tuple(self.vertex_config.identity_fields(vertex_name)),
+                    )
+                    vertex_list_updated = pick_unique_dict(vertex_list_updated)
+                    assembly_ctx.acc_global[vertex_name] += vertex_list_updated
+                # A `find` observation carries no primary key: it is written
+                # onto the vertex its selector finds, so it is merged on those
+                # fields and kept apart from the documents that are upserted.
+                attached = self._fuse_attached(vertex_name, vertex_list)
+                if attached:
+                    assembly_ctx.acc_attached[vertex_name] += attached
+        for vertex_name, docs in assembly_ctx.acc_attached.items():
+            assembly_ctx.acc_attached[vertex_name] = pick_unique_dict(docs)
 
         assembly_ctx = add_blank_collections(assembly_ctx, self.vertex_config)
 
         if isinstance(ctx, ActionContext):
             ctx.acc_global = assembly_ctx.acc_global
+            ctx.acc_attached = assembly_ctx.acc_attached
             return ctx.acc_global
         return assembly_ctx.acc_global
+
+    def _fuse_attached(
+        self, vertex_name: str, vertex_list: list[VertexRep]
+    ) -> list[dict[str, Any]]:
+        """The attached documents of one location, merged on their find fields."""
+        attached = [x for x in vertex_list if x.find is not None and not x.lookup_only]
+        if not attached:
+            return []
+        fields = self.vertex_config.match_fields(vertex_name, attached[0].find)
+        return fuse_doc_basis([x.vertex for x in attached], tuple(fields))
 
     @classmethod
     def from_dict(cls, data: dict | list) -> ActorWrapper:

@@ -8,6 +8,7 @@ nodes and edges. These tests cast a real document and assert on the container.
 from __future__ import annotations
 
 import asyncio
+import logging
 
 import pytest
 
@@ -304,7 +305,8 @@ class TestFusionIsJudgedPerSlot:
     def _a_rows(manifest: GraphManifest) -> list[dict]:
         vertices, _edges = _emit(manifest)
         return [
-            {k: v for k, v in row.items() if k in ("a_id", "b_id")}
+            # B's demoted key is named by its origin, the schema name ``g``.
+            {k: v for k, v in row.items() if k in ("a_id", "g__b_id")}
             for row in vertices["A"]
         ]
 
@@ -318,7 +320,7 @@ class TestFusionIsJudgedPerSlot:
             ],
             allow_fusion=True,
         )
-        assert self._a_rows(out) == [{"a_id": "a1", "b_id": "b1"}]
+        assert self._a_rows(out) == [{"a_id": "a1", "g__b_id": "b1"}]
 
     def test_roled_steps_of_two_members_stay_apart_unacknowledged(self) -> None:
         """Same collapse, distinct roles: two buckets, no flag, A's row intact.
@@ -415,3 +417,229 @@ class TestFusionIsJudgedPerSlot:
                 [MergeVerticesOp(sources=["B"], into="A")],
                 bump_version=False,
             )
+
+
+#: ``C`` is keyed by a digest ``id`` and found by ``by_k``; ``D`` by ``d_id``,
+#: or by ``by_code`` when an edge step says so.
+_ATTACH_DOC = {"k": "K1", "name": "n1", "d_id": "d1", "code": "X1"}
+
+
+def _attach_manifest(pipeline: list[dict]) -> GraphManifest:
+    manifest = GraphManifest.from_config(
+        {
+            "schema": {
+                "metadata": {"name": "g", "version": "1.0.0"},
+                "graph": {
+                    "vertex_config": {
+                        "vertices": [
+                            {
+                                "name": "C",
+                                "properties": ["k", "name"],
+                                "hash_identity_properties": ["name"],
+                                "secondary_identities": [
+                                    {"name": "by_k", "fields": ["k"]}
+                                ],
+                            },
+                            {
+                                "name": "D",
+                                "properties": ["d_id", "code"],
+                                "identity": ["d_id"],
+                                "secondary_identities": [
+                                    {"name": "by_code", "fields": ["code"]}
+                                ],
+                            },
+                        ]
+                    },
+                    "edge_config": {
+                        "edges": [{"source": "C", "target": "D", "relation": "cd"}]
+                    },
+                },
+            },
+            "ingestion_model": {"resources": [{"name": "res", "pipeline": pipeline}]},
+        }
+    )
+    manifest.finish_init()
+    return manifest
+
+
+def _attach_cast(manifest: GraphManifest, docs: list[dict] | None = None):
+    caster = DocumentCaster(manifest.require_ingestion_model())
+    return asyncio.run(
+        caster.cast_batch(docs or [_ATTACH_DOC], "res", params=IngestionParams())
+    ).graph
+
+
+def _endpoints(graph, edge_id=("C", "D", "cd")) -> list[tuple[dict, dict]]:
+    return [(dict(s), dict(t)) for s, t, *_ in graph.edges.get(edge_id, [])]
+
+
+_C_FINDS = {"vertex": "C", "find": "by_k", "extraction_scope": "mapped_only"}
+_C_FROM = {"k": "k", "name": "name"}
+_D_STEP = {"vertex": "D", "from": {"d_id": "d_id"}, "extraction_scope": "mapped_only"}
+_EDGE = {"edge": {"source": "C", "target": "D", "relation": "cd"}}
+
+
+class TestAttachedVertices:
+    """A ``find`` step writes onto the vertex its secondary identity finds."""
+
+    def test_an_attached_rep_keeps_its_find_fields_and_gets_no_digest(self) -> None:
+        graph = _attach_cast(
+            _attach_manifest([{**_C_FINDS, "from": _C_FROM}, _D_STEP, _EDGE])
+        )
+        assert graph.attached["C"] == [{"k": "K1", "name": "n1"}]
+        assert graph.attached_by == {"C": "by_k"}
+        assert not graph.vertices.get("C")
+        assert graph.vertices["D"] == [{"d_id": "d1"}]
+
+    def test_the_runtime_exposes_the_selector_per_class(self) -> None:
+        manifest = _attach_manifest([{**_C_FINDS, "from": _C_FROM}, _D_STEP, _EDGE])
+        runtime = manifest.require_ingestion_model().fetch_resource("res")
+        assert runtime.attached_selectors == {"C": "by_k"}
+        match = runtime.edge_derivation.endpoint_match_for(("C", "D", "cd"))
+        assert match is not None and (match.source, match.target) == ("by_k", None)
+
+    def test_an_explicit_edge_without_a_selector_follows_the_attached_vertex(
+        self,
+    ) -> None:
+        graph = _attach_cast(
+            _attach_manifest([{**_C_FINDS, "from": _C_FROM}, _D_STEP, _EDGE])
+        )
+        assert _endpoints(graph) == [({"k": "K1"}, {"d_id": "d1"})]
+
+    def test_an_inferred_edge_follows_the_attached_vertex(self) -> None:
+        graph = _attach_cast(_attach_manifest([{**_C_FINDS, "from": _C_FROM}, _D_STEP]))
+        assert _endpoints(graph) == [({"k": "K1"}, {"d_id": "d1"})]
+
+    def test_an_authored_selector_on_the_other_endpoint_is_kept(self) -> None:
+        d_by_code = {
+            "vertex": "D",
+            "from": {"code": "code"},
+            "lookup_only": True,
+            "extraction_scope": "mapped_only",
+        }
+        edge = {
+            "edge": {
+                "source": "C",
+                "target": "D",
+                "relation": "cd",
+                "target_match": "by_code",
+            }
+        }
+        graph = _attach_cast(
+            _attach_manifest([{**_C_FINDS, "from": _C_FROM}, d_by_code, edge])
+        )
+        assert _endpoints(graph) == [({"k": "K1"}, {"code": "X1"})]
+
+    def test_identical_attached_rows_are_deduplicated(self) -> None:
+        manifest = _attach_manifest(
+            [
+                {
+                    "descend": {
+                        "key": "items",
+                        "pipeline": [{**_C_FINDS, "from": _C_FROM}],
+                    }
+                }
+            ]
+        )
+        row = {"k": "K1", "name": "n1"}
+        graph = _attach_cast(manifest, [{"items": [row, dict(row)]}])
+        assert graph.attached["C"] == [row]
+
+        graph = _attach_cast(manifest, [{"items": [row]}, {"items": [dict(row)]}])
+        assert len(graph.attached["C"]) == 2
+        graph.pick_unique()
+        assert graph.attached["C"] == [row]
+
+    def test_lookup_only_with_find_references_and_attaches_nothing(self) -> None:
+        graph = _attach_cast(
+            _attach_manifest(
+                [{**_C_FINDS, "from": {"k": "k"}, "lookup_only": True}, _D_STEP, _EDGE]
+            )
+        )
+        assert not graph.attached.get("C")
+        assert not graph.vertices.get("C")
+        assert _endpoints(graph) == [({"k": "K1"}, {"d_id": "d1"})]
+
+    def test_attached_rows_without_their_find_fields_are_dropped(self) -> None:
+        graph = _attach_cast(
+            _attach_manifest([{**_C_FINDS, "from": _C_FROM}, _D_STEP, _EDGE]),
+            [{"name": "n1", "d_id": "d1"}],
+        )
+        assert not graph.attached.get("C")
+        assert not _endpoints(graph)
+
+    def test_an_attached_row_missing_its_find_key_is_dropped_as_attached(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Absent (not ``None``) find key: the row is still attached, never written."""
+        manifest = _attach_manifest(
+            [
+                {"vertex": "C", "find": "by_k", "keep_fields": ["k", "name"]},
+                _D_STEP,
+                _EDGE,
+            ]
+        )
+        with caplog.at_level(logging.WARNING):
+            graph = _attach_cast(manifest, [{"name": "n1", "d_id": "d1"}])
+        assert not graph.vertices.get("C")
+        assert not graph.attached.get("C")
+        assert "attached 'C'" in caplog.text and "'by_k'" in caplog.text
+
+    def test_an_attached_row_missing_its_find_key_is_never_a_vertex(self) -> None:
+        manifest = _attach_manifest(
+            [
+                {"vertex": "C", "find": "by_k", "keep_fields": ["k", "name"]},
+                _D_STEP,
+                _EDGE,
+            ]
+        )
+        caster = DocumentCaster(manifest.require_ingestion_model())
+        graph = asyncio.run(
+            caster.cast_batch(
+                [{"name": "n1", "d_id": "d1"}],
+                "res",
+                params=IngestionParams(drop_empty_identity_docs=False),
+            )
+        ).graph
+        assert "C" not in graph.vertices
+        assert graph.attached["C"] == [{"name": "n1"}]
+
+    def test_worker_processes_carry_the_attached_channel(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        manifest = _attach_manifest([{**_C_FINDS, "from": _C_FROM}, _D_STEP, _EDGE])
+        docs = [{**_ATTACH_DOC, "k": f"K{i}"} for i in range(4)]
+        caster = DocumentCaster(manifest.require_ingestion_model())
+        try:
+            graph = asyncio.run(
+                caster.cast_batch(
+                    docs,
+                    "res",
+                    params=IngestionParams(n_cores=2, cast_executor="process"),
+                )
+            ).graph
+        finally:
+            caster.close()
+        assert "falling back" not in caplog.text
+        assert graph.attached["C"] == [{"k": f"K{i}", "name": "n1"} for i in range(4)]
+        assert graph.attached_by == {"C": "by_k"}
+
+    def test_the_container_round_trips_its_attached_channel(self) -> None:
+        graph = _attach_cast(
+            _attach_manifest([{**_C_FINDS, "from": _C_FROM}, _D_STEP, _EDGE])
+        )
+        restored = type(graph).model_validate(graph.model_dump(mode="json"))
+        assert restored.attached == {"C": [{"k": "K1", "name": "n1"}]}
+        assert restored.attached_by == {"C": "by_k"}
+
+    def test_a_class_produced_with_and_without_find_is_refused(self) -> None:
+        with pytest.raises(ValueError, match=r"res.*'C'.*find"):
+            _attach_manifest([_C_FINDS, {"vertex": "C"}])
+
+    def test_find_naming_an_undeclared_secondary_is_refused(self) -> None:
+        with pytest.raises(ValueError, match=r"by_nothing"):
+            _attach_manifest([{"vertex": "C", "find": "by_nothing"}])
+
+    def test_find_naming_the_primary_identity_is_refused(self) -> None:
+        with pytest.raises(ValueError, match=r"secondary identity"):
+            _attach_manifest([{"vertex": "C", "find": "identity"}])

@@ -150,7 +150,12 @@ def fuse_doc_basis(
     elif pending_non_ids:
         # No documents with index keys: merge all into a single document
         if is_vertexrep:
-            merged_doc = VertexRep(vertex={})
+            # Keep the observation's tags (lookup_only, find): a fresh rep
+            # would turn a reference or an attached row into a write.
+            first = pending_non_ids[0]
+            if not isinstance(first, VertexRep):
+                raise TypeError(f"expected VertexRep, got {type(first).__name__}")
+            merged_doc = first.model_copy(update={"vertex": {}})
         else:
             merged_doc = {}
         for pending in pending_non_ids:

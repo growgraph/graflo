@@ -618,6 +618,8 @@ class Caster:
             self._document_caster.close()
             self._ingest_bindings = None
             self._connection_provider = EmptyConnectionProvider()
+            if self._db_writer is not None and not self._db_writer.stats.is_empty():
+                logger.info("Write resolution:\n%s", self._db_writer.stats.summary())
             self._db_writer = None
 
     def ingest(

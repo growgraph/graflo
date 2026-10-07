@@ -111,7 +111,14 @@ _APPLY_EXPORTS = frozenset(
 )
 
 _MERGE_EXPORTS = frozenset(
-    {"MergeIdentityError", "MergeNameConflictError", "merge_manifests"}
+    {
+        "AttachedProducer",
+        "MergeIdentityError",
+        "MergeNameConflictError",
+        "MergeReport",
+        "merge_manifests",
+        "merge_manifests_with_report",
+    }
 )
 
 _MERGE_COMMIT_EXPORTS = frozenset({"build_merge_commit", "find_commit_by_tree"})
@@ -332,6 +339,7 @@ __all__ = [
     "AddVerticesOp",
     "AlignmentConflictError",
     "AssignedIdentityTarget",
+    "AttachedProducer",
     "BlankIdentityTarget",
     "CanonicalMap",
     "CanonicalizeOp",
@@ -384,6 +392,7 @@ __all__ = [
     "MergeRecipe",
     "MergeRecipeRef",
     "MergeRenames",
+    "MergeReport",
     "MergeResult",
     "MergeVerticesOp",
     "NamingFinding",
@@ -504,6 +513,7 @@ __all__ = [
     "is_reversible",
     "manifest_hash",
     "merge_manifests",
+    "merge_manifests_with_report",
     "merge_three_way",
     "naming_table",
     "op_from_dict",

@@ -15,6 +15,7 @@ from graflo.architecture.graph_types import (
 )
 from graflo.architecture.graph_types.merge import fuse_doc_basis
 from graflo.architecture.schema.vertex import VertexConfig, VertexName
+from graflo.onto import PRIMARY_IDENTITY_SELECTOR
 
 from .base import ActorConstants, ActorInitContext, VertexProducingActor
 
@@ -66,6 +67,26 @@ def refuse_undeclared_mapping(
         )
 
 
+def find_fields(
+    vertex_config: VertexConfig, vertex: str, selector: str, *, step: str
+) -> list[str]:
+    """The fields of the secondary identity *selector* that *step* finds *vertex* by.
+
+    Raises:
+        ValueError: *selector* names the primary identity or no secondary
+            identity *vertex* declares.
+    """
+    if selector == PRIMARY_IDENTITY_SELECTOR:
+        raise ValueError(
+            f"{step}: find must name a secondary identity of {vertex!r}, "
+            f"got {selector!r}"
+        )
+    try:
+        return vertex_config.match_fields(vertex, selector)
+    except ValueError as exc:
+        raise ValueError(f"{step}: find {selector!r}: {exc}") from exc
+
+
 class VertexActor(VertexProducingActor):
     """Actor for processing vertex data."""
 
@@ -78,6 +99,7 @@ class VertexActor(VertexProducingActor):
         self.extraction_scope: Literal["full", "mapped_only"] = config.extraction_scope
         self.role: str | None = config.role
         self.lookup_only: bool = config.lookup_only
+        self.find: str | None = config.find
         self.vertex_config: VertexConfig
         self.allowed_vertex_names: set[VertexName] | None = None
 
@@ -94,6 +116,7 @@ class VertexActor(VertexProducingActor):
                 "extraction_scope",
                 "role",
                 "lookup_only",
+                "find",
             )
         )
 
@@ -102,6 +125,13 @@ class VertexActor(VertexProducingActor):
         self.allowed_vertex_names = init_ctx.allowed_vertex_names
         if init_ctx.strict_references and self.from_doc:
             refuse_undeclared_mapping(self.vertex_config, self.name, self.from_doc)
+        if self.find is not None and self.name in self.vertex_config.vertex_set:
+            find_fields(
+                self.vertex_config,
+                self.name,
+                self.find,
+                step=f"vertex step {self.name!r}",
+            )
 
     def _filter_and_aggregate_vertex_docs(
         self, docs: list[dict[str, Any]], doc: dict[str, Any]
@@ -214,6 +244,13 @@ class VertexActor(VertexProducingActor):
 
         agg = []
         identity_fields = self.vertex_config.identity_fields(self.name)
+        # A `find` document is keyed by the fields it is found by: they are
+        # what expands a multi-valued source field and what documents merge on.
+        key_fields = (
+            identity_fields
+            if self.find is None
+            else self.vertex_config.match_fields(self.name, self.find)
+        )
         if self.from_doc:
             source_keys = set(self.from_doc.values())
             consumed_from_buffer = False
@@ -225,7 +262,7 @@ class VertexActor(VertexProducingActor):
                         v_f: item.named[d_f] for v_f, d_f in self.from_doc.items()
                     }
                     if any(v is not None for v in projected.values()):
-                        agg.extend(explode_identity_lists(projected, identity_fields))
+                        agg.extend(explode_identity_lists(projected, key_fields))
                     for k in source_keys:
                         item.named.pop(k, None)
                     consumed_from_buffer = True
@@ -244,7 +281,7 @@ class VertexActor(VertexProducingActor):
                     v_f: effective_doc.get(d_f) for v_f, d_f in self.from_doc.items()
                 }
                 if any(v is not None for v in projected.values()):
-                    agg.extend(explode_identity_lists(projected, identity_fields))
+                    agg.extend(explode_identity_lists(projected, key_fields))
             buffer_vertex_keys = tuple(k for k in vertex_keys if k not in self.from_doc)
         else:
             buffer_vertex_keys = vertex_keys
@@ -274,10 +311,12 @@ class VertexActor(VertexProducingActor):
                 for field in identity_fields:
                     vertex_doc.pop(field, None)
 
-        merged = fuse_doc_basis(agg, index_keys=tuple(identity_fields))
+        merged = fuse_doc_basis(agg, index_keys=tuple(key_fields))
 
         for m in merged:
-            vertex_rep = VertexRep(vertex=m, lookup_only=self.lookup_only)
+            vertex_rep = VertexRep(
+                vertex=m, lookup_only=self.lookup_only, find=self.find
+            )
             ctx.acc_vertex[self.name][effective_lindex].append(vertex_rep)
             ctx.record_vertex_observation(
                 vertex_name=self.name,

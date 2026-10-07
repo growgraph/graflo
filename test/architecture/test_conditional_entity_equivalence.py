@@ -211,11 +211,8 @@ class TestComposedSchema:
         funnel_fields = {f for b in vertex.identity_funnel.branches for f in b.fields}
         assert funnel_fields == {"match_key", "local_key"}
         # The retired side keys survive as lookup-only secondary identities,
-        # named automatically after their fields.
-        assert {s.name for s in vc.secondary_identities("Company")} == {
-            "by_company_id",
-            "by_org_id",
-        }
+        # named by the side each came from.
+        assert {s.name for s in vc.secondary_identities("Company")} == {"a", "b"}
 
     def test_identity_validates_against_the_union(self) -> None:
         """The lowering runs validate_identity when handed the manifest."""
@@ -251,7 +248,7 @@ class TestConditionalFusion:
         assert len(a_docs) == 2, "non-gated record must still be ingested"
         assert len(b_docs) == 1
 
-        by_company = {doc["company_id"]: doc for doc in a_docs}
+        by_company = {doc["a__company_id"]: doc for doc in a_docs}
         gated, non_gated = by_company["f1"], by_company["f2"]
         b_doc = b_docs[0]
 
@@ -426,8 +423,8 @@ class TestPriorityFunnel:
         notes = [f for f in preview.findings if f.kind == "lookup_demotion"]
         assert {f.severity for f in notes} == {"note"}
         messages = " ".join(f.message for f in notes)
-        assert "'by_company_id'" in messages
-        assert "'by_org_id'" in messages
+        assert "secondary 'a'" in messages
+        assert "secondary 'b'" in messages
         assert not preview.blocking
 
 
@@ -893,16 +890,25 @@ def _rekeyed(identity: list[IdentityBranchDecl], key: str) -> list[IdentityBranc
 
 
 def _raw_member_union(identity: list[IdentityBranchDecl]) -> GraphManifest:
-    """The member union authored against the raw left side: `Firm`, no `into`."""
+    """The member union authored against the raw left side: `Firm`, no `into`.
+
+    The vocabulary renames the class only: `firm_id` is a key the union
+    demotes, which is named by its origin rather than by the vocabulary.
+    """
     op = MergeManifestsOp(
         vertex_equivalences=[
             VertexEquivalence(
                 left=["Firm", "Shop"], right="Org", identity=list(identity)
             )
         ],
-        canonical_maps={"left": _ROUTED_CANONICAL},
+        canonical_maps={"left": CanonicalMap(vertices={"Firm": "Company"})},
     )
     return merge_manifests(_routed_manifest_a(), _manifest_b(), op)
+
+
+def _keyed_by(docs: list[dict]) -> list[dict]:
+    """What each cast record is keyed by, whatever its demoted key is called."""
+    return [{k: doc.get(k) for k in ("id", "match_key", "local_key")} for doc in docs]
 
 
 class TestMemberKeysResolveThroughTheMap:
@@ -912,8 +918,8 @@ class TestMemberKeysResolveThroughTheMap:
     def test_a_raw_side_takes_the_own_or_the_canonical_key(self, key: str) -> None:
         union = _raw_member_union(_rekeyed(_MEMBER_IDENTITY, key))
         reference = _build_member_union()
-        assert _cast(union, "r_view", _SHARED_COLUMN_VIEW) == _cast(
-            reference, "r_view", _SHARED_COLUMN_VIEW
+        assert _keyed_by(_cast(union, "r_view", _SHARED_COLUMN_VIEW)) == _keyed_by(
+            _cast(reference, "r_view", _SHARED_COLUMN_VIEW)
         )
 
     def test_two_spellings_of_one_member_are_refused(self) -> None:
@@ -1020,8 +1026,8 @@ class TestDynamicRouterFusion:
             if step.get("type") == "vertex_router"
         ]
 
-        # Firm projects company_id from firm_id and Shop does not, so merging
-        # them splits the router: one closed router per projection.
+        # Firm projects its demoted key from firm_id and Shop from shop_id, so
+        # merging them splits the router: one closed router per projection.
         assert [r["type_map"] for r in routers] == [
             # Merge then closes the router over the left side as handed in:
             # its other classes, as themselves.
@@ -1029,8 +1035,9 @@ class TestDynamicRouterFusion:
             {"Shop": "Company"},
         ]
         assert [r.get("vertex_from_map") for r in routers] == [
-            {"Company": {"company_id": "firm_id"}},
-            None,
+            # Each demoted key is named by its member's local_key tag.
+            {"Company": {"firm__company_id": "firm_id"}},
+            {"Company": {"shop__shop_id": "shop_id"}},
         ]
         assert all(r["type_map_only"] is True for r in routers)
 
@@ -1287,8 +1294,8 @@ class TestCompositeDerivedKey:
         inventory = _cast_all(union, "all_classes", _INVENTORY_ROWS)
         api = _cast_all(union, "api_vertex", _API_ROWS)
 
-        hosts = {doc["aid"]: doc for doc in inventory["Host"]}
-        servers = {doc["key"]: doc for doc in api["Host"]}
+        hosts = {doc["inventory__aid"]: doc for doc in inventory["Host"]}
+        servers = {doc["api__key"]: doc for doc in api["Host"]}
         assert hosts["a1"]["id"] == servers["v1"]["id"]
         assert inventory["Dev"][0]["id"] == api["Dev"][0]["id"]
         assert servers["v1"]["id"] != api["Dev"][0]["id"]
@@ -1299,10 +1306,12 @@ class TestCompositeDerivedKey:
         inventory = _cast_all(union, "all_classes", _INVENTORY_ROWS)
         api = _cast_all(union, "api_vertex", _API_ROWS)
 
-        unmarked = next(doc for doc in inventory["Host"] if doc["aid"] == "a2")
+        unmarked = next(
+            doc for doc in inventory["Host"] if doc["inventory__aid"] == "a2"
+        )
         assert unmarked.get("host_key") is None
         assert unmarked["local_key"] == "inventory:a2"
-        partial = next(doc for doc in api["Host"] if doc["key"] == "v2")
+        partial = next(doc for doc in api["Host"] if doc["api__key"] == "v2")
         assert partial.get("group_key") is None
         assert partial["local_key"] == "api:v2"
         ids = [doc["id"] for doc in [*inventory["Host"], *api["Host"]]]
@@ -1363,7 +1372,13 @@ class TestCompositeDerivedKey:
         union.finish_init(strict_references=True)
 
         router = _normalized_steps(union, "api_vertex")[0]
-        assert router["vertex_from_map"] == {"Rack": {}}
+        # The demoted keys of the merged classes read the router's `from`
+        # target under their origin-prefixed names.
+        assert router["vertex_from_map"] == {
+            "Host": {"api__key": "vertex_id"},
+            "Dev": {"api__key": "vertex_id"},
+            "Rack": {},
+        }
         racks = _cast_all(
             union,
             "api_vertex",
@@ -1393,4 +1408,7 @@ class TestCompositeDerivedKey:
 
         router = _normalized_steps(union, "api_vertex")[0]
         assert router["type_map"]["Rack"] == "Shelf"
-        assert router["vertex_from_map"] == {"Shelf": {}}
+        assert router["vertex_from_map"] == {
+            "Host": {"api__key": "vertex_id"},
+            "Shelf": {},
+        }

@@ -1,7 +1,8 @@
 """Database writer for pushing graph data to the target database.
 
-Handles vertex upserts (including blank-node resolution), extra-weight
-enrichment, and edge insertion.  All heavy DB I/O lives here so that
+Handles vertex upserts (including blank-node resolution), attaching records to
+vertices found by a secondary identity, extra-weight enrichment, and edge
+insertion.  All heavy DB I/O lives here so that
 :class:`Caster` stays a lightweight orchestrator.
 """
 
@@ -19,6 +20,7 @@ from graflo.architecture.evolution.sanitize import (
     with_physical_names,
 )
 from graflo.architecture.graph_types import EdgeId, GraphContainer, Weight
+from graflo.architecture.graph_types.merge import fuse_doc_basis
 from graflo.architecture.schema import EdgeRuntime, Schema, SchemaDBAware
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.identity_digest import (
@@ -32,8 +34,14 @@ from graflo.architecture.schema.physical_keys import PhysicalKeys
 from graflo.connections.onto import DBConfig
 from graflo.db.conn import ConnectionCapability
 from graflo.db.manager import ConnectionManager
-from graflo.hq.endpoint_resolve import resolve_edge_endpoints
-from graflo.onto import DBType
+from graflo.db.resolve import key_tuple
+from graflo.hq.endpoint_resolve import (
+    AttachStats,
+    WriteStats,
+    resolve_edge_endpoints,
+    select_matches,
+)
+from graflo.onto import DBType, EndpointAmbiguityPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +116,8 @@ class DBWriter:
         dry: When ``True`` no database mutations are performed.
         max_concurrent: Upper bound on concurrent DB operations (semaphore size).
             A file-backend target is written by one operation at a time.
+        stats: What attaching records and resolving edge endpoints found,
+            accumulated over every :meth:`write` of this instance.
     """
 
     def __init__(
@@ -132,6 +142,7 @@ class DBWriter:
         self._collection_locks: dict[str, asyncio.Lock] = {}
         self._collection_locks_loop: asyncio.AbstractEventLoop | None = None
         self._reported_undeclared_edges: set[tuple] = set()
+        self.stats = WriteStats()
 
     # ------------------------------------------------------------------
     # Public API
@@ -145,7 +156,8 @@ class DBWriter:
         *,
         bulk_session_id: str | None = None,
     ) -> None:
-        """Push *gc* to the database (vertices, extra weights, then edges).
+        """Push *gc* to the database (vertices, attached records, extra weights,
+        then edges).
 
         When *bulk_session_id* is provided, appends rows using the connection's
         native bulk interface instead of using per-record writes.
@@ -153,10 +165,20 @@ class DBWriter:
         .. note::
             *gc* is mutated in-place for the REST path: blank-vertex keys are
             updated and blank edges are extended after the vertex round-trip.
-            The bulk path does not support blank vertices or ``extra_weights``.
+            The bulk path does not support blank vertices, attached records or
+            ``extra_weights``.
+
+        Raises:
+            ValueError: If *gc* carries attached records under a bulk session.
         """
         if bulk_session_id:
             self._validate_bulk_resource(resource_name)
+            if any(gc.attached.values()):
+                raise ValueError(
+                    "Native bulk ingest does not support attached records "
+                    f"({sorted(gc.attached)}): finding the vertices they attach to "
+                    "needs DB round-trips. Use REST ingest."
+                )
             if self.dry:
                 logger.debug(
                     "Dry run: would append batch to bulk session %s",
@@ -186,6 +208,7 @@ class DBWriter:
         )
 
         await self._push_vertices(gc, conn_conf)
+        await self._attach_vertices(gc, conn_conf)
         # O(blank vertices x edges x documents) of pure Python. Called straight from
         # the event loop it stalled every other coroutine — including the prefetch
         # that is supposed to overlap with the write.
@@ -273,6 +296,12 @@ class DBWriter:
             raise ValueError(
                 "Native bulk ingest does not support resources with extra_weights "
                 "(those require DB round-trips). Use REST ingest or disable extra_weights."
+            )
+        if resource.attached_selectors:
+            raise ValueError(
+                "Native bulk ingest does not support resources that attach records "
+                f"to existing vertices ({sorted(resource.attached_selectors)}; those "
+                "require DB round-trips). Use REST ingest."
             )
 
     # ------------------------------------------------------------------
@@ -435,11 +464,173 @@ class DBWriter:
         preferred_field = identity_fields[0] if identity_fields else default_field
 
         ensure_digest_identities_on_docs(data, vertex, preferred_field=preferred_field)
-        if default_field != preferred_field:
-            for doc in data:
-                value = doc.get(preferred_field)
-                if value is not None and value != "" and default_field not in doc:
-                    doc[default_field] = value
+        self._mirror_default_identity(vcol=vcol, data=data, conn_conf=conn_conf)
+
+    def _mirror_default_identity(
+        self, vcol: str, data: list[dict], conn_conf: DBConfig
+    ) -> None:
+        """Copy the first identity value into the flavor's default key field.
+
+        The default field is ``_key`` on Arango and ``id`` elsewhere; a value
+        already there is never overwritten.
+        """
+        vc = self._db_aware_for(conn_conf).vertex_config
+        identity_fields = vc.identity_fields(vcol)
+        default_field = "_key" if conn_conf.connection_type == DBType.ARANGO else "id"
+        preferred_field = identity_fields[0] if identity_fields else default_field
+        if default_field == preferred_field:
+            return
+        for doc in data:
+            value = doc.get(preferred_field)
+            if value is not None and value != "" and default_field not in doc:
+                doc[default_field] = value
+
+    # ------------------------------------------------------------------
+    # Attached records
+    # ------------------------------------------------------------------
+
+    async def _attach_vertices(self, gc: GraphContainer, conn_conf: DBConfig) -> None:
+        """Write attached records onto the vertices their secondary identity finds.
+
+        Each record is looked up by the identity ``gc.attached_by`` names for its
+        class, takes the primary identity of the vertex it matches, and is
+        upserted on it (records landing on one vertex fused into one row) — in a call of its own, after the class's owners, so a
+        record never nulls a property the owners wrote in the same batch. A
+        record that matches nothing is counted and not written: attaching never
+        creates a vertex. Several matches follow ``endpoints_on_ambiguous``,
+        writing the record onto each vertex it keeps. A dry run only counts.
+
+        Raises:
+            ValueError: If an attached class has no selector in ``gc.attached_by``.
+            AmbiguousEndpointError: on several matches under the ``error`` policy.
+        """
+        vc = self._db_aware_for(conn_conf).vertex_config
+        policy = self.ingestion_model.endpoints_on_ambiguous
+
+        async def _attach_one(vcol: str, docs: list[dict]) -> None:
+            selector = gc.attached_by.get(vcol)
+            if selector is None:
+                raise ValueError(
+                    f"Attached '{vcol}' records name no secondary identity to be "
+                    "found by."
+                )
+            if self.dry:
+                self._record_attach(vcol, selector, AttachStats(documents=len(docs)))
+                return
+            async with AsyncExitStack() as stack:
+                await self._acquire_write_slot(stack, conn_conf, vc.vertex_dbname(vcol))
+
+                def _sync() -> AttachStats:
+                    with ConnectionManager(connection_config=conn_conf) as db:
+                        return self._attach_class(
+                            db, vcol, docs, selector, conn_conf=conn_conf, policy=policy
+                        )
+
+                stats = await asyncio.to_thread(_sync)
+            self._record_attach(vcol, selector, stats)
+
+        await asyncio.gather(
+            *[_attach_one(vcol, docs) for vcol, docs in gc.attached.items() if docs]
+        )
+
+    def _attach_class(
+        self,
+        db: Any,
+        vcol: str,
+        docs: list[dict],
+        selector: str,
+        *,
+        conn_conf: DBConfig,
+        policy: EndpointAmbiguityPolicy,
+    ) -> AttachStats:
+        """Resolve and upsert one class's attached records; return the counts."""
+        vc = self._db_aware_for(conn_conf).vertex_config
+        keys = self._keys_for(conn_conf)
+        stats = AttachStats(documents=len(docs))
+        match_fields = vc.match_fields(vcol, selector)
+        identity_fields = vc.identity_fields(vcol)
+        # Resolution reads the database, so it runs on stored names.
+        match_keys = tuple(keys.vertex_fields(vcol, match_fields))
+        identity_keys = tuple(keys.vertex_fields(vcol, identity_fields))
+        stored_docs = keys.vertex_docs(vcol, docs)
+
+        resolvable = [key_tuple(doc, match_keys) is not None for doc in stored_docs]
+        found: dict[int, list[dict[str, Any]]] = {}
+        if any(resolvable):
+            found = db.resolve_vertices(
+                vc.vertex_dbname(vcol), stored_docs, match_keys, identity_keys
+            )
+
+        filled: list[dict[str, Any]] = []
+        for position, doc in enumerate(docs):
+            if not resolvable[position]:
+                # A partial composite key must never be partially matched.
+                stats.unresolvable += 1
+                continue
+            # A match without its primary identity cannot be upserted onto: keyed
+            # on null, the write would create a vertex.
+            matches = [
+                match
+                for match in found.get(position) or []
+                if key_tuple(match, identity_keys) is not None
+            ]
+            if not matches:
+                stats.unmatched += 1
+                continue
+            if len(matches) > 1:
+                stats.ambiguous += 1
+            selected = select_matches(
+                matches,
+                policy=policy,
+                identity_fields=identity_keys,
+                describe=lambda count, doc=stored_docs[position]: (
+                    f"Attached '{vcol}' record matched {count} vertices on "
+                    f"{selector} {list(match_keys)}={key_tuple(doc, match_keys)}."
+                ),
+            )
+            if selected:
+                stats.attached += 1
+            filled.extend(
+                {**doc, **keys.logical_vertex_doc(vcol, identity)}
+                for identity in selected
+            )
+
+        if not filled:
+            return stats
+        # Records landing on one vertex become one row, later records winning:
+        # a batch upsert may not touch the same row twice.
+        filled = fuse_doc_basis(filled, tuple(identity_fields))
+        if (
+            vcol in vc.hash_identity_vertices
+            or vcol in vc.assigned_vertices
+            or vcol in vc.blank_vertices
+        ):
+            # Owners of a generated key mirrored it the same way when written.
+            self._mirror_default_identity(vcol=vcol, data=filled, conn_conf=conn_conf)
+        db.upsert_docs_batch(
+            keys.vertex_docs(vcol, filled),
+            vc.vertex_dbname(vcol),
+            list(identity_keys),
+            update_keys="doc",
+            filter_uniques=True,
+            dry=self.dry,
+        )
+        stats.written = len(filled)
+        return stats
+
+    def _record_attach(self, vcol: str, selector: str, stats: AttachStats) -> None:
+        self.stats.add_attached(vcol, stats)
+        if stats.has_findings():
+            logger.warning(
+                "Attached '%s' records found by %s: %s",
+                vcol,
+                selector,
+                stats.summary(),
+            )
+        else:
+            logger.debug(
+                "Attached '%s' records found by %s: %s", vcol, selector, stats.summary()
+            )
 
     # ------------------------------------------------------------------
     # Blank-edge resolution
@@ -763,6 +954,7 @@ class DBWriter:
             resolve_target=list(target_fields) != list(target_identity),
             policy=policy,
         )
+        self.stats.add_endpoints(edge_id, stats)
         if keys is not None and keys.active:
             resolved = [
                 (
