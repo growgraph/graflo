@@ -110,8 +110,10 @@ uv run graflo merge manifest_maintenance.yaml manifest_sensors.yaml \
 
 `uv run python inspect_fusion.py` reads the four machine records and the two work
 orders through the combined manifest and prints the vertex each one lands on. A
-work order names its machine by `asset_id`, so the combined manifest keeps
-`asset_id` on `Machine` as a second key to look machines up by:
+work order names its machine by `asset_id`, so the combined manifest keeps it on
+`Machine` as `maintenance__asset_id`, a second key named `maintenance` to look
+machines up by. The device id becomes `sensors__device_id` the same way: each
+source's own key is named after its manifest.
 
 ```text
 resource  own key  serial   vertex id
@@ -124,10 +126,20 @@ W1 -> Hydraulic press (vertex 303d50890862)
 W2 -> Conveyor (vertex d154517d907c)
 ```
 
-`asset_id` is now a key to look machines up by, not the key that makes them
+The asset id is now a key to look machines up by, not the key that makes them
 one. A record of `A1` without a serial number would key on `maintenance:A1`
 and become a second machine beside the one matched on `hp-0042`. The preview
 of this merge says so, as a `lookup_demotion` note.
+
+`--dry-run` prints which resource keys `Machine` and which only finds it:
+
+```text
+routing:
+  merged   resource     side   members  role       key
+  Machine  assets       left   Asset    owner      id
+           devices      right  Device   owner      id
+           work_orders  left   Asset    reference  maintenance
+```
 
 ## What goes wrong
 

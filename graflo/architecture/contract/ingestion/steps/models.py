@@ -68,6 +68,15 @@ class VertexActorConfig(VertexExtractionOptionsConfig):
             "them would create keyless duplicates."
         ),
     )
+    find: str | None = PydanticField(
+        default=None,
+        description=(
+            "Name of a secondary identity of the vertex class. The record's "
+            "properties are written onto the existing vertex found by that "
+            "identity; a vertex is never created. With lookup_only: true the "
+            "step is a reference by that identity instead and writes nothing."
+        ),
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -926,11 +935,26 @@ class VertexRouterActorConfig(VertexExtractionOptionsConfig):
         ),
     )
 
+    find: dict[VertexName, str] | None = PydanticField(
+        default=None,
+        description=(
+            "Per class, the name of a secondary identity: rows routed to that "
+            "class are written onto the existing vertex found by that identity, "
+            "never creating one -- the router counterpart of a vertex step's "
+            "find. With lookup_only covering the class they are a reference by "
+            "that identity instead."
+        ),
+    )
+
     def looks_up(self, vertex: VertexName) -> bool:
         """Whether rows routed to *vertex* are only looked up, never written."""
         if isinstance(self.lookup_only, list):
             return vertex in self.lookup_only
         return self.lookup_only
+
+    def find_for(self, vertex: VertexName) -> str | None:
+        """The secondary identity rows routed to *vertex* are found by, if any."""
+        return (self.find or {}).get(vertex)
 
     def admits(self, vertex: VertexName) -> bool:
         """Whether *vertex* is among the classes the router may produce."""
@@ -970,6 +994,7 @@ class VertexRouterActorConfig(VertexExtractionOptionsConfig):
         lookup = self.lookup_only if isinstance(self.lookup_only, list) else []
         for name, classes in (
             ("lookup_only", lookup),
+            ("find", list(self.find or {})),
             ("vertex_from_map", list(self.vertex_from_map or {})),
         ):
             outside = sorted(set(classes) - allowed)

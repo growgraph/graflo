@@ -29,6 +29,11 @@ def dd_factory() -> defaultdict[GraphEntity, list]:
     return defaultdict(list)
 
 
+def attached_factory() -> defaultdict[str, list]:
+    """Create a default dictionary for attached vertex documents, by class."""
+    return defaultdict(list)
+
+
 def _default_dict_transforms() -> defaultdict[LocationIndex, list[Any]]:
     return defaultdict(list)
 
@@ -189,6 +194,8 @@ class AssemblyContext(ConfigBaseModel):
 
     extraction: ExtractionContext
     acc_global: Any = Field(default_factory=dd_factory)
+    acc_attached: Any = Field(default_factory=attached_factory)
+    """Documents of ``find`` steps, by class: written onto found vertices only."""
 
     @property
     def acc_vertex(self) -> Any:
@@ -215,6 +222,7 @@ class GraphAssemblyResult(ConfigBaseModel):
     """Result of graph assembly phase."""
 
     entities: Any = Field(default_factory=dd_factory)
+    attached: dict[str, list[dict]] = Field(default_factory=dict)
 
 
 class ResourceCastResult(ConfigBaseModel):
@@ -224,6 +232,8 @@ class ResourceCastResult(ConfigBaseModel):
 
     entities: Any
     transform_failures: list[TransformCastFailure] = Field(default_factory=list)
+    attached: dict[str, list[dict]] = Field(default_factory=dict)
+    """Documents to write onto vertices found by a secondary identity, by class."""
 
 
 class ActionContext(ExtractionContext):
@@ -233,3 +243,4 @@ class ActionContext(ExtractionContext):
     """
 
     acc_global: Any = Field(default_factory=dd_factory)
+    acc_attached: Any = Field(default_factory=attached_factory)

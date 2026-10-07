@@ -5,7 +5,8 @@
 # or declared here under `canonical_maps`) names the merged class Company.
 # The cluster carries a declared identity: each member keys on the key it
 # carries, one funnel branch apiece, and the members' own keys stay
-# addressable as secondary identities.
+# addressable as secondary identities, named by each side's origin: the
+# schema names (source-a) are not identifiers, so `origins` declares them.
 # No field is common to all four members, so a single natural key such as
 # [company_id] would leave Shop, Org and Branch completing no key -- merge
 # refuses it rather than dropping their records.
@@ -14,3 +15,6 @@ vertex_equivalences:
 -   left: [Firm, Shop]
     right: [Org, Branch]
     identity: [company_id, shop_id, org_id, branch_id]
+origins:
+    left: source_a
+    right: source_b

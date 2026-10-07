@@ -295,3 +295,59 @@ class TestAcknowledgement:
 
         asyncio.run(caster._release_staged_sources(loaded=False))
         assert (source.acknowledged, source.closed) == ([], 1)
+
+
+class TestWriteResolutionLog:
+    """The run's write-resolution counts are logged however the run ends."""
+
+    @staticmethod
+    def _ingest(caster: Caster) -> None:
+        from graflo.hq.endpoint_resolve import AttachStats, WriteStats
+
+        stats = WriteStats()
+        stats.add_attached("ci", AttachStats(documents=3, unmatched=2))
+
+        async def _write(batch, resource_name=None, conn_conf=None):
+            del batch, resource_name, conn_conf
+            caster._db_writer = SimpleNamespace(stats=stats)  # ty: ignore[invalid-assignment]
+
+        caster.process_batch = _write  # ty: ignore[invalid-assignment]
+        caster.ingestion_model._resources = {"fake_resource": MagicMock()}
+        registry = SimpleNamespace(
+            get_data_sources=lambda name: [_AcknowledgedSource(1)]
+        )
+        asyncio.run(
+            caster.ingest_data_sources(registry, conn_conf=_TARGET)  # ty: ignore[invalid-argument-type]
+        )
+
+    @staticmethod
+    def _logged(caplog) -> list[str]:
+        return [
+            r.getMessage()
+            for r in caplog.records
+            if r.name == "graflo.hq.caster" and "Write resolution" in r.getMessage()
+        ]
+
+    def test_the_counts_are_logged_at_the_end_of_the_run(self, caplog) -> None:
+        with caplog.at_level("INFO", logger="graflo.hq.caster"):
+            self._ingest(_caster())
+
+        (message,) = self._logged(caplog)
+        assert "attached ci" in message and "unmatched=2" in message
+
+    def test_the_counts_are_logged_when_finalizing_fails(self, caplog) -> None:
+        caster = _caster()
+
+        async def _finalize(conn_conf) -> None:
+            del conn_conf
+            raise ConnectionError("bulk load failed")
+
+        caster._finalize_bulk_session = _finalize  # ty: ignore[invalid-assignment]
+        with (
+            caplog.at_level("INFO", logger="graflo.hq.caster"),
+            pytest.raises(ConnectionError, match="bulk load failed"),
+        ):
+            self._ingest(caster)
+
+        (message,) = self._logged(caplog)
+        assert "attached ci" in message and "unmatched=2" in message

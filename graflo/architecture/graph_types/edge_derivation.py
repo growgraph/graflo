@@ -210,6 +210,19 @@ class EdgeDerivationRegistry:
         self._vertex_weights: dict[EdgeId, list[Weight]] = {}
         self._endpoint_match: dict[EdgeId, EndpointMatch] = {}
         self._endpoint_rules: list[EndpointRule] = []
+        self._attached: dict[str, PlainSelector] = {}
+
+    def attach(self, vertex: str, selector: PlainSelector) -> None:
+        """Record that this resource finds *vertex* by *selector*.
+
+        Every edge endpoint of that class is then matched on it, unless an edge
+        step states a selector for that endpoint.
+        """
+        self._attached[vertex] = selector
+
+    def attached_selector(self, vertex: str) -> PlainSelector | None:
+        """The selector *vertex* is found by, or ``None`` when it is not attached."""
+        return self._attached.get(vertex)
 
     def mark_relation_from_key(self, edge_id: EdgeId) -> None:
         self._relation_from_key[edge_id] = True
@@ -241,24 +254,40 @@ class EdgeDerivationRegistry:
         """How *edge_id* locates its endpoints, or ``None`` for the primary identity.
 
         An edge registered by id wins; otherwise the last rule covering it
-        decides, reduced to the edge's concrete classes.
+        decides, reduced to the edge's concrete classes. Per endpoint, one
+        still on the primary identity whose class is attached takes the
+        attached selector.
         """
         match = self._endpoint_match.get(edge_id)
-        if match is not None:
-            return match
-        for rule in reversed(self._endpoint_rules):
-            if rule.applies_to(edge_id):
-                resolved = rule.resolve(edge_id)
-                return None if resolved.is_default() else resolved
-        return None
+        if match is None:
+            for rule in reversed(self._endpoint_rules):
+                if rule.applies_to(edge_id):
+                    match = rule.resolve(edge_id)
+                    break
+        if self._attached:
+            source, target, _relation = edge_id
+            base = match or EndpointMatch()
+            match = EndpointMatch(
+                source=self._attached.get(source, base.source)
+                if _is_primary(base.source)
+                else base.source,
+                target=self._attached.get(target, base.target)
+                if _is_primary(base.target)
+                else base.target,
+                on_ambiguous=base.on_ambiguous,
+            )
+        if match is None or match.is_default():
+            return None
+        return match
 
     def has_endpoint_matches(self) -> bool:
         """Whether any edge locates its endpoints by a secondary identity.
 
-        Such edges are resolved against database state at write time, which
-        makes cross-batch write ordering semantic for the resource.
+        Such edges -- and attached vertices -- are resolved against database
+        state at write time, which makes cross-batch write ordering semantic
+        for the resource.
         """
-        return bool(self._endpoint_match or self._endpoint_rules)
+        return bool(self._endpoint_match or self._endpoint_rules or self._attached)
 
     def merge_vertex_weights(self, edge_id: EdgeId, rules: list[Weight]) -> None:
         """Append vertex weight rules for *edge_id*, deduplicating by stable fingerprint."""
@@ -285,6 +314,7 @@ class EdgeDerivationRegistry:
         }
         out._endpoint_match = dict(self._endpoint_match)
         out._endpoint_rules = list(self._endpoint_rules)
+        out._attached = dict(self._attached)
         return out
 
     def merge_from(self, other: EdgeDerivationRegistry) -> None:
@@ -297,6 +327,8 @@ class EdgeDerivationRegistry:
             self.set_endpoint_match(eid, match)
         for rule in other._endpoint_rules:
             self.add_endpoint_rule(rule)
+        for vertex, selector in other._attached.items():
+            self.attach(vertex, selector)
 
 
 def _weight_fingerprint(w: Weight) -> str:

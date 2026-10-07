@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
+
+import pytest
 
 from graflo.architecture.contract.ingestion import IngestionModel
 from graflo.architecture.graph_types import GraphContainer
@@ -12,8 +15,14 @@ from graflo.architecture.schema import (
 from graflo.architecture.schema.database_features import DatabaseProfile
 from graflo.architecture.schema.edge import Edge, EdgeConfig
 from graflo.architecture.schema.vertex import Field, Vertex, VertexConfig
-from graflo.connections.onto import ArangoConfig, Neo4jConfig
+from graflo.connections.onto import (
+    ArangoConfig,
+    Neo4jConfig,
+    PostgresConfig,
+    TigergraphConfig,
+)
 from graflo.hq.db_writer import DBWriter
+from graflo.hq.endpoint_resolve import AmbiguousEndpointError
 from graflo.onto import DBType
 
 
@@ -81,6 +90,66 @@ def test_push_vertices_blank_uses_python_generated_identity(monkeypatch):
     assert "_key" in gc.vertices["blank_v"][0]
     assert isinstance(gc.vertices["blank_v"][0]["_key"], str)
     assert gc.vertices["blank_v"][0]["_key"]
+
+
+def test_a_blank_vertex_mirrors_an_identity_it_already_carries(monkeypatch):
+    schema = _build_schema()
+    writer = DBWriter(schema=schema, ingestion_model=_build_ingestion_model(schema))
+    gc = GraphContainer(vertices={"blank_v": [{"id": "b-1"}]}, edges={}, linear=[])
+
+    monkeypatch.setattr("graflo.hq.db_writer.ConnectionManager", _FakeConnectionManager)
+    conn_conf = ArangoConfig(uri="http://localhost:8529", username="root", password="x")
+    asyncio.run(writer._push_vertices(gc, conn_conf))
+
+    assert gc.vertices["blank_v"][0] == {"id": "b-1", "_key": "b-1"}
+
+
+def _assigned_writer(identity: list[str]) -> DBWriter:
+    vertex_config = VertexConfig(
+        vertices=[
+            Vertex(
+                name="event",
+                properties=[Field(name=name) for name in identity],
+                identity=identity,
+                assigned=True,
+            )
+        ],
+    )
+    schema = Schema(
+        metadata=GraphMetadata(name="test"),
+        core_schema=CoreSchema(vertex_config=vertex_config, edge_config=EdgeConfig()),
+        db_profile=DatabaseProfile(db_flavor=DBType.NEO4J),
+    )
+    return DBWriter(schema=schema, ingestion_model=_build_ingestion_model(schema))
+
+
+@pytest.mark.parametrize(
+    ("identity", "conn_conf", "default_field"),
+    [
+        (
+            [],
+            ArangoConfig(uri="http://localhost:8529", username="root", password="x"),
+            "_key",
+        ),
+        (
+            ["uid"],
+            Neo4jConfig(uri="bolt://localhost:7687", username="u", password="p"),
+            "id",
+        ),
+    ],
+)
+def test_an_assigned_vertex_mirrors_its_uuid_into_the_default_key(
+    identity, conn_conf, default_field
+):
+    writer = _assigned_writer(identity)
+    (preferred,) = writer.schema.core_schema.vertex_config.identity_fields("event")
+    kept = "00000000-0000-4000-8000-000000000001"
+    docs: list[dict] = [{}, {preferred: kept, default_field: "own"}]
+
+    writer._assign_assigned_vertex_ids("event", docs, conn_conf)
+
+    assert docs[0][default_field] == docs[0][preferred]
+    assert docs[1] == {preferred: kept, default_field: "own"}
 
 
 def test_resolve_blank_edges_prefers_identity_join_over_zip():
@@ -367,3 +436,668 @@ def test_an_edge_the_schema_does_not_declare_is_reported_once(caplog):
     reports = [r for r in caplog.records if "does not declare" in r.getMessage()]
     assert len(reports) == 1
     assert str(undeclared) in reports[0].getMessage()
+
+
+# -- attach: records written onto the vertices their secondary identity finds ----
+
+
+def _cmdb_schema(flavor: str = "neo4j") -> Schema:
+    return Schema.model_validate(
+        {
+            "metadata": {"name": "cmdb"},
+            "core_schema": {
+                "vertex_config": {
+                    "vertices": [
+                        {
+                            "name": "ci",
+                            "properties": ["id", "serial", "site", "tag", "owner"],
+                            "identity": ["id"],
+                            "secondary_identities": [
+                                {"name": "by_serial", "fields": ["serial"]},
+                                {"name": "by_site_tag", "fields": ["site", "tag"]},
+                            ],
+                        },
+                        {
+                            "name": "probe",
+                            "properties": ["name", "serial", "owner"],
+                            "hash_identity_properties": ["name"],
+                            "secondary_identities": [
+                                {"name": "by_serial", "fields": ["serial"]}
+                            ],
+                        },
+                    ]
+                },
+                "edge_config": {"edges": []},
+            },
+            "db_profile": {"db_flavor": flavor},
+        }
+    )
+
+
+def _cmdb_model(schema: Schema, policy: str = "all") -> IngestionModel:
+    model = IngestionModel.model_validate(
+        {
+            "resources": [
+                {
+                    "name": "owners",
+                    "pipeline": [{"vertex": "ci", "from": {"id": "id"}}],
+                },
+                {
+                    "name": "attach",
+                    "pipeline": [
+                        {
+                            "vertex": "ci",
+                            "find": "by_serial",
+                            "from": {"serial": "serial", "owner": "owner"},
+                        }
+                    ],
+                },
+            ],
+            "transforms": [],
+            "endpoints_on_ambiguous": policy,
+        }
+    )
+    model.finish_init(schema.core_schema)
+    return model
+
+
+class _AttachDB:
+    """Holds stored vertices; records every resolve and upsert it is asked for."""
+
+    def __init__(self, stored: list[dict] | None = None) -> None:
+        self.stored = stored or []
+        self.upserts: list[dict] = []
+        self.resolves: list[tuple] = []
+
+    def upsert_docs_batch(self, docs, class_name, match_keys, **kwargs):
+        self.upserts.append(
+            {
+                "docs": list(docs),
+                "class_name": class_name,
+                "match_keys": list(match_keys),
+                **kwargs,
+            }
+        )
+
+    def resolve_vertices(self, class_name, key_docs, match_keys, return_keys, **kw):
+        self.resolves.append((class_name, tuple(match_keys), tuple(return_keys)))
+        found: dict[int, list[dict]] = {}
+        for position, doc in enumerate(key_docs):
+            key = tuple(doc.get(f) for f in match_keys)
+            if None in key:
+                continue
+            hits = [
+                {f: node.get(f) for f in return_keys}
+                for node in self.stored
+                if tuple(node.get(f) for f in match_keys) == key
+            ]
+            if hits:
+                found[position] = hits
+        return found
+
+
+def _manager_for(db: _AttachDB) -> type:
+    class _Manager:
+        def __init__(self, connection_config):
+            self.connection_config = connection_config
+
+        def __enter__(self) -> _AttachDB:
+            return db
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    return _Manager
+
+
+def _attach_write(
+    monkeypatch,
+    gc: GraphContainer,
+    db: _AttachDB,
+    *,
+    policy: str = "all",
+    dry: bool = False,
+    schema: Schema | None = None,
+    conn_conf=None,
+    resource_name: str | None = "attach",
+) -> DBWriter:
+    schema = schema or _cmdb_schema()
+    writer = DBWriter(
+        schema=schema, ingestion_model=_cmdb_model(schema, policy), dry=dry
+    )
+
+    monkeypatch.setattr("graflo.hq.db_writer.ConnectionManager", _manager_for(db))
+    conn_conf = conn_conf or Neo4jConfig(
+        uri="bolt://localhost:7687", username="u", password="p"
+    )
+    asyncio.run(writer.write(gc=gc, conn_conf=conn_conf, resource_name=resource_name))
+    return writer
+
+
+def _attached(
+    docs: list[dict], selector: str = "by_serial", vertex: str = "ci"
+) -> GraphContainer:
+    return GraphContainer(
+        vertices={}, edges={}, attached={vertex: docs}, attached_by={vertex: selector}
+    )
+
+
+class TestAttachVertices:
+    def test_owners_and_attached_records_are_upserted_in_separate_calls(
+        self, monkeypatch
+    ):
+        gc = _attached([{"serial": "S1", "owner": "ann"}])
+        gc.vertices["ci"] = [{"id": "c1"}]
+        db = _AttachDB(stored=[{"id": "c0", "serial": "S1"}])
+
+        writer = _attach_write(monkeypatch, gc, db)
+
+        owners, attached = db.upserts
+        assert owners["docs"] == [{"id": "c1"}]
+        assert attached["docs"] == [{"serial": "S1", "owner": "ann", "id": "c0"}]
+        assert attached["class_name"] == "ci" and attached["match_keys"] == ["id"]
+        assert attached["update_keys"] == "doc" and attached["filter_uniques"]
+        assert db.resolves == [("ci", ("serial",), ("id",))]
+        stats = writer.stats.attached["ci"]
+        assert (stats.documents, stats.attached, stats.written) == (1, 1, 1)
+
+    def test_an_unmatched_record_is_counted_and_never_written(self, monkeypatch):
+        gc = _attached(
+            [{"serial": "S1", "owner": "ann"}, {"serial": "NOPE", "owner": "bob"}]
+        )
+        db = _AttachDB(stored=[{"id": "c0", "serial": "S1"}])
+
+        writer = _attach_write(monkeypatch, gc, db)
+
+        (attached,) = db.upserts
+        assert attached["docs"] == [{"serial": "S1", "owner": "ann", "id": "c0"}]
+        stats = writer.stats.attached["ci"]
+        assert (stats.documents, stats.attached, stats.unmatched) == (2, 1, 1)
+
+    def test_attaching_never_creates_a_vertex(self, monkeypatch):
+        db = _AttachDB(stored=[])
+
+        writer = _attach_write(
+            monkeypatch, _attached([{"serial": "S9", "owner": "x"}]), db
+        )
+
+        assert db.upserts == []
+        assert writer.stats.attached["ci"].unmatched == 1
+
+    @pytest.mark.parametrize(
+        ("policy", "ids"),
+        [("all", ["c2", "c1"]), ("first", ["c1"]), ("skip", [])],
+    )
+    def test_an_ambiguous_record_follows_the_policy(self, monkeypatch, policy, ids):
+        db = _AttachDB(
+            stored=[{"id": "c2", "serial": "S1"}, {"id": "c1", "serial": "S1"}]
+        )
+
+        writer = _attach_write(
+            monkeypatch,
+            _attached([{"serial": "S1", "owner": "ann"}]),
+            db,
+            policy=policy,
+        )
+
+        written = [doc for call in db.upserts for doc in call["docs"]]
+        assert [doc["id"] for doc in written] == ids
+        assert all(doc["owner"] == "ann" for doc in written)
+        stats = writer.stats.attached["ci"]
+        assert stats.ambiguous == 1 and stats.written == len(ids)
+
+    def test_an_ambiguous_record_raises_under_error(self, monkeypatch):
+        db = _AttachDB(
+            stored=[{"id": "c2", "serial": "S1"}, {"id": "c1", "serial": "S1"}]
+        )
+        with pytest.raises(AmbiguousEndpointError, match="S1"):
+            _attach_write(
+                monkeypatch,
+                _attached([{"serial": "S1", "owner": "ann"}]),
+                db,
+                policy="error",
+            )
+        assert db.upserts == []
+
+    def test_an_ambiguous_record_under_error_cancels_every_class(self, monkeypatch):
+        schema = _cmdb_schema()
+        (identity,) = schema.core_schema.vertex_config.identity_fields("probe")
+        db = _AttachDB(
+            stored=[
+                {identity: "h1", "serial": "P1"},
+                {"id": "c2", "serial": "S1"},
+                {"id": "c1", "serial": "S1"},
+            ]
+        )
+        gc = GraphContainer(
+            attached={
+                "probe": [{"serial": "P1", "owner": "bob"}],
+                "ci": [{"serial": "S1", "owner": "ann"}],
+            },
+            attached_by={"probe": "by_serial", "ci": "by_serial"},
+        )
+
+        with pytest.raises(AmbiguousEndpointError, match="S1"):
+            _attach_write(
+                monkeypatch,
+                gc,
+                db,
+                policy="error",
+                schema=schema,
+                resource_name=None,
+            )
+        assert db.upserts == []
+
+    def test_a_partial_composite_key_is_unresolvable(self, monkeypatch):
+        db = _AttachDB(stored=[{"id": "c0", "site": "x", "tag": "t"}])
+
+        writer = _attach_write(
+            monkeypatch,
+            _attached([{"site": "x", "owner": "ann"}], selector="by_site_tag"),
+            db,
+            resource_name=None,
+        )
+
+        assert db.upserts == []
+        stats = writer.stats.attached["ci"]
+        assert (stats.documents, stats.unresolvable, stats.written) == (1, 1, 0)
+
+    def test_a_dry_run_resolves_and_writes_nothing(self, monkeypatch):
+        class _NoResolve(_AttachDB):
+            def resolve_vertices(self, *args, **kwargs):
+                raise AssertionError("a dry run must not read the database")
+
+        db = _NoResolve()
+
+        writer = _attach_write(
+            monkeypatch, _attached([{"serial": "S1", "owner": "ann"}]), db, dry=True
+        )
+
+        assert db.upserts == []
+        assert writer.stats.attached["ci"].documents == 1
+
+    def test_a_hash_keyed_vertex_mirrors_the_arango_key(self, monkeypatch):
+        schema = _cmdb_schema("arango")
+        (identity,) = schema.core_schema.vertex_config.identity_fields("probe")
+        db = _AttachDB(stored=[{identity: "h1", "serial": "S1"}])
+
+        _attach_write(
+            monkeypatch,
+            _attached([{"serial": "S1", "owner": "ann"}], vertex="probe"),
+            db,
+            schema=schema,
+            conn_conf=ArangoConfig(
+                uri="http://localhost:8529", username="root", password="x"
+            ),
+            resource_name=None,
+        )
+
+        ((doc,),) = [call["docs"] for call in db.upserts]
+        assert doc[identity] == "h1" and doc["_key"] == "h1"
+
+    def test_the_summary_and_warning_report_the_counts(self, monkeypatch, caplog):
+        db = _AttachDB(stored=[{"id": "c0", "serial": "S1"}])
+        gc = _attached([{"serial": "S1"}, {"serial": "NOPE"}])
+
+        with caplog.at_level("WARNING", logger="graflo.hq.db_writer"):
+            writer = _attach_write(monkeypatch, gc, db)
+
+        summary = writer.stats.summary()
+        assert "ci" in summary and "unmatched=1" in summary
+        assert not writer.stats.is_empty()
+        (warning,) = [r.getMessage() for r in caplog.records]
+        assert "ci" in warning and "by_serial" in warning and "unmatched=1" in warning
+
+    def test_records_landing_on_one_vertex_become_one_row(self, monkeypatch):
+        db = _AttachDB(stored=[{"id": "c0", "serial": "S1"}])
+        gc = _attached(
+            [
+                {"serial": "S1", "owner": "ann", "site": "x"},
+                {"serial": "S1", "owner": "bob", "tag": "t"},
+            ]
+        )
+
+        writer = _attach_write(monkeypatch, gc, db)
+
+        (call,) = db.upserts
+        assert call["docs"] == [
+            {"serial": "S1", "owner": "bob", "site": "x", "tag": "t", "id": "c0"}
+        ]
+        stats = writer.stats.attached["ci"]
+        assert (stats.attached, stats.written) == (2, 1)
+
+    def test_a_match_without_a_primary_identity_is_unmatched(self, monkeypatch):
+        db = _AttachDB(stored=[{"serial": "S1"}])
+
+        writer = _attach_write(
+            monkeypatch, _attached([{"serial": "S1", "owner": "ann"}]), db
+        )
+
+        assert db.upserts == []
+        stats = writer.stats.attached["ci"]
+        assert (stats.unmatched, stats.attached, stats.written) == (1, 0, 0)
+
+    def test_an_attached_class_without_a_selector_is_refused(self, monkeypatch):
+        gc = GraphContainer(attached={"ci": [{"serial": "S1"}]})
+        db = _AttachDB(stored=[{"id": "c0", "serial": "S1"}])
+
+        with pytest.raises(ValueError, match="'ci'.*no secondary identity"):
+            _attach_write(monkeypatch, gc, db)
+        assert db.resolves == [] and db.upserts == []
+
+
+# -- edge endpoints found by a secondary identity --------------------------------
+
+
+def _located_schema() -> Schema:
+    return Schema.model_validate(
+        {
+            "metadata": {"name": "cmdb"},
+            "core_schema": {
+                "vertex_config": {
+                    "vertices": [
+                        {
+                            "name": "ci",
+                            "properties": ["id", "serial"],
+                            "identity": ["id"],
+                            "secondary_identities": [
+                                {"name": "by_serial", "fields": ["serial"]}
+                            ],
+                        },
+                        {"name": "site", "properties": ["id"], "identity": ["id"]},
+                    ]
+                },
+                "edge_config": {
+                    "edges": [
+                        {"source": "ci", "target": "site", "relation": "at"},
+                        {"source": "ci", "target": "site", "relation": "near"},
+                    ]
+                },
+            },
+            "db_profile": {"db_flavor": "neo4j"},
+        }
+    )
+
+
+class _EdgeResolveDB(_AttachDB):
+    def __init__(self, stored: list[dict]) -> None:
+        super().__init__(stored)
+        self.edge_inserts: list[dict] = []
+
+    def insert_edges_batch(self, **kwargs):
+        self.edge_inserts.append(kwargs)
+
+
+def _push_located_edges(monkeypatch, edges: dict, db: _EdgeResolveDB) -> None:
+    from graflo.architecture.graph_types.edge_derivation import (
+        EdgeDerivationRegistry,
+    )
+
+    schema = _located_schema()
+    model = IngestionModel.model_validate(
+        {"resources": [], "endpoints_on_ambiguous": "error"}
+    )
+    model.finish_init(schema.core_schema)
+    writer = DBWriter(schema=schema, ingestion_model=model)
+    registry = EdgeDerivationRegistry()
+    registry.attach("ci", "by_serial")
+    resource = SimpleNamespace(edge_derivation=registry)
+
+    monkeypatch.setattr("graflo.hq.db_writer.ConnectionManager", _manager_for(db))
+    conn_conf = Neo4jConfig(uri="bolt://localhost:7687", username="u", password="p")
+    asyncio.run(writer._push_edges(GraphContainer(edges=edges), conn_conf, resource))
+
+
+class TestEdgeEndpointResolution:
+    def test_an_ambiguous_endpoint_under_error_cancels_every_edge(self, monkeypatch):
+        db = _EdgeResolveDB(
+            stored=[
+                {"id": "c1", "serial": "S1"},
+                {"id": "c2", "serial": "S1"},
+                {"id": "c3", "serial": "S2"},
+            ]
+        )
+        edges = {
+            ("ci", "site", "near"): [({"serial": "S2"}, {"id": "x"}, {})],
+            ("ci", "site", "at"): [({"serial": "S1"}, {"id": "x"}, {})],
+        }
+
+        with pytest.raises(AmbiguousEndpointError, match="S1"):
+            _push_located_edges(monkeypatch, edges, db)
+        assert db.edge_inserts == []
+
+    def test_clean_endpoints_are_resolved_then_inserted(self, monkeypatch):
+        db = _EdgeResolveDB(
+            stored=[{"id": "c1", "serial": "S1"}, {"id": "c3", "serial": "S2"}]
+        )
+        edges = {
+            ("ci", "site", "near"): [({"serial": "S2"}, {"id": "x"}, {})],
+            ("ci", "site", "at"): [({"serial": "S1"}, {"id": "x"}, {})],
+        }
+
+        _push_located_edges(monkeypatch, edges, db)
+
+        written = {
+            call["relation_name"]: [doc[0]["id"] for doc in call["docs_edges"]]
+            for call in db.edge_inserts
+        }
+        assert written == {"near": ["c3"], "at": ["c1"]}
+
+
+class TestAttachRefusedInBulk:
+    def test_a_resource_that_attaches_is_refused(self, monkeypatch):
+        with pytest.raises(ValueError, match="REST ingest"):
+            _attach_write_bulk(monkeypatch, GraphContainer(), "attach")
+
+    def test_attached_records_are_refused(self, monkeypatch):
+        gc = _attached([{"serial": "S1"}])
+        with pytest.raises(ValueError, match="REST ingest"):
+            _attach_write_bulk(monkeypatch, gc, None)
+
+
+def _attach_write_bulk(monkeypatch, gc: GraphContainer, resource_name) -> None:
+    schema = _cmdb_schema()
+    writer = DBWriter(schema=schema, ingestion_model=_cmdb_model(schema))
+
+    monkeypatch.setattr(
+        "graflo.hq.db_writer.ConnectionManager", _manager_for(_AttachDB())
+    )
+    conn_conf = Neo4jConfig(uri="bolt://localhost:7687", username="u", password="p")
+    asyncio.run(
+        writer.write(
+            gc=gc, conn_conf=conn_conf, resource_name=resource_name, bulk_session_id="s"
+        )
+    )
+
+
+def test_attached_records_are_resolved_and_written_under_stored_names(monkeypatch):
+    """``from`` and ``type`` are TigerGraph reserved words, so both are renamed."""
+    schema = Schema.model_validate(
+        {
+            "metadata": {"name": "routes"},
+            "core_schema": {
+                "vertex_config": {
+                    "vertices": [
+                        {
+                            "name": "route",
+                            "properties": ["from", "type", "name"],
+                            "identity": ["from"],
+                            "secondary_identities": [
+                                {"name": "by_type", "fields": ["type"]}
+                            ],
+                        }
+                    ]
+                },
+                "edge_config": {"edges": []},
+            },
+            "db_profile": {"db_flavor": "tigergraph"},
+        }
+    )
+    model = IngestionModel(resources=[])
+    model.finish_init(schema.core_schema)
+    writer = DBWriter(schema=schema, ingestion_model=model)
+    db = _AttachDB(stored=[{"from_attr": "A", "type_attr": "bus"}])
+
+    monkeypatch.setattr("graflo.hq.db_writer.ConnectionManager", _manager_for(db))
+    gc = _attached([{"type": "bus", "name": "x"}], selector="by_type", vertex="route")
+    conn_conf = TigergraphConfig(
+        uri="http://localhost:14240", username="u", password="p"
+    )
+
+    asyncio.run(writer.write(gc=gc, conn_conf=conn_conf, resource_name=None))
+
+    assert db.resolves == [("route", ("type_attr",), ("from_attr",))]
+    (call,) = db.upserts
+    assert call["docs"] == [{"type_attr": "bus", "name": "x", "from_attr": "A"}]
+    assert call["match_keys"] == ["from_attr"]
+    assert gc.attached["route"] == [{"type": "bus", "name": "x"}]
+
+
+# -- PostgreSQL edge writes: keyed like the edge table ----------------------------
+
+
+class _EdgeWrites:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def insert_edges_batch(self, **kwargs):
+        self.calls.append(kwargs)
+
+
+def _postgres_edge_kwargs(
+    monkeypatch,
+    edges_on_duplicate: str,
+    identities: list[list[str]] | None = None,
+) -> dict:
+    schema = Schema.model_validate(
+        {
+            "metadata": {"name": "hr"},
+            "core_schema": {
+                "vertex_config": {
+                    "vertices": [
+                        {"name": "person", "properties": ["id"], "identity": ["id"]},
+                        {"name": "org", "properties": ["id"], "identity": ["id"]},
+                    ]
+                },
+                "edge_config": {
+                    "edges": [
+                        {
+                            "source": "person",
+                            "target": "org",
+                            "relation": "works_at",
+                            "properties": ["since", "grade"],
+                            "identities": identities or [["source", "target", "since"]],
+                        }
+                    ]
+                },
+            },
+            "db_profile": {"db_flavor": "postgres"},
+        }
+    )
+    model = IngestionModel.model_validate(
+        {"resources": [], "edges_on_duplicate": edges_on_duplicate}
+    )
+    model.finish_init(schema.core_schema)
+    writer = DBWriter(schema=schema, ingestion_model=model)
+    writes = _EdgeWrites()
+
+    class _Manager(_FakeConnectionManager):
+        db = writes
+
+    monkeypatch.setattr("graflo.hq.db_writer.ConnectionManager", _Manager)
+    gc = GraphContainer(
+        vertices={},
+        edges={
+            ("person", "org", "works_at"): [
+                ({"id": "p1"}, {"id": "o1"}, {"since": "2020", "grade": "A"})
+            ]
+        },
+        linear=[],
+    )
+    conn_conf = PostgresConfig(
+        uri="postgresql://localhost:5432/db", username="u", password="p", database="db"
+    )
+
+    asyncio.run(writer._push_edges(gc, conn_conf))
+
+    (call,) = writes.calls
+    return call
+
+
+def test_postgres_edges_are_written_on_their_merge_properties(monkeypatch):
+    call = _postgres_edge_kwargs(monkeypatch, "ignore")
+
+    assert call["relationship_merge_properties"] == ("since",)
+    assert "on_duplicate" not in call
+
+
+def test_postgres_edges_upsert_when_the_model_asks_for_it(monkeypatch):
+    call = _postgres_edge_kwargs(monkeypatch, "upsert")
+
+    assert call["relationship_merge_properties"] == ("since",)
+    assert call["on_duplicate"] == "upsert"
+
+
+def test_postgres_edges_keyed_by_relation_conflict_on_their_endpoints(monkeypatch):
+    """The table name holds the relation, so it adds no key column."""
+    call = _postgres_edge_kwargs(
+        monkeypatch, "upsert", identities=[["source", "target", "relation"]]
+    )
+
+    assert call.get("relationship_merge_properties") is None
+
+
+def test_postgres_edges_keyed_by_relation_and_a_property_use_the_property(
+    monkeypatch,
+):
+    call = _postgres_edge_kwargs(
+        monkeypatch, "upsert", identities=[["source", "target", "relation", "since"]]
+    )
+
+    assert call["relationship_merge_properties"] == ("since",)
+
+
+def test_owner_docs_sharing_an_identity_reach_the_backend_as_one_doc(monkeypatch):
+    vertex_config = VertexConfig(
+        vertices=[
+            Vertex(
+                name="item",
+                properties=[Field(name="id"), Field(name="a"), Field(name="b")],
+                identity=["id"],
+            )
+        ],
+    )
+    schema = Schema(
+        metadata=GraphMetadata(name="test"),
+        core_schema=CoreSchema(vertex_config=vertex_config, edge_config=EdgeConfig()),
+        db_profile=DatabaseProfile(db_flavor=DBType.NEO4J),
+    )
+    writer = DBWriter(
+        schema=schema,
+        ingestion_model=_build_ingestion_model(schema),
+        dry=False,
+        max_concurrent=1,
+    )
+    gc = GraphContainer(
+        vertices={
+            "item": [
+                {"id": "x", "a": 1, "b": 1},
+                {"id": "y", "a": 5},
+                {"id": "x", "b": 2},
+            ]
+        },
+        edges={},
+        linear=[],
+    )
+
+    class _RecordingConnectionManager(_FakeConnectionManager):
+        db = _FakeDB()
+
+    monkeypatch.setattr(
+        "graflo.hq.db_writer.ConnectionManager", _RecordingConnectionManager
+    )
+    conn_conf = Neo4jConfig(uri="bolt://localhost:7687", username="u", password="p")
+    asyncio.run(writer._push_vertices(gc, conn_conf))
+
+    [(docs, _, _)] = _RecordingConnectionManager.db.upsert_calls
+    assert docs == [{"id": "x", "a": 1, "b": 2}, {"id": "y", "a": 5}]

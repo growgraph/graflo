@@ -37,7 +37,12 @@ the position matters.
 7. **Apply the composite rename** to each side, one `CanonicalizeOp` per side,
    preceded by the `change_field_types` the op's `field_types` lower to on that
    side's own names. Every property type clash no declaration settles is
-   refused before this step, naming the members that carry each type.
+   refused before this step, naming the members that carry each type. The
+   rename already holds each demoted key's `<key space>__<field>` name, which
+   step 1 put there, so pipelines get their `from` maps like any property
+   rename. Origins and key spaces are refused, if at all, right after step 1
+   (`origin_refusals`, `key_space_refusals`, `demoted_key_refusals` in
+   `merge_refusals.py`), before anything is named by them.
 8. **Prefix the right side's remaining collisions** (`prefix_right` only;
    `error` and `union_right` settled theirs in step 3).
 9. **Union schema, ingestion and bindings by name** (`_union_schema`,
@@ -51,18 +56,52 @@ the position matters.
 11. **Bump the version, then lower each derived identity**
     (`_apply_derived_identities`, through `identity_to_ops`).
 12. **Demote the members' own keys** of every re-keyed type
-    (`_retire_member_keys`), against the type's final identity. This runs after
-    the lowering because a derived identity replaces the provisional one, and a
-    key demoted against that could be skipped as equal to a primary key that no
-    longer exists. Then **turn each resource that can fill no branch into a
-    reference** (`_convert_uncovered_producers`): no derived branch names it and
-    its members carry no property branch. Then **point reference-only
-    resources** at the demoted keys (`_pin_member_references`).
+    (`_retire_member_keys`), against the type's final identity, one secondary
+    identity per key space, named by `plan_demoted_key_names`
+    (`merge_refusals.py`) -- the rule the preview and `demoted_key_refusals`
+    read from the sides before the union, so all three name a key alike.
+    This runs after the lowering because a derived
+    identity replaces the provisional one, and a key demoted against that could
+    be skipped as equal to a primary key that no longer exists. Then record
+    the shared key spaces and the key owners, then **attach each resource that
+    can fill no branch** (`_attach_uncovered_producers`: `find: <key space>` on
+    its steps, per type on routers, in every role), then **pin reference-only
+    resources** to the demoted keys (`_pin_member_references`, which skips
+    `find` steps).
 13. **Close each side's routers** over its own types (`router_scope="side"`,
-    `_close_side_routers`). Last, so the lowering and the reference conversion
-    see the routers as they were.
-14. **Apply the op's `name` and `target_namespace`** (`_apply_merge_naming`),
+    `_close_side_routers`). After the lowering and the attaching, so both see
+    the routers as they were.
+14. **Order the resources** (`_order_after_merge` in `merge_report.py`, through
+    `ordering.order_resources`): a stable topological order with owners before
+    the resources of their side attached to their type, and every other writer
+    of a type before the resources that only find it (a router counts only for
+    the types it names, not those it passes through). An owner of the other
+    side does not constrain an attached resource, because it never writes the
+    key that resource finds by. The resources in a cycle keep their declared
+    order among themselves, and the constraints it leaves unmet are reported
+    as `MergeReport.order_cycles`. Last among the pipeline rewrites, so it
+    reads the steps as attached, pinned and closed.
+15. **Apply the op's `name` and `target_namespace`** (`_apply_merge_naming`),
     then `finish_init`.
+
+### How an attached record is written
+
+1. **Cast.** A vertex step with `find` builds a `VertexRep` carrying the
+   selector. It keeps the selector's fields, gets no digest or uuid, is
+   deduplicated on those fields, and lands in `GraphContainer.attached[class]`,
+   with `attached_by[class]` naming the selector.
+2. **Edges.** At load, `ResourceRuntime` collects each class's selector
+   (`pipeline_find_selectors`, one per class per resource) and registers it
+   with `EdgeDerivationRegistry.attach`. `endpoint_match_for` composes it into
+   every edge: an explicit `source_match` / `target_match` wins, otherwise an
+   endpoint of an attached class takes its selector.
+3. **Write.** `DBWriter.write` pushes vertices, then `_attach_vertices`: per
+   class, `resolve_vertices` by the selector's fields, `select_matches` under
+   `endpoints_on_ambiguous`, the primary identity filled in from each match,
+   and one `upsert_docs_batch` of its own, so a record never nulls a property
+   the owners wrote. Unmatched and ambiguous records are counted in
+   `DBWriter.stats`. Edges are written last, resolving attached endpoints the
+   same way.
 
 ## How names resolve
 
@@ -118,12 +157,12 @@ raised after naming.
 Each cluster's `declaration` is one `VertexEquivalence` over the closed sets:
 the property equivalences of all its equivalences, a bare property name
 expanded over the members its own equivalence lists, and the one `identity`.
-When that identity derives, a member keeps its own key behind `side:Type` for
+When that identity derives, a member keeps its own key behind `<origin>:Type` for
 every resource that produces it and that its stepped branches do not key for
 it: a resource whose entries are keyed by other members, a member-keyed local
 key that skips it, or, for a member the vocabulary joins, a resource with no
 entry at all. A member an equivalence lists whose resource has no entry is
-left to the reference conversion of step 12, as is a resource that produces
+left to be attached in step 12, as is a resource that produces
 the member through routers in several roles (`hosts_member_derivation` is
 false: one level's transform buffer cannot hold a derived value per role; a
 `reference_only` note). Each automatic key is an `auto_local_key` note. Downstream code iterates `cluster.members(side)` and
@@ -273,8 +312,7 @@ sets none: a plain `vertex` step producing the type beside the router. Routers
 reading different discriminators at one level, the roles of an edge resource,
 are refused outright, `when` or not: the level's transform buffer is shared by
 every router at it, so one derived attribute cannot hold a different value per
-role. Such a resource stays out of the sources and is converted into a
-reference (step 12).
+role. Such a resource stays out of the sources and is attached (step 12).
 
 **The guard is derived from the sides.** After the per-side rename, the union
 cannot say which router key produced which member, but the snapshots from step

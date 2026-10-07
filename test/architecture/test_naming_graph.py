@@ -25,10 +25,12 @@ from graflo.architecture.evolution import (
     IdentityBranchDecl,
     LocalKeyBranch,
     LocalKeySource,
+    MergeIdentityError,
     MergeManifestsOp,
     PropertyEquivalence,
     VertexEquivalence,
     merge_manifests,
+    merge_manifests_with_report,
     resolve_clusters,
 )
 from graflo.architecture.evolution.alignment import AlignmentConflictError
@@ -250,11 +252,169 @@ class TestVocabularyGroupWithPartialEquivalence:
         devices = _cast(union, "devices", _DEVICE_ROWS, "Machine")
 
         by_local = {doc["local_key"]: doc for doc in register}
-        device_ids = {doc["device_id"]: doc["id"] for doc in devices}
+        device_ids = {doc["device__device_id"]: doc["id"] for doc in devices}
         assert by_local["press:P1"]["match_key"] == "hp-1"
         assert by_local["press:P1"]["id"] == device_ids["D1"]
         assert by_local["lathe:L1"]["match_key"] == "lt-7"
         assert by_local["lathe:L1"]["id"] == device_ids["D2"]
+
+    def test_a_members_local_key_tag_names_its_demoted_key(self) -> None:
+        """``press`` and ``lathe`` are two key spaces; Bench keeps the origin's."""
+        union, report = merge_manifests_with_report(
+            _register_manifest(), _devices_manifest(), _engineer_op()
+        )
+
+        machine = union.require_schema().core_schema.vertex_config["Machine"]
+        assert {s.name: list(s.fields) for s in machine.secondary_identities} == {
+            "press": ["press__asset_id"],
+            "lathe": ["lathe__asset_id"],
+            "maintenance": ["maintenance__asset_id"],
+            "device": ["device__device_id"],
+        }
+        register = _cast(union, "register", _REGISTER_ROWS, "Machine")
+        assert sorted(
+            (k, v) for doc in register for k, v in doc.items() if k.endswith("asset_id")
+        ) == [
+            ("lathe__asset_id", "L1"),
+            ("maintenance__asset_id", "B1"),
+            ("press__asset_id", "P1"),
+        ]
+        assert report.shared_key_spaces == []
+
+    @staticmethod
+    def _register_with(*resources: dict) -> GraphManifest:
+        left = _register_manifest()
+        manifest = GraphManifest.from_config(
+            {
+                **left.to_dict(skip_defaults=True),
+                "ingestion_model": {
+                    "resources": [
+                        *left.require_ingestion_model().to_dict(skip_defaults=True)[
+                            "resources"
+                        ],
+                        *resources,
+                    ]
+                },
+            }
+        )
+        manifest.finish_init()
+        return manifest
+
+    def test_a_reference_to_one_member_is_pinned_to_its_key_space(self) -> None:
+        left = self._register_with(
+            {
+                "name": "press_refs",
+                "pipeline": [{"vertex": "Press", "lookup_only": True}],
+            }
+        )
+        _union, report = merge_manifests_with_report(
+            left, _devices_manifest(), _engineer_op()
+        )
+
+        assert [(r.resource, r.members, r.key) for r in report.references] == [
+            ("press_refs", ("Press",), "press")
+        ]
+
+    def test_a_router_referencing_members_in_two_key_spaces_is_refused(
+        self,
+    ) -> None:
+        """One reference cannot select both ``press`` and ``lathe``."""
+        left = self._register_with(
+            {
+                "name": "refs",
+                "pipeline": [
+                    {
+                        "vertex_router": {
+                            "type_field": "kind",
+                            "type_map": {"press": "Press", "lathe": "Lathe"},
+                            "type_map_only": True,
+                            "lookup_only": True,
+                        }
+                    }
+                ],
+            }
+        )
+        with pytest.raises(MergeIdentityError, match="refs") as refused:
+            merge_manifests(left, _devices_manifest(), _engineer_op())
+        assert refused.value.check == "ambiguous reference"
+
+    def test_a_member_tagged_twice_differently_is_refused(self) -> None:
+        op = _engineer_op(
+            identity=[
+                _TRIAGE[0],
+                LocalKeyBranch(
+                    local_key={
+                        "register": {
+                            "Press": LocalKeySource(field="asset_id", tag="press"),
+                            "Lathe": LocalKeySource(field="asset_id", tag="lathe"),
+                        },
+                        "devices": LocalKeySource(field="device_id", tag="device"),
+                        "presses_too": LocalKeySource(field="asset_id", tag="hp"),
+                    }
+                ),
+            ]
+        )
+        left = _register_manifest()
+        ingestion = left.require_ingestion_model()
+        left = GraphManifest.from_config(
+            {
+                **left.to_dict(skip_defaults=True),
+                "ingestion_model": {
+                    "resources": [
+                        *ingestion.to_dict(skip_defaults=True)["resources"],
+                        {"name": "presses_too", "pipeline": [{"vertex": "Press"}]},
+                    ]
+                },
+            }
+        )
+        left.finish_init()
+
+        with pytest.raises(MergeIdentityError, match="left:Press") as refused:
+            merge_manifests(left, _devices_manifest(), op)
+        assert refused.value.check == "key space"
+        assert "one tag" in str(refused.value)
+
+    def test_a_null_tag_names_the_key_by_the_origin(self) -> None:
+        op = _engineer_op(
+            identity=[
+                _TRIAGE[0],
+                LocalKeyBranch(
+                    local_key={
+                        "register": {
+                            "Press": LocalKeySource(field="asset_id", tag=None),
+                            "Lathe": LocalKeySource(field="asset_id", tag="lathe"),
+                        },
+                        "devices": LocalKeySource(field="device_id", tag="device"),
+                    }
+                ),
+            ]
+        )
+        union = merge_manifests(_register_manifest(), _devices_manifest(), op)
+
+        machine = union.require_schema().core_schema.vertex_config["Machine"]
+        secondaries = {s.name: list(s.fields) for s in machine.secondary_identities}
+        assert secondaries["maintenance"] == ["maintenance__asset_id"]
+        assert secondaries["lathe"] == ["lathe__asset_id"]
+        assert "press" not in secondaries
+
+    def test_a_tag_that_cannot_name_a_key_space_is_refused(self) -> None:
+        op = _engineer_op(
+            identity=[
+                _TRIAGE[0],
+                LocalKeyBranch(
+                    local_key={
+                        "register": {
+                            "Press": LocalKeySource(field="asset_id", tag="p:1"),
+                            "Lathe": LocalKeySource(field="asset_id", tag="lathe"),
+                        },
+                        "devices": LocalKeySource(field="device_id", tag="device"),
+                    }
+                ),
+            ]
+        )
+        with pytest.raises(MergeIdentityError) as refused:
+            merge_manifests(_register_manifest(), _devices_manifest(), op)
+        assert refused.value.check == "key space"
 
     def test_a_vocabulary_only_member_keeps_its_own_key_and_never_matches(
         self,
@@ -266,8 +426,10 @@ class TestVocabularyGroupWithPartialEquivalence:
         register = _cast(union, "register", _REGISTER_ROWS, "Machine")
         devices = _cast(union, "devices", _DEVICE_ROWS, "Machine")
 
-        bench = next(doc for doc in register if doc["asset_id"] == "B1")
-        assert bench["local_key"] == "left:Bench:B1"
+        bench = next(
+            doc for doc in register if doc.get("maintenance__asset_id") == "B1"
+        )
+        assert bench["local_key"] == "maintenance:Bench:B1"
         assert bench.get("match_key") is None
         assert bench["id"] not in {doc["id"] for doc in devices}
 
@@ -278,6 +440,18 @@ class TestVocabularyGroupWithPartialEquivalence:
 
         (note,) = _notes(resolution.findings, "auto_local_key")
         assert "left:Bench" in note.subjects
+        assert "'maintenance:Bench:<value>'" in note.message
+
+    def test_the_automatic_key_is_tagged_by_the_op_origin(self) -> None:
+        op = _engineer_op().model_copy(
+            update={"origins": {"left": "plant", "right": "iot"}}
+        )
+        resolution = resolve_clusters(
+            op, left=_register_manifest(), right=_devices_manifest()
+        )
+
+        (note,) = _notes(resolution.findings, "auto_local_key")
+        assert "'plant:Bench:<value>'" in note.message
 
     def test_a_derive_attribute_is_keyed_like_the_derived_branch(self) -> None:
         derived, local = _TRIAGE
@@ -353,7 +527,9 @@ class TestVocabularyGroupWithPartialEquivalence:
         )
 
         register = _cast(union, "register", _REGISTER_ROWS, "Machine")
-        bench = next(doc for doc in register if doc["asset_id"] == "B1")
+        bench = next(
+            doc for doc in register if doc.get("maintenance__asset_id") == "B1"
+        )
         assert bench["match_key"] == "hp-1"
 
     def test_a_composite_key_cannot_be_keyed_automatically(self) -> None:
@@ -685,7 +861,9 @@ class TestSuggestions:
         assert local is not None
         register = local.local_key["register"]
         assert isinstance(register, dict)
-        assert register["Bench"] == LocalKeySource(field="asset_id", tag="left:Bench")
+        assert register["Bench"] == LocalKeySource(
+            field="asset_id", tag="maintenance:Bench"
+        )
         resolution = resolve_clusters(
             suggested, left=_register_manifest(), right=_devices_manifest()
         )
@@ -1032,16 +1210,35 @@ class TestAnEdgeResourceReferencesAJoinedMember:
         assert "left:Bench" in note.subjects
         assert "links" in note.message
 
-    def test_the_union_looks_the_merged_class_up_from_both_roles(self) -> None:
-        union = merge_manifests(_links_manifest(), _devices_manifest(), _links_op())
+    def test_members_in_different_key_spaces_cannot_be_attached_by_one_router(
+        self,
+    ) -> None:
+        """``Press`` ids are tagged ``press``, ``Bench`` ids are the origin's."""
+        with pytest.raises(MergeIdentityError, match="links") as refused:
+            merge_manifests(_links_manifest(), _devices_manifest(), _links_op())
+        assert refused.value.check == "ambiguous reference"
+        alone = preview_merge(
+            _links_manifest(), _devices_manifest(), _links_op(), attempt=False
+        )
+        assert "ambiguity" in {
+            f.kind for f in alone.findings if f.severity == "possible"
+        }
+
+    def test_the_union_attaches_the_merged_class_in_both_roles(self) -> None:
+        """``Press`` left untagged shares the origin's key space with ``Bench``."""
+        union = merge_manifests(
+            _links_manifest(),
+            _devices_manifest(),
+            _links_op(presses=LocalKeySource(field="asset_id")),
+        )
 
         source, target, edge = _links_steps(union)
-        assert source["lookup_only"] == ["Machine"]
-        assert target["lookup_only"] == ["Machine"]
-        assert edge["source_match"] == {"Machine": "by_asset_id"}
-        assert edge["target_match"] == {"Machine": "by_asset_id"}
+        assert source["find"] == {"Machine": "plant"}
+        assert target["find"] == {"Machine": "plant"}
+        assert not source.get("lookup_only") and not target.get("lookup_only")
+        assert not edge.get("source_match") and not edge.get("target_match")
         presses = _cast(union, "presses", [{"asset_id": "P1"}], "Machine")
-        assert [p["local_key"] for p in presses] == ["press:P1"]
+        assert [p["local_key"] for p in presses] == ["plant:P1"]
 
     def test_keying_the_edge_resource_by_member_is_refused(self) -> None:
         op = _links_op(links={"Bench": LocalKeySource(field="source_id", tag="link")})
@@ -1065,7 +1262,7 @@ class TestAnEdgeResourceReferencesAJoinedMember:
         assert repair.vertex_equivalences == (
             {
                 "local_key": {
-                    "benches": {"Bench": {"field": "asset_id", "tag": "left:Bench"}}
+                    "benches": {"Bench": {"field": "asset_id", "tag": "plant:Bench"}}
                 }
             },
         )
@@ -1108,7 +1305,9 @@ class TestAPropertyKeyAndAVocabularyJoinedMember:
         assert repair.vertex_equivalences == (
             {
                 "local_key": {
-                    "register": {"Bench": {"field": "asset_id", "tag": "left:Bench"}}
+                    "register": {
+                        "Bench": {"field": "asset_id", "tag": "maintenance:Bench"}
+                    }
                 }
             },
         )
@@ -1118,7 +1317,7 @@ class TestAPropertyKeyAndAVocabularyJoinedMember:
     ) -> None:
         local_key = {
             "local_key": {
-                "register": {"Bench": {"field": "asset_id", "tag": "left:Bench"}}
+                "register": {"Bench": {"field": "asset_id", "tag": "maintenance:Bench"}}
             }
         }
 
@@ -1127,7 +1326,9 @@ class TestAPropertyKeyAndAVocabularyJoinedMember:
         )
 
         benches = _cast(union, "register", _REGISTER_ROWS[2:], "Machine")
-        assert [b["local_key"] for b in benches] == ["left:Bench:B1"]
+        assert [b["local_key"] for b in benches] == ["maintenance:Bench:B1"]
+        # The automatic key's tag namespaces the values; it names no key space.
+        assert [b["maintenance__asset_id"] for b in benches] == ["B1"]
 
 
 # --------------------------------------------------------------------------- #

@@ -338,15 +338,18 @@ class EdgeConfigDBAware:
         via :meth:`compile_identity_indexes` but do not change the writer merge key.
 
         If that key yields no relationship fields, or ``identities`` is empty,
-        falls back to all declared edge attribute names.
+        falls back to all declared edge attribute names. On PostgreSQL a
+        ``relation`` token yields no field and no fallback: each relation has its
+        own edge table, so the endpoints already key it.
         """
         db_flavor = self.db_profile.db_flavor
         if edge.identities:
-            props = self._identity_tokens_to_relationship_properties(
-                edge.identities[0], db_flavor
-            )
+            first = edge.identities[0]
+            props = self._identity_tokens_to_relationship_properties(first, db_flavor)
             if props:
                 return props
+            if db_flavor == DBType.POSTGRES and "relation" in first:
+                return []
         if edge.property_names:
             return list(edge.property_names)
         return []
@@ -360,7 +363,7 @@ class EdgeConfigDBAware:
             if token in ("source", "target"):
                 continue
             if token == "relation":
-                if db_flavor != DBType.TIGERGRAPH:
+                if db_flavor not in (DBType.TIGERGRAPH, DBType.POSTGRES):
                     fields.append("relation")
                 continue
             fields.append(token)

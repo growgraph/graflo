@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from functools import partial
 from itertools import combinations, product, zip_longest
 from typing import Any
@@ -254,6 +254,7 @@ def render_edge(
     derivation: EdgeDerivation | None = None,
     source_match_fields: list[str] | None = None,
     target_match_fields: list[str] | None = None,
+    endpoints: Mapping[str, Mapping[LocationIndex, list[VertexRep]]] | None = None,
 ) -> defaultdict[str | None, list]:
     """Create edges between source and target vertices.
 
@@ -265,6 +266,8 @@ def render_edge(
             the vertex's primary identity; a secondary identity is passed when the
             edge step selects one.
         target_match_fields: Same, for the target endpoint.
+        endpoints: Observations to read the endpoints from, per class and
+            location; ``ctx.acc_vertex`` when omitted. Must hold both classes.
     """
     acc_vertex = ctx.acc_vertex
     transform_buffer = ctx.transform_buffer
@@ -283,8 +286,12 @@ def render_edge(
         else vertex_config.identity_fields(target)
     )
 
-    source_by_loc = acc_vertex[source]
-    target_by_loc = acc_vertex[target]
+    if endpoints is None:
+        source_by_loc = acc_vertex[source]
+        target_by_loc = acc_vertex[target]
+    else:
+        source_by_loc = endpoints[source]
+        target_by_loc = endpoints[target]
     if not source_by_loc or not target_by_loc:
         return defaultdict(list)
 
@@ -422,7 +429,7 @@ def render_edge(
 def render_weights(
     edge: Edge,
     vertex_config: VertexConfig,
-    acc_vertex: defaultdict[str, defaultdict[LocationIndex, list]],
+    acc_vertex: Mapping[str, Mapping[LocationIndex, list]],
     edges: defaultdict[str | None, list],
     *,
     vertex_weights: list[Weight] | None = None,
@@ -431,7 +438,8 @@ def render_weights(
 
     An entry read from one vertex goes on every edge. An entry read from as many
     vertices as a relation has edges pairs them by position; any other count
-    goes on every edge from the first vertex, with a warning.
+    goes on every edge from the first vertex, with a warning. *acc_vertex*
+    maps each class to its vertex reps per location.
     """
     vertex_weights = vertex_weights or []
     entries: list[tuple[str, list[dict]]] = []
@@ -441,7 +449,7 @@ def render_weights(
         vertex = w.name
         if vertex is None or vertex not in vertex_config.vertex_set:
             continue
-        vertex_lists = acc_vertex[vertex]
+        vertex_lists = acc_vertex.get(vertex, {})
 
         keys = sorted(vertex_lists)
         if not keys:

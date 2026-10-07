@@ -18,7 +18,11 @@ from graflo.architecture.graph_types import (
 from graflo.architecture.schema.vertex import VertexConfig, VertexName
 
 from .base import ActorInitContext, VertexProducingActor
-from .vertex import refuse_undeclared_mapping, undeclared_mapping_targets
+from .vertex import (
+    find_fields,
+    refuse_undeclared_mapping,
+    undeclared_mapping_targets,
+)
 
 if TYPE_CHECKING:
     from .wrapper import ActorWrapper
@@ -47,8 +51,9 @@ class VertexRouterActor(VertexProducingActor):
 
     ``lookup_only`` (every routed class, or the listed ones) is handed to the
     vertex actor of each class it covers, so those rows locate edge endpoints
-    and are never written. ``vertex_types`` bounds the classes it produces: a
-    value resolving to any other class is skipped.
+    and are never written. ``find`` names, per class, the secondary identity its
+    rows find their existing vertex by. ``vertex_types`` bounds the classes it
+    produces: a value resolving to any other class is skipped.
     """
 
     def __init__(self, config: VertexRouterActorConfig):
@@ -88,6 +93,8 @@ class VertexRouterActor(VertexProducingActor):
             items["vertex_types"] = self.config.vertex_types
         if self.config.lookup_only:
             items["lookup_only"] = self.config.lookup_only
+        if self.config.find:
+            items["find"] = self.config.find
         items["routed_types"] = sorted(self._vertex_actors.keys())
         return items
 
@@ -98,6 +105,7 @@ class VertexRouterActor(VertexProducingActor):
         for field, named in (
             ("lookup_only", self.config.lookup_only),
             ("vertex_types", self.config.vertex_types),
+            ("find", list(self.config.find or {})),
         ):
             if isinstance(named, list):
                 unknown = sorted(set(named) - self.vertex_config.vertex_set)
@@ -106,6 +114,13 @@ class VertexRouterActor(VertexProducingActor):
                         f"vertex_router on {self.type_field!r}: {field} names "
                         f"{unknown}, which the schema does not declare"
                     )
+        for vertex_type, selector in sorted((self.config.find or {}).items()):
+            find_fields(
+                self.vertex_config,
+                vertex_type,
+                selector,
+                step=f"vertex_router on {self.type_field!r}",
+            )
         if init_ctx.strict_references:
             # Checked for the classes the router names; one an unbounded router
             # routes to by pass-through is known only per record, and gets the
@@ -166,6 +181,7 @@ class VertexRouterActor(VertexProducingActor):
                     "keep_fields": list(self.keep_fields) if self.keep_fields else None,
                     "extraction_scope": self.extraction_scope,
                     "lookup_only": self.config.looks_up(vertex_type),
+                    "find": self.config.find_for(vertex_type),
                 }
             )
             wrapper = ActorWrapper.from_config(config)

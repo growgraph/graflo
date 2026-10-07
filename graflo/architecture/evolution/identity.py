@@ -376,7 +376,7 @@ def apply_replace_identity(manifest: GraphManifest, op: ReplaceIdentityOp) -> No
 
 
 def _selectors_in_use(manifest: GraphManifest) -> list[tuple[str, str | list[str]]]:
-    """Every ``(vertex, selector)`` an edge step depends on across all resources."""
+    """Every ``(vertex, selector)`` an edge step or a ``find`` depends on, across resources."""
     from .rewrite import collect_endpoint_selectors
 
     if manifest.ingestion_model is None:
@@ -524,8 +524,8 @@ def apply_remove_secondary_identities(
             ):
                 raise ValueError(
                     f"remove_secondary_identities: vertex '{vertex.name}' secondary "
-                    f"identity {used_selector!r} is still selected by an edge step; "
-                    "repoint that endpoint before removing the lookup key"
+                    f"identity {used_selector!r} is still selected by an edge step "
+                    "or a `find`; repoint it before removing the lookup key"
                 )
 
         replacements[vertex.name] = _replaced_vertex(

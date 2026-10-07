@@ -44,6 +44,11 @@ def fuse_doc_basis(
 
     For VertexRep objects, the merge is performed on the `vertex` attribute.
 
+    VertexRep objects fuse only with reps carrying the same observation tags
+    (``lookup_only``, ``find``): each tag set is fused on its own, and the
+    groups follow one another in the order of their first rep. Fusing across
+    tags would put writable properties under a reference, or the reverse.
+
     Args:
         docs: Homogeneous list of documents (all dict or all VertexRep) to merge
         index_keys: Tuple of key names to use for merging
@@ -53,7 +58,24 @@ def fuse_doc_basis(
     """
     if not docs:
         return docs
+    if isinstance(docs[0], VertexRep):
+        groups: dict[tuple[bool, str | None], list[VertexRep]] = {}
+        for rep in docs:
+            if not isinstance(rep, VertexRep):
+                raise TypeError(f"expected VertexRep, got {type(rep).__name__}")
+            groups.setdefault((rep.lookup_only, rep.find), []).append(rep)
+        fused: list[VertexRep] = []
+        for group in groups.values():
+            fused.extend(cast(list[VertexRep], _fuse_group(group, index_keys)))
+        return fused
+    return _fuse_group(docs, index_keys)
 
+
+def _fuse_group(
+    docs: list[dict] | list[VertexRep],
+    index_keys: tuple[str, ...],
+) -> list[dict] | list[VertexRep]:
+    """:func:`fuse_doc_basis` over documents that may all fuse with one another."""
     # Check if we're working with VertexRep objects
     is_vertexrep = isinstance(docs[0], VertexRep)
 
@@ -150,7 +172,12 @@ def fuse_doc_basis(
     elif pending_non_ids:
         # No documents with index keys: merge all into a single document
         if is_vertexrep:
-            merged_doc = VertexRep(vertex={})
+            # Keep the group's tags (lookup_only, find): a fresh rep would
+            # turn a reference or an attached row into a write.
+            first = pending_non_ids[0]
+            if not isinstance(first, VertexRep):
+                raise TypeError(f"expected VertexRep, got {type(first).__name__}")
+            merged_doc = first.model_copy(update={"vertex": {}})
         else:
             merged_doc = {}
         for pending in pending_non_ids:

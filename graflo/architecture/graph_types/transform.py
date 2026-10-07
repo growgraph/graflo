@@ -26,6 +26,13 @@ class VertexRep(ConfigBaseModel):
     the observation rather than the vertex type keeps it correct when one
     resource both writes and merely references the same vertex type.
     """
+    find: str | None = None
+    """Secondary identity this observation finds its existing vertex by.
+
+    Such a document carries the find fields and no primary key: it is written
+    onto the vertex it finds (or, with ``lookup_only``, only referenced) and
+    never creates one.
+    """
 
 
 class TransformPayload(ConfigBaseModel):

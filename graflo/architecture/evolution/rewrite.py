@@ -329,6 +329,13 @@ def _router_piece(closed: dict[str, Any], classes: frozenset[str]) -> dict[str, 
             out["lookup_only"] = kept_lookup
         else:
             out.pop("lookup_only")
+    found = closed.get("find")
+    if isinstance(found, dict):
+        kept_find = {c: s for c, s in found.items() if c in classes}
+        if kept_find:
+            out["find"] = kept_find
+        else:
+            out.pop("find")
     return out
 
 
@@ -356,8 +363,14 @@ def _refuse_mixed_lookup(
     reach: frozenset[str] | None,
     known_before: set[str],
 ) -> None:
+    """Refuse a merge of classes the router produces in different ways.
+
+    One class cannot be both looked up and written, nor found by a secondary
+    identity and written by its primary, nor found by two secondaries.
+    """
     lookup = router.get("lookup_only")
-    if not isinstance(lookup, list):
+    found = router.get("find")
+    if not isinstance(lookup, list) and not isinstance(found, dict):
         return
     groups: dict[str, set[str]] = {}
     for old, new in mapping.items():
@@ -366,13 +379,28 @@ def _refuse_mixed_lookup(
             groups.setdefault(new, {new} & known_before).add(old)
     for target, members in sorted(groups.items()):
         routed = {m for m in members if reach is None or m in reach}
-        looked_up = routed & set(lookup)
+        looked_up = routed & set(lookup) if isinstance(lookup, list) else set()
         if looked_up and routed - looked_up:
             raise ValueError(
                 f"vertex_router on {router.get('type_field')!r}: merging "
                 f"{sorted(routed)} into {target!r} joins classes it only looks up "
                 f"({sorted(looked_up)}) with classes it writes "
                 f"({sorted(routed - looked_up)}); split the router first"
+            )
+        by = {m: found[m] for m in routed if m in found} if found else {}
+        if by and routed - set(by):
+            raise ValueError(
+                f"vertex_router on {router.get('type_field')!r}: merging "
+                f"{sorted(routed)} into {target!r} joins classes it finds by a "
+                f"secondary identity ({sorted(by)}) with classes it writes by "
+                f"their primary ({sorted(routed - set(by))}); split the router "
+                "first"
+            )
+        if len(set(by.values())) > 1:
+            raise ValueError(
+                f"vertex_router on {router.get('type_field')!r}: merging "
+                f"{sorted(routed)} into {target!r} joins classes it finds by "
+                f"different secondary identities ({by}); give them one first"
             )
 
 
@@ -429,6 +457,19 @@ def _renamed_router(
             out["lookup_only"] = kept
         else:
             out.pop("lookup_only")
+
+    found = out.get("find")
+    if isinstance(found, dict):
+        # Merged classes share one selector: _refuse_mixed_lookup has checked.
+        kept_find = {
+            mapped: selector
+            for name, selector in found.items()
+            if (mapped := new_name(name)) is not None
+        }
+        if kept_find:
+            out["find"] = kept_find
+        else:
+            out.pop("find")
 
     vertex_from_map = out.get("vertex_from_map")
     if isinstance(vertex_from_map, dict):
@@ -988,6 +1029,71 @@ def _mark_lookup_only(step: Any, vertex: str) -> None:
             _mark_lookup_only(step[key], vertex)
 
 
+def mark_find_in_pipeline(
+    pipeline: list[dict[str, Any]], vertex: str, selector: str
+) -> list[dict[str, Any]]:
+    """*pipeline* with every production of *vertex* found by *selector*.
+
+    A ``vertex`` step for it gains ``find: <selector>``; a ``vertex_router``
+    whose :func:`router_reach` includes it gains ``{vertex: selector}`` in its
+    ``find`` map, its other classes untouched. ``lookup_only`` is left as is:
+    a step that wrote the class now attaches to the node it finds, one that
+    only referenced it now references it by *selector*. Steps keep their
+    authored spelling, at every level.
+    """
+    out = deepcopy(pipeline)
+    _mark_find(out, vertex, selector)
+    return out
+
+
+def _mark_find(step: Any, vertex: str, selector: str) -> None:
+    if isinstance(step, list):
+        for item in step:
+            _mark_find(item, vertex, selector)
+        return
+    if not isinstance(step, dict):
+        return
+    normalized = normalize_actor_step(dict(step))
+    step_type = normalized.get("type")
+    if step_type == "vertex" and normalized.get("vertex") == vertex:
+        step["find"] = selector
+    elif step_type == "vertex_router":
+        reach = router_reach(normalized)
+        payload = router_payload(step)
+        if payload is not None and (reach is None or vertex in reach):
+            current = payload.get("find")
+            payload["find"] = {
+                **(current if isinstance(current, dict) else {}),
+                vertex: selector,
+            }
+
+    descend_payload = step.get("descend")
+    if isinstance(descend_payload, dict):
+        for key in ("apply", "pipeline"):
+            _mark_find(descend_payload.get(key), vertex, selector)
+    for key in ("apply", "pipeline"):
+        if isinstance(step.get(key), list):
+            _mark_find(step[key], vertex, selector)
+
+
+def _collect_find_selectors(
+    step: dict[str, Any], out: list[tuple[str, str | list[str]]]
+) -> None:
+    """``(vertex, selector)`` for each class *step* finds by a secondary identity."""
+    normalized = normalize_actor_step(dict(step))
+    found = normalized.get("find")
+    if normalized.get("type") == "vertex" and isinstance(found, str):
+        vertex = normalized.get("vertex")
+        if isinstance(vertex, str):
+            out.append((vertex, found))
+    elif normalized.get("type") == "vertex_router" and isinstance(found, dict):
+        out.extend(
+            (vertex, selector)
+            for vertex, selector in found.items()
+            if isinstance(selector, str)
+        )
+
+
 def _collect_endpoint_selectors_in_edge_payload(
     payload: dict[str, Any], out: list[tuple[str, str | list[str]]]
 ) -> None:
@@ -1029,6 +1135,7 @@ def _collect_endpoint_selectors_in_step(
     if not isinstance(step, dict):
         return
 
+    _collect_find_selectors(step, out)
     for payload in edge_payloads(step):
         _collect_endpoint_selectors_in_edge_payload(payload, out)
 
@@ -1048,10 +1155,12 @@ def _collect_endpoint_selectors_in_step(
 def collect_endpoint_selectors(
     pipeline: list[dict[str, Any]],
 ) -> list[tuple[str, str | list[str]]]:
-    """``(vertex_name, selector)`` for every endpoint matched on a secondary identity.
+    """``(vertex_name, selector)`` for every use of a secondary identity.
 
-    Endpoints resolving through the primary identity are omitted — they carry no
-    dependency on a named secondary identity.
+    Each edge endpoint matched on one, and each class a vertex step or a
+    router finds by one (``find``). Endpoints resolving through the primary
+    identity are omitted — they carry no dependency on a named secondary
+    identity.
     """
     out: list[tuple[str, str | list[str]]] = []
     _collect_endpoint_selectors_in_step(pipeline, out)

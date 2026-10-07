@@ -318,6 +318,7 @@ Elsewhere:
 |---|---|---|
 | `identity_from_all_properties` | `vertex_config` | `true` |
 | `lookup_only` | `vertex` step (`true`), or `vertex_router` step (`true`, or a list of the types only looked up) | `false` |
+| `find` | `vertex` step (a secondary identity name), or `vertex_router` step (`{type: name}`): write onto the vertex that identity finds, never create one; with `lookup_only`, only find it for edges | none |
 | `source_match`, `target_match` | edge step; for an endpoint filled by a `vertex_router`, a mapping `{type: selector}` | the primary identity |
 | `on_ambiguous` | edge step | the model's `endpoints_on_ambiguous` |
 | `endpoints_on_ambiguous` | `ingestion_model` | `all` |

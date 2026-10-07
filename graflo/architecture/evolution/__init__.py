@@ -111,7 +111,19 @@ _APPLY_EXPORTS = frozenset(
 )
 
 _MERGE_EXPORTS = frozenset(
-    {"MergeIdentityError", "MergeNameConflictError", "merge_manifests"}
+    {
+        "AttachedProducer",
+        "DemotedKey",
+        "KeyOwner",
+        "MergeIdentityError",
+        "MergeNameConflictError",
+        "MergeReport",
+        "OrderCycle",
+        "PinnedReference",
+        "SharedKeySpace",
+        "merge_manifests",
+        "merge_manifests_with_report",
+    }
 )
 
 _MERGE_COMMIT_EXPORTS = frozenset({"build_merge_commit", "find_commit_by_tree"})
@@ -332,6 +344,7 @@ __all__ = [
     "AddVerticesOp",
     "AlignmentConflictError",
     "AssignedIdentityTarget",
+    "AttachedProducer",
     "BlankIdentityTarget",
     "CanonicalMap",
     "CanonicalizeOp",
@@ -345,6 +358,7 @@ __all__ = [
     "DanglingEntry",
     "DeclareEdgeInversesOp",
     "DeclaredMaps",
+    "DemotedKey",
     "DerivationSpec",
     "DerivedBranch",
     "EdgeFieldSemanticsTarget",
@@ -366,6 +380,7 @@ __all__ = [
     "IdentityReplacement",
     "IdentityTarget",
     "InversePlan",
+    "KeyOwner",
     "ListOrder",
     "LocalKeyBranch",
     "LocalKeySource",
@@ -384,12 +399,15 @@ __all__ = [
     "MergeRecipe",
     "MergeRecipeRef",
     "MergeRenames",
+    "MergeReport",
     "MergeResult",
     "MergeVerticesOp",
     "NamingFinding",
     "NamingGraph",
     "NamingResult",
     "NaturalIdentityTarget",
+    "OrderCycle",
+    "PinnedReference",
     "ProjectManifestOp",
     "PropertyEquivalence",
     "RelationCluster",
@@ -422,6 +440,7 @@ __all__ = [
     "SetNativeInversesOp",
     "SetVertexDescriptionsOp",
     "SetVertexSemanticsOp",
+    "SharedKeySpace",
     "SideMaps",
     "SideRenames",
     "UnclassifiedListField",
@@ -504,6 +523,7 @@ __all__ = [
     "is_reversible",
     "manifest_hash",
     "merge_manifests",
+    "merge_manifests_with_report",
     "merge_three_way",
     "naming_table",
     "op_from_dict",

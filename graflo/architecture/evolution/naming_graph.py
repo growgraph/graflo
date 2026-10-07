@@ -30,19 +30,23 @@ as handed in, before the relabel. So class-specific identity sources, property
 maps and the ``when`` guards derived from how a resource produces a member
 survive the merge. A member a vocabulary joins whose producing resources the
 group's identity does not key is given its own key behind a tag
-(``side:Class``): it belongs to the class, but its records never fuse with
-another member's.
+(``origin:Class``): it belongs to the class, but its records never fuse with
+another member's. A member key a declared identity demotes is renamed
+``<origin>__<field>`` by the same relabel, so keys from the two sides never
+share a property.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.refusal import Refusal
+from graflo.onto import PRIMARY_IDENTITY_SELECTOR, SECONDARY_IDENTITY_SUGAR
 
 from .canonical import (
     ClusterResolution,
@@ -329,6 +333,92 @@ class _Component:
         return [name for _kind, s, name in self.nodes if s == side]
 
 
+#: What a key space name must look like: it prefixes property names with ``__``.
+_KEY_SPACE_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
+#: Selector words an edge step reads as something other than a declared name.
+_RESERVED_KEY_SPACE_NAMES = frozenset(
+    {PRIMARY_IDENTITY_SELECTOR, SECONDARY_IDENTITY_SUGAR}
+)
+
+
+def key_space_name_problem(name: str) -> str | None:
+    """Why *name* cannot name a key space, as a clause; ``None`` when it can.
+
+    A key space name is a letter, then letters, digits or single underscores,
+    and not a selector word (``identity``, ``secondary``).
+    """
+    if not name:
+        return "is empty"
+    if "__" in name:
+        return "contains '__', which joins a key space to field names"
+    if not _KEY_SPACE_NAME.fullmatch(name):
+        return "is not a letter followed by letters, digits or underscores"
+    if name in _RESERVED_KEY_SPACE_NAMES:
+        return f"is the selector word {name!r}"
+    return None
+
+
+def is_key_space_name(name: str) -> bool:
+    """Whether *name* can name a key space: see :func:`key_space_name_problem`."""
+    return key_space_name_problem(name) is None
+
+
+def member_key_tags(
+    op: MergeManifestsOp,
+    cluster: Cluster,
+    side: Side,
+    member: str,
+    producing: Collection[str],
+    origin: str,
+) -> set[str]:
+    """The key spaces the op's own ``local_key`` entries put *member*'s ids in.
+
+    A ``local_key`` tag names the key space of a source's own ids. An entry
+    keyed by member applies to that member; an unkeyed one to every member its
+    resource produces (*producing*: the union names of the resources producing
+    *member* on *side*). An omitted or ``null`` tag is the side's *origin*.
+    Automatic keys are not read: those merge adds are not the op's, and one
+    written into the op keeps its ``<origin>:<Member>`` tag, which namespaces
+    the member's values but names no key space.
+    """
+    automatic = f"{origin}:{member}"
+    tags: set[str] = set()
+    for declaration in op.vertex_equivalences:
+        if not any(
+            cluster.resolved(s, m) in cluster.members(s)
+            for s in _SIDES
+            for m in declaration.members(s)
+        ):
+            continue
+        branch = declaration.local_key_branch()
+        if branch is None:
+            continue
+        for resource, entry in branch.local_key.items():
+            if resource not in producing:
+                continue
+            sources = (
+                [src for k, src in entry.items() if cluster.resolved(side, k) == member]
+                if isinstance(entry, dict)
+                else [entry]
+            )
+            tags.update(src.tag or origin for src in sources if src.tag != automatic)
+    return tags
+
+
+def key_space_name(tags: Collection[str], origin: str) -> str:
+    """The key space a member's demoted key is named by.
+
+    Its one tag when that is a valid name, else the side's *origin* -- also
+    when it has none, or two (refused by
+    :func:`~graflo.architecture.evolution.merge_refusals.key_space_refusals`).
+    """
+    if len(tags) == 1:
+        (tag,) = tags
+        if tag == origin or is_key_space_name(tag):
+            return tag
+    return origin
+
+
 def _free_name(base: str, taken: Collection[str], suffix: str) -> str:
     candidate = f"{base}_{suffix}"
     ordinal = 2
@@ -349,6 +439,9 @@ class _Naming:
     op: MergeManifestsOp
     manifests: dict[Side, GraphManifest]
     extra: Sequence[tuple[Side, CanonicalMap]]
+    origins: dict[Side, str] = field(
+        default_factory=lambda: {"left": "left", "right": "right"}
+    )
     names: dict[Side, SideNames] = field(default_factory=dict)
     declared: DeclaredMaps = field(
         default_factory=lambda: DeclaredMaps(left=CanonicalMap(), right=CanonicalMap())
@@ -360,6 +453,12 @@ class _Naming:
     #: The same shape for ``renames`` entries whose source the side declares.
     renames: dict[Kind, dict[Side, dict[str, str]]] = field(default_factory=dict)
     edges: list[NamingEdge] = field(default_factory=list)
+    #: Each side's merged classes whose local keys its origin tags: see
+    #: :class:`ClusterResolution`.
+    origin_tagged: dict[Side, set[str]] = field(default_factory=dict)
+    demoted_keys: dict[tuple[Side, str], tuple[str, ...]] = field(default_factory=dict)
+    key_spaces: dict[tuple[Side, str], str] = field(default_factory=dict)
+    key_tags: dict[tuple[Side, str], tuple[str, ...]] = field(default_factory=dict)
 
     # ── findings ────────────────────────────────────────────────────────────
 
@@ -441,6 +540,7 @@ class _Naming:
                 if isinstance(c.declaration, RelationEquivalence)
             ),
         )
+        self._untagged_local_keys(index)
         side_maps = self._side_maps(components, index)
         self._consequences(components)
         self._property_checks(index, side_maps)
@@ -453,6 +553,13 @@ class _Naming:
                 declared=self.declared,
                 findings=tuple(f for f in findings if not f.blocking),
                 graph=graph,
+                origins=dict(self.origins),
+                origin_tagged={
+                    side: frozenset(names) for side, names in self.origin_tagged.items()
+                },
+                demoted_keys=dict(self.demoted_keys),
+                key_spaces=dict(self.key_spaces),
+                key_tags=dict(self.key_tags),
             ),
             graph=graph,
             findings=findings,
@@ -1511,7 +1618,7 @@ class _Naming:
         self, side: Side, member: str, resource_names: Mapping[Side, Mapping[str, str]]
     ) -> list[tuple[str, str]]:
         """``(side name, union name)`` of each resource of *side* producing *member*."""
-        from .merge import _steps_producing
+        from graflo.architecture.contract.ingestion.resource import _steps_producing
 
         manifest = self.manifests[side]
         ingestion, schema = manifest.ingestion_model, manifest.graph_schema
@@ -1593,7 +1700,7 @@ class _Naming:
                 if any(branch <= carried for branch in branches):
                     continue
                 own = list(vertex_config[member].identity)
-                tag = f"{side}:{member}"
+                tag = f"{self.origins[side]}:{member}"
                 entry = {
                     "local_key": {
                         union_name: {
@@ -1643,10 +1750,10 @@ class _Naming:
         stepped branch has an entry for the resource that applies to it: one
         unkeyed spec, or one keyed by that member. A resource keying other
         members only would drop its records; a vocabulary-joined member's
-        resource with no entry at all would otherwise be turned into a lookup.
-        Both get the member's own key behind ``side:Member``. A declared member
-        whose resource has no entry is left to merge, which turns that
-        resource into a lookup of the merged class — as is a resource that
+        resource with no entry at all would otherwise be attached by its key.
+        Both get the member's own key behind ``origin:Member``. A declared member
+        whose resource has no entry is left to merge, which attaches that
+        resource to the merged class by its own key — as is a resource that
         produces the member through routers in several roles, which no
         derivation at its level can serve (:func:`_keyable`).
         """
@@ -1706,7 +1813,7 @@ class _Naming:
                             f"{side}:{member} joins {component.name!r}; resource "
                             f"{union_name!r} produces it through routers in several "
                             "roles, which one derivation cannot serve, so it gets no "
-                            "key there: its steps reference the merged class by the "
+                            "key there: its steps attach to the merged class by the "
                             "member's own key",
                             subjects=(
                                 subject(side, member),
@@ -1721,7 +1828,8 @@ class _Naming:
                         or vertex.hash_identity_properties
                         or vertex.identity_funnel is not None
                     )
-                    tag = f"{side}:{member}"
+                    tag = f"{self.origins[side]}:{member}"
+                    self.origin_tagged.setdefault(side, set()).add(component.name)
                     if plain and len(vertex.identity) == 1:
                         additions.setdefault(union_name, {})[member] = LocalKeySource(
                             field=vertex.identity[0], tag=tag
@@ -1992,7 +2100,130 @@ class _Naming:
                         subjects=(subject(side, cls, old),),
                     )
                 bucket[old] = new
+        self._origin_renames(side, index, properties)
         return {cls: attrs for cls, attrs in properties.items() if attrs}
+
+    def _origin_renames(
+        self,
+        side: Side,
+        index: ClusterIndex,
+        properties: dict[str, dict[str, str]],
+    ) -> None:
+        """Rename each demoted member key field to ``<space>__<field>``, in *properties*.
+
+        A member's own plain key is demoted when its cluster declares
+        ``identity`` (with ``retire: demote``) that does not restate it: its
+        field-set is neither the whole primary nor a funnel's digest field. A
+        key that is also a property branch is demoted all the same -- it finds
+        the node whichever branch keyed it -- but a field a property branch
+        names keeps its spelling, since the identity declares it. Any other
+        key field a property equivalence names, or a vocabulary entry renames,
+        is refused, whatever the target: the key is named by its key space.
+
+        The key space is the member's ``local_key`` tag, else the side's
+        origin (:func:`member_key_tags`, :func:`key_space_name`).
+        """
+        schema = self.manifests[side].graph_schema
+        if schema is None:
+            return
+        vertex_config = schema.core_schema.vertex_config
+        resource_names = self._resource_names()
+        for cluster in index.vertices:
+            declaration = cluster.declaration
+            if (
+                not isinstance(declaration, VertexEquivalence)
+                or declaration.identity is None
+                or declaration.retire != "demote"
+            ):
+                continue
+            branched = {f for branch in declaration.raw_branches() for f in branch}
+            restated = {
+                frozenset(f for b in declaration.identity for f in branch_fields(b))
+            }
+            if declaration.has_derivation or len(declaration.identity) > 1:
+                restated.add(frozenset({declaration.digest_field}))
+            equated: dict[str, set[str]] = {}
+            for pe in declaration.properties:
+                spec = pe.left if side == "left" else pe.right
+                if spec is None:
+                    continue
+                entries = (
+                    dict.fromkeys(cluster.members(side), spec)
+                    if isinstance(spec, str)
+                    else {cluster.resolved(side, m): f for m, f in spec.items()}
+                )
+                for m, f in entries.items():
+                    equated.setdefault(m, set()).add(f)
+            for member in cluster.members(side):
+                if member not in vertex_config.vertex_set:
+                    continue
+                vertex = vertex_config[member]
+                if (
+                    vertex.blank
+                    or vertex.assigned
+                    or vertex.hash_identity_properties
+                    or vertex.identity_funnel is not None
+                ):
+                    continue
+                bucket = properties.get(member, {})
+                key = tuple(bucket.get(f, f) for f in vertex.identity)
+                if not key or frozenset(key) in restated:
+                    continue
+                self.demoted_keys[(side, member)] = key
+                tags = member_key_tags(
+                    self.op,
+                    cluster,
+                    side,
+                    member,
+                    self._producing(side, member, resource_names),
+                    self.origins[side],
+                )
+                origin = key_space_name(tags, self.origins[side])
+                self.key_spaces[(side, member)] = origin
+                if tags:
+                    self.key_tags[(side, member)] = tuple(sorted(tags))
+                for own, canonical in zip(vertex.identity, key, strict=True):
+                    if canonical in branched:
+                        continue
+                    if canonical != own or own in equated.get(member, set()):
+                        self.finding(
+                            "double_home",
+                            f"double home: {side}:{member}.{own} is a key the "
+                            f"merged identity of {cluster.into!r} demotes, and "
+                            f"the key is named by its key space, as "
+                            f"{f'{origin}__{own}'!r}, but a declaration names it "
+                            f"{canonical!r}; list it as a property branch of "
+                            "`identity` (it then keys the merged class and keeps "
+                            "its name), or rename the other side's property instead",
+                            subjects=(
+                                subject(side, member, own),
+                                subject("merged", cluster.into),
+                            ),
+                            check="double home",
+                        )
+                        continue
+                    properties.setdefault(member, {})[own] = f"{origin}__{own}"
+
+    def _untagged_local_keys(self, index: ClusterIndex) -> None:
+        """Record the class of each ``local_key`` source whose tag defaults to its origin."""
+        side_of = {
+            union: side
+            for side, names in self._resource_names().items()
+            for union in names.values()
+        }
+        for cluster in index.vertices:
+            declaration = cluster.declaration
+            if not isinstance(declaration, VertexEquivalence):
+                continue
+            branch = declaration.local_key_branch()
+            if branch is None:
+                continue
+            for resource, entry in branch.local_key.items():
+                sources = entry.values() if isinstance(entry, dict) else [entry]
+                if resource in side_of and any(s.tag_omitted for s in sources):
+                    self.origin_tagged.setdefault(side_of[resource], set()).add(
+                        cluster.into
+                    )
 
     def _property_checks(self, index: ClusterIndex, side_maps: SideMaps) -> None:
         for cluster in index.vertices:
@@ -2082,6 +2313,25 @@ class _Naming:
         )
 
 
+def merge_origins(
+    op: MergeManifestsOp, left: GraphManifest, right: GraphManifest
+) -> dict[Side, str]:
+    """Each side's origin name: ``op.origins``, else its schema's name, else the side.
+
+    Not validated here: :func:`~graflo.architecture.evolution.merge_refusals.origin_refusals`
+    checks the origins a union actually names something by.
+    """
+    declared = op.origins or {}
+    out: dict[Side, str] = {}
+    for side, manifest in (("left", left), ("right", right)):
+        schema = manifest.graph_schema
+        origin = declared.get(side)
+        if origin is None:
+            origin = (schema.metadata.name if schema is not None else None) or side
+        out[side] = origin
+    return out
+
+
 def build_naming(
     op: MergeManifestsOp,
     *,
@@ -2104,7 +2354,10 @@ def build_naming(
         finding. Lowered best-effort when a finding blocks it.
     """
     return _Naming(
-        op=op, manifests={"left": left, "right": right}, extra=canonical_maps
+        op=op,
+        manifests={"left": left, "right": right},
+        extra=canonical_maps,
+        origins=merge_origins(op, left, right),
     ).run()
 
 

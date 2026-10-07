@@ -22,10 +22,16 @@ from graflo.hq.document_caster import DocumentCaster
 from graflo.hq.ingestion_parameters import IngestionParams
 
 EXAMPLE_DIR = Path(__file__).resolve().parent
-#: Resource name, its file, and the column holding the record's own key.
+#: Resource name, its file, and the property holding the record's own key per
+#: vertex type. The combined manifest names a machine's own key by its origin; a
+#: production line keeps its own `asset_id`.
 SOURCES = [
-    ("register", "register.csv", "asset_id"),
-    ("devices", "devices.csv", "device_id"),
+    (
+        "register",
+        "register.csv",
+        {"Machine": "maintenance__asset_id", "ProductionLine": "asset_id"},
+    ),
+    ("devices", "devices.csv", {"Machine": "sensors__device_id"}),
 ]
 ID_WIDTH = 12
 
@@ -55,8 +61,9 @@ def main() -> None:
     print(
         f"{'resource':<10}{'own key':<9}{'vertex type':<16}{'matched on':<16}vertex id"
     )
-    for resource, filename, key in SOURCES:
+    for resource, filename, keys in SOURCES:
         for vertex_type, docs in cast(caster, resource, filename).vertices.items():
+            key = keys[vertex_type]
             for doc in docs:
                 # The derived key a machine is matched on. A production line has
                 # none: it keeps its own identity, asset_id.

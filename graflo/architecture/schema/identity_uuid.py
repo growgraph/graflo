@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from typing import Any
 from uuid import uuid4
 
+from graflo.architecture.graph_types.transform import VertexRep
 from graflo.architecture.schema.vertex import (
     FieldType,
     Vertex,
@@ -66,6 +67,10 @@ def ensure_assigned_uuids_in_acc_vertex(
         preferred = identity_fields[0] if identity_fields else "id"
         for reps in by_loc.values():
             for rep in reps:
+                if isinstance(rep, VertexRep) and rep.find is not None:
+                    # Found by a secondary identity: it must not get a key of
+                    # its own, which would make it a new vertex.
+                    continue
                 doc = rep.vertex if hasattr(rep, "vertex") else rep
                 if isinstance(doc, dict):
                     ensure_assigned_uuid(doc, preferred)
@@ -75,13 +80,10 @@ def ensure_assigned_uuids_on_docs(
     data: list[dict[str, Any]],
     *,
     preferred_field: str,
-    arango_key_mirror: bool = False,
 ) -> None:
     """Idempotent assigned-UUID ensure for a flat doc list (writer safety net)."""
     for doc in data:
         ensure_assigned_uuid(doc, preferred_field)
-        if arango_key_mirror and "_key" not in doc:
-            doc["_key"] = doc[preferred_field]
 
 
 def validate_uuid_typed_identity_fields(

@@ -1592,3 +1592,90 @@ class TestRoleRouters:
     def test_a_member_keyed_source_on_it_is_refused(self) -> None:
         with pytest.raises(AlignmentConflictError, match="shared by every router"):
             _dynamic_ops(_ROLE_ROUTERS)
+
+
+def _one_resource_side(resource: str) -> GraphManifest:
+    """A side manifest owning only *resource*, for resolving a resource's side."""
+    payload = _union_manifest().to_dict(skip_defaults=True)
+    payload["ingestion_model"]["resources"] = [
+        r for r in payload["ingestion_model"]["resources"] if r["name"] == resource
+    ]
+    manifest = GraphManifest.from_config(payload)
+    manifest.finish_init()
+    return manifest
+
+
+def _tagged_key_params(ops, resource: str) -> dict:
+    (transforms,) = [op for op in ops if isinstance(op, AddResourceTransformsOp)]
+    (call,) = [
+        step["transform"]["call"]
+        for step in transforms.additions[resource]
+        if step["transform"]["call"]["foo"] == "tagged_key"
+    ]
+    return call["params"]
+
+
+class TestLocalKeyTagDefault:
+    """An omitted ``tag`` is the origin of the resource's side; ``null`` is raw."""
+
+    def _ops(self, local_key: LocalKeyBranch, **kwargs):
+        return identity_to_ops(
+            _plan(_match_key(), local_key),
+            sides={
+                "left": _one_resource_side("r_a"),
+                "right": _one_resource_side("r_b"),
+            },
+            **kwargs,
+        )
+
+    def test_an_omitted_tag_is_the_sides_origin(self) -> None:
+        ops = self._ops(
+            LocalKeyBranch(
+                local_key={
+                    "r_a": LocalKeySource(field="firm_id"),
+                    "r_b": LocalKeySource(field="org_id"),
+                }
+            ),
+            origins={"left": "acme", "right": "beta"},
+        )
+        assert _tagged_key_params(ops, "r_a")["tag"] == "acme"
+        assert _tagged_key_params(ops, "r_b")["tag"] == "beta"
+
+    def test_an_explicit_null_tag_keeps_raw_values(self) -> None:
+        source = LocalKeySource(field="org_id", tag=None)
+        assert source.tag == ""
+        ops = self._ops(
+            LocalKeyBranch(
+                local_key={"r_a": LocalKeySource(field="firm_id"), "r_b": source}
+            ),
+            origins={"left": "acme", "right": "beta"},
+        )
+        assert _tagged_key_params(ops, "r_b")["tag"] == ""
+
+    def test_a_copy_setting_the_tag_to_null_keeps_raw_values(self) -> None:
+        """The copy skips the validator, so its tag is ``None`` yet set."""
+        source = LocalKeySource(field="org_id").model_copy(update={"tag": None})
+        assert source.tag is None
+        assert not source.tag_omitted
+        ops = self._ops(
+            LocalKeyBranch(
+                local_key={"r_a": LocalKeySource(field="firm_id"), "r_b": source}
+            ),
+            origins={"left": "acme", "right": "beta"},
+        )
+        assert _tagged_key_params(ops, "r_a")["tag"] == "acme"
+        assert _tagged_key_params(ops, "r_b")["tag"] == ""
+
+    def test_an_omitted_tag_round_trips_as_omitted(self) -> None:
+        source = LocalKeySource.model_validate({"field": "firm_id"})
+        assert source.tag is None
+        assert "tag" not in source.to_dict(skip_defaults=True)
+        assert LocalKeySource.model_validate({"field": "f", "tag": None}).to_dict(
+            skip_defaults=True
+        ) == {"field": "f", "tag": ""}
+
+    def test_an_omitted_tag_without_origins_is_refused(self) -> None:
+        with pytest.raises(AlignmentConflictError, match="tag"):
+            self._ops(
+                LocalKeyBranch(local_key={"r_a": LocalKeySource(field="firm_id")})
+            )

@@ -13,10 +13,12 @@ NebulaGraph VIDs, TigerGraph ``PRIMARY_ID``).
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+import threading
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from graflo.architecture.graph_types.identifiers import EdgeId
 from graflo.db.resolve import key_tuple
 from graflo.onto import EndpointAmbiguityPolicy
 
@@ -59,6 +61,99 @@ class EndpointResolutionStats:
             f"unresolvable={self.unresolvable} unmatched={self.unmatched} "
             f"ambiguous={self.ambiguous}"
         )
+
+    def merge(self, other: EndpointResolutionStats) -> None:
+        """Add *other*'s counts to these."""
+        self.documents += other.documents
+        self.unresolvable += other.unresolvable
+        self.unmatched += other.unmatched
+        self.ambiguous += other.ambiguous
+        self.dropped += other.dropped
+        self.written += other.written
+        for endpoint in other.endpoints:
+            if endpoint not in self.endpoints:
+                self.endpoints.append(endpoint)
+
+
+@dataclass
+class AttachStats:
+    """What happened while attaching records of one class to existing vertices.
+
+    An attached record never creates a vertex, so a record whose key finds none
+    is counted and not written.
+    """
+
+    documents: int = 0
+    attached: int = 0
+    """Records written onto at least one vertex."""
+    unmatched: int = 0
+    """Records whose key matched no vertex."""
+    unresolvable: int = 0
+    """Records whose key was absent or incomplete, so no lookup was possible."""
+    ambiguous: int = 0
+    """Records whose key matched more than one vertex."""
+    written: int = 0
+    """Rows upserted, one per vertex written onto: above ``attached`` when
+    fanning out, below it when several records land on one vertex."""
+
+    def has_findings(self) -> bool:
+        return bool(self.unresolvable or self.unmatched or self.ambiguous)
+
+    def summary(self) -> str:
+        return (
+            f"documents={self.documents} attached={self.attached} "
+            f"written={self.written} unresolvable={self.unresolvable} "
+            f"unmatched={self.unmatched} ambiguous={self.ambiguous}"
+        )
+
+    def merge(self, other: AttachStats) -> None:
+        """Add *other*'s counts to these."""
+        self.documents += other.documents
+        self.attached += other.attached
+        self.unmatched += other.unmatched
+        self.unresolvable += other.unresolvable
+        self.ambiguous += other.ambiguous
+        self.written += other.written
+
+
+@dataclass
+class WriteStats:
+    """Resolution counts accumulated by one writer over a run.
+
+    Safe to add to from the worker threads concurrent writes run on.
+    """
+
+    attached: dict[str, AttachStats] = field(default_factory=dict)
+    """By vertex class."""
+    endpoints: dict[EdgeId, EndpointResolutionStats] = field(default_factory=dict)
+    """By edge, for edges whose endpoints were resolved by a secondary identity."""
+    _lock: threading.Lock = field(
+        default_factory=threading.Lock, repr=False, compare=False
+    )
+
+    def add_attached(self, vertex: str, stats: AttachStats) -> None:
+        with self._lock:
+            self.attached.setdefault(vertex, AttachStats()).merge(stats)
+
+    def add_endpoints(self, edge_id: EdgeId, stats: EndpointResolutionStats) -> None:
+        with self._lock:
+            self.endpoints.setdefault(edge_id, EndpointResolutionStats()).merge(stats)
+
+    def is_empty(self) -> bool:
+        return not self.attached and not self.endpoints
+
+    def summary(self) -> str:
+        """One line per attached class and per resolved edge."""
+        with self._lock:
+            lines = [
+                f"attached {vertex}: {stats.summary()}"
+                for vertex, stats in self.attached.items()
+            ]
+            lines.extend(
+                f"edge {edge_id}: {stats.summary()}"
+                for edge_id, stats in self.endpoints.items()
+            )
+        return "\n".join(lines)
 
 
 def _sorted_candidates(
@@ -193,13 +288,50 @@ def _candidates_for(
     if not found:
         stats.unmatched += 1
         return []
-
     if len(found) > 1:
         stats.ambiguous += 1
+
+    return select_matches(
+        found,
+        policy=policy,
+        identity_fields=identity_fields,
+        describe=lambda count: (
+            f"{side} endpoint of '{source_class}' matched {count} vertices "
+            f"on {list(match_fields)}={key_tuple(projection, match_fields)}."
+        ),
+    )
+
+
+def select_matches(
+    found: list[dict[str, Any]],
+    *,
+    policy: EndpointAmbiguityPolicy,
+    identity_fields: Sequence[str],
+    describe: Callable[[int], str],
+) -> list[dict[str, Any]]:
+    """The vertices a key's matches resolve to under *policy*.
+
+    Several matches are kept (``all``), reduced to the lowest primary identity
+    (``first``), dropped (``skip``) or refused (``error``); a single match is
+    always kept. Callers check for a partial key before looking it up.
+
+    Args:
+        found: Every vertex the key matched, carrying *identity_fields*
+        policy: What to do when there are several matches
+        identity_fields: Primary identity fields to project the matches onto
+        describe: Given the match count, the sentence naming what matched,
+            for the ``error`` message
+
+    Returns:
+        list: The selected matches, projected onto *identity_fields*.
+
+    Raises:
+        AmbiguousEndpointError: on several matches under the ``error`` policy.
+    """
+    if len(found) > 1:
         if policy == "error":
             raise AmbiguousEndpointError(
-                f"{side} endpoint of '{source_class}' matched {len(found)} vertices "
-                f"on {list(match_fields)}={key_tuple(projection, match_fields)}. "
+                f"{describe(len(found))} "
                 "Set endpoints_on_ambiguous to all, first or skip to tolerate this."
             )
         if policy == "skip":

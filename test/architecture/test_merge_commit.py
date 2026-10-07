@@ -24,6 +24,8 @@ from graflo.architecture.evolution.merge3 import build_merge_recipe
 from graflo.architecture.evolution.merge_commit import (
     build_merge_commit,
     find_commit_by_tree,
+    left_relabel_ops,
+    lift_recorded_merge_op,
 )
 
 
@@ -181,6 +183,147 @@ class TestReplay:
 
         assert manifest_hash(checkout(left, history, entry.id)) == manifest_hash(merged)
 
+    def test_a_rekeying_merge_replays_from_its_first_parent(self) -> None:
+        """The origin-named keys are part of the left relabel the commit records."""
+        left, right = _keyed("Machine", "plant"), _keyed("Device", "sensors")
+        op = MergeManifestsOp.model_validate(
+            {
+                "vertex_equivalences": [
+                    {
+                        "left": "Machine",
+                        "right": "Device",
+                        "into": "Machine",
+                        "identity": ["serial"],
+                    }
+                ]
+            }
+        )
+        merged = merge_manifests(left, right, op, bump_version=False)
+        assert "plant__machine_id" in (
+            merged.graph_schema.core_schema.vertex_config["Machine"].property_names
+            if merged.graph_schema is not None
+            else []
+        )
+
+        left_root = build_root_commit(left, scope="left")
+        right_root = build_root_commit(right, scope="right")
+        entry = build_merge_commit(
+            left,
+            merged,
+            parents=[left_root.id, right_root.id],
+            recipe=build_merge_recipe(left, right, op),
+            right=right,
+        )
+        history = History(commits=[left_root, right_root, entry])
+
+        assert manifest_hash(checkout(left, history, entry.id)) == manifest_hash(merged)
+
+
+def _keyed(vertex: str, schema_name: str) -> GraphManifest:
+    """*vertex* keyed on its own ``<vertex>_id``, carrying a shared ``serial``."""
+    key = f"{vertex.lower()}_id"
+    manifest = GraphManifest.from_config(
+        {
+            "schema": {
+                "metadata": {"name": schema_name, "version": "1.0.0"},
+                "graph": {
+                    "vertex_config": {
+                        "vertices": [
+                            {
+                                "name": vertex,
+                                "properties": [key, "serial"],
+                                "identity": [key],
+                            }
+                        ]
+                    },
+                    "edge_config": {"edges": []},
+                },
+            },
+            "ingestion_model": {
+                "resources": [
+                    {"name": f"r_{vertex.lower()}", "pipeline": [{"vertex": vertex}]}
+                ]
+            },
+        }
+    )
+    manifest.finish_init()
+    return manifest
+
+
+def _rekey_op() -> MergeManifestsOp:
+    """``Machine ~ Device`` re-keyed on ``serial``: both own keys are demoted."""
+    return MergeManifestsOp.model_validate(
+        {
+            "vertex_equivalences": [
+                {
+                    "left": "Machine",
+                    "right": "Device",
+                    "into": "Machine",
+                    "identity": ["serial"],
+                }
+            ]
+        }
+    )
+
+
+def _renamed(manifest: GraphManifest, schema_name: str) -> GraphManifest:
+    payload = manifest.to_dict(skip_defaults=True)
+    payload["schema"]["metadata"]["name"] = schema_name
+    out = GraphManifest.from_config(payload)
+    out.finish_init()
+    return out
+
+
+def _replay(
+    recipe_op: dict, left: GraphManifest, right: GraphManifest
+) -> GraphManifest:
+    op = MergeManifestsOp.model_validate(lift_recorded_merge_op(recipe_op))
+    return merge_manifests(left, right, op, bump_version=False)
+
+
+class TestRecordedOrigins:
+    def test_a_union_naming_keys_by_origin_records_the_resolved_origins(
+        self,
+    ) -> None:
+        left, right = _keyed("Machine", "plant"), _keyed("Device", "sensors")
+
+        recipe = build_merge_recipe(left, right, _rekey_op())
+
+        assert recipe.equivalences["origins"] == {"left": "plant", "right": "sensors"}
+
+    def test_the_recorded_union_replays_alike_after_a_parent_is_renamed(
+        self,
+    ) -> None:
+        """The schema name no longer decides what the recorded union names keys by."""
+        left, right = _keyed("Machine", "plant"), _keyed("Device", "sensors")
+        merged = merge_manifests(left, right, _rekey_op(), bump_version=False)
+        recipe = build_merge_recipe(left, right, _rekey_op())
+
+        replayed = _replay(recipe.equivalences, _renamed(left, "factory"), right)
+
+        assert merged.graph_schema is not None and replayed.graph_schema is not None
+        assert (
+            replayed.graph_schema.core_schema.to_dict()
+            == merged.graph_schema.core_schema.to_dict()
+        )
+        assert replayed.require_ingestion_model().to_dict() == (
+            merged.require_ingestion_model().to_dict()
+        )
+        assert left_relabel_ops(
+            _renamed(left, "factory"), right, recipe
+        ) == left_relabel_ops(left, right, recipe)
+
+    def test_a_union_naming_nothing_by_origin_records_its_op_unchanged(
+        self,
+    ) -> None:
+        left, right = _manifest("Machine"), _manifest("Reading")
+        op = MergeManifestsOp(name_conflict="prefix_right")
+
+        recipe = build_merge_recipe(left, right, op)
+
+        assert "origins" not in recipe.equivalences
+        assert recipe.equivalences == op.to_dict()
+
 
 class TestFindingAParentByContent:
     def test_a_manifest_resolves_to_the_commit_that_produced_it(self) -> None:
@@ -246,3 +389,18 @@ class TestARecordedDeclarationStillLoads:
         assert equivalence.allow == ["self_relations"]
         assert op.renames.right.resources == {"r": "r_right"}
         assert op.name_conflict == "union_right"
+
+    def test_a_declaration_recorded_before_origins_loads_without_them(self) -> None:
+        from graflo.architecture.evolution.merge_commit import lift_recorded_merge_op
+
+        recorded = {
+            "op": "merge_manifests",
+            "vertex_equivalences": [
+                {"left": "A", "right": "B", "into": "C", "identity": ["k"]}
+            ],
+        }
+
+        op = MergeManifestsOp.model_validate(lift_recorded_merge_op(recorded))
+
+        assert op.origins is None
+        assert "origins" not in op.to_dict(skip_defaults=True)

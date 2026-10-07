@@ -607,6 +607,10 @@ class Caster:
                     )
             logger.info(f"Processing took {klepsidra.elapsed:.1f} sec")
         finally:
+            # Logged first: the counts describe the writes already made, and a
+            # failing finalize must not hide them.
+            if self._db_writer is not None and not self._db_writer.stats.is_empty():
+                logger.info("Write resolution:\n%s", self._db_writer.stats.summary())
             try:
                 await self._finalize_bulk_session(conn_conf)
             except BaseException:

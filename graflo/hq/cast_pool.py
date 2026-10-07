@@ -38,8 +38,8 @@ class CastSpec(BaseModel):
 
 
 # One chunk's outcome as a plain tuple:
-# (vertices, edges, linear, transform_failures, errors) where
-#   vertices/edges/linear are the chunk's *pre-folded, pre-filtered*
+# (vertices, edges, linear, transform_failures, errors, attached) where
+#   vertices/edges/linear/attached are the chunk's *pre-folded, pre-filtered*
 #   GraphContainer fields (the parent only concatenates chunks, in order);
 #   transform_failures is [(local_doc_index, [TransformCastFailure, ...]), ...];
 #   errors is [(local_doc_index, (exception_type, message, traceback)), ...].
@@ -55,6 +55,7 @@ WorkerChunkResult = tuple[
     list[Any],
     list[tuple[int, list]],
     list[tuple[int, tuple[str, str, str]]],
+    dict[str, list],
 ]
 
 
@@ -133,6 +134,7 @@ def cast_chunk(
     )
 
     entities_list: list[Any] = []
+    attached_list: list[dict[str, list]] = []
     transform_failures: list[tuple[int, list]] = []
     errors: list[tuple[int, tuple[str, str, str]]] = []
     for i, doc in enumerate(docs):
@@ -142,10 +144,15 @@ def cast_chunk(
             errors.append((i, (type(exc).__name__, str(exc), traceback.format_exc())))
             continue
         entities_list.append(result.entities)
+        attached_list.append(result.attached)
         if result.transform_failures:
             transform_failures.append((i, list(result.transform_failures)))
 
-    gc = GraphContainer.from_docs_list(entities_list)
+    gc = GraphContainer.from_docs_list(
+        entities_list,
+        attached=attached_list,
+        attached_by=runtime.attached_selectors,
+    )
     filter_graph_container_by_vertices_inplace(
         gc,
         allowed_vertex_names=(
@@ -160,7 +167,7 @@ def cast_chunk(
             vertex_config=runtime.vertex_config,
             edge_derivation=runtime.edge_derivation,
         )
-    return gc.vertices, gc.edges, gc.linear, transform_failures, errors
+    return gc.vertices, gc.edges, gc.linear, transform_failures, errors, gc.attached
 
 
 class WorkerCastError(RuntimeError):
