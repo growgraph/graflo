@@ -630,3 +630,34 @@ def union_default_property_values(
         )
 
     return DefaultPropertyValues(vertices=vertices, edges=list(edges.values()))
+
+
+def _merge_declared_scalar(
+    left: DatabaseProfile,
+    right: DatabaseProfile,
+    field: str,
+) -> Any:
+    """The declared value of a single-valued profile key, refusing two of them.
+
+    Presence is read from ``skip_defaults=True`` rather than from the value:
+    ``db_flavor`` defaults to Arango, so a value-based fold cannot tell a side
+    that *declared* Arango from one that never spoke, and would let an
+    undeclared left silently retarget a right that named its backend.
+    """
+    left_declared = left.to_dict(skip_defaults=True)
+    right_declared = right.to_dict(skip_defaults=True)
+    if field not in left_declared:
+        return right_declared.get(field, getattr(left, field))
+    if field not in right_declared:
+        return left_declared[field]
+    if left_declared[field] != right_declared[field]:
+        hint = (
+            " (set MergeManifestsOp.target_namespace to choose one)"
+            if field == "target_namespace"
+            else ""
+        )
+        raise ValueError(
+            f"merge_manifests: conflicting {field}: "
+            f"{left_declared[field]!r} vs {right_declared[field]!r}{hint}"
+        )
+    return left_declared[field]

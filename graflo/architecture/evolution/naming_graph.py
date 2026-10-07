@@ -341,15 +341,26 @@ _RESERVED_KEY_SPACE_NAMES = frozenset(
 )
 
 
-def is_key_space_name(name: str) -> bool:
-    """Whether *name* can name a key space: a letter, then letters, digits or
-    single underscores, and not a selector word (``identity``, ``secondary``).
+def key_space_name_problem(name: str) -> str | None:
+    """Why *name* cannot name a key space, as a clause; ``None`` when it can.
+
+    A key space name is a letter, then letters, digits or single underscores,
+    and not a selector word (``identity``, ``secondary``).
     """
-    return (
-        bool(_KEY_SPACE_NAME.fullmatch(name))
-        and "__" not in name
-        and name not in _RESERVED_KEY_SPACE_NAMES
-    )
+    if not name:
+        return "is empty"
+    if "__" in name:
+        return "contains '__', which joins a key space to field names"
+    if not _KEY_SPACE_NAME.fullmatch(name):
+        return "is not a letter followed by letters, digits or underscores"
+    if name in _RESERVED_KEY_SPACE_NAMES:
+        return f"is the selector word {name!r}"
+    return None
+
+
+def is_key_space_name(name: str) -> bool:
+    """Whether *name* can name a key space: see :func:`key_space_name_problem`."""
+    return key_space_name_problem(name) is None
 
 
 def member_key_tags(
@@ -399,7 +410,7 @@ def key_space_name(tags: Collection[str], origin: str) -> str:
 
     Its one tag when that is a valid name, else the side's *origin* -- also
     when it has none, or two (refused by
-    :func:`~graflo.architecture.evolution.merge.key_space_refusals`).
+    :func:`~graflo.architecture.evolution.merge_refusals.key_space_refusals`).
     """
     if len(tags) == 1:
         (tag,) = tags
@@ -442,8 +453,9 @@ class _Naming:
     #: The same shape for ``renames`` entries whose source the side declares.
     renames: dict[Kind, dict[Side, dict[str, str]]] = field(default_factory=dict)
     edges: list[NamingEdge] = field(default_factory=list)
-    #: The sides whose origin names something: see :class:`ClusterResolution`.
-    origin_sides: set[Side] = field(default_factory=set)
+    #: Each side's merged classes whose local keys its origin tags: see
+    #: :class:`ClusterResolution`.
+    origin_tagged: dict[Side, set[str]] = field(default_factory=dict)
     demoted_keys: dict[tuple[Side, str], tuple[str, ...]] = field(default_factory=dict)
     key_spaces: dict[tuple[Side, str], str] = field(default_factory=dict)
     key_tags: dict[tuple[Side, str], tuple[str, ...]] = field(default_factory=dict)
@@ -542,7 +554,9 @@ class _Naming:
                 findings=tuple(f for f in findings if not f.blocking),
                 graph=graph,
                 origins=dict(self.origins),
-                origin_sides=frozenset(self.origin_sides),
+                origin_tagged={
+                    side: frozenset(names) for side, names in self.origin_tagged.items()
+                },
                 demoted_keys=dict(self.demoted_keys),
                 key_spaces=dict(self.key_spaces),
                 key_tags=dict(self.key_tags),
@@ -1604,7 +1618,7 @@ class _Naming:
         self, side: Side, member: str, resource_names: Mapping[Side, Mapping[str, str]]
     ) -> list[tuple[str, str]]:
         """``(side name, union name)`` of each resource of *side* producing *member*."""
-        from .merge import _steps_producing
+        from graflo.architecture.contract.ingestion.resource import _steps_producing
 
         manifest = self.manifests[side]
         ingestion, schema = manifest.ingestion_model, manifest.graph_schema
@@ -1815,7 +1829,7 @@ class _Naming:
                         or vertex.identity_funnel is not None
                     )
                     tag = f"{self.origins[side]}:{member}"
-                    self.origin_sides.add(side)
+                    self.origin_tagged.setdefault(side, set()).add(component.name)
                     if plain and len(vertex.identity) == 1:
                         additions.setdefault(union_name, {})[member] = LocalKeySource(
                             field=vertex.identity[0], tag=tag
@@ -2168,8 +2182,6 @@ class _Naming:
                 self.key_spaces[(side, member)] = origin
                 if tags:
                     self.key_tags[(side, member)] = tuple(sorted(tags))
-                if origin == self.origins[side]:
-                    self.origin_sides.add(side)
                 for own, canonical in zip(vertex.identity, key, strict=True):
                     if canonical in branched:
                         continue
@@ -2193,7 +2205,7 @@ class _Naming:
                     properties.setdefault(member, {})[own] = f"{origin}__{own}"
 
     def _untagged_local_keys(self, index: ClusterIndex) -> None:
-        """Mark the side of each ``local_key`` source whose tag defaults to its origin."""
+        """Record the class of each ``local_key`` source whose tag defaults to its origin."""
         side_of = {
             union: side
             for side, names in self._resource_names().items()
@@ -2208,8 +2220,10 @@ class _Naming:
                 continue
             for resource, entry in branch.local_key.items():
                 sources = entry.values() if isinstance(entry, dict) else [entry]
-                if resource in side_of and any(s.tag is None for s in sources):
-                    self.origin_sides.add(side_of[resource])
+                if resource in side_of and any(s.tag_omitted for s in sources):
+                    self.origin_tagged.setdefault(side_of[resource], set()).add(
+                        cluster.into
+                    )
 
     def _property_checks(self, index: ClusterIndex, side_maps: SideMaps) -> None:
         for cluster in index.vertices:
@@ -2304,7 +2318,7 @@ def merge_origins(
 ) -> dict[Side, str]:
     """Each side's origin name: ``op.origins``, else its schema's name, else the side.
 
-    Not validated here: :func:`~graflo.architecture.evolution.merge.origin_refusals`
+    Not validated here: :func:`~graflo.architecture.evolution.merge_refusals.origin_refusals`
     checks the origins a union actually names something by.
     """
     declared = op.origins or {}
@@ -2324,7 +2338,6 @@ def build_naming(
     left: GraphManifest,
     right: GraphManifest,
     canonical_maps: Sequence[tuple[Side, CanonicalMap]] = (),
-    origins: Mapping[Side, str] | None = None,
 ) -> NamingResult:
     """Resolve *op* against *left* and *right* in one pass, refusing nothing.
 
@@ -2334,7 +2347,6 @@ def build_naming(
         right: The right manifest.
         canonical_maps: Extra ``(side, map)`` vocabulary pairs, folded into
             ``op.canonical_maps``.
-        origins: Each side's origin name; defaults to :func:`merge_origins`.
 
     Returns:
         The resolution merge would apply (groups as clusters over their closed
@@ -2345,9 +2357,7 @@ def build_naming(
         op=op,
         manifests={"left": left, "right": right},
         extra=canonical_maps,
-        origins=dict(origins)
-        if origins is not None
-        else merge_origins(op, left, right),
+        origins=merge_origins(op, left, right),
     ).run()
 
 
@@ -2357,12 +2367,9 @@ def resolve_naming(
     left: GraphManifest,
     right: GraphManifest,
     canonical_maps: Sequence[tuple[Side, CanonicalMap]] = (),
-    origins: Mapping[Side, str] | None = None,
 ) -> ClusterResolution:
     """:func:`build_naming`, raising every blocking finding as one :class:`MergeNamingError`."""
-    result = build_naming(
-        op, left=left, right=right, canonical_maps=canonical_maps, origins=origins
-    )
+    result = build_naming(op, left=left, right=right, canonical_maps=canonical_maps)
     result.raise_if_blocking()
     return result.resolution
 

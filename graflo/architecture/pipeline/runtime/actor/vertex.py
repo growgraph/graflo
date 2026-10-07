@@ -102,6 +102,7 @@ class VertexActor(VertexProducingActor):
         self.find: str | None = config.find
         self.vertex_config: VertexConfig
         self.allowed_vertex_names: set[VertexName] | None = None
+        self._key_fields: list[str] | None = None
 
     @classmethod
     def from_config(cls, config: VertexActorConfig) -> VertexActor:
@@ -125,13 +126,31 @@ class VertexActor(VertexProducingActor):
         self.allowed_vertex_names = init_ctx.allowed_vertex_names
         if init_ctx.strict_references and self.from_doc:
             refuse_undeclared_mapping(self.vertex_config, self.name, self.from_doc)
-        if self.find is not None and self.name in self.vertex_config.vertex_set:
-            find_fields(
-                self.vertex_config,
-                self.name,
-                self.find,
-                step=f"vertex step {self.name!r}",
+        self._key_fields = None
+        if self.name in self.vertex_config.vertex_set:
+            self._key_fields = (
+                self.vertex_config.identity_fields(self.name)
+                if self.find is None
+                else find_fields(
+                    self.vertex_config,
+                    self.name,
+                    self.find,
+                    step=f"vertex step {self.name!r}",
+                )
             )
+
+    def _resolve_key_fields(self) -> list[str]:
+        """The fields this step's documents are keyed by.
+
+        A `find` document is keyed by the fields it is found by: they are what
+        expands a multi-valued source field, what positional transform outputs
+        land on, and what documents merge on. Otherwise the primary identity.
+        """
+        if self._key_fields is not None:
+            return self._key_fields
+        if self.find is None:
+            return self.vertex_config.identity_fields(self.name)
+        return self.vertex_config.match_fields(self.name, self.find)
 
     def _filter_and_aggregate_vertex_docs(
         self, docs: list[dict[str, Any]], doc: dict[str, Any]
@@ -191,8 +210,8 @@ class VertexActor(VertexProducingActor):
         lindex: LocationIndex,
         doc: dict[str, Any],
         vertex_keys: tuple[str, ...],
+        index_keys: tuple[str, ...],
     ) -> list[dict[str, Any]]:
-        index_keys = tuple(self.vertex_config.identity_fields(self.name))
         payloads = ctx.transform_buffer[lindex]
         extracted_docs = [
             self._extract_vertex_doc_from_transformed_item(
@@ -243,14 +262,7 @@ class VertexActor(VertexProducingActor):
         effective_lindex = lindex.extend((self.role, 0)) if self.role else lindex
 
         agg = []
-        identity_fields = self.vertex_config.identity_fields(self.name)
-        # A `find` document is keyed by the fields it is found by: they are
-        # what expands a multi-valued source field and what documents merge on.
-        key_fields = (
-            identity_fields
-            if self.find is None
-            else self.vertex_config.match_fields(self.name, self.find)
-        )
+        key_fields = self._resolve_key_fields()
         if self.from_doc:
             source_keys = set(self.from_doc.values())
             consumed_from_buffer = False
@@ -288,7 +300,7 @@ class VertexActor(VertexProducingActor):
 
         agg.extend(
             self._process_transformed_items(
-                ctx, lindex, effective_doc, buffer_vertex_keys
+                ctx, lindex, effective_doc, buffer_vertex_keys, tuple(key_fields)
             )
         )
 
@@ -307,6 +319,8 @@ class VertexActor(VertexProducingActor):
             # A digest vertex's key is synthetic: a value the record carries
             # under that name (a source `id` column, a mapping, a positional
             # transform output) would key the document instead of the digest.
+            # A `find` document gets no digest; it carries no primary key either.
+            identity_fields = self.vertex_config.identity_fields(self.name)
             for vertex_doc in agg:
                 for field in identity_fields:
                     vertex_doc.pop(field, None)

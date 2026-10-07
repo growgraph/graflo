@@ -24,6 +24,8 @@ from graflo.architecture.evolution.merge3 import build_merge_recipe
 from graflo.architecture.evolution.merge_commit import (
     build_merge_commit,
     find_commit_by_tree,
+    left_relabel_ops,
+    lift_recorded_merge_op,
 )
 
 
@@ -246,6 +248,81 @@ def _keyed(vertex: str, schema_name: str) -> GraphManifest:
     )
     manifest.finish_init()
     return manifest
+
+
+def _rekey_op() -> MergeManifestsOp:
+    """``Machine ~ Device`` re-keyed on ``serial``: both own keys are demoted."""
+    return MergeManifestsOp.model_validate(
+        {
+            "vertex_equivalences": [
+                {
+                    "left": "Machine",
+                    "right": "Device",
+                    "into": "Machine",
+                    "identity": ["serial"],
+                }
+            ]
+        }
+    )
+
+
+def _renamed(manifest: GraphManifest, schema_name: str) -> GraphManifest:
+    payload = manifest.to_dict(skip_defaults=True)
+    payload["schema"]["metadata"]["name"] = schema_name
+    out = GraphManifest.from_config(payload)
+    out.finish_init()
+    return out
+
+
+def _replay(
+    recipe_op: dict, left: GraphManifest, right: GraphManifest
+) -> GraphManifest:
+    op = MergeManifestsOp.model_validate(lift_recorded_merge_op(recipe_op))
+    return merge_manifests(left, right, op, bump_version=False)
+
+
+class TestRecordedOrigins:
+    def test_a_union_naming_keys_by_origin_records_the_resolved_origins(
+        self,
+    ) -> None:
+        left, right = _keyed("Machine", "plant"), _keyed("Device", "sensors")
+
+        recipe = build_merge_recipe(left, right, _rekey_op())
+
+        assert recipe.equivalences["origins"] == {"left": "plant", "right": "sensors"}
+
+    def test_the_recorded_union_replays_alike_after_a_parent_is_renamed(
+        self,
+    ) -> None:
+        """The schema name no longer decides what the recorded union names keys by."""
+        left, right = _keyed("Machine", "plant"), _keyed("Device", "sensors")
+        merged = merge_manifests(left, right, _rekey_op(), bump_version=False)
+        recipe = build_merge_recipe(left, right, _rekey_op())
+
+        replayed = _replay(recipe.equivalences, _renamed(left, "factory"), right)
+
+        assert merged.graph_schema is not None and replayed.graph_schema is not None
+        assert (
+            replayed.graph_schema.core_schema.to_dict()
+            == merged.graph_schema.core_schema.to_dict()
+        )
+        assert replayed.require_ingestion_model().to_dict() == (
+            merged.require_ingestion_model().to_dict()
+        )
+        assert left_relabel_ops(
+            _renamed(left, "factory"), right, recipe
+        ) == left_relabel_ops(left, right, recipe)
+
+    def test_a_union_naming_nothing_by_origin_records_its_op_unchanged(
+        self,
+    ) -> None:
+        left, right = _manifest("Machine"), _manifest("Reading")
+        op = MergeManifestsOp(name_conflict="prefix_right")
+
+        recipe = build_merge_recipe(left, right, op)
+
+        assert "origins" not in recipe.equivalences
+        assert recipe.equivalences == op.to_dict()
 
 
 class TestFindingAParentByContent:

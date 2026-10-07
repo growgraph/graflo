@@ -498,11 +498,13 @@ class Connection(abc.ABC):
                 - collection_name: Edge collection (ArangoDB) or unused type-specific name
                 - uniq_weight_fields: Uniqueness fields (ArangoDB UPSERT match)
                 - uniq_weight_collections: Uniqueness collections (ArangoDB UPSERT)
-                - on_duplicate: ArangoDB only. ``\"ignore\"`` (default): ``INSERT`` with
-                  ``ignoreErrors``; ``\"upsert\"``: AQL ``UPSERT`` when a matching edge
-                  may already exist (align match keys with a unique index).
+                - on_duplicate: ArangoDB and PostgreSQL. ``\"ignore\"`` (default):
+                  an edge that already exists is left as stored; ``\"upsert\"``:
+                  it is updated (AQL ``UPSERT`` on ArangoDB -- align match keys with
+                  a unique index; ``ON CONFLICT DO UPDATE`` on PostgreSQL).
                 - relationship_merge_properties: Property names for Cypher MERGE
-                  (Neo4j, FalkorDB, Memgraph) so parallel edges differ by weights
+                  (Neo4j, FalkorDB, Memgraph) so parallel edges differ by weights;
+                  on PostgreSQL, the edge table's key columns besides the endpoints
         """
 
     @abc.abstractmethod

@@ -72,24 +72,29 @@ from .equivalence import (
     subject,
 )
 from .merge import (
-    AttachedProducer,
-    DemotedKey,
-    MergeIdentityError,
-    MergeNameConflictError,
-    MergeReport,
-    OrderCycle,
-    SharedKeySpace,
     _apply_resource_renames,
     _apply_right_resource_policy,
-    ambiguous_reference_refusals,
-    key_space_refusals,
-    origin_refusals,
 )
 from .merge_core import (
     EdgeMergeError,
     VertexMergeError,
     merge_edge_pair,
     merge_vertex_models,
+)
+from .merge_errors import MergeIdentityError, MergeNameConflictError
+from .merge_refusals import (
+    ambiguous_reference_refusals,
+    demoted_key_refusals,
+    identifier_refusals,
+    key_space_refusals,
+    origin_refusals,
+)
+from .merge_report import (
+    AttachedProducer,
+    DemotedKey,
+    MergeReport,
+    OrderCycle,
+    SharedKeySpace,
 )
 from .merge_types import (
     MERGE_RETYPE_REMEDY,
@@ -180,6 +185,8 @@ _KIND_BY_CHECK: dict[str, FindingKind] = {
     "identity collision": "identity_collision",
     "origin": "origin",
     "key space": "key_space",
+    # A key-space-named property too long for the target: renamed by its tag.
+    "identifier": "key_space",
     # What the schema union refuses. A bare ``conflict`` key would swallow all
     # six and must never be added.
     "field type conflict": "type_conflict",
@@ -1149,7 +1156,7 @@ class _Builder:
     def origin_checks(self) -> None:
         """The origins the union names demoted keys and default tags by.
 
-        The rule of :func:`~graflo.architecture.evolution.merge.origin_refusals`,
+        The rule of :func:`~graflo.architecture.evolution.merge_refusals.origin_refusals`,
         over the sides the naming pass found an origin used on.
         """
         if self.resolution is None:
@@ -1160,20 +1167,26 @@ class _Builder:
     def key_space_checks(self) -> None:
         """The key spaces the union names demoted keys by.
 
-        The rule of
-        :func:`~graflo.architecture.evolution.merge.key_space_refusals`, over
-        the key spaces the naming pass assigned.
+        The rules of
+        :func:`~graflo.architecture.evolution.merge_refusals.key_space_refusals`,
+        :func:`~graflo.architecture.evolution.merge_refusals.demoted_key_refusals` and
+        :func:`~graflo.architecture.evolution.merge_refusals.identifier_refusals`,
+        over the key spaces the naming pass assigned.
         """
         if self.resolution is None:
             return
-        for refusal in key_space_refusals(self.resolution, self.manifests):
+        for refusal in (
+            *key_space_refusals(self.resolution, self.manifests),
+            *demoted_key_refusals(self.resolution, self.manifests),
+            *identifier_refusals(self.resolution, self.manifests),
+        ):
             self.from_refusal(refusal, fallback="key_space")
 
     def ambiguity_checks(self) -> None:
         """Resources that would find one merged class by two demoted keys.
 
         The rule of
-        :func:`~graflo.architecture.evolution.merge.ambiguous_reference_refusals`.
+        :func:`~graflo.architecture.evolution.merge_refusals.ambiguous_reference_refusals`.
         """
         if self.resolution is None:
             return
@@ -1759,11 +1772,7 @@ def _attempt(
     before the one whose nodes it needs. It also has the routing rows.
     """
     from .alignment import AlignmentConflictError
-    from .merge import (
-        MergeIdentityError,
-        MergeNameConflictError,
-        _merge_manifests,
-    )
+    from .merge import _merge_manifests
 
     try:
         merged, report = _merge_manifests(

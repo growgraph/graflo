@@ -12,6 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Merge** names each demoted member key by its side's origin: property `maintenance__asset_id`,
   lookup identity `maintenance`. `origins` on the op sets the origins (default: each schema's name);
   `local_key.tag` is optional and defaults to the origin. A property rename of a demoted key is refused.
+- **PostgreSQL** now requires version 15 or later. Every edge table carries a unique key over its
+  endpoints and merge properties (`NULLS NOT DISTINCT`); an existing edge table gains it at schema
+  definition or on its first ingest, which fails with a clear error if it holds duplicate edges.
+- **Merge** refuses two key spaces of one side whose demoted key is one property-branch field.
+- **`build_naming`, `resolve_naming`, `resolve_clusters`** no longer take `origins=`; the origins
+  are always the op's (`merge_origins`).
 
 ### Added
 
@@ -23,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`graflo merge --dry-run`** prints a routing table: each resource producing a merged class, its
   role and its key.
 - **`DBWriter.stats`**: attached, unmatched and ambiguous records per class, logged after ingest.
+- **Merge report types** `KeyOwner`, `PinnedReference`, `SharedKeySpace`, `OrderCycle` and
+  `DemotedKey` are exported from `graflo.architecture.evolution`.
 
 ### Changed
 
@@ -32,6 +40,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of dropping their records, and orders the union's resources owners first.
 - **Merge preview** notes `attached`, `shared_key_space` and `attach_order` replace
   `reference_conversion`.
+- **Merge preview** names demoted keys exactly as the merge does.
+- **Merge** refusals of an invalid origin or key-space name say which rule the name breaks, and
+  name only the affected merged classes.
+- **Blank-identity vertices** mirror an identity value they already carry into `_key` (ArangoDB) or
+  `id`, as hash-identity vertices do.
+- **Merge** on a PostgreSQL target refuses a demoted-key property name longer than 63 bytes
+  (`identifier`).
+- **Merge recipes** record the resolved `origins` when the union names keys by origin.
+
+### Fixed
+
+- **Vertex writes** fuse records sharing an identity within a batch (later values win) before
+  writing, so no backend loses or rejects a property.
+- **PostgreSQL** vertex upserts leave columns a record lacks untouched, and skip, with a warning,
+  records with an incomplete key instead of failing the batch.
+- **PostgreSQL** edge writes honour `edges_on_duplicate: upsert` and no longer duplicate an edge
+  without properties on re-ingest, including in edge tables an earlier version created.
+- **Merge** keeps the declared order only among the resources in a resource-order cycle, not the
+  whole union; owners constrain only attached resources of their own side. Under
+  `router_scope: union` an open router counts only for the classes it names, so its own
+  `find`/`lookup_only` steps are ordered after their writers.
+- **`find`** steps attach records keyed by positional transform outputs, keep their properties
+  beside a `lookup_only` step for the same class, name the resource in their errors, and no longer
+  serialize ingestion when their class is excluded from the run.
+- **`endpoints_on_ambiguous: error`**: an ambiguous attached record or edge endpoint now stops the
+  batch's attach upserts and edge inserts for every class and edge, not just its own.
+- **PostgreSQL** index names longer than 63 bytes are shortened with a digest instead of being
+  truncated into collisions.
 
 ## [1.16.3]
 

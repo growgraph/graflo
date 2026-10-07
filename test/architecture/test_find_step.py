@@ -76,6 +76,13 @@ def test_step_finds_for_router_only_within_reach():
     assert step_finds(closed, "Rack") is None
 
 
+def test_step_finds_for_open_router_only_within_known_vertices():
+    """An open router reaches the declared classes, not every name in its map."""
+    router = {"type_field": "kind", "find": {"Ghost": "x", "Host": "cmdb"}}
+    assert step_finds(router, "Ghost", known_vertices=KNOWN) is None
+    assert step_finds(router, "Host", known_vertices=KNOWN) == "cmdb"
+
+
 def test_step_finds_ignores_non_vertex_steps():
     assert step_finds({"transform": {"call": {"use": "x"}}}, "Host") is None
 

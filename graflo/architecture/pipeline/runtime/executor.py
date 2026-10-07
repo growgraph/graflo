@@ -27,8 +27,8 @@ class ActorExecutor:
     def assemble(
         self, extraction_ctx: ExtractionContext
     ) -> defaultdict[GraphEntity, list]:
-        assembly_ctx = AssemblyContext.from_extraction(extraction_ctx)
-        return self.root.assemble(assembly_ctx)
+        """The assembled entities; :meth:`assemble_result` adds the attached rows."""
+        return self.assemble_result(extraction_ctx).entities
 
     def assemble_result(self, extraction_ctx: ExtractionContext) -> GraphAssemblyResult:
         assembly_ctx = AssemblyContext.from_extraction(extraction_ctx)

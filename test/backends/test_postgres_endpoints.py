@@ -24,7 +24,7 @@ def test_a_composite_identity_gets_a_column_per_field() -> None:
 
 
 def test_the_table_refers_to_the_whole_identity() -> None:
-    create, create_without_keys, unique = edge_table_ddl(
+    create, create_without_keys = edge_table_ddl(
         "g",
         TABLE,
         source_table="pair",
@@ -42,10 +42,6 @@ def test_the_table_refers_to_the_whole_identity() -> None:
         'FOREIGN KEY ("target_id") REFERENCES "g"."org" ("oid"))'
     )
     assert "FOREIGN KEY" not in create_without_keys
-    assert unique == (
-        'CREATE UNIQUE INDEX IF NOT EXISTS "pair_org_owns_edges_edge_uniq" ON '
-        '"g"."pair_org_owns_edges" ("source__a", "source__b", "target_id", "since")'
-    )
 
 
 class _Cursor:
@@ -54,6 +50,13 @@ class _Cursor:
 
     def __exit__(self, *exc: object) -> None:
         return None
+
+    def execute(self, query: Any, params: Any = None) -> None:
+        return None
+
+    def fetchone(self) -> tuple[str, None]:
+        """The catalogue holds the edge key and no stale index."""
+        return (f"{TABLE}_edge_key", None)
 
 
 class _Pg:

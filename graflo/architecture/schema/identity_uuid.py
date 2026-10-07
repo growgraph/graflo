@@ -80,13 +80,10 @@ def ensure_assigned_uuids_on_docs(
     data: list[dict[str, Any]],
     *,
     preferred_field: str,
-    arango_key_mirror: bool = False,
 ) -> None:
     """Idempotent assigned-UUID ensure for a flat doc list (writer safety net)."""
     for doc in data:
         ensure_assigned_uuid(doc, preferred_field)
-        if arango_key_mirror and "_key" not in doc:
-            doc["_key"] = doc[preferred_field]
 
 
 def validate_uuid_typed_identity_fields(

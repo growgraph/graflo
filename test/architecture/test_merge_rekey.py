@@ -850,10 +850,20 @@ class TestOwnersAndAttachedResources:
         order = [r.name for r in merged.require_ingestion_model().resources]
         assert order == [
             "left_resource_A",
-            "right_resource_A",
             "left_resource_B",
+            "right_resource_A",
             "right_resource_B",
         ]
+        assert report.order_cycles == []
+
+    def test_an_owner_does_not_constrain_the_other_sides_attached_resources(
+        self,
+    ) -> None:
+        """``right_resource_A`` never writes the ``left`` key ``left_resource_B`` finds by."""
+        merged, report = _asset_union()
+        order = [r.name for r in merged.require_ingestion_model().resources]
+        assert order.index("left_resource_B") < order.index("right_resource_A")
+        assert order.index("right_resource_A") < order.index("right_resource_B")
         assert report.order_cycles == []
 
     def test_same_side_members_sharing_a_key_field_share_one_key_space(self) -> None:
@@ -1068,6 +1078,19 @@ def _side_a_routed() -> GraphManifest:
     return manifest
 
 
+def _side_a_routed_with(resources: list[dict]) -> GraphManifest:
+    """:func:`_side_a_routed`'s schema, ingested by *resources*."""
+    left = _side_a_routed()
+    side = GraphManifest.from_config(
+        {
+            **left.to_dict(skip_defaults=True),
+            "ingestion_model": {"resources": resources},
+        }
+    )
+    side.finish_init()
+    return side
+
+
 def _merge_routed(
     *, right: GraphManifest | None = None, router_scope: str = "side"
 ) -> GraphManifest:
@@ -1155,6 +1178,100 @@ class TestRoutersKeepToTheirSide:
         assert not router.get("type_map_only")
         graph = _cast_ra(merged, self.ORG_ROW)
         assert [dict(d) for d in graph.vertices["Org"]] == [{"x_id": "o7"}]
+
+
+class TestOpenRoutersInResourceOrder:
+    """Under ``router_scope: union`` a router reaches every class by pass-through."""
+
+    @staticmethod
+    def _ra(*extra: dict) -> dict:
+        router, work_order, edge = _side_a_routed().to_dict(skip_defaults=True)[
+            "ingestion_model"
+        ]["resources"][1]["pipeline"]
+        return {"name": "RA", "pipeline": [router, *extra, work_order, edge]}
+
+    @staticmethod
+    def _order(left: GraphManifest) -> tuple[list[str], list]:
+        from graflo.architecture.evolution import merge_manifests_with_report
+
+        merged, report = merge_manifests_with_report(
+            left,
+            _side_b_with_org(),
+            MergeManifestsOp.model_validate(
+                {
+                    "vertex_equivalences": [
+                        VertexEquivalence(
+                            left="X",
+                            right="Y",
+                            into="Z",
+                            identity=_derived_identity(),
+                            allow=["self_relations"],
+                        )
+                    ],
+                    "router_scope": "union",
+                }
+            ),
+            bump_version=False,
+        )
+        router = next(
+            step for step in _pipeline(merged, "RA") if step.get("type_field")
+        )
+        assert not router.get("type_map_only")
+        assert router["find"] == {"Z": "a"}
+        return [r.name for r in merged.require_ingestion_model().resources], [
+            (c.resource, c.before, c.vertex) for c in report.order_cycles
+        ]
+
+    def test_its_lookup_of_a_passed_through_class_runs_after_the_writers(
+        self,
+    ) -> None:
+        """``RA`` looks ``C`` up; its router reaching ``C`` does not make it a writer."""
+        order, cycles = self._order(
+            _side_a_routed_with(
+                [
+                    {"name": "r_x", "pipeline": [{"vertex": "X"}]},
+                    self._ra({"vertex": "C", "lookup_only": True}),
+                    {"name": "r_c", "pipeline": [{"vertex": "C"}]},
+                ]
+            )
+        )
+        assert order == ["r_x", "r_c", "RA", "r_y", "r_org"]
+        assert cycles == []
+
+    def test_it_runs_after_the_writers_of_the_class_it_finds(self) -> None:
+        """``RA`` finds ``Z`` by ``a``, the key its own side's ``r_x`` writes."""
+        order, cycles = self._order(
+            _side_a_routed_with(
+                [self._ra(), {"name": "r_x", "pipeline": [{"vertex": "X"}]}]
+            )
+        )
+        assert order == ["r_x", "RA", "r_y", "r_org"]
+        assert cycles == []
+
+    def test_it_is_not_a_writer_of_the_classes_it_passes_through(self) -> None:
+        """``r_c_ref`` only references ``C``; ``RA`` need not run before it."""
+        order, cycles = self._order(
+            _side_a_routed_with(
+                [
+                    {"name": "r_x", "pipeline": [{"vertex": "X"}]},
+                    {
+                        "name": "r_c_ref",
+                        "pipeline": [
+                            {"vertex": "WorkOrder"},
+                            {"vertex": "C", "lookup_only": True},
+                            {
+                                "source": "WorkOrder",
+                                "target": "C",
+                                "relation": "targets",
+                            },
+                        ],
+                    },
+                    self._ra(),
+                ]
+            )
+        )
+        assert order == ["r_x", "r_c_ref", "RA", "r_y", "r_org"]
+        assert cycles == []
 
 
 class TestRoutedReferences:
@@ -1314,6 +1431,24 @@ def test_a_link_table_attaches_the_merged_class_in_both_roles() -> None:
     assert target["find"] == {"Z": "a"}
     assert not source.get("lookup_only") and not target.get("lookup_only")
     assert collect_endpoint_selectors([edge]) == []
+
+    graph = _cast_graph(
+        merged,
+        "LT",
+        [
+            {
+                "source_type": "X",
+                "source_id": "x1",
+                "target_type": "C",
+                "target_id": "c1",
+            }
+        ],
+    )
+    assert not graph.vertices.get("Z")
+    assert [dict(d) for d in graph.attached["Z"]] == [{"a__x_id": "x1"}]
+    assert [dict(d) for d in graph.vertices["C"]] == [{"x_id": "c1"}]
+    ((z, c, _props),) = graph.edges[("Z", "C", "linked")]
+    assert (dict(z), dict(c)) == ({"a__x_id": "x1"}, {"x_id": "c1"})
 
 
 class TestDerivedBranchDerivations:
@@ -1553,6 +1688,38 @@ def _side_a_two_keys() -> GraphManifest:
     return manifest
 
 
+def _side_a_two_members_on(key: str) -> GraphManifest:
+    """``X`` and ``W`` both keyed on *key*, each written by its own resource."""
+    manifest = GraphManifest.from_config(
+        {
+            "schema": {
+                "metadata": {"name": "a", "version": "1.0.0"},
+                "graph": {
+                    "vertex_config": {
+                        "vertices": [
+                            {
+                                "name": member,
+                                "properties": [key, "name"],
+                                "identity": [key],
+                            }
+                            for member in ("X", "W")
+                        ]
+                    },
+                    "edge_config": {"edges": []},
+                },
+            },
+            "ingestion_model": {
+                "resources": [
+                    {"name": "r_x", "pipeline": [{"vertex": "X"}]},
+                    {"name": "r_w", "pipeline": [{"vertex": "W"}]},
+                ]
+            },
+        }
+    )
+    manifest.finish_init()
+    return manifest
+
+
 def _side_b_composite() -> GraphManifest:
     """``Y`` keyed on the composite ``[y_id, site]``."""
     manifest = GraphManifest.from_config(
@@ -1581,6 +1748,58 @@ def _side_b_composite() -> GraphManifest:
     return manifest
 
 
+def _two_cluster_sides(
+    *, w_secondaries: list[dict] | None = None
+) -> tuple[GraphManifest, GraphManifest]:
+    """``X ~ Y`` and ``W ~ V``: ``W`` and ``V`` share their key ``w_id``.
+
+    Re-keyed on ``w_id``, ``W ~ V`` demotes nothing; *w_secondaries* are
+    declared on ``W``.
+    """
+
+    def side(name: str, vertices: list[dict]) -> GraphManifest:
+        manifest = GraphManifest.from_config(
+            {
+                "schema": {
+                    "metadata": {"name": name, "version": "1.0.0"},
+                    "graph": {
+                        "vertex_config": {"vertices": vertices},
+                        "edge_config": {"edges": []},
+                    },
+                },
+                "ingestion_model": {
+                    "resources": [
+                        {
+                            "name": f"r_{v['name'].lower()}",
+                            "pipeline": [{"vertex": v["name"]}],
+                        }
+                        for v in vertices
+                    ]
+                },
+            }
+        )
+        manifest.finish_init()
+        return manifest
+
+    w = {"name": "W", "properties": ["w_id"], "identity": ["w_id"]}
+    if w_secondaries is not None:
+        w["properties"] = ["w_id", "label"]
+        w["secondary_identities"] = w_secondaries
+    return (
+        side(
+            "a",
+            [{"name": "X", "properties": ["x_id", "name"], "identity": ["x_id"]}, w],
+        ),
+        side(
+            "b",
+            [
+                {"name": "Y", "properties": ["y_id", "cname"], "identity": ["y_id"]},
+                {"name": "V", "properties": ["w_id"], "identity": ["w_id"]},
+            ],
+        ),
+    )
+
+
 def _rekey(**updates) -> VertexEquivalence:
     """``X ~ Y`` re-keyed on ``name``, so both members' own keys are demoted."""
     payload: dict = {
@@ -1592,6 +1811,34 @@ def _rekey(**updates) -> VertexEquivalence:
         **updates,
     }
     return VertexEquivalence(**payload)
+
+
+def _on_postgres(side: GraphManifest) -> GraphManifest:
+    """*side* targeting PostgreSQL."""
+    payload = side.to_dict(skip_defaults=True)
+    payload["schema"]["db_profile"] = {"db_flavor": "postgres"}
+    manifest = GraphManifest.from_config(payload)
+    manifest.finish_init()
+    return manifest
+
+
+def _long_origin_op(left_origin: str) -> MergeManifestsOp:
+    """``X ~ Y`` re-keyed on ``name``, the left's demoted key named by *left_origin*."""
+    return MergeManifestsOp(
+        vertex_equivalences=[_rekey(allow=["self_relations"])],
+        origins={"left": left_origin, "right": "b"},
+    )
+
+
+def _two_clusters(left_origin: str | None = None) -> MergeManifestsOp:
+    """``X ~ Y`` re-keyed on ``name``, and ``W ~ V`` on their shared key."""
+    return MergeManifestsOp(
+        vertex_equivalences=[
+            _rekey(allow=["self_relations"]),
+            VertexEquivalence(left="W", right="V", into="U", identity=["w_id"]),
+        ],
+        origins=None if left_origin is None else {"left": left_origin, "right": "b"},
+    )
 
 
 def _vertex_step(pipeline: list, vertex: str) -> dict:
@@ -1668,6 +1915,121 @@ class TestOriginNaming:
             "b": ["b__y_id"],
         }
 
+    def test_a_field_named_key_an_authored_secondary_already_takes_is_refused(
+        self,
+    ) -> None:
+        """``a__x_id`` names ``X``'s demoted key, but ``Y`` declares it over ``extra``."""
+        right = _named_side(
+            _side_b(properties=["y_id", "cname", "extra"]),
+            "b",
+            secondaries=[{"name": "a__x_id", "fields": ["extra"]}],
+        )
+        with pytest.raises(MergeIdentityError, match="'a__x_id'") as excinfo:
+            merge_manifests(
+                _side_a_two_keys(),
+                right,
+                MergeManifestsOp(
+                    vertex_equivalences=[
+                        VertexEquivalence(
+                            left=["X", "W"],
+                            right="Y",
+                            into="Z",
+                            identity=["name"],
+                            properties=[NAME_EQUIVALENCE],
+                            allow=["observation_fusion"],
+                        )
+                    ]
+                ),
+                bump_version=False,
+            )
+        assert excinfo.value.check == "key space"
+
+    def test_two_key_spaces_of_one_side_on_one_branch_key_are_refused(
+        self,
+    ) -> None:
+        """``X`` and ``W`` both key on ``lid``, a property branch, tagged apart.
+
+        The branch keeps ``lid``'s spelling, so both keys would be one lookup
+        column: an id of one key space would find a node of the other.
+        """
+        with pytest.raises(MergeIdentityError, match="'one'") as excinfo:
+            merge_manifests(
+                _side_a_two_members_on("lid"),
+                _side_b(),
+                MergeManifestsOp(
+                    vertex_equivalences=[
+                        VertexEquivalence(
+                            left=["X", "W"],
+                            right="Y",
+                            into="Z",
+                            identity=[
+                                "lid",
+                                LocalKeyBranch(
+                                    local_key={
+                                        "r_x": LocalKeySource(field="lid", tag="one"),
+                                        "r_w": LocalKeySource(field="lid", tag="two"),
+                                        "r_y": LocalKeySource(field="y_id"),
+                                    }
+                                ),
+                            ],
+                            properties=[NAME_EQUIVALENCE],
+                            allow=["observation_fusion"],
+                        )
+                    ]
+                ),
+                bump_version=False,
+            )
+        assert excinfo.value.check == "key space"
+        assert "'two'" in str(excinfo.value)
+
+    def test_a_demoted_key_answers_to_an_authored_secondary_over_its_fields(
+        self,
+    ) -> None:
+        """``Y`` declares ``legacy`` over ``x_id``: ``X``'s demoted key takes it."""
+        right = _named_side(
+            _side_b(properties=["y_id", "cname", "x_id"]),
+            "b",
+            secondaries=[{"name": "legacy", "fields": ["x_id"]}],
+        )
+        merged = _merge(
+            VertexEquivalence(left="X", right="Y", into="Z", identity=["x_id", "y_id"]),
+            right=right,
+        )
+        assert _secondaries(merged) == {"legacy": ["x_id"], "b": ["y_id"]}
+        assert collect_endpoint_selectors(_pipeline(merged, "r_ap")) == [
+            ("Z", "legacy")
+        ]
+
+    def test_two_sides_on_one_branch_key_share_the_first_secondary(self) -> None:
+        from graflo.architecture.evolution.merge import plan_demoted_key_names
+
+        plan = plan_demoted_key_names(
+            "Z",
+            [("left", "X", ("lid",), ("lid",)), ("right", "Y", ("lid",), ("lid",))],
+            {},
+            {"left": "a", "right": "b"},
+            {},
+        )
+        assert plan.names == {("left", "X"): "a", ("right", "Y"): "a"}
+        assert [(e.name, e.fields) for e in plan.additions] == [("a", ["lid"])]
+        assert not plan.refusals
+
+    def test_key_spaces_of_one_side_on_an_authored_secondary_are_refused(
+        self,
+    ) -> None:
+        """An authored ``legacy`` over ``lid`` is still one column for two key spaces."""
+        from graflo.architecture.evolution.merge import plan_demoted_key_names
+
+        plan = plan_demoted_key_names(
+            "Z",
+            [("left", "X", ("lid",), ("lid",)), ("left", "W", ("lid",), ("lid",))],
+            {("left", "X"): "one", ("left", "W"): "two"},
+            {"left": "a", "right": "b"},
+            {"legacy": ["lid"]},
+        )
+        assert [refusal.check for refusal in plan.refusals] == ["key space"]
+        assert not plan.additions
+
     def test_a_key_a_property_branch_names_keeps_its_name(self) -> None:
         """``x_id`` is part of the merged key: renaming it would empty that branch.
 
@@ -1727,10 +2089,23 @@ class TestOriginNaming:
             _merge(_rekey(), right=_named_side(_side_b(), "source-b"))
         assert excinfo.value.check == "origin"
 
-    @pytest.mark.parametrize("origin", ["a__x", "identity", "secondary"])
-    def test_an_origin_that_cannot_name_a_key_is_refused(self, origin: str) -> None:
+    @pytest.mark.parametrize(
+        ("origin", "reason"),
+        [
+            ("a__x", "contains '__'"),
+            ("identity", "is the selector word 'identity'"),
+            ("secondary", "is the selector word 'secondary'"),
+            ("1abc", "is not a letter followed by letters, digits or underscores"),
+        ],
+    )
+    def test_an_origin_that_cannot_name_a_key_is_refused_with_its_reason(
+        self, origin: str, reason: str
+    ) -> None:
         """``__`` would split ambiguously; a selector word names no secondary."""
-        with pytest.raises(MergeIdentityError) as excinfo:
+        with pytest.raises(
+            MergeIdentityError,
+            match=f"names the left side's demoted keys, but {reason}",
+        ) as excinfo:
             merge_manifests(
                 _side_a(),
                 _side_b(),
@@ -1740,6 +2115,53 @@ class TestOriginNaming:
                 ),
             )
         assert excinfo.value.check == "origin"
+
+    def test_an_invalid_origin_is_about_the_classes_it_names_keys_of(self) -> None:
+        """``W ~ V`` demotes nothing, so the origin names nothing on ``U``."""
+        left, right = _two_cluster_sides()
+        with pytest.raises(MergeIdentityError, match="contains '__'") as excinfo:
+            merge_manifests(left, right, _two_clusters("a__x"))
+        assert excinfo.value.subjects == ("merged:Z",)
+
+    def test_an_origin_also_tagging_untagged_local_keys_says_both(self) -> None:
+        with pytest.raises(
+            MergeIdentityError,
+            match="names the left side's demoted keys and tags its local keys "
+            "the op leaves untagged, but is not a letter",
+        ):
+            merge_manifests(
+                _side_a(),
+                _side_b(),
+                MergeManifestsOp(
+                    vertex_equivalences=[
+                        _rekey(
+                            identity=[
+                                _name_key(),
+                                LocalKeyBranch(
+                                    local_key={
+                                        "r_x": LocalKeySource(field="x_id"),
+                                        "r_y": LocalKeySource(field="y_id", tag="b"),
+                                    }
+                                ),
+                            ],
+                            allow=["self_relations"],
+                        )
+                    ],
+                    origins={"left": "1abc", "right": "b"},
+                ),
+            )
+
+    def test_an_origin_clash_with_a_secondary_is_about_its_authors_classes(
+        self,
+    ) -> None:
+        """``Z`` demotes ``X``'s key by origin ``a``; ``W`` on ``U`` declares ``a``."""
+        left, right = _two_cluster_sides(
+            w_secondaries=[{"name": "a", "fields": ["label"]}]
+        )
+        with pytest.raises(MergeIdentityError, match="left:W declare") as excinfo:
+            merge_manifests(left, right, _two_clusters())
+        assert excinfo.value.check == "origin"
+        assert excinfo.value.subjects == ("merged:U",)
 
     def test_an_origin_named_like_an_authored_secondary_is_refused(self) -> None:
         left = _named_side(
@@ -1773,6 +2195,52 @@ class TestOriginNaming:
         )
         assert _z(merged).identity == ["x_id"]
         assert _secondaries(merged) == {}
+
+    def test_a_demoted_key_name_too_long_for_postgres_is_refused(self) -> None:
+        """``<origin>__x_id`` past 63 bytes would be truncated by PostgreSQL."""
+        origin = "a" * 60
+        with pytest.raises(MergeIdentityError, match="63") as excinfo:
+            merge_manifests(
+                _on_postgres(_side_a()),
+                _side_b(),
+                _long_origin_op(origin),
+                bump_version=False,
+            )
+        assert excinfo.value.check == "identifier"
+        assert f"'{origin}__x_id'" in str(excinfo.value)
+        assert "66 bytes" in str(excinfo.value)
+        assert excinfo.value.subjects == ("merged:Z",)
+
+    def test_a_demoted_key_name_too_long_for_postgres_is_found_by_preview(
+        self,
+    ) -> None:
+        left, right, op = _on_postgres(_side_a()), _side_b(), _long_origin_op("a" * 60)
+
+        attempted = preview_merge(left, right, op)
+        alone = preview_merge(left, right, op, attempt=False)
+
+        assert attempted.outcome.status == "refused"
+        assert attempted.outcome.check == "identifier"
+        found = [f for f in alone.findings if f.check == "identifier"]
+        assert len(found) == 1
+        assert found[0].kind == "key_space"
+        assert found[0].nodes == ["merged:Z"]
+
+    def test_a_demoted_key_name_within_63_bytes_merges_on_postgres(self) -> None:
+        merged = merge_manifests(
+            _on_postgres(_side_a()),
+            _side_b(),
+            _long_origin_op("a" * 57),
+            bump_version=False,
+        )
+        assert f"{'a' * 57}__x_id" in _z(merged).property_names
+
+    def test_a_long_demoted_key_name_merges_off_postgres(self) -> None:
+        """Only PostgreSQL truncates: the default target keeps the name whole."""
+        merged = merge_manifests(
+            _side_a(), _side_b(), _long_origin_op("a" * 60), bump_version=False
+        )
+        assert f"{'a' * 60}__x_id" in _z(merged).property_names
 
     def test_an_authored_rename_of_a_demoted_key_is_refused(self) -> None:
         from graflo.architecture.evolution.naming_graph import MergeNamingError
@@ -1824,7 +2292,7 @@ class TestOriginNaming:
         assert _secondaries(merged)["a"] == ["a__x_id"]
 
     def test_an_explicit_empty_origin_is_refused(self) -> None:
-        with pytest.raises(MergeIdentityError) as excinfo:
+        with pytest.raises(MergeIdentityError, match="is empty") as excinfo:
             merge_manifests(
                 _side_a(),
                 _side_b(),

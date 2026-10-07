@@ -349,6 +349,33 @@ def test_relationship_merge_property_names_prefers_first_identity(
     assert ec_db.relationship_merge_property_names(edge) == ["relation", "pub_id"]
 
 
+@pytest.mark.parametrize(
+    ("identity", "expected"),
+    [
+        (["source", "target", "relation"], []),
+        (["source", "target", "relation", "pub_id"], ["pub_id"]),
+    ],
+)
+def test_postgres_merge_properties_leave_out_the_relation_token(
+    vertex_config_kg, identity, expected
+):
+    """A PostgreSQL edge table is per relation, so the endpoints already key it."""
+    vertex_config = VertexConfig.from_dict(vertex_config_kg)
+    edge = Edge.from_dict(
+        {
+            "source": "entity",
+            "target": "entity",
+            "identities": [identity],
+            "properties": ["pub_id", "date"],
+        }
+    )
+    edge.finish_init(vertex_config)
+    profile = DatabaseProfile(db_flavor=DBType.POSTGRES)
+    vc_db = VertexConfigDBAware(vertex_config, profile)
+    ec_db = EdgeConfigDBAware(EdgeConfig(edges=[edge]), vc_db, profile)
+    assert ec_db.relationship_merge_property_names(edge) == expected
+
+
 def test_edge_property_dicts_keep_every_field_key():
     """The dict must reach `Field` whole: an enumerated copy dropped the rest."""
     edge = Edge.from_dict(

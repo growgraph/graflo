@@ -228,8 +228,25 @@ class ActorWrapper:
         attached = [x for x in vertex_list if x.find is not None and not x.lookup_only]
         if not attached:
             return []
-        fields = self.vertex_config.match_fields(vertex_name, attached[0].find)
-        return fuse_doc_basis([x.vertex for x in attached], tuple(fields))
+        fields = self._find_fields(vertex_name, attached[0].find)
+        return fuse_doc_basis([x.vertex for x in attached], fields)
+
+    def _find_fields(self, vertex_name: str, selector: str | None) -> tuple[str, ...]:
+        """The fields *selector* finds *vertex_name* by, resolved once per pair.
+
+        Keyed by the vertex config object, like :meth:`_inverse_pairs`.
+        """
+        vertex_config = self.init_ctx.vertex_config
+        cached = self.__dict__.get("_find_fields_cache")
+        if cached is None or cached[0] is not vertex_config:
+            cached = (vertex_config, {})
+            self.__dict__["_find_fields_cache"] = cached
+        by_pair: dict[tuple[str, str | None], tuple[str, ...]] = cached[1]
+        fields = by_pair.get((vertex_name, selector))
+        if fields is None:
+            fields = tuple(vertex_config.match_fields(vertex_name, selector))
+            by_pair[vertex_name, selector] = fields
+        return fields
 
     @classmethod
     def from_dict(cls, data: dict | list) -> ActorWrapper:

@@ -1652,6 +1652,20 @@ class TestLocalKeyTagDefault:
         )
         assert _tagged_key_params(ops, "r_b")["tag"] == ""
 
+    def test_a_copy_setting_the_tag_to_null_keeps_raw_values(self) -> None:
+        """The copy skips the validator, so its tag is ``None`` yet set."""
+        source = LocalKeySource(field="org_id").model_copy(update={"tag": None})
+        assert source.tag is None
+        assert not source.tag_omitted
+        ops = self._ops(
+            LocalKeyBranch(
+                local_key={"r_a": LocalKeySource(field="firm_id"), "r_b": source}
+            ),
+            origins={"left": "acme", "right": "beta"},
+        )
+        assert _tagged_key_params(ops, "r_a")["tag"] == "acme"
+        assert _tagged_key_params(ops, "r_b")["tag"] == ""
+
     def test_an_omitted_tag_round_trips_as_omitted(self) -> None:
         source = LocalKeySource.model_validate({"field": "firm_id"})
         assert source.tag is None

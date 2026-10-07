@@ -1090,14 +1090,33 @@ def build_merge_recipe(
     the name-conflict policy -- because all of it is "how these two were
     joined", and a re-merge that had only the equivalences would reconstruct a
     different manifest.
+
+    When the union names a demoted key or an untagged local key by a side's
+    origin, the resolved ``origins`` are recorded with the op, so a re-merge
+    names them alike after a parent's schema is renamed. Otherwise the op is
+    recorded as given.
     """
+    from .naming_graph import build_naming, merge_origins
+
+    resolution = build_naming(
+        op, left=left.model_copy(deep=True), right=right.model_copy(deep=True)
+    ).resolution
+    names_by_origin = any(
+        space == resolution.origins[side]
+        for (side, _member), space in resolution.key_spaces.items()
+    ) or any(resolution.origin_tagged.values())
+    recorded = (
+        op.model_copy(update={"origins": merge_origins(op, left, right)})
+        if names_by_origin
+        else op
+    )
     return MergeRecipe(
         kind="merge",
         left=manifest_hash(left),
         right=manifest_hash(right),
         base=None,
         resolutions=[],
-        equivalences=op.to_dict(),
+        equivalences=recorded.to_dict(),
         name_conflict=op.name_conflict,
     )
 

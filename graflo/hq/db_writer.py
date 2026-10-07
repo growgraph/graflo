@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Coroutine
 from contextlib import AsyncExitStack
-from typing import Any
+from typing import Any, TypeVar, cast
 from uuid import uuid4
 
 from graflo.architecture.contract.ingestion import IngestionModel
@@ -45,6 +46,8 @@ from graflo.onto import DBType, EndpointAmbiguityPolicy
 
 logger = logging.getLogger(__name__)
 
+_T = TypeVar("_T")
+
 # Backends whose upsert primitive is atomic per key under concurrency:
 # Postgres INSERT .. ON CONFLICT, Arango UPSERT with OPTIONS {exclusive: true}
 # (collection-level write lock), and the keyed REST/NGQL upserts of TigerGraph
@@ -56,6 +59,20 @@ logger = logging.getLogger(__name__)
 _CONCURRENT_UPSERT_SAFE_FLAVORS = frozenset(
     {DBType.POSTGRES, DBType.ARANGO, DBType.TIGERGRAPH, DBType.NEBULA}
 )
+
+
+async def _gather_settled(aws: list[Coroutine[Any, Any, _T]]) -> list[_T]:
+    """Await every coroutine to the end, then raise the first failure if any.
+
+    Unlike a plain ``gather``, no sibling is still running when the error
+    surfaces — a thread cannot be cancelled, so it would otherwise go on to
+    write after its caller has failed.
+    """
+    results = await asyncio.gather(*aws, return_exceptions=True)
+    for result in results:
+        if isinstance(result, BaseException):
+            raise result
+    return cast(list[_T], results)
 
 
 def _weight_source_fields(weight: Weight) -> list[str]:
@@ -346,6 +363,12 @@ class DBWriter:
                         writable = self._drop_unkeyed_docs(
                             vcol=vcol, data=data, conn_conf=conn_conf
                         )
+                        identity_fields = vc.identity_fields(vcol)
+                        if identity_fields:
+                            # One row per vertex per batch, later wins: a backend
+                            # that replaces a row or refuses a second touch would
+                            # otherwise lose or fail on the earlier document.
+                            writable = fuse_doc_basis(writable, tuple(identity_fields))
                         db.upsert_docs_batch(
                             keys.vertex_docs(vcol, writable),
                             vc.vertex_dbname(vcol),
@@ -404,38 +427,20 @@ class DBWriter:
         self, vcol: str, data: list[dict], conn_conf: DBConfig
     ) -> None:
         """Assign deterministic in-memory IDs to blank vertices before persistence."""
-        vc = self._db_aware_for(conn_conf).vertex_config
-        identity_fields = vc.identity_fields(vcol)
-        default_field = "_key" if conn_conf.connection_type == DBType.ARANGO else "id"
-        preferred_field = identity_fields[0] if identity_fields else default_field
-
+        _, preferred_field = self._default_and_preferred(vcol, conn_conf)
         for doc in data:
             current_value = doc.get(preferred_field)
             if current_value is None or current_value == "":
-                generated = str(uuid4())
-                doc[preferred_field] = generated
-                if default_field != preferred_field and default_field not in doc:
-                    doc[default_field] = generated
+                doc[preferred_field] = str(uuid4())
+        self._mirror_default_identity(vcol=vcol, data=data, conn_conf=conn_conf)
 
     def _assign_assigned_vertex_ids(
         self, vcol: str, data: list[dict], conn_conf: DBConfig
     ) -> None:
         """Idempotent uuid4 fill for assigned vertices (assemble-time mint is primary)."""
-        vc = self._db_aware_for(conn_conf).vertex_config
-        identity_fields = vc.identity_fields(vcol)
-        default_field = "_key" if conn_conf.connection_type == DBType.ARANGO else "id"
-        preferred_field = identity_fields[0] if identity_fields else default_field
-        ensure_assigned_uuids_on_docs(
-            data,
-            preferred_field=preferred_field,
-            arango_key_mirror=(
-                conn_conf.connection_type == DBType.ARANGO and preferred_field != "_key"
-            ),
-        )
-        if default_field != preferred_field:
-            for doc in data:
-                if default_field not in doc:
-                    doc[default_field] = doc[preferred_field]
+        _, preferred_field = self._default_and_preferred(vcol, conn_conf)
+        ensure_assigned_uuids_on_docs(data, preferred_field=preferred_field)
+        self._mirror_default_identity(vcol=vcol, data=data, conn_conf=conn_conf)
 
     def _validate_uuid_natural_identity(
         self, vcol: str, data: list[dict], conn_conf: DBConfig
@@ -459,12 +464,21 @@ class DBWriter:
         """
         vc = self._db_aware_for(conn_conf).vertex_config
         vertex = vc.logical._get_vertex_by_name(vcol)
-        identity_fields = vc.identity_fields(vcol)
-        default_field = "_key" if conn_conf.connection_type == DBType.ARANGO else "id"
-        preferred_field = identity_fields[0] if identity_fields else default_field
-
+        _, preferred_field = self._default_and_preferred(vcol, conn_conf)
         ensure_digest_identities_on_docs(data, vertex, preferred_field=preferred_field)
         self._mirror_default_identity(vcol=vcol, data=data, conn_conf=conn_conf)
+
+    def _default_and_preferred(self, vcol: str, conn_conf: DBConfig) -> tuple[str, str]:
+        """The flavor's default key field and *vcol*'s first identity field.
+
+        The default is ``_key`` on Arango and ``id`` elsewhere; a vertex without
+        identity fields is keyed on the default itself.
+        """
+        identity_fields = self._db_aware_for(conn_conf).vertex_config.identity_fields(
+            vcol
+        )
+        default_field = "_key" if conn_conf.connection_type == DBType.ARANGO else "id"
+        return default_field, identity_fields[0] if identity_fields else default_field
 
     def _mirror_default_identity(
         self, vcol: str, data: list[dict], conn_conf: DBConfig
@@ -474,10 +488,7 @@ class DBWriter:
         The default field is ``_key`` on Arango and ``id`` elsewhere; a value
         already there is never overwritten.
         """
-        vc = self._db_aware_for(conn_conf).vertex_config
-        identity_fields = vc.identity_fields(vcol)
-        default_field = "_key" if conn_conf.connection_type == DBType.ARANGO else "id"
-        preferred_field = identity_fields[0] if identity_fields else default_field
+        default_field, preferred_field = self._default_and_preferred(vcol, conn_conf)
         if default_field == preferred_field:
             return
         for doc in data:
@@ -502,12 +513,15 @@ class DBWriter:
 
         Raises:
             ValueError: If an attached class has no selector in ``gc.attached_by``.
-            AmbiguousEndpointError: on several matches under the ``error`` policy.
+            AmbiguousEndpointError: on several matches under the ``error`` policy;
+                no class's records are written then.
         """
         vc = self._db_aware_for(conn_conf).vertex_config
         policy = self.ingestion_model.endpoints_on_ambiguous
 
-        async def _attach_one(vcol: str, docs: list[dict]) -> None:
+        async def _resolve_one(
+            vcol: str, docs: list[dict]
+        ) -> tuple[str, str, list[dict[str, Any]], AttachStats]:
             selector = gc.attached_by.get(vcol)
             if selector is None:
                 raise ValueError(
@@ -515,25 +529,43 @@ class DBWriter:
                     "found by."
                 )
             if self.dry:
-                self._record_attach(vcol, selector, AttachStats(documents=len(docs)))
-                return
-            async with AsyncExitStack() as stack:
-                await self._acquire_write_slot(stack, conn_conf, vc.vertex_dbname(vcol))
+                return vcol, selector, [], AttachStats(documents=len(docs))
+            async with self._db_semaphore(conn_conf):
 
-                def _sync() -> AttachStats:
+                def _sync() -> tuple[list[dict[str, Any]], AttachStats]:
                     with ConnectionManager(connection_config=conn_conf) as db:
-                        return self._attach_class(
+                        return self._resolve_attached(
                             db, vcol, docs, selector, conn_conf=conn_conf, policy=policy
                         )
 
-                stats = await asyncio.to_thread(_sync)
+                filled, stats = await asyncio.to_thread(_sync)
+            return vcol, selector, filled, stats
+
+        async def _upsert_one(
+            vcol: str, selector: str, filled: list[dict[str, Any]], stats: AttachStats
+        ) -> None:
+            if filled:
+                async with AsyncExitStack() as stack:
+                    await self._acquire_write_slot(
+                        stack, conn_conf, vc.vertex_dbname(vcol)
+                    )
+
+                    def _sync() -> None:
+                        with ConnectionManager(connection_config=conn_conf) as db:
+                            self._upsert_attached(db, vcol, filled, conn_conf=conn_conf)
+
+                    await asyncio.to_thread(_sync)
+                stats.written = len(filled)
             self._record_attach(vcol, selector, stats)
 
-        await asyncio.gather(
-            *[_attach_one(vcol, docs) for vcol, docs in gc.attached.items() if docs]
+        # Every class resolves before any writes, so an ``error`` raised for one
+        # class leaves the others unwritten too.
+        resolved = await _gather_settled(
+            [_resolve_one(vcol, docs) for vcol, docs in gc.attached.items() if docs]
         )
+        await asyncio.gather(*[_upsert_one(*entry) for entry in resolved])
 
-    def _attach_class(
+    def _resolve_attached(
         self,
         db: Any,
         vcol: str,
@@ -542,8 +574,15 @@ class DBWriter:
         *,
         conn_conf: DBConfig,
         policy: EndpointAmbiguityPolicy,
-    ) -> AttachStats:
-        """Resolve and upsert one class's attached records; return the counts."""
+    ) -> tuple[list[dict[str, Any]], AttachStats]:
+        """Resolve one class's attached records to the rows to upsert.
+
+        Returns the rows, fused one per vertex and keyed like their owners, and
+        the counts; ``written`` is left for the upsert to set.
+
+        Raises:
+            AmbiguousEndpointError: on several matches under the ``error`` policy.
+        """
         vc = self._db_aware_for(conn_conf).vertex_config
         keys = self._keys_for(conn_conf)
         stats = AttachStats(documents=len(docs))
@@ -596,7 +635,7 @@ class DBWriter:
             )
 
         if not filled:
-            return stats
+            return filled, stats
         # Records landing on one vertex become one row, later records winning:
         # a batch upsert may not touch the same row twice.
         filled = fuse_doc_basis(filled, tuple(identity_fields))
@@ -607,16 +646,22 @@ class DBWriter:
         ):
             # Owners of a generated key mirrored it the same way when written.
             self._mirror_default_identity(vcol=vcol, data=filled, conn_conf=conn_conf)
+        return filled, stats
+
+    def _upsert_attached(
+        self, db: Any, vcol: str, filled: list[dict[str, Any]], *, conn_conf: DBConfig
+    ) -> None:
+        """Upsert one class's resolved attached rows on their primary identity."""
+        vc = self._db_aware_for(conn_conf).vertex_config
+        keys = self._keys_for(conn_conf)
         db.upsert_docs_batch(
             keys.vertex_docs(vcol, filled),
             vc.vertex_dbname(vcol),
-            list(identity_keys),
+            keys.vertex_fields(vcol, vc.identity_fields(vcol)),
             update_keys="doc",
             filter_uniques=True,
             dry=self.dry,
         )
-        stats.written = len(filled)
-        return stats
 
     def _record_attach(self, vcol: str, selector: str, stats: AttachStats) -> None:
         self.stats.add_attached(vcol, stats)
@@ -784,6 +829,10 @@ class DBWriter:
         Endpoints declared by a secondary identity are resolved to their primary
         identity first, so the write itself stays a plain primary-key operation
         on every backend.
+
+        Raises:
+            AmbiguousEndpointError: on several matches under the ``error`` policy;
+                no edge of *gc* is inserted then.
         """
         schema_db = self._db_aware_for(conn_conf)
         vc = schema_db.vertex_config
@@ -797,11 +846,33 @@ class DBWriter:
 
         endpoint_match_for = self._endpoint_match_lookup(resource)
 
-        async def _push_one(edge_id: tuple, docs: list) -> None:
+        async def _resolve_one(
+            edge_id: tuple, docs: list
+        ) -> tuple[tuple, Edge, list] | None:
             edge = _schema_edge_for(edge_id)
             if edge is None:
                 self._report_undeclared_edge(edge_id, len(docs))
-                return
+                return None
+            endpoint_match = endpoint_match_for(edge_id)
+            if endpoint_match is None:
+                return edge_id, edge, docs
+            async with self._db_semaphore(conn_conf):
+
+                def _sync() -> list:
+                    with ConnectionManager(connection_config=conn_conf) as db:
+                        return self._resolve_endpoints(
+                            db=db,
+                            docs=docs,
+                            edge=edge,
+                            edge_id=edge_id,
+                            match=endpoint_match,
+                            vertex_config=vc,
+                        )
+
+                edge_docs = await asyncio.to_thread(_sync)
+            return (edge_id, edge, edge_docs) if edge_docs else None
+
+        async def _insert_one(edge_id: tuple, edge: Edge, edge_docs: list) -> None:
             async with AsyncExitStack() as stack:
                 # Cypher relationship MERGE has the same concurrent
                 # check-then-create race as node MERGE; lock per relation store.
@@ -813,21 +884,8 @@ class DBWriter:
                     _, _, relation = edge_id
                     with ConnectionManager(connection_config=conn_conf) as db:
                         runtime = ec.runtime(edge)
-                        endpoint_match = endpoint_match_for(edge_id)
                         source_keys = tuple(vc.identity_fields(edge.source))
                         target_keys = tuple(vc.identity_fields(edge.target))
-                        edge_docs = docs
-                        if endpoint_match is not None:
-                            edge_docs = self._resolve_endpoints(
-                                db=db,
-                                docs=docs,
-                                edge=edge,
-                                edge_id=edge_id,
-                                match=endpoint_match,
-                                vertex_config=vc,
-                            )
-                            if not edge_docs:
-                                return
                         merge_props: tuple[str, ...] | None = None
                         mp = ec.relationship_merge_property_names(edge)
                         if mp:
@@ -856,6 +914,15 @@ class DBWriter:
                                     edge_kw["relationship_merge_properties"] = (
                                         merge_props
                                     )
+                            elif conn_conf.connection_type == DBType.POSTGRES:
+                                # The conflict target must match the edge
+                                # table's unique key, built from the same names.
+                                if merge_props is not None:
+                                    edge_kw["relationship_merge_properties"] = (
+                                        merge_props
+                                    )
+                                if self.ingestion_model.edges_on_duplicate == "upsert":
+                                    edge_kw["on_duplicate"] = "upsert"
                             elif (
                                 conn_conf.connection_type == DBType.ARANGO
                                 and self.ingestion_model.edges_on_duplicate == "upsert"
@@ -879,8 +946,13 @@ class DBWriter:
 
                 await asyncio.to_thread(_sync)
 
+        # Every edge id resolves before any inserts, so an ``error`` raised for
+        # one leaves the others unwritten too.
+        resolved = await _gather_settled(
+            [_resolve_one(edge_id, docs) for edge_id, docs in gc.edges.items()]
+        )
         await asyncio.gather(
-            *[_push_one(edge_id, docs) for edge_id, docs in gc.edges.items()]
+            *[_insert_one(*entry) for entry in resolved if entry is not None]
         )
 
     def _report_undeclared_edge(self, edge_id: tuple, count: int) -> None:

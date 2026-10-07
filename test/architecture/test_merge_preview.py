@@ -678,11 +678,15 @@ def _key_space_pair(
     *,
     l1_secondaries: list[dict] | None = None,
     both_router: bool = False,
+    lid_branch: bool = False,
+    r_secondaries: list[dict] | None = None,
 ) -> tuple[GraphManifest, GraphManifest, MergeManifestsOp]:
     """``[L1, L2] ~ R`` on a derived name; ``L1`` and ``L2`` key on ``lid``, tagged as given.
 
     *both_router* adds ``r_both``, a router writing both left members that no
-    derived branch names: it is attached by their keys.
+    derived branch names: it is attached by their keys. *lid_branch* also
+    lists ``lid`` as a property branch, so both left keys keep its spelling.
+    *r_secondaries* are declared on ``R``, which then also carries ``lid``.
     """
 
     def side(
@@ -730,7 +734,19 @@ def _key_space_pair(
     }
     return (
         side("kl", [l1, keyed("L2", "lid")], [router] if both_router else None),
-        side("kr", [keyed("R", "rid")]),
+        side(
+            "kr",
+            [
+                keyed(
+                    "R",
+                    "rid",
+                    properties=["rid", "name", "lid"],
+                    secondary_identities=r_secondaries,
+                )
+                if r_secondaries is not None
+                else keyed("R", "rid")
+            ],
+        ),
         MergeManifestsOp(
             vertex_equivalences=[
                 VertexEquivalence(
@@ -745,6 +761,7 @@ def _key_space_pair(
                                 for r in ("r_l1", "r_l2", "r_r")
                             },
                         ),
+                        *(["lid"] if lid_branch else []),
                         LocalKeyBranch(
                             local_key={
                                 "r_l1": LocalKeySource(field="lid", tag=left_tag),
@@ -753,6 +770,64 @@ def _key_space_pair(
                             }
                         ),
                     ],
+                )
+            ]
+        ),
+    )
+
+
+def _fallback_key_pair(
+    *, right_secondaries: list[dict] | None = None
+) -> tuple[GraphManifest, GraphManifest, MergeManifestsOp]:
+    """``[A, C] ~ B`` re-keyed on ``q``: origin ``l`` demotes ``p`` and ``k``."""
+    right = _natural("B", properties=["p", "q", "s"])
+    if right_secondaries is not None:
+        right["secondary_identities"] = right_secondaries
+    return (
+        _schema_manifest(
+            "l",
+            [_natural("A"), {"name": "C", "properties": ["k", "q"], "identity": ["k"]}],
+            [],
+        ),
+        _schema_manifest("r", [right], []),
+        MergeManifestsOp(
+            vertex_equivalences=[
+                VertexEquivalence(
+                    left=["A", "C"],
+                    right="B",
+                    into="Party",
+                    identity=["q"],
+                    allow=["observation_fusion"],
+                )
+            ]
+        ),
+    )
+
+
+def _authored_reuse_pair() -> tuple[GraphManifest, GraphManifest, MergeManifestsOp]:
+    """``A ~ B`` keyed on branches ``p`` and ``k``; ``B`` declares ``by_p`` over ``p``.
+
+    ``A``'s demoted key ``p`` answers to that declaration rather than to its
+    origin.
+    """
+    return (
+        _schema_manifest("l", [_natural("A")], []),
+        _schema_manifest(
+            "r",
+            [
+                {
+                    "name": "B",
+                    "properties": ["p", "q", "k"],
+                    "identity": ["k"],
+                    "secondary_identities": [{"name": "by_p", "fields": ["p"]}],
+                }
+            ],
+            [],
+        ),
+        MergeManifestsOp(
+            vertex_equivalences=[
+                VertexEquivalence(
+                    left="A", right="B", into="Party", identity=["p", "k"]
                 )
             ]
         ),
@@ -828,6 +903,21 @@ def _union_cases() -> dict[str, tuple[GraphManifest, GraphManifest, MergeManifes
         ),
         # A router writing members in two key spaces cannot find by one key.
         "attached-across-key-spaces": _key_space_pair("one", "two", both_router=True),
+        # Two key spaces of one side whose key is one property-branch field
+        # would share its lookup column.
+        "key-spaces-share-a-branch-key": _key_space_pair("one", "two", lid_branch=True),
+        # ... even when a member declares that field as a secondary identity.
+        "key-spaces-share-an-authored-branch-key": _key_space_pair(
+            "one",
+            "two",
+            lid_branch=True,
+            r_secondaries=[{"name": "legacy", "fields": ["lid"]}],
+        ),
+        # One origin demotes two key field sets, so each is named
+        # `<origin>__<field>`, and a member already declares `l__p`.
+        "fallback-key-name-like-a-secondary": _fallback_key_pair(
+            right_secondaries=[{"name": "l__p", "fields": ["s"]}]
+        ),
         # A re-keyed cluster demotes both members' `p`, named by the origins.
         "origin-invalid-name": _rekeyed_pair("union-left", "union-right"),
         "origin-equal-names": _rekeyed_pair("same", "same"),
@@ -890,6 +980,11 @@ def _clean_cases() -> dict[str, tuple[GraphManifest, GraphManifest, MergeManifes
     )
     cases["key-space-tags-agree"] = _key_space_pair("kl", "kl")
     cases["key-space-tags-differ"] = _key_space_pair("one", "two")
+    cases["key-spaces-agree-on-a-branch-key"] = _key_space_pair(
+        "kl", "kl", lid_branch=True
+    )
+    cases["fallback-key-names"] = _fallback_key_pair()
+    cases["demoted-key-reuses-an-authored-secondary"] = _authored_reuse_pair()
     rekeyed_left, rekeyed_right, rekeyed_op = _rekeyed_pair("same", "same")
     cases["origin-equal-names-set-on-the-op"] = (
         rekeyed_left,
@@ -1011,6 +1106,26 @@ def test_an_origin_no_demoted_key_can_be_named_by_is_refused_and_found(case):
     assert "origin" in {f.kind for f in alone.findings if f.severity == "possible"}
 
 
+def test_an_invalid_origin_finding_is_about_the_classes_it_names_keys_of():
+    """``C ~ D`` agrees on its key ``k``, so neither origin names anything there."""
+    shared = {"name": "C", "properties": ["k", "q"], "identity": ["k"]}
+    preview = preview_merge(
+        _schema_manifest("union-left", [_natural("A"), shared], []),
+        _schema_manifest("union-right", [_natural("B"), {**shared, "name": "D"}], []),
+        MergeManifestsOp(
+            vertex_equivalences=[
+                VertexEquivalence(left="A", right="B", into="Party", identity=["q"]),
+                VertexEquivalence(left="C", right="D", into="Place", identity=["k"]),
+            ]
+        ),
+        attempt=False,
+    )
+
+    origin = [f for f in preview.findings if f.kind == "origin"]
+    assert len(origin) == 2
+    assert all(f.nodes == ["merged:Party"] for f in origin)
+
+
 def test_a_tag_that_cannot_name_a_key_space_is_refused_and_found():
     case_left, case_right, op = _union_cases()["key-space-invalid-tag"]
 
@@ -1027,6 +1142,9 @@ def test_a_tag_that_cannot_name_a_key_space_is_refused_and_found():
     [
         ("key-space-named-like-a-secondary", "key space", "key_space"),
         ("attached-across-key-spaces", "ambiguous reference", "ambiguity"),
+        ("key-spaces-share-a-branch-key", "key space", "key_space"),
+        ("key-spaces-share-an-authored-branch-key", "key space", "key_space"),
+        ("fallback-key-name-like-a-secondary", "key space", "key_space"),
     ],
 )
 def test_a_key_space_refusal_is_found_without_merging(case, check, kind):
@@ -1230,6 +1348,8 @@ def test_routing_rows_survive_a_round_trip_through_json():
         ("identity collision", "identity_collision"),
         ("origin", "origin"),
         ("key space", "key_space"),
+        # Not the `identity` phrases: a name too long for the target.
+        ("identifier", "key_space"),
         # What the schema union refuses.
         ("field type conflict", "type_conflict"),
         ("field units conflict", "unit_conflict"),

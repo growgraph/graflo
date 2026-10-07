@@ -89,13 +89,17 @@ logs a warning, because every filtered read on that tag then fails with
 | NebulaGraph | A tag index over the identity fields, always created, because `LOOKUP` and filtered `MATCH` need it | A tag index | An edge index |
 | ArangoDB | A unique persistent index over the identity fields, created with the collection; none when the identity is `_key`, which ArangoDB indexes itself | As declared, with `unique` and `type` applied | As declared, on each edge collection |
 | TigerGraph | The primary key (`PRIMARY_ID`, or `PRIMARY KEY` for a composite identity), which TigerGraph indexes itself | Single-field indexes only; a multi-field index is skipped with a warning | Not supported; skipped with a log message |
-| PostgreSQL | The vertex table's `PRIMARY KEY` | `CREATE INDEX`, or `CREATE UNIQUE INDEX` when `unique: true` | Not created. Every edge table gets an index on its target columns, and a unique index over its endpoint columns and the edge's properties when it has properties |
+| PostgreSQL | The vertex table's `PRIMARY KEY` | `CREATE INDEX`, or `CREATE UNIQUE INDEX` when `unique: true` | Not created. Every edge table gets an index on its target columns, and a unique index over its endpoint columns and the edge's merge properties |
 | GraFlo file backend | None | None | None |
 
 On ArangoDB, TigerGraph and PostgreSQL the identity is covered when the
 collection, vertex type or table is created. On Neo4j, Memgraph, FalkorDB and
 NebulaGraph, GraFlo creates the identity index together with the declared
 indexes when it defines the schema.
+
+On PostgreSQL an index name longer than 63 bytes, the identifier limit, is
+shortened to a head and an 8-hex digest of the whole name, so two long names
+sharing a prefix stay two indexes.
 
 ## Defining indexes without a schema
 
@@ -121,6 +125,15 @@ is empty or names no relationship property, it uses all the edge's declared
 `properties`. If the edge declares neither, it merges on the endpoints and the
 relation alone: one edge per pair of endpoints, whose properties the last
 record overwrites.
+
+PostgreSQL keys every edge table on the same properties, less a `relation`
+token, since each relation has its own table: a unique index over the endpoint
+columns and the merge properties, `NULLS NOT DISTINCT`, so it needs PostgreSQL
+15 or later. An edge write that finds its key taken leaves the row as stored,
+or updates its other properties under `edges_on_duplicate: upsert`. An edge
+table created by an earlier version gains the key at schema definition or on
+its first ingest, which fails with a clear error if the table holds duplicate
+edges.
 
 An edge's `identities` also feed edge indexes, which are defined with the
 schema. The `MERGE` key is chosen separately, when the graph is written. Keep

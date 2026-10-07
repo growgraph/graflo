@@ -965,7 +965,7 @@ def uncovered_producers(
             continue
         if not any(
             not step_looks_up(step, plan.vertex)
-            and step_finds(step, plan.vertex) is None
+            and step_finds(step, plan.vertex, known_vertices=known) is None
             for step in _steps_producing_anywhere(pipeline, plan.vertex, known)
         ):
             continue
@@ -1372,9 +1372,9 @@ def _branch_steps(
         else:
             assert isinstance(branch, LocalKeyBranch)
             tag = (
-                spec.tag
-                if spec.tag is not None
-                else _origin_tag(resource, sides, origins)
+                _origin_tag(resource, sides, origins)
+                if spec.tag_omitted
+                else spec.tag or ""
             )
             steps.append(
                 _call_step(

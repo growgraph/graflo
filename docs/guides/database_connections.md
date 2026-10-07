@@ -33,7 +33,10 @@ If you leave the field that names the graph empty, GraFlo uses the manifest's
 `schema.metadata.name`, adjusted to the characters the database accepts; see
 [Graph namespace and schema](graph_namespace_and_schema.md). PostgreSQL is
 different: `database` must name a database that exists, and GraFlo creates the
-tables in the schema `schema_name`, `public` when it is not set.
+tables in the schema `schema_name`, `public` when it is not set. It needs
+PostgreSQL 15 or later, for the unique key on each edge table. An edge table
+created by an earlier version gains that key at schema definition or on its
+first ingest, which fails with a clear error if the table holds duplicate edges.
 
 A URI without a port gets the database's default. For Neo4j the default
 follows the scheme: `bolt_port` when it is set and otherwise 7687 for `bolt`

@@ -7,6 +7,8 @@ from collections import defaultdict
 from collections.abc import Callable
 from typing import Any
 
+from pydantic import ValidationError
+
 from graflo.architecture.contract.ingestion.resource import (
     EdgeInferSpec,
     ResourceConfig,
@@ -118,11 +120,20 @@ class ResourceRuntime:
         edge_derivation_registry = EdgeDerivationRegistry()
         self._edge_derivation_registry = edge_derivation_registry
         try:
-            self._attached_selectors = pipeline_find_selectors(
+            found_by = pipeline_find_selectors(
                 config.pipeline, known_vertices=vertex_config.vertex_set
             )
         except ValueError as exc:
             raise ValueError(f"Resource {config.name!r}: {exc}") from exc
+        # Validated over the whole schema, registered only for the classes this
+        # runtime writes: an excluded class would make endpoint matching (and
+        # its serialized, non-bulk write path) look necessary when it is not.
+        runtime_vertices = runtime_vertex_config.vertex_set
+        self._attached_selectors = {
+            vertex: selector
+            for vertex, selector in found_by.items()
+            if vertex in runtime_vertices
+        }
         for vertex, selector in self._attached_selectors.items():
             edge_derivation_registry.attach(vertex, selector)
 
@@ -136,7 +147,13 @@ class ResourceRuntime:
             target_db_flavor=target_db_flavor,
         )
         logger.debug("total resource actor count : %s", self._root.count())
-        self._root.finish_init(init_ctx=init_ctx)
+        try:
+            self._root.finish_init(init_ctx=init_ctx)
+        except ValidationError:
+            # A step's own model refusing: its structured errors stay intact.
+            raise
+        except ValueError as exc:
+            raise ValueError(f"Resource {config.name!r}: {exc}") from exc
         self._has_dynamic_edge_steps = any(
             isinstance(actor, EdgeActor) and actor.is_dynamic
             for actor in self._root.collect_actors()

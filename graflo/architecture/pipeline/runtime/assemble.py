@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 import logging
+from collections import ChainMap
 from collections.abc import Collection, Mapping
 from typing import Any
 
-from graflo.architecture.graph_types import AssemblyContext, EdgeId, LocationIndex
+from graflo.architecture.graph_types import (
+    AssemblyContext,
+    EdgeId,
+    LocationIndex,
+    VertexRep,
+)
 from graflo.architecture.graph_types.edge_derivation import (
     EdgeDerivation,
     EdgeDerivationRegistry,
@@ -85,7 +91,7 @@ def _fuse_vertices_for_edge(
     *,
     source_fields: list[str],
     target_fields: list[str],
-) -> None:
+) -> dict[str, dict[LocationIndex, list[VertexRep]]]:
     """Merge endpoint observations on the fields they will be matched on.
 
     Merging on the primary identity would be wrong for endpoints matched by a
@@ -95,6 +101,12 @@ def _fuse_vertices_for_edge(
     When both endpoints are the same vertex type the bucket is shared, so it is
     merged once on the union of both field-sets — conservative, and it never
     produces the keyless collapse.
+
+    Returns:
+        The endpoints edges are rendered from, per class and location. Reps
+        stay apart per tag set in ``ctx.acc_vertex``, so what each writes is
+        kept; an edge sees one endpoint per key whatever the tags, so a
+        reference beside a write neither doubles an edge nor makes a self-loop.
     """
     if source == target:
         basis = list(dict.fromkeys([*source_fields, *target_fields]))
@@ -102,9 +114,23 @@ def _fuse_vertices_for_edge(
     else:
         bases = [(source, source_fields), (target, target_fields)]
 
+    endpoints: dict[str, dict[LocationIndex, list[VertexRep]]] = {}
     for vname, fields in bases:
+        index_keys = tuple(fields)
+        by_location: dict[LocationIndex, list[VertexRep]] = {}
         for lindex, vlist in ctx.acc_vertex[vname].items():
-            ctx.acc_vertex[vname][lindex] = fuse_doc_basis(vlist, tuple(fields))
+            fused = fuse_doc_basis(vlist, index_keys)
+            ctx.acc_vertex[vname][lindex] = fused
+            if len({(rep.lookup_only, rep.find) for rep in fused}) > 1:
+                fused = [
+                    VertexRep(vertex=doc)
+                    for doc in fuse_doc_basis(
+                        [dict(rep.vertex) for rep in fused], index_keys
+                    )
+                ]
+            by_location[lindex] = fused
+        endpoints[vname] = by_location
+    return endpoints
 
 
 def _emit_edge_documents(
@@ -152,7 +178,7 @@ def _emit_edge_documents(
             target_selector = registered.target
     source_fields = vertex_config.match_fields(edge.source, source_selector)
     target_fields = vertex_config.match_fields(edge.target, target_selector)
-    _fuse_vertices_for_edge(
+    endpoints = _fuse_vertices_for_edge(
         ctx,
         vertex_config,
         edge.source,
@@ -165,6 +191,7 @@ def _emit_edge_documents(
         vertex_config=vertex_config,
         ctx=ctx,
         lindex=lindex,
+        endpoints=endpoints,
         relation_input_field=relation_input_field,
         derivation=derivation,
         source_match_fields=source_fields,
@@ -173,8 +200,14 @@ def _emit_edge_documents(
     vertex_rules: list = []
     if edge_derivation is not None:
         vertex_rules = edge_derivation.vertex_weights_for(edge.edge_id)
+    # Weights read the endpoint view too, so a class both referenced and
+    # written here yields one document per vertex, not one per tag set.
     edges = render_weights(
-        edge, vertex_config, ctx.acc_vertex, edges, vertex_weights=vertex_rules
+        edge,
+        vertex_config,
+        ChainMap(endpoints, ctx.acc_vertex),
+        edges,
+        vertex_weights=vertex_rules,
     )
     mirror = (
         derivation is not None

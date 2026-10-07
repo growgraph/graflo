@@ -41,7 +41,8 @@ the position matters.
    rename already holds each demoted key's `<key space>__<field>` name, which
    step 1 put there, so pipelines get their `from` maps like any property
    rename. Origins and key spaces are refused, if at all, right after step 1
-   (`origin_refusals`, `key_space_refusals`), before anything is named by them.
+   (`origin_refusals`, `key_space_refusals`, `demoted_key_refusals` in
+   `merge_refusals.py`), before anything is named by them.
 8. **Prefix the right side's remaining collisions** (`prefix_right` only;
    `error` and `union_right` settled theirs in step 3).
 9. **Union schema, ingestion and bindings by name** (`_union_schema`,
@@ -56,7 +57,10 @@ the position matters.
     (`_apply_derived_identities`, through `identity_to_ops`).
 12. **Demote the members' own keys** of every re-keyed type
     (`_retire_member_keys`), against the type's final identity, one secondary
-    identity per key space. This runs after the lowering because a derived
+    identity per key space, named by `plan_demoted_key_names`
+    (`merge_refusals.py`) -- the rule the preview and `demoted_key_refusals`
+    read from the sides before the union, so all three name a key alike.
+    This runs after the lowering because a derived
     identity replaces the provisional one, and a key demoted against that could
     be skipped as equal to a primary key that no longer exists. Then record
     the shared key spaces and the key owners, then **attach each resource that
@@ -67,12 +71,16 @@ the position matters.
 13. **Close each side's routers** over its own types (`router_scope="side"`,
     `_close_side_routers`). After the lowering and the attaching, so both see
     the routers as they were.
-14. **Order the resources** (`_order_after_merge`, through
+14. **Order the resources** (`_order_after_merge` in `merge_report.py`, through
     `ordering.order_resources`): a stable topological order with owners before
-    the resources attached to their type, and writers of a type before the
-    resources that only find it. A cycle keeps the declared order and is
-    reported as `MergeReport.order_cycles`. Last among the pipeline rewrites,
-    so it reads the steps as attached, pinned and closed.
+    the resources of their side attached to their type, and every other writer
+    of a type before the resources that only find it (a router counts only for
+    the types it names, not those it passes through). An owner of the other
+    side does not constrain an attached resource, because it never writes the
+    key that resource finds by. The resources in a cycle keep their declared
+    order among themselves, and the constraints it leaves unmet are reported
+    as `MergeReport.order_cycles`. Last among the pipeline rewrites, so it
+    reads the steps as attached, pinned and closed.
 15. **Apply the op's `name` and `target_namespace`** (`_apply_merge_naming`),
     then `finish_init`.
 

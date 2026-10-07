@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
@@ -14,7 +15,12 @@ from graflo.architecture.schema import (
 from graflo.architecture.schema.database_features import DatabaseProfile
 from graflo.architecture.schema.edge import Edge, EdgeConfig
 from graflo.architecture.schema.vertex import Field, Vertex, VertexConfig
-from graflo.connections.onto import ArangoConfig, Neo4jConfig, TigergraphConfig
+from graflo.connections.onto import (
+    ArangoConfig,
+    Neo4jConfig,
+    PostgresConfig,
+    TigergraphConfig,
+)
 from graflo.hq.db_writer import DBWriter
 from graflo.hq.endpoint_resolve import AmbiguousEndpointError
 from graflo.onto import DBType
@@ -84,6 +90,66 @@ def test_push_vertices_blank_uses_python_generated_identity(monkeypatch):
     assert "_key" in gc.vertices["blank_v"][0]
     assert isinstance(gc.vertices["blank_v"][0]["_key"], str)
     assert gc.vertices["blank_v"][0]["_key"]
+
+
+def test_a_blank_vertex_mirrors_an_identity_it_already_carries(monkeypatch):
+    schema = _build_schema()
+    writer = DBWriter(schema=schema, ingestion_model=_build_ingestion_model(schema))
+    gc = GraphContainer(vertices={"blank_v": [{"id": "b-1"}]}, edges={}, linear=[])
+
+    monkeypatch.setattr("graflo.hq.db_writer.ConnectionManager", _FakeConnectionManager)
+    conn_conf = ArangoConfig(uri="http://localhost:8529", username="root", password="x")
+    asyncio.run(writer._push_vertices(gc, conn_conf))
+
+    assert gc.vertices["blank_v"][0] == {"id": "b-1", "_key": "b-1"}
+
+
+def _assigned_writer(identity: list[str]) -> DBWriter:
+    vertex_config = VertexConfig(
+        vertices=[
+            Vertex(
+                name="event",
+                properties=[Field(name=name) for name in identity],
+                identity=identity,
+                assigned=True,
+            )
+        ],
+    )
+    schema = Schema(
+        metadata=GraphMetadata(name="test"),
+        core_schema=CoreSchema(vertex_config=vertex_config, edge_config=EdgeConfig()),
+        db_profile=DatabaseProfile(db_flavor=DBType.NEO4J),
+    )
+    return DBWriter(schema=schema, ingestion_model=_build_ingestion_model(schema))
+
+
+@pytest.mark.parametrize(
+    ("identity", "conn_conf", "default_field"),
+    [
+        (
+            [],
+            ArangoConfig(uri="http://localhost:8529", username="root", password="x"),
+            "_key",
+        ),
+        (
+            ["uid"],
+            Neo4jConfig(uri="bolt://localhost:7687", username="u", password="p"),
+            "id",
+        ),
+    ],
+)
+def test_an_assigned_vertex_mirrors_its_uuid_into_the_default_key(
+    identity, conn_conf, default_field
+):
+    writer = _assigned_writer(identity)
+    (preferred,) = writer.schema.core_schema.vertex_config.identity_fields("event")
+    kept = "00000000-0000-4000-8000-000000000001"
+    docs: list[dict] = [{}, {preferred: kept, default_field: "own"}]
+
+    writer._assign_assigned_vertex_ids("event", docs, conn_conf)
+
+    assert docs[0][default_field] == docs[0][preferred]
+    assert docs[1] == {preferred: kept, default_field: "own"}
 
 
 def test_resolve_blank_edges_prefers_identity_join_over_zip():
@@ -593,6 +659,35 @@ class TestAttachVertices:
             )
         assert db.upserts == []
 
+    def test_an_ambiguous_record_under_error_cancels_every_class(self, monkeypatch):
+        schema = _cmdb_schema()
+        (identity,) = schema.core_schema.vertex_config.identity_fields("probe")
+        db = _AttachDB(
+            stored=[
+                {identity: "h1", "serial": "P1"},
+                {"id": "c2", "serial": "S1"},
+                {"id": "c1", "serial": "S1"},
+            ]
+        )
+        gc = GraphContainer(
+            attached={
+                "probe": [{"serial": "P1", "owner": "bob"}],
+                "ci": [{"serial": "S1", "owner": "ann"}],
+            },
+            attached_by={"probe": "by_serial", "ci": "by_serial"},
+        )
+
+        with pytest.raises(AmbiguousEndpointError, match="S1"):
+            _attach_write(
+                monkeypatch,
+                gc,
+                db,
+                policy="error",
+                schema=schema,
+                resource_name=None,
+            )
+        assert db.upserts == []
+
     def test_a_partial_composite_key_is_unresolvable(self, monkeypatch):
         db = _AttachDB(stored=[{"id": "c0", "site": "x", "tag": "t"}])
 
@@ -691,6 +786,104 @@ class TestAttachVertices:
         assert db.resolves == [] and db.upserts == []
 
 
+# -- edge endpoints found by a secondary identity --------------------------------
+
+
+def _located_schema() -> Schema:
+    return Schema.model_validate(
+        {
+            "metadata": {"name": "cmdb"},
+            "core_schema": {
+                "vertex_config": {
+                    "vertices": [
+                        {
+                            "name": "ci",
+                            "properties": ["id", "serial"],
+                            "identity": ["id"],
+                            "secondary_identities": [
+                                {"name": "by_serial", "fields": ["serial"]}
+                            ],
+                        },
+                        {"name": "site", "properties": ["id"], "identity": ["id"]},
+                    ]
+                },
+                "edge_config": {
+                    "edges": [
+                        {"source": "ci", "target": "site", "relation": "at"},
+                        {"source": "ci", "target": "site", "relation": "near"},
+                    ]
+                },
+            },
+            "db_profile": {"db_flavor": "neo4j"},
+        }
+    )
+
+
+class _EdgeResolveDB(_AttachDB):
+    def __init__(self, stored: list[dict]) -> None:
+        super().__init__(stored)
+        self.edge_inserts: list[dict] = []
+
+    def insert_edges_batch(self, **kwargs):
+        self.edge_inserts.append(kwargs)
+
+
+def _push_located_edges(monkeypatch, edges: dict, db: _EdgeResolveDB) -> None:
+    from graflo.architecture.graph_types.edge_derivation import (
+        EdgeDerivationRegistry,
+    )
+
+    schema = _located_schema()
+    model = IngestionModel.model_validate(
+        {"resources": [], "endpoints_on_ambiguous": "error"}
+    )
+    model.finish_init(schema.core_schema)
+    writer = DBWriter(schema=schema, ingestion_model=model)
+    registry = EdgeDerivationRegistry()
+    registry.attach("ci", "by_serial")
+    resource = SimpleNamespace(edge_derivation=registry)
+
+    monkeypatch.setattr("graflo.hq.db_writer.ConnectionManager", _manager_for(db))
+    conn_conf = Neo4jConfig(uri="bolt://localhost:7687", username="u", password="p")
+    asyncio.run(writer._push_edges(GraphContainer(edges=edges), conn_conf, resource))
+
+
+class TestEdgeEndpointResolution:
+    def test_an_ambiguous_endpoint_under_error_cancels_every_edge(self, monkeypatch):
+        db = _EdgeResolveDB(
+            stored=[
+                {"id": "c1", "serial": "S1"},
+                {"id": "c2", "serial": "S1"},
+                {"id": "c3", "serial": "S2"},
+            ]
+        )
+        edges = {
+            ("ci", "site", "near"): [({"serial": "S2"}, {"id": "x"}, {})],
+            ("ci", "site", "at"): [({"serial": "S1"}, {"id": "x"}, {})],
+        }
+
+        with pytest.raises(AmbiguousEndpointError, match="S1"):
+            _push_located_edges(monkeypatch, edges, db)
+        assert db.edge_inserts == []
+
+    def test_clean_endpoints_are_resolved_then_inserted(self, monkeypatch):
+        db = _EdgeResolveDB(
+            stored=[{"id": "c1", "serial": "S1"}, {"id": "c3", "serial": "S2"}]
+        )
+        edges = {
+            ("ci", "site", "near"): [({"serial": "S2"}, {"id": "x"}, {})],
+            ("ci", "site", "at"): [({"serial": "S1"}, {"id": "x"}, {})],
+        }
+
+        _push_located_edges(monkeypatch, edges, db)
+
+        written = {
+            call["relation_name"]: [doc[0]["id"] for doc in call["docs_edges"]]
+            for call in db.edge_inserts
+        }
+        assert written == {"near": ["c3"], "at": ["c1"]}
+
+
 class TestAttachRefusedInBulk:
     def test_a_resource_that_attaches_is_refused(self, monkeypatch):
         with pytest.raises(ValueError, match="REST ingest"):
@@ -758,3 +951,153 @@ def test_attached_records_are_resolved_and_written_under_stored_names(monkeypatc
     assert call["docs"] == [{"type_attr": "bus", "name": "x", "from_attr": "A"}]
     assert call["match_keys"] == ["from_attr"]
     assert gc.attached["route"] == [{"type": "bus", "name": "x"}]
+
+
+# -- PostgreSQL edge writes: keyed like the edge table ----------------------------
+
+
+class _EdgeWrites:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def insert_edges_batch(self, **kwargs):
+        self.calls.append(kwargs)
+
+
+def _postgres_edge_kwargs(
+    monkeypatch,
+    edges_on_duplicate: str,
+    identities: list[list[str]] | None = None,
+) -> dict:
+    schema = Schema.model_validate(
+        {
+            "metadata": {"name": "hr"},
+            "core_schema": {
+                "vertex_config": {
+                    "vertices": [
+                        {"name": "person", "properties": ["id"], "identity": ["id"]},
+                        {"name": "org", "properties": ["id"], "identity": ["id"]},
+                    ]
+                },
+                "edge_config": {
+                    "edges": [
+                        {
+                            "source": "person",
+                            "target": "org",
+                            "relation": "works_at",
+                            "properties": ["since", "grade"],
+                            "identities": identities or [["source", "target", "since"]],
+                        }
+                    ]
+                },
+            },
+            "db_profile": {"db_flavor": "postgres"},
+        }
+    )
+    model = IngestionModel.model_validate(
+        {"resources": [], "edges_on_duplicate": edges_on_duplicate}
+    )
+    model.finish_init(schema.core_schema)
+    writer = DBWriter(schema=schema, ingestion_model=model)
+    writes = _EdgeWrites()
+
+    class _Manager(_FakeConnectionManager):
+        db = writes
+
+    monkeypatch.setattr("graflo.hq.db_writer.ConnectionManager", _Manager)
+    gc = GraphContainer(
+        vertices={},
+        edges={
+            ("person", "org", "works_at"): [
+                ({"id": "p1"}, {"id": "o1"}, {"since": "2020", "grade": "A"})
+            ]
+        },
+        linear=[],
+    )
+    conn_conf = PostgresConfig(
+        uri="postgresql://localhost:5432/db", username="u", password="p", database="db"
+    )
+
+    asyncio.run(writer._push_edges(gc, conn_conf))
+
+    (call,) = writes.calls
+    return call
+
+
+def test_postgres_edges_are_written_on_their_merge_properties(monkeypatch):
+    call = _postgres_edge_kwargs(monkeypatch, "ignore")
+
+    assert call["relationship_merge_properties"] == ("since",)
+    assert "on_duplicate" not in call
+
+
+def test_postgres_edges_upsert_when_the_model_asks_for_it(monkeypatch):
+    call = _postgres_edge_kwargs(monkeypatch, "upsert")
+
+    assert call["relationship_merge_properties"] == ("since",)
+    assert call["on_duplicate"] == "upsert"
+
+
+def test_postgres_edges_keyed_by_relation_conflict_on_their_endpoints(monkeypatch):
+    """The table name holds the relation, so it adds no key column."""
+    call = _postgres_edge_kwargs(
+        monkeypatch, "upsert", identities=[["source", "target", "relation"]]
+    )
+
+    assert call.get("relationship_merge_properties") is None
+
+
+def test_postgres_edges_keyed_by_relation_and_a_property_use_the_property(
+    monkeypatch,
+):
+    call = _postgres_edge_kwargs(
+        monkeypatch, "upsert", identities=[["source", "target", "relation", "since"]]
+    )
+
+    assert call["relationship_merge_properties"] == ("since",)
+
+
+def test_owner_docs_sharing_an_identity_reach_the_backend_as_one_doc(monkeypatch):
+    vertex_config = VertexConfig(
+        vertices=[
+            Vertex(
+                name="item",
+                properties=[Field(name="id"), Field(name="a"), Field(name="b")],
+                identity=["id"],
+            )
+        ],
+    )
+    schema = Schema(
+        metadata=GraphMetadata(name="test"),
+        core_schema=CoreSchema(vertex_config=vertex_config, edge_config=EdgeConfig()),
+        db_profile=DatabaseProfile(db_flavor=DBType.NEO4J),
+    )
+    writer = DBWriter(
+        schema=schema,
+        ingestion_model=_build_ingestion_model(schema),
+        dry=False,
+        max_concurrent=1,
+    )
+    gc = GraphContainer(
+        vertices={
+            "item": [
+                {"id": "x", "a": 1, "b": 1},
+                {"id": "y", "a": 5},
+                {"id": "x", "b": 2},
+            ]
+        },
+        edges={},
+        linear=[],
+    )
+
+    class _RecordingConnectionManager(_FakeConnectionManager):
+        db = _FakeDB()
+
+    monkeypatch.setattr(
+        "graflo.hq.db_writer.ConnectionManager", _RecordingConnectionManager
+    )
+    conn_conf = Neo4jConfig(uri="bolt://localhost:7687", username="u", password="p")
+    asyncio.run(writer._push_vertices(gc, conn_conf))
+
+    [(docs, _, _)] = _RecordingConnectionManager.db.upsert_calls
+    assert docs == [{"id": "x", "a": 1, "b": 2}, {"id": "y", "a": 5}]

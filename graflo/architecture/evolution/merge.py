@@ -4,24 +4,19 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Collection, Mapping, Sequence
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
 from graflo.architecture.contract.bindings import Bindings
 from graflo.architecture.contract.ingestion import IngestionModel
 from graflo.architecture.contract.ingestion.resource import (
+    _steps_producing,
     pipeline_has_pass_through_router,
     step_finds,
     step_looks_up,
-    step_produces_vertices,
-)
-from graflo.architecture.contract.ingestion.steps.normalize import (
-    normalize_actor_step,
 )
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.contract.provenance import ManifestMetadata
 from graflo.architecture.graph_types import EdgeId
-from graflo.architecture.refusal import Refusal
 from graflo.architecture.schema.core import CoreSchema
 from graflo.architecture.schema.database_features import (
     DatabaseProfile,
@@ -34,7 +29,7 @@ from graflo.architecture.schema.metadata import GraphMetadata
 from graflo.architecture.schema.namespace import validate_namespace
 from graflo.architecture.schema.naming import NamingConvention, canonical_slug
 from graflo.architecture.schema.semantics import merge_semantics
-from graflo.architecture.schema.vertex import SecondaryIdentity, Vertex, VertexConfig
+from graflo.architecture.schema.vertex import Vertex, VertexConfig
 
 from .apply import (
     _bump_schema_version,
@@ -46,17 +41,37 @@ from .apply import (
 )
 from .canonical import (
     CanonicalMap,
-    ClusterResolution,
     SideMaps,
     canonical_near_collisions,
     canonicalize_ops,
     resolve_clusters,
 )
-from .db_profile import union_default_property_values
+from .db_profile import _merge_declared_scalar, union_default_property_values
 from .equivalence import Cluster, ClusterIndex, Side, subject
 from .merge_core import (
     merge_edge_pair,
     merge_vertex_models,
+)
+from .merge_errors import MergeIdentityError, MergeNameConflictError
+from .merge_refusals import (
+    DemotedKeyPlan,
+    _capture_all_member_state,
+    ambiguous_reference_refusals,
+    demoted_key_refusals,
+    identifier_refusals,
+    key_space_refusals,
+    origin_refusals,
+    plan_demoted_key_names,
+)
+from .merge_report import (
+    AttachedProducer,
+    DemotedKey,
+    KeyOwner,
+    MergeReport,
+    OrderCycle,
+    PinnedReference,
+    SharedKeySpace,
+    _order_after_merge,
 )
 from .merge_types import (
     MERGE_RETYPE_REMEDY,
@@ -64,7 +79,6 @@ from .merge_types import (
     field_type_clashes,
     field_type_ops,
 )
-from .naming_graph import is_key_space_name
 from .ops import (
     AddSecondaryIdentitiesOp,
     CanonicalizeOp,
@@ -82,6 +96,27 @@ from .version import semver_core
 
 if TYPE_CHECKING:
     from .alignment import IdentityPlan
+
+__all__ = [
+    "AttachedProducer",
+    "DemotedKey",
+    "DemotedKeyPlan",
+    "KeyOwner",
+    "MergeIdentityError",
+    "MergeNameConflictError",
+    "MergeReport",
+    "OrderCycle",
+    "PinnedReference",
+    "SharedKeySpace",
+    "ambiguous_reference_refusals",
+    "demoted_key_refusals",
+    "identifier_refusals",
+    "key_space_refusals",
+    "merge_manifests",
+    "merge_manifests_with_report",
+    "origin_refusals",
+    "plan_demoted_key_names",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -209,46 +244,6 @@ def _apply_right_resource_policy(
     )
     if collisions:
         apply_rename_resources(right, RenameResourcesOp(renames=collisions))
-
-
-class MergeNameConflictError(Refusal):
-    """Two names denote one concept under different naming conventions.
-
-    Distinct from ``MergeCanonicalConflictError`` in ``canonical.py``, which
-    reports a *declared* CanonicalMap contradicting the op. This one fires on
-    the residue neither side declared -- the undeclared path, where merge
-    would otherwise produce two unrelated types with the data split between
-    them and nothing raising.
-
-    ``check`` names the rule that refused and ``subjects`` the names it is
-    about, as :func:`~graflo.architecture.evolution.equivalence.subject` ids;
-    see :class:`.Refusal`.
-    """
-
-
-class MergeIdentityError(Refusal):
-    """A merged vertex's identity is ambiguous and nothing resolves it.
-
-    Two or more cluster members disagree on their (canonical-name) identity
-    field-set and the ``VertexEquivalence`` declares no ``identity``. The
-    alternative -- silently taking the union of both field-sets as the new
-    identity -- produces a natural key no record fully carries. Also raised
-    for a declared ``identity`` some member cannot complete, or one whose
-    funnel's synthetic ``id`` a member already declares as a property.
-
-    ``subjects`` names the merged class and its disagreeing members, as
-    :func:`~graflo.architecture.evolution.equivalence.subject` ids; it does not
-    appear in the message.
-    """
-
-    def __init__(
-        self, message: str, *, check: str = "", subjects: tuple[str, ...] = ()
-    ) -> None:
-        # The only refusal carrying a default check: every raise site here is
-        # the same rule, and three of them pass no subjects either.
-        super().__init__(
-            message, check=check or "identity disagreement", subjects=subjects
-        )
 
 
 def _resolve_schema_collisions(
@@ -422,47 +417,6 @@ def _apply_right_schema_collision_policy(
         apply_rename_relations(right, RenameRelationsOp(renames=r_renames))
 
 
-def _member_state(
-    schema: Schema,
-    cluster: Cluster,
-    side: Side,
-    property_rename: dict[str, dict[str, str]],
-) -> tuple[
-    dict[tuple[Side, str], tuple[str, ...] | None],
-    dict[tuple[Side, str], set[str]],
-]:
-    """Per-member canonical-name identity key (or ``None`` if not a plain
-    natural key) and canonical-name property set, captured **before** the
-    per-side property-rename / merge ops run.
-
-    A plain natural key is the only identity mode this module has to
-    reconcile across members on its own: ``blank`` / ``assigned`` /
-    ``hash_identity_properties`` / ``identity_funnel`` disagreement is already
-    handled — raised on, or carried through when consistent — by
-    :func:`~graflo.architecture.evolution.merge_core.merge_vertex_models`.
-    """
-    vertex_config = schema.core_schema.vertex_config
-    keys: dict[tuple[Side, str], tuple[str, ...] | None] = {}
-    names: dict[tuple[Side, str], set[str]] = {}
-    for member in cluster.members(side):
-        vertex = vertex_config[member]
-        rename = property_rename.get(member, {})
-        names[(side, member)] = {rename.get(f, f) for f in vertex.property_names}
-        if (
-            vertex.blank
-            or vertex.assigned
-            or vertex.hash_identity_properties
-            or vertex.identity_funnel is not None
-        ):
-            keys[(side, member)] = None
-        else:
-            # Declared order, not sorted: a demoted key becomes a compound
-            # index whose column order is the author's. Comparisons across
-            # members are order-insensitive at the comparison site.
-            keys[(side, member)] = tuple(rename.get(f, f) for f in vertex.identity)
-    return keys, names
-
-
 def _member_identity_fields(
     index: ClusterIndex,
     left_schema: Schema | None,
@@ -491,27 +445,6 @@ def _member_identity_fields(
                 carried.update(rename.get(f, f) for f in vertex_config[member].identity)
                 carried.update(demoted_keys.get((side, member), ()))
     return fields
-
-
-def _capture_all_member_state(
-    index: ClusterIndex,
-    left_schema: Schema | None,
-    right_schema: Schema | None,
-    side_maps: SideMaps,
-) -> tuple[
-    dict[tuple[Side, str], tuple[str, ...] | None],
-    dict[tuple[Side, str], set[str]],
-]:
-    member_keys: dict[tuple[Side, str], tuple[str, ...] | None] = {}
-    member_property_names: dict[tuple[Side, str], set[str]] = {}
-    for cluster in index.vertices:
-        for side, schema in (("left", left_schema), ("right", right_schema)):
-            if schema is None:
-                continue
-            k, n = _member_state(schema, cluster, side, side_maps[side].properties)
-            member_keys.update(k)
-            member_property_names.update(n)
-    return member_keys, member_property_names
 
 
 def _composed_identity(
@@ -712,13 +645,10 @@ def _retire_member_keys(
     must not restate.
 
     Only for the members the naming pass demoted (*demoted_keys*), in
-    clusters in *rekeyed* whose ``retire`` is ``demote`` (the default). The
-    secondary is named by the member's key space (*key_spaces*: its
-    ``local_key`` tag, else its side's origin), one per key space per class;
-    a key space contributing two key field-sets to one class names each
-    ``<space>__<fields joined by __>``. A field-set already declared as a
-    secondary keeps that declaration and its name. The first member to
-    declare a field-set fixes its column order.
+    clusters in *rekeyed* whose ``retire`` is ``demote`` (the default), named
+    by :func:`plan_demoted_key_names` against the merged class's secondaries.
+    Its refusals were reported by :func:`demoted_key_refusals` already; one
+    reaching here is raised.
 
     Returns the secondary name each demoted member's key now answers to, keyed
     by ``(side, member)``.
@@ -727,7 +657,6 @@ def _retire_member_keys(
     if schema is None:
         return {}
     vertex_config = schema.core_schema.vertex_config
-    spaces = key_spaces or {}
     ops: list[ManifestOp] = []
     demoted: dict[tuple[Side, str], str] = {}
     for cluster in index.vertices:
@@ -742,159 +671,35 @@ def _retire_member_keys(
         # A funnel keys on its digest field; a member key spelled like it
         # cannot be demoted beside it without restating the primary.
         restated = {primary, frozenset(vertex.identity)}
-        authored = {
-            entry.name: frozenset(entry.fields) for entry in vertex.secondary_identities
-        }
-        by_fields = {fields: name for name, fields in authored.items()}
-        keys: list[tuple[Side, str, tuple[str, ...]]] = []
+        members: list[tuple[Side, str, tuple[str, ...], tuple[str, ...]]] = []
         for side in ("left", "right"):
             for member in cluster.members(side):
+                key = demoted_keys.get((side, member))
                 fields = member_keys.get((side, member))
-                if (
-                    (side, member) not in demoted_keys
-                    or not fields
-                    or frozenset(fields) in restated
-                ):
+                if key is None or not fields or frozenset(fields) in restated:
                     continue
-                keys.append((side, member, fields))
-        field_sets: dict[str, set[frozenset[str]]] = {}
-        for side, member, fields in keys:
-            if frozenset(fields) not in by_fields:
-                field_sets.setdefault(
-                    spaces.get((side, member), origins[side]), set()
-                ).add(frozenset(fields))
-        additions: list[SecondaryIdentity] = []
-        for side, member, fields in keys:
-            if frozenset(fields) not in by_fields:
-                name = spaces.get((side, member), origins[side])
-                if len(field_sets[name]) > 1:
-                    name = "__".join((name, *demoted_keys[(side, member)]))
-                if name in authored:
-                    raise MergeIdentityError(
-                        f"merge_manifests: the key {side}:{member} demotes on "
-                        f"{cluster.into!r} would be the secondary identity "
-                        f"{name!r}, which a member already declares over "
-                        f"{sorted(authored[name])}; rename that secondary, or "
-                        f"set `origins.{side}` on the op, or tag the member's "
-                        "`local_key` otherwise",
-                        check="origin",
-                        subjects=(subject("merged", cluster.into),),
-                    )
-                entry = SecondaryIdentity(name=name, fields=list(fields))
-                by_fields[frozenset(fields)] = entry.name
-                additions.append(entry)
-            demoted[(side, member)] = by_fields[frozenset(fields)]
-        if additions:
-            ops.append(AddSecondaryIdentitiesOp(additions={cluster.into: additions}))
+                members.append((side, member, fields, key))
+        plan = plan_demoted_key_names(
+            cluster.into,
+            members,
+            key_spaces or {},
+            origins,
+            {
+                entry.name: entry.fields
+                for entry in vertex.secondary_identities
+                if entry.name is not None
+            },
+        )
+        if plan.refusals:
+            raise plan.refusals[0]
+        if plan.additions:
+            ops.append(
+                AddSecondaryIdentitiesOp(additions={cluster.into: plan.additions})
+            )
+        demoted.update(plan.names)
     if ops:
         apply_manifest_ops_inplace(manifest, ops)
     return demoted
-
-
-def origin_refusals(
-    op: MergeManifestsOp,
-    manifests: Mapping[Side, GraphManifest],
-    resolution: ClusterResolution,
-) -> list[MergeIdentityError]:
-    """Every problem with the origins *resolution* names something by.
-
-    Only a side whose origin names a demoted key or a defaulted ``local_key``
-    tag is checked. Its origin must be a letter then letters, digits or
-    underscores, without ``__`` (it is joined to field names with ``__``),
-    and not a selector word (``identity``, ``secondary``); two named origins
-    must differ; and no member of a re-keyed cluster may declare a secondary
-    identity of that name, which the demoted key takes.
-    """
-    sides: tuple[Side, ...] = ("left", "right")
-    used = [side for side in sides if side in resolution.origin_sides]
-    if not used:
-        return []
-    origins = resolution.origins
-    rekeyed = [
-        cluster
-        for cluster in resolution.index.vertices
-        if isinstance(cluster.declaration, VertexEquivalence)
-        and cluster.declaration.identity is not None
-    ]
-    subjects = tuple(subject("merged", cluster.into) for cluster in rekeyed)
-    declared = op.origins or {}
-
-    def source(side: Side) -> str:
-        if side in declared:
-            return f"`origins.{side}`"
-        return f"the {side} schema name"
-
-    out: list[MergeIdentityError] = []
-    for side in used:
-        origin = origins[side]
-        if not is_key_space_name(origin):
-            out.append(
-                MergeIdentityError(
-                    f"merge_manifests: origin {origin!r} ({source(side)}) names "
-                    f"the {side} side's demoted keys, but is not a letter "
-                    "followed by letters, digits or single underscores, or is a "
-                    f"selector word; set `origins.{side}` on the op",
-                    check="origin",
-                    subjects=subjects,
-                )
-            )
-        authors = sorted(
-            f"{member_side}:{member}"
-            for cluster in rekeyed
-            for member_side in sides
-            if (schema := manifests[member_side].graph_schema) is not None
-            for member in cluster.members(member_side)
-            if member in schema.core_schema.vertex_config.vertex_set
-            and origin
-            in {
-                entry.name
-                for entry in schema.core_schema.vertex_config[
-                    member
-                ].secondary_identities
-            }
-        )
-        if authors:
-            out.append(
-                MergeIdentityError(
-                    f"merge_manifests: origin {origin!r} ({source(side)}) names "
-                    f"the {side} side's demoted keys, but {', '.join(authors)} "
-                    f"declare a secondary identity named {origin!r}; set "
-                    f"`origins.{side}` on the op",
-                    check="origin",
-                    subjects=subjects,
-                )
-            )
-    if len(used) == 2 and origins["left"] == origins["right"]:
-        out.append(
-            MergeIdentityError(
-                f"merge_manifests: both sides' origin is {origins['left']!r}, "
-                "so their demoted keys would share one name; set `origins` on "
-                "the op",
-                check="origin",
-                subjects=subjects,
-            )
-        )
-    return out
-
-
-def _steps_producing(
-    steps: Sequence[Any], vertex: str, *, known_vertices: Collection[str]
-) -> list[dict[str, Any]]:
-    """Every step at any level of *steps* that produces *vertex*, normalized."""
-    out: list[dict[str, Any]] = []
-    for step in steps:
-        if not isinstance(step, dict):
-            continue
-        normalized = normalize_actor_step(dict(step))
-        if vertex in step_produces_vertices(normalized, known_vertices=known_vertices):
-            out.append(normalized)
-        if normalized.get("type") == "descend":
-            nested = normalized.get("pipeline")
-            if isinstance(nested, list):
-                out.extend(
-                    _steps_producing(nested, vertex, known_vertices=known_vertices)
-                )
-    return out
 
 
 def _members_produced(
@@ -949,103 +754,6 @@ def _rebuild_pipelines(
     manifest.ingestion_model = IngestionModel.model_validate(
         ingestion.to_dict(skip_defaults=False)
     )
-
-
-@dataclass(frozen=True)
-class KeyOwner:
-    """A resource a derived identity names that produces the merged class.
-
-    It computes the class's key, so it creates and fuses its nodes.
-    """
-
-    resource: str
-    vertex: str
-    side: Side
-    members: tuple[str, ...]
-
-
-@dataclass(frozen=True)
-class AttachedProducer:
-    """A resource merge turned from creating a merged class into attaching to it.
-
-    Its steps producing the class now ``find`` it by *key*, write their
-    properties onto the node found, and create none.
-    """
-
-    resource: str
-    vertex: str
-    side: Side
-    members: tuple[str, ...]
-    key: str
-    """The secondary identity its records find the class by."""
-
-
-@dataclass(frozen=True)
-class PinnedReference:
-    """A resource that only references a re-keyed member, pointed at its key.
-
-    Its edge endpoints for the class now select *key*.
-    """
-
-    resource: str
-    vertex: str
-    side: Side
-    members: tuple[str, ...]
-    key: str
-
-
-@dataclass(frozen=True)
-class SharedKeySpace:
-    """Members of one side whose demoted keys are one secondary identity.
-
-    Their key values are taken to be one space: an id of one member finds a
-    node of another.
-    """
-
-    vertex: str
-    side: Side
-    members: tuple[str, ...]
-    key: str
-
-
-@dataclass(frozen=True)
-class OrderCycle:
-    """A resource order constraint the union's resource order leaves unmet.
-
-    *resource* depends on *before* for *vertex* -- it attaches to or
-    references what *before* writes -- but runs first, because the
-    constraints formed a cycle and the declared order was kept.
-    """
-
-    resource: str
-    before: str
-    vertex: str
-
-
-@dataclass(frozen=True)
-class DemotedKey:
-    """A member's pre-merge key the merge demoted to a lookup-only secondary."""
-
-    vertex: str
-    side: Side
-    member: str
-    fields: tuple[str, ...]
-    secondary: str
-    branches: tuple[str, ...] = ()
-    """Funnel branches the member's records can complete, in order, up to the
-    one over its own key. Two or more mean the key no longer deduplicates."""
-
-
-@dataclass(frozen=True)
-class MergeReport:
-    """What a merge did to the sources, beyond the manifest it returns."""
-
-    demoted: list[DemotedKey] = field(default_factory=list)
-    owners: list[KeyOwner] = field(default_factory=list)
-    attached: list[AttachedProducer] = field(default_factory=list)
-    references: list[PinnedReference] = field(default_factory=list)
-    shared_key_spaces: list[SharedKeySpace] = field(default_factory=list)
-    order_cycles: list[OrderCycle] = field(default_factory=list)
 
 
 def _completes_property_branch(
@@ -1255,248 +963,6 @@ def _shared_key_spaces(
     return out
 
 
-def key_space_refusals(
-    resolution: ClusterResolution, manifests: Mapping[Side, GraphManifest]
-) -> list[MergeIdentityError]:
-    """Every problem with the key spaces *resolution* names demoted keys by.
-
-    A ``local_key`` tag names the key space of a member's own ids, and its
-    demoted key is named by it. Refused: a member two of its resources tag
-    differently (its ids would be in two spaces at once), a tag that cannot
-    name a key space (see :func:`~graflo.architecture.evolution.naming_graph.is_key_space_name`),
-    a tag a member of the cluster already declares as a secondary identity
-    (the demoted key would take that name), and a key space both sides name
-    (two sides' ids in one space). An origin colliding with a secondary is
-    :func:`origin_refusals`' to report.
-    """
-    origins = resolution.origins
-    clusters = {
-        (side, member): cluster.into
-        for cluster in resolution.index.vertices
-        for side in ("left", "right")
-        for member in cluster.members(side)
-    }
-    out: list[MergeIdentityError] = []
-    authored: dict[str, dict[str, list[str]]] = {}
-    for cluster in resolution.index.vertices:
-        for member_side in ("left", "right"):
-            schema = manifests[member_side].graph_schema
-            if schema is None:
-                continue
-            vertex_config = schema.core_schema.vertex_config
-            for member in cluster.members(member_side):
-                if member not in vertex_config.vertex_set:
-                    continue
-                for entry in vertex_config[member].secondary_identities:
-                    authored.setdefault(cluster.into, {}).setdefault(
-                        entry.name, []
-                    ).append(f"{member_side}:{member}")
-    for (side, member), space in sorted(resolution.key_spaces.items()):
-        into = clusters.get((side, member))
-        authors = authored.get(into or "", {}).get(space)
-        if space == origins[side] or not authors:
-            continue
-        out.append(
-            MergeIdentityError(
-                f"merge_manifests: key space: {side}:{member} is tagged "
-                f"{space!r}, which names its demoted key on {into!r}, but "
-                f"{', '.join(sorted(authors))} declare a secondary identity "
-                f"named {space!r}; give the member another tag, or rename that "
-                "secondary",
-                check="key space",
-                subjects=(subject("merged", into or member), subject(side, member)),
-            )
-        )
-    for (side, member), tags in sorted(resolution.key_tags.items()):
-        nodes = (
-            subject("merged", clusters.get((side, member), member)),
-            subject(side, member),
-        )
-        if len(tags) > 1:
-            out.append(
-                MergeIdentityError(
-                    f"merge_manifests: key space: {side}:{member} is tagged "
-                    f"{list(tags)} by its resources' local_key entries, so its "
-                    "ids would be in several key spaces; give the member one tag",
-                    check="key space",
-                    subjects=nodes,
-                )
-            )
-        elif tags[0] != origins[side] and not is_key_space_name(tags[0]):
-            out.append(
-                MergeIdentityError(
-                    f"merge_manifests: key space: {side}:{member} is tagged "
-                    f"{tags[0]!r}, which names its demoted key but is not a "
-                    "letter followed by letters, digits or single underscores, "
-                    "or is a selector word; give the member another tag",
-                    check="key space",
-                    subjects=nodes,
-                )
-            )
-    named: dict[str, set[Side]] = {}
-    for (side, _member), space in resolution.key_spaces.items():
-        named.setdefault(space, set()).add(side)
-    for space, sides in sorted(named.items()):
-        # Two equal origins are the origin rule's refusal.
-        if len(sides) < 2 or space == origins["left"] == origins["right"]:
-            continue
-        members = sorted(
-            (side, member)
-            for (side, member), name in resolution.key_spaces.items()
-            if name == space
-        )
-        named_members = ", ".join(f"{side}:{member}" for side, member in members)
-        out.append(
-            MergeIdentityError(
-                f"merge_manifests: key space: {named_members} would share "
-                f"the key space {space!r}, though they come from different "
-                "sides; tag one side's members otherwise, or set `origins`",
-                check="key space",
-                subjects=tuple(subject(side, member) for side, member in members),
-            )
-        )
-    return out
-
-
-def _demoted_key_names(resolution: ClusterResolution) -> dict[tuple[Side, str], str]:
-    """The secondary each demoted member key will be, as the naming pass sees it.
-
-    Its key space, joined with its fields when that space demotes several
-    field sets onto one class -- the rule of :func:`_retire_member_keys`,
-    short of reusing a secondary a member already declares over the fields.
-    """
-    origins = resolution.origins
-    into_of = {
-        (side, member): cluster.into
-        for cluster in resolution.index.vertices
-        for side in ("left", "right")
-        for member in cluster.members(side)
-    }
-
-    def space(side: Side, member: str) -> str:
-        return resolution.key_spaces.get((side, member), origins[side])
-
-    field_sets: dict[tuple[str, str], set[frozenset[str]]] = {}
-    for (side, member), fields in resolution.demoted_keys.items():
-        into = into_of.get((side, member))
-        if into is not None:
-            field_sets.setdefault((into, space(side, member)), set()).add(
-                frozenset(fields)
-            )
-    out: dict[tuple[Side, str], str] = {}
-    for (side, member), fields in resolution.demoted_keys.items():
-        into = into_of.get((side, member))
-        if into is None:
-            continue
-        name = space(side, member)
-        if len(field_sets[(into, name)]) > 1:
-            name = "__".join((name, *fields))
-        out[(side, member)] = name
-    return out
-
-
-def ambiguous_reference_refusals(
-    resolution: ClusterResolution,
-    sides: Mapping[str, GraphManifest],
-    member_properties: Mapping[tuple[Side, str], set[str]],
-) -> list[MergeIdentityError]:
-    """Each resource that would have to find one class by two demoted keys.
-
-    The rule :func:`_attach_uncovered_producers` and
-    :func:`_pin_member_references` refuse on, read from the sides before the
-    union: a resource producing members of one side whose keys are demoted to
-    different secondaries -- two key spaces, or two field sets -- when it
-    only references them (every step ``lookup_only``), or when it would be
-    attached: it writes them, the derived identity names it nowhere, and its
-    records complete no property branch. *sides* carry the union's resource
-    names; *member_properties* are each member's properties in canonical
-    names.
-    """
-    names = _demoted_key_names(resolution)
-    out: list[MergeIdentityError] = []
-    for cluster in resolution.index.vertices:
-        declaration = cluster.declaration
-        if (
-            not isinstance(declaration, VertexEquivalence)
-            or declaration.identity is None
-            or declaration.retire != "demote"
-        ):
-            continue
-        local_key = declaration.local_key_branch()
-        owners = {
-            *declaration.derive_at,
-            *(r for branch in declaration.derivations() for r in branch.sources),
-            *(local_key.local_key if local_key is not None else ()),
-        }
-        raw = declaration.raw_branches()
-        for side in ("left", "right"):
-            manifest = sides[side]
-            ingestion, schema = manifest.ingestion_model, manifest.graph_schema
-            if ingestion is None or schema is None:
-                continue
-            known = schema.core_schema.vertex_config.vertex_set
-            for resource in ingestion.resources:
-                produced = {
-                    member: steps
-                    for member in cluster.members(side)
-                    if (
-                        steps := _steps_producing(
-                            resource.pipeline, member, known_vertices=known
-                        )
-                    )
-                }
-                keys = {names.get((side, member)) for member in produced}
-                named = sorted(key for key in keys if key is not None)
-                if len(named) < 2 or any(
-                    step_finds(step, member) is not None
-                    for member, steps in produced.items()
-                    for step in steps
-                ):
-                    continue
-                references = all(
-                    step_looks_up(step, member)
-                    for member, steps in produced.items()
-                    for step in steps
-                )
-                attached = (
-                    not references
-                    and declaration.has_derivation
-                    and resource.name not in owners
-                    and None not in keys
-                    and not (
-                        raw
-                        and all(
-                            any(
-                                set(fields)
-                                <= member_properties.get((side, member), set())
-                                for fields in raw
-                            )
-                            for member in produced
-                        )
-                    )
-                )
-                if not references and not attached:
-                    continue
-                members = sorted(produced)
-                out.append(
-                    MergeIdentityError(
-                        f"merge_manifests: resource {resource.name!r} "
-                        f"{'references' if references else 'upserts'} {side} "
-                        f"members {members} of {cluster.into!r}, whose keys are "
-                        f"demoted to different secondary identities {named}; it "
-                        "cannot find the class by one of them. Tag the members' "
-                        "`local_key` alike (one key space), or produce each "
-                        "member from its own resource.",
-                        check="ambiguous reference",
-                        subjects=(
-                            subject("merged", cluster.into),
-                            *(subject(side, member) for member in members),
-                        ),
-                    )
-                )
-    return out
-
-
 def _close_side_routers(
     manifest: GraphManifest, sides: Mapping[str, GraphManifest]
 ) -> None:
@@ -1620,7 +1086,11 @@ def _pin_member_references(
             if (
                 not steps
                 or not all(step_looks_up(step, cluster.into) for step in steps)
-                or any(step_finds(step, cluster.into) is not None for step in steps)
+                or any(
+                    step_finds(step, cluster.into, known_vertices=union_vertices)
+                    is not None
+                    for step in steps
+                )
             ):
                 continue
             origin = _members_produced(resource.name, cluster, sides)
@@ -1681,67 +1151,6 @@ def _pin_member_references(
         },
     )
     return pinned
-
-
-def _order_after_merge(
-    manifest: GraphManifest,
-    owners: Sequence[KeyOwner],
-    attached: Sequence[AttachedProducer],
-) -> list[OrderCycle]:
-    """Run each resource after the resources whose nodes it needs.
-
-    A resource attached to a merged class runs after the class's key owners;
-    one whose every step producing a class only looks it up or finds it runs
-    after every resource writing that class -- otherwise, in one ingest, it
-    finds nothing. The declared order is moved only as far as that requires
-    (:func:`~graflo.architecture.evolution.ordering.order_resources`). When
-    the constraints form a cycle the declared order is kept, and each
-    constraint it leaves unmet is returned.
-    """
-    from .ordering import order_resources
-
-    ingestion = manifest.ingestion_model
-    schema = manifest.graph_schema
-    if ingestion is None or schema is None:
-        return []
-    known = schema.core_schema.vertex_config.vertex_set
-    because: dict[tuple[str, str], set[str]] = {}
-    for producer in attached:
-        for owner in owners:
-            if owner.vertex == producer.vertex:
-                because.setdefault((owner.resource, producer.resource), set()).add(
-                    producer.vertex
-                )
-    for vertex in sorted(known):
-        writers: list[str] = []
-        referrers: list[str] = []
-        for resource in ingestion.resources:
-            steps = _steps_producing(resource.pipeline, vertex, known_vertices=known)
-            refers = [
-                step_looks_up(step, vertex) or step_finds(step, vertex) is not None
-                for step in steps
-            ]
-            if refers and all(refers):
-                referrers.append(resource.name)
-            elif refers:
-                writers.append(resource.name)
-        for writer in writers:
-            for referrer in referrers:
-                because.setdefault((writer, referrer), set()).add(vertex)
-
-    declared = [resource.name for resource in ingestion.resources]
-    order, unmet = order_resources(declared, because)
-    if order != declared:
-        by_name = {resource.name: resource for resource in ingestion.resources}
-        ingestion.resources = [by_name[name] for name in order]
-        manifest.ingestion_model = IngestionModel.model_validate(
-            ingestion.to_dict(skip_defaults=False)
-        )
-    return [
-        OrderCycle(resource=after, before=before, vertex=vertex)
-        for before, after in unmet
-        for vertex in sorted(because[(before, after)])
-    ]
 
 
 #: Separator :func:`_fold_name` joins two differing labels with.
@@ -1851,37 +1260,6 @@ def _merge_manifest_metadata(
     if name is None and description is None:
         return None
     return ManifestMetadata(name=name, description=description)
-
-
-def _merge_declared_scalar(
-    left: DatabaseProfile,
-    right: DatabaseProfile,
-    field: str,
-) -> Any:
-    """The declared value of a single-valued profile key, refusing two of them.
-
-    Presence is read from ``skip_defaults=True`` rather than from the value:
-    ``db_flavor`` defaults to Arango, so a value-based fold cannot tell a side
-    that *declared* Arango from one that never spoke, and would let an
-    undeclared left silently retarget a right that named its backend.
-    """
-    left_declared = left.to_dict(skip_defaults=True)
-    right_declared = right.to_dict(skip_defaults=True)
-    if field not in left_declared:
-        return right_declared.get(field, getattr(left, field))
-    if field not in right_declared:
-        return left_declared[field]
-    if left_declared[field] != right_declared[field]:
-        hint = (
-            " (set MergeManifestsOp.target_namespace to choose one)"
-            if field == "target_namespace"
-            else ""
-        )
-        raise ValueError(
-            f"merge_manifests: conflicting {field}: "
-            f"{left_declared[field]!r} vs {right_declared[field]!r}{hint}"
-        )
-    return left_declared[field]
 
 
 def _merge_db_profiles(
@@ -2365,6 +1743,8 @@ def _merge_manifests(
     refusals = [
         *origin_refusals(op, {"left": out_left, "right": out_right}, resolution),
         *key_space_refusals(resolution, {"left": out_left, "right": out_right}),
+        *demoted_key_refusals(resolution, {"left": out_left, "right": out_right}),
+        *identifier_refusals(resolution, {"left": out_left, "right": out_right}),
     ]
     if refusals:
         raise refusals[0]

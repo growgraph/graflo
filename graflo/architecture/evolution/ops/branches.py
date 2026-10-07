@@ -90,6 +90,15 @@ class LocalKeySource(ConfigBaseModel):
     def _none_is_the_empty_tag(cls, value: Any) -> Any:
         return "" if value is None else value
 
+    @property
+    def tag_omitted(self) -> bool:
+        """Whether ``tag`` was left out, so the side's origin tags the key.
+
+        Read from the fields set rather than from ``tag is None``: a copy that
+        sets ``tag=None`` skips the validator, and still sets the tag.
+        """
+        return "tag" not in self.model_fields_set
+
 
 def _refuse_member_keyed_guards(
     kind: str, sources: Mapping[str, Any], label: str

@@ -67,3 +67,33 @@ def test_actor_executor_assemble_result_returns_graph_result():
 
     assert isinstance(result, GraphAssemblyResult)
     assert result.entities["author"] == [{"id": "42"}]
+
+
+def test_actor_executor_results_carry_the_attached_rows_of_a_find_step():
+    vc = VertexConfig.from_dict(
+        {
+            "vertices": [
+                {
+                    "name": "author",
+                    "properties": ["id", "orcid", "name"],
+                    "identity": ["id"],
+                    "secondary_identities": [{"name": "by_orcid", "fields": ["orcid"]}],
+                }
+            ]
+        }
+    )
+    wrapper = ActorWrapper(pipeline=[{"vertex": "author", "find": "by_orcid"}])
+    wrapper.finish_init(
+        init_ctx=ActorInitContext(
+            vertex_config=vc,
+            edge_config=EdgeConfig.from_dict({"edges": []}),
+            transforms={},
+        )
+    )
+    executor = ActorExecutor(wrapper)
+    doc = {"orcid": "0000-1", "name": "A"}
+
+    result = executor.assemble_result(executor.extract(doc))
+    assert result.attached == {"author": [{"orcid": "0000-1", "name": "A"}]}
+    assert not result.entities.get("author")
+    assert dict(executor.assemble(executor.extract(doc))) == dict(result.entities)

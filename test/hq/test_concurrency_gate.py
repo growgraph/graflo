@@ -164,3 +164,66 @@ class TestRealRuntimeSurface:
         assert effective_in_flight(
             runtime, IngestionParams(), _conn(), bulk_enabled=False
         ) == (1, SerialReason.BLANK_VERTICES)
+
+    @staticmethod
+    def _finding_manifest() -> GraphManifest:
+        """``person`` is written; ``org`` is found by its ``by_name`` identity."""
+        out = GraphManifest.from_config(
+            {
+                "schema": {
+                    "metadata": {"name": "g", "version": "1.0.0"},
+                    "graph": {
+                        "vertex_config": {
+                            "vertices": [
+                                {"name": "person", "properties": ["pid"]},
+                                {
+                                    "name": "org",
+                                    "properties": ["oid", "name"],
+                                    "identity": ["oid"],
+                                    "secondary_identities": [
+                                        {"name": "by_name", "fields": ["name"]}
+                                    ],
+                                },
+                            ]
+                        },
+                        "edge_config": {"edges": []},
+                    },
+                },
+                "ingestion_model": {
+                    "resources": [
+                        {
+                            "name": "r",
+                            "apply": [
+                                {"vertex": "person", "from": {"pid": "pid"}},
+                                {"vertex": "org", "find": "by_name"},
+                            ],
+                        }
+                    ],
+                    "transforms": [],
+                },
+            }
+        )
+        out.finish_init()
+        return out
+
+    def test_a_find_step_serializes(self) -> None:
+        runtime = self._finding_manifest().require_ingestion_model().fetch_resource("r")
+        assert runtime.attached_selectors == {"org": "by_name"}
+        assert effective_in_flight(
+            runtime, IngestionParams(), _conn(), bulk_enabled=False
+        ) == (1, SerialReason.SECONDARY_IDENTITY)
+
+    def test_a_find_step_for_a_class_excluded_from_the_run_allows_overlap(
+        self,
+    ) -> None:
+        manifest = self._finding_manifest()
+        model = manifest.require_ingestion_model()
+        model.finish_init(
+            manifest.require_schema().core_schema, allowed_vertex_names={"person"}
+        )
+        runtime = model.fetch_resource("r")
+        assert runtime.attached_selectors == {}
+        assert not runtime.edge_derivation.has_endpoint_matches()
+        assert effective_in_flight(
+            runtime, IngestionParams(), _conn(), bulk_enabled=False
+        ) == (2, None)

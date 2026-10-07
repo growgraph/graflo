@@ -119,6 +119,22 @@ class TestEdgeInference:
         assert edges == {("A", "C", "ac"): 1}
 
 
+def test_a_reference_beside_a_write_of_one_vertex_is_one_endpoint() -> None:
+    """A plain write and a ``lookup_only`` step of one class at one level.
+
+    They stay apart for writing, but an edge sees one endpoint per key: no
+    self-loop between the two observations of one vertex.
+    """
+    step = {"vertex": "A", "from": {"a_id": "a_id"}, **_MAPPED}
+    manifest = _manifest(
+        edges=[Edge(source="A", target="A", relation="aa")],
+        pipeline=[step, {**step, "lookup_only": True}],
+    )
+    vertices, edges = _emit(manifest)
+    assert vertices == {"A": [{"a_id": "a1"}]}
+    assert edges == {}
+
+
 class TestMergeGuardsProtectTheEmittedGraph:
     @staticmethod
     def _joined() -> GraphManifest:
@@ -424,7 +440,12 @@ class TestFusionIsJudgedPerSlot:
 _ATTACH_DOC = {"k": "K1", "name": "n1", "d_id": "d1", "code": "X1"}
 
 
-def _attach_manifest(pipeline: list[dict]) -> GraphManifest:
+def _attach_manifest(
+    pipeline: list[dict], extra_weights: list[dict] | None = None
+) -> GraphManifest:
+    resource: dict = {"name": "res", "pipeline": pipeline}
+    if extra_weights is not None:
+        resource["extra_weights"] = extra_weights
     manifest = GraphManifest.from_config(
         {
             "schema": {
@@ -455,7 +476,7 @@ def _attach_manifest(pipeline: list[dict]) -> GraphManifest:
                     },
                 },
             },
-            "ingestion_model": {"resources": [{"name": "res", "pipeline": pipeline}]},
+            "ingestion_model": {"resources": [resource]},
         }
     )
     manifest.finish_init()
@@ -560,6 +581,63 @@ class TestAttachedVertices:
         assert not graph.vertices.get("C")
         assert _endpoints(graph) == [({"k": "K1"}, {"d_id": "d1"})]
 
+    def test_a_reference_beside_an_attaching_step_keeps_its_properties(
+        self,
+    ) -> None:
+        """A ``lookup_only`` find and a writing find of one class at one level."""
+        reference = {**_C_FINDS, "from": {"k": "k"}, "lookup_only": True}
+        graph = _attach_cast(
+            _attach_manifest([reference, {**_C_FINDS, "from": _C_FROM}, _D_STEP, _EDGE])
+        )
+        assert graph.attached["C"] == [{"k": "K1", "name": "n1"}]
+        assert not graph.vertices.get("C")
+        assert _endpoints(graph) == [({"k": "K1"}, {"d_id": "d1"})]
+
+    @pytest.mark.parametrize(
+        ("weight", "attribute"),
+        [
+            ({"name": "C", "fields": ["name"]}, "C@name"),
+            ({"name": "C", "map": {"name": "c_name"}}, "c_name"),
+        ],
+    )
+    def test_a_vertex_weight_beside_a_reference_reads_the_endpoint_once(
+        self, weight: dict, attribute: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A weight from a class both referenced and written at one level."""
+        reference = {**_C_FINDS, "from": {"k": "k"}, "lookup_only": True}
+        manifest = _attach_manifest(
+            [reference, {**_C_FINDS, "from": _C_FROM}, _D_STEP, _EDGE],
+            extra_weights=[{"edge": _EDGE["edge"], "vertex_weights": [weight]}],
+        )
+
+        with caplog.at_level(logging.WARNING):
+            graph = _attach_cast(manifest)
+
+        [(_, _, attributes)] = graph.edges[("C", "D", "cd")]
+        assert attributes[attribute] == "n1"
+        assert "weight vertices" not in caplog.text
+
+    def test_a_positional_transform_output_lands_on_the_find_field(self) -> None:
+        """A scalar transform result keys a ``find`` record on its find fields."""
+        to_str = {
+            "transform": {
+                "call": {"module": "builtins", "foo": "str", "strategy": "all"}
+            }
+        }
+        found = {"vertex": "C", "find": "by_k", **_MAPPED}
+        graph = _attach_cast(
+            _attach_manifest(
+                [_D_STEP, {"descend": {"key": "items", "pipeline": [to_str, found]}}]
+            ),
+            [{"items": [7, 8], "d_id": "d1"}],
+        )
+        assert graph.attached["C"] == [{"k": "7"}, {"k": "8"}]
+        assert not graph.vertices.get("C")
+        assert _endpoints(graph) == [
+            ({"k": "7"}, {"d_id": "d1"}),
+            ({"k": "8"}, {"d_id": "d1"}),
+        ]
+
     def test_attached_rows_without_their_find_fields_are_dropped(self) -> None:
         graph = _attach_cast(
             _attach_manifest([{**_C_FINDS, "from": _C_FROM}, _D_STEP, _EDGE]),
@@ -637,9 +715,9 @@ class TestAttachedVertices:
             _attach_manifest([_C_FINDS, {"vertex": "C"}])
 
     def test_find_naming_an_undeclared_secondary_is_refused(self) -> None:
-        with pytest.raises(ValueError, match=r"by_nothing"):
+        with pytest.raises(ValueError, match=r"^Resource 'res': .*by_nothing"):
             _attach_manifest([{"vertex": "C", "find": "by_nothing"}])
 
     def test_find_naming_the_primary_identity_is_refused(self) -> None:
-        with pytest.raises(ValueError, match=r"secondary identity"):
+        with pytest.raises(ValueError, match=r"^Resource 'res': .*secondary identity"):
             _attach_manifest([{"vertex": "C", "find": "identity"}])

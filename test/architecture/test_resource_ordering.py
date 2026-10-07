@@ -43,3 +43,29 @@ def test_a_cycle_keeps_the_declared_order_and_returns_what_it_breaks() -> None:
     )
     assert order == ["a", "b", "c"]
     assert cycles == [("b", "a")]
+
+
+def test_a_cycle_keeps_the_declared_order_only_among_its_resources() -> None:
+    """``a``/``b`` form a cycle; ``d`` still runs before ``c``."""
+    order, cycles = order_resources(
+        ["a", "b", "c", "d"], [("a", "b"), ("b", "a"), ("d", "c")]
+    )
+    assert order == ["a", "b", "d", "c"]
+    assert cycles == [("b", "a")]
+
+
+def test_a_cycle_waits_for_its_predecessors_outside_it() -> None:
+    """The cycle ``a``/``b``/``c`` depends on ``d``, which depends on ``e``."""
+    order, cycles = order_resources(
+        ["a", "b", "c", "d", "e"],
+        [("a", "b"), ("b", "c"), ("c", "a"), ("e", "d"), ("d", "b")],
+    )
+    assert order == ["e", "d", "a", "b", "c"]
+    assert cycles == [("c", "a")]
+
+
+def test_a_long_constraint_chain_is_ordered() -> None:
+    names = [f"r{i}" for i in range(3000)]
+    order, cycles = order_resources(names, list(zip(names[1:], names[:-1])))
+    assert order == names[::-1]
+    assert cycles == []

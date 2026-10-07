@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
-from collections.abc import Collection, Sequence
+from collections.abc import Callable, Collection, Sequence
+from functools import partial
 from typing import Any, Protocol
 
 from psycopg2 import sql
@@ -23,6 +25,7 @@ from graflo.db.conn import (
     DEFAULT_DELETE_CHUNK_SIZE,
     NamespaceNotFoundError,
     SchemaExistsError,
+    consume_insert_edges_kwargs,
     deletable_docs,
     deletable_endpoints,
 )
@@ -41,6 +44,32 @@ class _Psycopg2Conn(Protocol):
 logger = logging.getLogger(__name__)
 
 _PG_TEXT = "TEXT"
+
+#: The longest identifier PostgreSQL keeps, in bytes (``NAMEDATALEN - 1``);
+#: a longer one is truncated without an error.
+_PG_IDENTIFIER_BYTES = 63
+_PG_DIGEST_LENGTH = 8
+
+
+def _pg_clip(name: str, size: int = _PG_IDENTIFIER_BYTES) -> str:
+    """The longest prefix of *name* within *size* UTF-8 bytes, whole characters only."""
+    return name.encode("utf-8")[:size].decode("utf-8", "ignore")
+
+
+def _pg_index_name(name: str) -> str:
+    """*name* as an index name PostgreSQL keeps whole.
+
+    A name within 63 bytes is returned unchanged. A longer one becomes a head
+    and ``_`` plus 8 hex digits of its SHA-1, within 63 bytes: truncation alone
+    would let two names sharing a prefix become one, and
+    ``CREATE INDEX IF NOT EXISTS`` would then skip the second index.
+    """
+    if len(name.encode("utf-8")) <= _PG_IDENTIFIER_BYTES:
+        return name
+    digest = hashlib.sha1(name.encode("utf-8")).hexdigest()[:_PG_DIGEST_LENGTH]
+    head = _pg_clip(name, _PG_IDENTIFIER_BYTES - _PG_DIGEST_LENGTH - 1).rstrip("_")
+    return f"{head}_{digest}"
+
 
 _LIST_ITEM_TO_PG_ARRAY: dict[str, str] = {
     FieldType.INT.value: "INTEGER[]",
@@ -242,11 +271,11 @@ def edge_table_ddl(
     target_table: str,
     target_fields: Sequence[str],
     properties: Sequence[tuple[str, str]],
-) -> tuple[str, str, str | None]:
-    """``CREATE TABLE`` for an edge table, the same without foreign keys, and its unique index.
+) -> tuple[str, str]:
+    """``CREATE TABLE`` for an edge table, and the same without foreign keys.
 
-    *properties* are ``(column, type)`` pairs. The unique index covers the
-    endpoint columns and the properties, and there is none without properties.
+    *properties* are ``(column, type)`` pairs. The table's unique key is
+    built by :func:`edge_key_ddl`.
     """
     source_columns = edge_endpoint_columns("source", source_fields)
     target_columns = edge_endpoint_columns("target", target_fields)
@@ -275,19 +304,167 @@ def edge_table_ddl(
     create_without_keys = (
         f"CREATE TABLE IF NOT EXISTS {qualified} ({', '.join(column_defs)})"
     )
-    unique = None
-    if properties:
-        indexed = [*source_columns, *target_columns, *(name for name, _ in properties)]
-        unique = (
-            f"CREATE UNIQUE INDEX IF NOT EXISTS "
-            f"{_quote_ident(_edge_unique_index_name(table))} ON {qualified} "
-            f"({', '.join(_quote_ident(c) for c in indexed)})"
-        )
-    return create, create_without_keys, unique
+    return create, create_without_keys
+
+
+def edge_key_ddl(schema: str, table: str, columns: Sequence[str]) -> tuple[str, str]:
+    """``DROP`` of an edge table's stale unique index, and ``CREATE`` of its key.
+
+    *columns* are the endpoint columns and the edge's merge properties -- the
+    ``ON CONFLICT`` target of an edge write. ``NULLS NOT DISTINCT``
+    (PostgreSQL 15 or later) makes a NULL merge property conflict like any
+    other value.
+    """
+    drop = (
+        f"DROP INDEX IF EXISTS {_quote_ident(schema)}."
+        f"{_quote_ident(_edge_unique_index_name(table))}"
+    )
+    create = (
+        f"CREATE UNIQUE INDEX IF NOT EXISTS "
+        f"{_quote_ident(_edge_key_index_name(table))} ON "
+        f"{_quote_ident(schema)}.{_quote_ident(table)} "
+        f"({', '.join(_quote_ident(c) for c in columns)}) NULLS NOT DISTINCT"
+    )
+    return drop, create
 
 
 def _edge_unique_index_name(table: str) -> str:
-    return f"{table}_edge_uniq"
+    """Name of a stale unique index over every edge property, dropped on table definition.
+
+    It was created under its whole name, which PostgreSQL stored as its first
+    63 bytes, so it is dropped by those -- not by a digest-shortened name no
+    database holds.
+    """
+    return _pg_clip(f"{table}_edge_uniq")
+
+
+def _edge_key_index_name(table: str) -> str:
+    return _pg_index_name(f"{table}_edge_key")
+
+
+def _create_edge_key(
+    cursor: Any, schema: str, table: str, columns: Sequence[str]
+) -> None:
+    """Drop *table*'s stale unique index and create its key over *columns*.
+
+    Raises:
+        RuntimeError: The key cannot be built, as over duplicate edge rows.
+    """
+    drop, create = edge_key_ddl(schema, table, columns)
+    cursor.execute(drop)
+    try:
+        cursor.execute(create)
+    except Exception as exc:
+        raise RuntimeError(
+            f"Cannot create the unique key of edge table {schema}.{table}: "
+            f"{exc}. If the table holds duplicate edge rows (same endpoints and "
+            "merge properties), remove them and try again; the key also needs "
+            "PostgreSQL 15 or later."
+        ) from exc
+
+
+def _ensure_edge_key(
+    cursor: Any, schema: str, table: str, columns: Sequence[str]
+) -> None:
+    """Give *table* its key over *columns* unless the catalogue shows it in place.
+
+    A table defined by an older release lacks the key an edge write conflicts
+    on. The table is locked first, against writers on other connections: two
+    ``CREATE INDEX`` of one name would race, and each holding its ``SHARE``
+    lock into its insert would deadlock the other.
+
+    Raises:
+        RuntimeError: The key cannot be built, as over duplicate edge rows.
+    """
+    qualified = f"{_quote_ident(schema)}.{_quote_ident(table)}"
+    cursor.execute(
+        "SELECT to_regclass(%s), to_regclass(%s)",
+        (
+            f"{_quote_ident(schema)}.{_quote_ident(_edge_key_index_name(table))}",
+            f"{_quote_ident(schema)}.{_quote_ident(_edge_unique_index_name(table))}",
+        ),
+    )
+    key, stale = cursor.fetchone()
+    if key is not None and stale is None:
+        return
+    cursor.execute(f"LOCK TABLE {qualified} IN SHARE ROW EXCLUSIVE MODE")
+    _create_edge_key(cursor, schema, table, columns)
+
+
+def _edge_key_columns(schema: Schema | None, edge: Edge) -> list[str]:
+    """Property columns that, with the endpoints, key a row of *edge*'s table.
+
+    The edge's merge properties, so the index matches the ``ON CONFLICT``
+    target ``DBWriter`` writes with; every declared property without a schema.
+    """
+    if schema is None:
+        return [field.name for field in edge.properties]
+    edge_config = schema.resolve_db_aware(DBType.POSTGRES).edge_config
+    return edge_config.relationship_merge_property_names(edge)
+
+
+def _key_text(value: Any) -> str | None:
+    """*value* as a key compares in a TEXT column, so ``1`` and ``"1"`` are one key."""
+    return None if value is None else str(value)
+
+
+def _fuse_on_key(
+    rows: list[dict[str, Any]], key: Sequence[str], table: str
+) -> list[dict[str, Any]]:
+    """Merge rows sharing a *key*, later values winning, in order of first occurrence.
+
+    One ``INSERT ... ON CONFLICT DO UPDATE`` cannot touch a row twice, and a
+    later row must win over an earlier one as on every other backend. A row
+    lacking a key field is dropped with a warning: key columns are NOT NULL, so
+    it would fail the whole batch.
+    """
+    fused: list[dict[str, Any]] = []
+    position: dict[tuple[str | None, ...], int] = {}
+    dropped = 0
+    for row in rows:
+        ident = tuple(_key_text(row.get(k)) for k in key)
+        if None in ident:
+            dropped += 1
+            continue
+        at = position.get(ident)
+        if at is None:
+            position[ident] = len(fused)
+            fused.append(row)
+        else:
+            fused[at] = {**fused[at], **row}
+    if dropped:
+        logger.warning(
+            "Skipped %s row(s) of '%s' with an incomplete key %s; key columns "
+            "cannot be NULL.",
+            dropped,
+            table,
+            list(key),
+        )
+    return fused
+
+
+def _insert_on_conflict(
+    schema: str,
+    table: str,
+    columns: Sequence[str],
+    conflict: Sequence[str],
+    update: Sequence[str],
+) -> sql.Composed:
+    """``INSERT ... VALUES %s ON CONFLICT`` setting *update* columns, or doing nothing."""
+    head = sql.SQL("INSERT INTO {}.{} ({}) VALUES %s ON CONFLICT ({}) ").format(
+        sql.Identifier(schema),
+        sql.Identifier(table),
+        sql.SQL(", ").join(sql.Identifier(c) for c in columns),
+        sql.SQL(", ").join(sql.Identifier(c) for c in conflict),
+    )
+    if not update:
+        return head + sql.SQL("DO NOTHING")
+    return head + sql.SQL("DO UPDATE SET {}").format(
+        sql.SQL(", ").join(
+            sql.SQL("{} = EXCLUDED.{}").format(sql.Identifier(c), sql.Identifier(c))
+            for c in update
+        )
+    )
 
 
 def _identity_fields(schema: Schema | None, vertex_name: str) -> list[str]:
@@ -351,6 +528,29 @@ def _edge_weight_columns_from_schema(
         ):
             return [field.name for field in edge.properties]
     return []
+
+
+def _write_batches(
+    conn: _Psycopg2Conn,
+    statements: list[tuple[sql.Composed, list[tuple]]],
+    prepare: Callable[[Any], None] | None = None,
+) -> None:
+    """Run every ``VALUES %s`` statement in one transaction, rolled back on failure.
+
+    *prepare*, given the cursor, runs first in the same transaction.
+    """
+    if not statements:
+        return
+    try:
+        with conn.cursor() as cursor:
+            if prepare is not None:
+                prepare(cursor)
+            for query, values in statements:
+                execute_values(cursor, query, values)
+    except Exception:
+        conn.rollback()
+        raise
+    conn.commit()
 
 
 class PostgresTargetWriteMixin:
@@ -591,18 +791,25 @@ class PostgresTargetWriteMixin:
         pg_schema = _pg_schema_name(self.config)
         table = edge_table_name(edge.source, edge.target, edge.relation)
         schema = getattr(self, "_target_schema", None)
-        create, create_without_keys, unique = edge_table_ddl(
+        source_fields = _identity_fields(schema, edge.source)
+        target_fields = _identity_fields(schema, edge.target)
+        create, create_without_keys = edge_table_ddl(
             pg_schema,
             table,
             source_table=vertex_table_name(edge.source),
-            source_fields=_identity_fields(schema, edge.source),
+            source_fields=source_fields,
             target_table=vertex_table_name(edge.target),
-            target_fields=_identity_fields(schema, edge.target),
+            target_fields=target_fields,
             properties=[
                 (field.name, _pg_column_type_for_field(field))
                 for field in edge.properties
             ],
         )
+        key = [
+            *edge_endpoint_columns("source", source_fields),
+            *edge_endpoint_columns("target", target_fields),
+            *_edge_key_columns(schema, edge),
+        ]
         with self.conn.cursor() as cursor:
             try:
                 cursor.execute(create)
@@ -613,8 +820,11 @@ class PostgresTargetWriteMixin:
                     exc,
                 )
                 cursor.execute(create_without_keys)
-            if unique is not None:
-                cursor.execute(unique)
+            try:
+                _create_edge_key(cursor, pg_schema, table, key)
+            except Exception:
+                self.conn.rollback()
+                raise
         self.conn.commit()
 
     def upsert_docs_batch(
@@ -624,47 +834,34 @@ class PostgresTargetWriteMixin:
         match_keys: list[str] | tuple[str, ...],
         **kwargs: Any,
     ) -> None:
+        """Insert or update vertex rows, keyed on *match_keys*.
+
+        A column a document lacks is left as stored, and documents sharing a
+        key are fused into one row, later values winning. Each distinct set of
+        columns is written by its own statement, all in one transaction.
+        """
         if kwargs.get("dry") or not docs:
             return
         pg_schema = _pg_schema_name(self.config)
         table = vertex_table_name(class_name)
         match_keys = tuple(match_keys) or ("id",)
-        all_keys: list[str] = []
-        for doc in docs:
-            all_keys.extend(doc.keys())
-        columns = sorted({k for k in all_keys if not k.startswith("_")})
-        if not columns:
-            return
-        update_cols = [c for c in columns if c not in match_keys]
-        col_idents = sql.SQL(", ").join(sql.Identifier(c) for c in columns)
-        conflict = sql.SQL(", ").join(sql.Identifier(k) for k in match_keys)
-        if update_cols:
-            set_clause = sql.SQL(", ").join(
-                sql.SQL("{} = EXCLUDED.{}").format(sql.Identifier(c), sql.Identifier(c))
-                for c in update_cols
+        shapes: dict[frozenset[str], list[dict[str, Any]]] = {}
+        for doc in _fuse_on_key(docs, match_keys, table):
+            shape = frozenset(k for k in doc if not k.startswith("_"))
+            shapes.setdefault(shape, []).append(doc)
+        statements: list[tuple[sql.Composed, list[tuple]]] = []
+        for shape, rows in shapes.items():
+            if not shape:
+                continue
+            columns = sorted(shape)
+            update = [c for c in columns if c not in match_keys]
+            statements.append(
+                (
+                    _insert_on_conflict(pg_schema, table, columns, match_keys, update),
+                    [tuple(row[c] for c in columns) for row in rows],
+                )
             )
-            upsert_q = sql.SQL(
-                "INSERT INTO {}.{} ({}) VALUES %s ON CONFLICT ({}) DO UPDATE SET {}"
-            ).format(
-                sql.Identifier(pg_schema),
-                sql.Identifier(table),
-                col_idents,
-                conflict,
-                set_clause,
-            )
-        else:
-            upsert_q = sql.SQL(
-                "INSERT INTO {}.{} ({}) VALUES %s ON CONFLICT ({}) DO NOTHING"
-            ).format(
-                sql.Identifier(pg_schema),
-                sql.Identifier(table),
-                col_idents,
-                conflict,
-            )
-        values = [tuple(doc.get(c) for c in columns) for doc in docs]
-        with self.conn.cursor() as cursor:
-            execute_values(cursor, upsert_q, values)
-        self.conn.commit()
+        _write_batches(self.conn, statements)
 
     def insert_edges_batch(
         self,
@@ -678,7 +875,21 @@ class PostgresTargetWriteMixin:
         head: int | None = None,
         **kwargs: Any,
     ) -> None:
-        if kwargs.get("dry") or not docs_edges:
+        """Write edge rows, keyed on their endpoints and merge properties.
+
+        ``relationship_merge_properties`` names the weights that, with the
+        endpoints, identify an edge -- the table's unique key. Under
+        ``on_duplicate="upsert"`` an existing edge gets the other weights a row
+        carries; otherwise it is left as stored. Rows sharing a key are fused,
+        later weights winning, and rows missing an endpoint value are dropped.
+        The first write to a table on this connection gives it that key if it
+        lacks it.
+
+        Raises:
+            RuntimeError: The table lacks the key and holds duplicate edges.
+        """
+        opts = consume_insert_edges_kwargs(kwargs)
+        if opts.dry or not docs_edges:
             return
         if head is not None:
             docs_edges = docs_edges[:head]
@@ -686,52 +897,77 @@ class PostgresTargetWriteMixin:
         table = edge_table_name(source_class, target_class, relation_name)
         match_keys_source = match_keys_source or ("id",)
         match_keys_target = match_keys_target or ("id",)
+        merge = list(opts.relationship_merge_properties or ())
+        endpoints = [
+            *edge_endpoint_columns("source", match_keys_source),
+            *edge_endpoint_columns("target", match_keys_target),
+        ]
 
         rows: list[tuple[tuple, tuple, dict[str, Any]]] = []
-        weight_keys: set[str] = set()
+        position: dict[tuple[str | None, ...], int] = {}
         for item in docs_edges:
             if not isinstance(item, (list, tuple)) or len(item) < 2:
                 continue
             source_doc, target_doc = item[0], item[1]
-            weight = item[2] if len(item) > 2 and isinstance(item[2], dict) else {}
-            weight_keys.update(weight.keys())
-            rows.append(
-                (
-                    tuple(source_doc.get(k) for k in match_keys_source),
-                    tuple(target_doc.get(k) for k in match_keys_target),
-                    weight,
-                )
+            source = tuple(source_doc.get(k) for k in match_keys_source)
+            target = tuple(target_doc.get(k) for k in match_keys_target)
+            if None in source or None in target:
+                continue
+            raw = item[2] if len(item) > 2 and isinstance(item[2], dict) else {}
+            weight = {k: v for k, v in raw.items() if not k.startswith("_")}
+            # A NULL merge property is part of the key (NULLS NOT DISTINCT).
+            ident = tuple(
+                _key_text(v)
+                for v in (*source, *target, *(weight.get(k) for k in merge))
             )
+            at = position.get(ident)
+            if at is None:
+                position[ident] = len(rows)
+                rows.append((source, target, weight))
+            else:
+                rows[at] = (source, target, {**rows[at][2], **weight})
         if not rows:
             return
 
-        columns = [
-            *edge_endpoint_columns("source", match_keys_source),
-            *edge_endpoint_columns("target", match_keys_target),
-            *sorted(weight_keys),
-        ]
-        col_idents = sql.SQL(", ").join(sql.Identifier(c) for c in columns)
-        # No conflict target: the edge table's unique index covers the endpoint
-        # columns plus any weight columns, so naming a fixed set fails with
-        # "no unique or exclusion constraint matching" as soon as the edge
-        # carries properties. A bare DO NOTHING matches whichever index exists.
-        upsert_q = sql.SQL(
-            "INSERT INTO {}.{} ({}) VALUES %s ON CONFLICT DO NOTHING"
-        ).format(
-            sql.Identifier(pg_schema),
-            sql.Identifier(table),
-            col_idents,
+        shapes: dict[frozenset[str], list[tuple[tuple, tuple, dict[str, Any]]]] = {}
+        for row in rows:
+            shapes.setdefault(frozenset(row[2]), []).append(row)
+        statements: list[tuple[sql.Composed, list[tuple]]] = []
+        for shape, shaped in shapes.items():
+            weights = sorted(shape)
+            update = (
+                [w for w in weights if w not in merge]
+                if opts.on_duplicate == "upsert"
+                else []
+            )
+            statements.append(
+                (
+                    _insert_on_conflict(
+                        pg_schema,
+                        table,
+                        [*endpoints, *weights],
+                        [*endpoints, *merge],
+                        update,
+                    ),
+                    [
+                        (*source, *target, *(weight[w] for w in weights))
+                        for source, target, weight in shaped
+                    ],
+                )
+            )
+        keyed: set[str] = self.__dict__.setdefault("_edge_key_cache", set())
+        prepare = (
+            None
+            if table in keyed
+            else partial(
+                _ensure_edge_key,
+                schema=pg_schema,
+                table=table,
+                columns=[*endpoints, *merge],
+            )
         )
-        values = [
-            (*source, *target, *[weight.get(k) for k in sorted(weight_keys)])
-            for source, target, weight in rows
-            if None not in source and None not in target
-        ]
-        if not values:
-            return
-        with self.conn.cursor() as cursor:
-            execute_values(cursor, upsert_q, values)
-        self.conn.commit()
+        _write_batches(self.conn, statements, prepare)
+        keyed.add(table)
 
     def delete_vertices(
         self,
@@ -1048,7 +1284,7 @@ class PostgresTargetWriteMixin:
                 fields = [str(f) for f in index.fields]
                 if not fields:
                     continue
-                index_name = f"ix_{table}_{'_'.join(fields)}"
+                index_name = _pg_index_name(f"ix_{table}_{'_'.join(fields)}")
                 unique_clause = sql.SQL("UNIQUE ") if index.unique else sql.SQL("")
                 q = sql.SQL("CREATE {}INDEX IF NOT EXISTS {} ON {}.{} ({})").format(
                     unique_clause,
@@ -1085,7 +1321,7 @@ class PostgresTargetWriteMixin:
         pg_schema = _pg_schema_name(self.config)
         for edge in edges:
             table = edge_table_name(edge.source, edge.target, edge.relation)
-            index_name = f"ix_{table}_target_id"
+            index_name = _pg_index_name(f"ix_{table}_target_id")
             columns = edge_endpoint_columns(
                 "target",
                 _identity_fields(

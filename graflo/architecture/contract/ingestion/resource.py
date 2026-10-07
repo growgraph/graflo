@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Sequence
 from typing import Any
 
 from pydantic import AliasChoices, model_validator
@@ -101,11 +101,17 @@ def step_looks_up(step: dict[str, Any], vertex: str) -> bool:
     return False
 
 
-def step_finds(step: dict[str, Any], vertex: str) -> str | None:
+def step_finds(
+    step: dict[str, Any],
+    vertex: str,
+    *,
+    known_vertices: Collection[str] | None = None,
+) -> str | None:
     """The secondary identity *step* finds *vertex* by; ``None`` when it does not.
 
     A ``vertex`` step names it in ``find``; a ``vertex_router`` in its per-class
-    ``find`` map, for a class the router can reach.
+    ``find`` map, for a class the router can reach (its :func:`router_reach`
+    over *known_vertices*, as in :func:`step_produces_vertices`).
     """
     normalized = normalize_actor_step(dict(step))
     if normalized.get("type") == "vertex":
@@ -116,10 +122,30 @@ def step_finds(step: dict[str, Any], vertex: str) -> str | None:
     if normalized.get("type") == "vertex_router":
         table = normalized.get("find")
         selector = table.get(vertex) if isinstance(table, dict) else None
-        reach = router_reach(normalized)
+        reach = router_reach(normalized, known_vertices=known_vertices)
         if isinstance(selector, str) and (reach is None or vertex in reach):
             return selector
     return None
+
+
+def _steps_producing(
+    steps: Sequence[Any], vertex: str, *, known_vertices: Collection[str]
+) -> list[dict[str, Any]]:
+    """Every step at any level of *steps* that produces *vertex*, normalized."""
+    out: list[dict[str, Any]] = []
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        normalized = normalize_actor_step(dict(step))
+        if vertex in step_produces_vertices(normalized, known_vertices=known_vertices):
+            out.append(normalized)
+        if normalized.get("type") == "descend":
+            nested = normalized.get("pipeline")
+            if isinstance(nested, list):
+                out.extend(
+                    _steps_producing(nested, vertex, known_vertices=known_vertices)
+                )
+    return out
 
 
 def pipeline_find_selectors(
@@ -144,7 +170,7 @@ def pipeline_find_selectors(
                 continue
             step = normalize_actor_step(dict(item))
             for vertex in step_produces_vertices(step, known_vertices=known_vertices):
-                selector = step_finds(step, vertex)
+                selector = step_finds(step, vertex, known_vertices=known_vertices)
                 if selector is None:
                     plain.add(vertex)
                 else:

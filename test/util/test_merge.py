@@ -102,3 +102,35 @@ def test_merge_no_index_keys_vertexrep():
     output = fuse_doc_basis(input_docs, index_keys=("_key",))
     assert len(output) == 1
     assert output[0].vertex == {"a": 1, "b": 2, "c": 3, "d": 4, "e": 5}
+
+
+def test_merge_vertexreps_with_mixed_flags_fuse_per_flag_group():
+    """Reps of one location fuse only with reps carrying the same tags."""
+    input_docs = [
+        VertexRep(vertex={"k": 1}, find="by_k", lookup_only=True),
+        VertexRep(vertex={"k": 1, "name": "n"}, find="by_k"),
+        VertexRep(vertex={"extra": "e"}, find="by_k"),
+        VertexRep(vertex={"k": 1, "other": "o"}, find="by_k", lookup_only=True),
+        VertexRep(vertex={"_key": "a"}),
+        VertexRep(vertex={"x": 2}),
+    ]
+    output = fuse_doc_basis(input_docs, index_keys=("k", "_key"))
+    assert [(o.find, o.lookup_only, o.vertex) for o in output] == [
+        ("by_k", True, {"k": 1, "other": "o"}),
+        ("by_k", False, {"k": 1, "name": "n", "extra": "e"}),
+        (None, False, {"_key": "a", "x": 2}),
+    ]
+
+
+def test_merge_keyless_vertexreps_with_mixed_flags_stay_apart():
+    """A keyless group folds into one rep per tag set, never into another's."""
+    input_docs = [
+        VertexRep(vertex={"a": 1}, lookup_only=True),
+        VertexRep(vertex={"b": 2}),
+        VertexRep(vertex={"c": 3}, lookup_only=True),
+    ]
+    output = fuse_doc_basis(input_docs, index_keys=("_key",))
+    assert [(o.lookup_only, o.vertex) for o in output] == [
+        (True, {"a": 1, "c": 3}),
+        (False, {"b": 2}),
+    ]

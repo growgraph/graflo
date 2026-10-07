@@ -500,20 +500,27 @@ vertex. The prefix keeps the two sides' keys apart even when both are called
 origins: {left: maintenance, right: sensors}
 ```
 
-- An origin is a letter followed by letters, digits or single underscores. The
-  two must differ, and neither may name a secondary identity a member declares
-  (`origin`).
+- An origin is a letter followed by letters, digits or single underscores, and
+  not `identity` or `secondary`. The two must differ, and neither may name a
+  secondary identity a member declares (`origin`).
 - A member whose `local_key` tag differs from its origin is its own key space:
   its key is named by the tag (`<tag>__f`, identity `<tag>`). Members of one
-  side with the same key field and the same key space share one identity.
+  side share a lookup identity only when they share the key field and the key
+  space.
 - When one key space brings two different key fields to one type, each
-  identity is named `<space>__<fields>`.
-- A key listed as a property branch of `identity` is not demoted and keeps its
-  name. A key a member already declares as a secondary identity keeps that one.
+  identity is named `<space>__<fields>`. A secondary identity a member already
+  declares under that name over other fields is refused (`key space`).
+- A key listed as a property branch of `identity` is still demoted, but keeps
+  its name. Two members of one side in different key spaces whose key is that
+  one field are refused (`key space`), even when a member declares it as a
+  secondary identity: their ids would share one column. Tag them alike, or do
+  not list the key as a branch.
+- A key a member already declares as a secondary identity keeps that
+  declaration and its name, for one key space.
 - A demoted key is named by its origin, so renaming it in `properties` or a
   canonical map is refused (`double_home`).
-- `<origin>__f` must fit the database's identifier limit; PostgreSQL
-  truncates names longer than 63 characters.
+- On a PostgreSQL target, a `<space>__f` name longer than 63 bytes is refused
+  (`identifier`); set a shorter `origins` or `local_key` tag.
 
 Set `retire: keep` on the equivalence to leave the old key fields as plain
 properties instead.
@@ -686,9 +693,11 @@ the type, add it to a derived branch's `sources`.
 The rules:
 
 - Owners run first. The union orders the resources so that a type's owners
-  run before the resources attached to it, and every resource that writes a
-  type runs before the ones that only find it. When these constraints form a
-  cycle, the declared order is kept.
+  run before the resources of their side attached to it, and every other
+  resource that writes a type runs before the ones that only find it. An owner
+  of the other side does not constrain an attached resource, because it never
+  writes the key that resource finds by. When these constraints form a cycle,
+  the resources in it keep their declared order among themselves.
 - An attached record never creates a vertex. One that finds no vertex is
   skipped and counted; one that finds several follows the ingestion model's
   `endpoints_on_ambiguous` (`all`, the default, writes onto each). The counts
@@ -842,6 +851,7 @@ The schema union refuses on its own after the names are settled:
 | `MergeIdentityError` | members disagree on their key, a declared key some member cannot fill, or a funnel over a member declaring its `digest_field` | [declare the key](#keying-the-merged-type), or set `digest_field` |
 | `MergeIdentityError` (`origin`) | an origin that is not a valid name, two sides with one origin, or an origin a member's secondary identity already uses | set `origins` on the op |
 | `MergeIdentityError` (`key space`) | a member tagged differently by two resources, a tag that is not a valid name or names a member's secondary identity, or one key space on both sides | give the member one tag, or another one |
+| `MergeIdentityError` (`identifier`) | on a PostgreSQL target, a demoted key's `<space>__f` name longer than 63 bytes | set a shorter `origins` or `local_key` tag |
 | `MergeIdentityError` (`ambiguous reference`, finding `ambiguity`) | a resource that would find one type by two demoted keys | tag the members alike, or produce each from its own resource |
 | type or unit conflict | a property declared with two types or two units | retype or re-ground one side first |
 | `AlignmentConflictError` | a derived branch breaks [its rules](#rules-a-derived-branch-must-follow) | fix the derivation |
@@ -941,8 +951,10 @@ graflo merge manifest_maintenance.yaml manifest_sensors.yaml \
 `graflo merge ... -m LABEL` also records the union as a commit with two parents
 in the commit store (`--store`, default `.graflo/commits`). Both inputs must
 already be commits in that store; start the second input's history with
-`graflo commit --root`. The merged manifest is stamped with its parents before
-it is written, so the file carries its own lineage. See
+`graflo commit --root`. When the union names keys by origin, the resolved
+`origins` are recorded with the op, so renaming a parent's schema later does not
+change what the recorded union produces. The merged manifest is stamped with its
+parents before it is written, so the file carries its own lineage. See
 [Version control](versioning.md#a-union-is-recorded-too).
 
 ## Rules and limits

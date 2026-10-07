@@ -551,12 +551,15 @@ class ClusterResolution:
     declared: DeclaredMaps
     findings: tuple[Any, ...] = ()
     graph: Any = None
-    #: Each side's origin name, and the sides whose origin the union names
-    #: something by: a demoted key, or a ``local_key`` tag left to default.
+    #: Each side's origin name.
     origins: Mapping[Side, str] = field(
         default_factory=lambda: {"left": "left", "right": "right"}
     )
-    origin_sides: frozenset[Side] = frozenset()
+    #: Each side's merged classes whose local keys its origin tags: a
+    #: ``local_key`` source with its tag omitted, or a key merge adds for a
+    #: member no key source covers. With the demoted keys whose key space is
+    #: the origin, these are what the union names by a side's origin.
+    origin_tagged: Mapping[Side, frozenset[str]] = field(default_factory=dict)
     #: Each re-keyed member whose own key is demoted, ``(side, member)``, to
     #: that key's canonical fields before the origin prefix.
     demoted_keys: Mapping[tuple[Side, str], tuple[str, ...]] = field(
@@ -706,7 +709,6 @@ def resolve_clusters(
     left: GraphManifest,
     right: GraphManifest,
     canonical_maps: Sequence[tuple[Side, CanonicalMap]] = (),
-    origins: Mapping[Side, str] | None = None,
 ) -> ClusterResolution:
     """Resolve *op*'s groups and build the per-side composite relabel.
 
@@ -714,7 +716,7 @@ def resolve_clusters(
     ``op.canonical_maps``. *left* / *right* are the manifests about to be
     merged, in their own names: the vocabulary, the equivalences and
     ``op.renames`` are resolved together over those names, in one pass (see
-    :mod:`~graflo.architecture.evolution.naming_graph`). *origins* default to
+    :mod:`~graflo.architecture.evolution.naming_graph`). Each side's origin is
     :func:`~graflo.architecture.evolution.naming_graph.merge_origins`.
 
     Raises:
@@ -726,9 +728,7 @@ def resolve_clusters(
     """
     from .naming_graph import resolve_naming
 
-    return resolve_naming(
-        op, left=left, right=right, canonical_maps=canonical_maps, origins=origins
-    )
+    return resolve_naming(op, left=left, right=right, canonical_maps=canonical_maps)
 
 
 def validate_and_complete_canonical_map(
