@@ -842,6 +842,8 @@ def merge_three_way(
     *,
     resolutions: list[ConflictResolution] | None = None,
     hints: RenameHints | None = None,
+    left_hints: RenameHints | None = None,
+    right_hints: RenameHints | None = None,
 ) -> tuple[GraphManifest | None, MergeResult]:
     """Reconcile *left* and *right*, both descended from *base*.
 
@@ -854,6 +856,10 @@ def merge_three_way(
         hints: Rename hints for the two diffs -- renames are never *inferred*
             (a drop plus an add is not a rename), so a rename on either side
             needs a hint to be seen as one.
+        left_hints: Hints for the left diff alone, in place of *hints*. A
+            hint is emitted as a rename, so a rename only one side made belongs
+            in that side's hints (see :meth:`RenameHints.from_ops`).
+        right_hints: Hints for the right diff alone, in place of *hints*.
 
     Returns:
         ``(merged_manifest_or_None, result)``. The manifest is ``None`` exactly
@@ -871,8 +877,12 @@ def merge_three_way(
         resolution.slot_key: resolution for resolution in (resolutions or [])
     }
 
-    left_ops, left_warnings = diff_manifests_verified(base, left, hints=hints)
-    right_ops, right_warnings = diff_manifests_verified(base, right, hints=hints)
+    left_ops, left_warnings = diff_manifests_verified(
+        base, left, hints=left_hints or hints
+    )
+    right_ops, right_warnings = diff_manifests_verified(
+        base, right, hints=right_hints or hints
+    )
     warnings = [f"left: {w}" for w in left_warnings]
     warnings += [f"right: {w}" for w in right_warnings]
     if warnings:
@@ -1146,6 +1156,8 @@ def re_merge(
     right: GraphManifest,
     *,
     hints: RenameHints | None = None,
+    left_hints: RenameHints | None = None,
+    right_hints: RenameHints | None = None,
 ) -> tuple[GraphManifest | None, MergeResult]:
     """Re-run a recorded merge with its resolutions pre-applied.
 
@@ -1162,20 +1174,32 @@ def re_merge(
         left: The (possibly advanced) left state.
         right: The right state.
         hints: Rename hints for the underlying diffs.
+        left_hints: Hints for the left diff alone, as in :func:`merge_three_way`.
+        right_hints: Hints for the right diff alone.
 
     Returns:
         ``(merged_or_None, result)``, as :func:`merge_three_way`.
     """
+
     # What *would* conflict this time, before any recorded decision is applied.
     # Comparing against the conflicts that survive the replay instead would
     # report every resolution that did its job as "not needed" -- precisely
     # backwards, and the reading a maintainer would act on by deleting it.
-    _unresolved, dry = merge_three_way(base, left, right, hints=hints)
+    def run(resolutions: list[ConflictResolution] | None):
+        return merge_three_way(
+            base,
+            left,
+            right,
+            resolutions=resolutions,
+            hints=hints,
+            left_hints=left_hints,
+            right_hints=right_hints,
+        )
+
+    _unresolved, dry = run(None)
     contested = {conflict.slot_key for conflict in dry.conflicts}
 
-    merged, result = merge_three_way(
-        base, left, right, resolutions=recipe.resolutions, hints=hints
-    )
+    merged, result = run(recipe.resolutions)
 
     recorded = {resolution.slot_key for resolution in recipe.resolutions}
     replayed = sorted(recorded & contested)

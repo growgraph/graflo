@@ -197,6 +197,24 @@ def invert_ops(
     return inverses, blockers
 
 
+def inverse_per_op(
+    ops: list[ManifestOp], *, manifest: GraphManifest
+) -> list[ManifestOp | None]:
+    """Each op's inverse, aligned with *ops*; ``None`` where there is none.
+
+    Each inverse is computed against the state before its own op, as in
+    :func:`invert_ops`. An op that changed nothing also gets ``None``.
+    """
+    from .apply import apply_evolution
+
+    out: list[ManifestOp | None] = []
+    current = manifest
+    for op in ops:
+        out.append(invert_op(op, manifest=current))
+        current = apply_evolution(current, [op], bump_version=False, finish_init=False)
+    return out
+
+
 # -- per-op inverses ----------------------------------------------------
 
 

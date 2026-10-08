@@ -210,6 +210,18 @@ class History(ConfigBaseModel):
         path.reverse()
         return path
 
+    def ops_between(self, ancestor: str, descendant: str) -> list[Any] | None:
+        """The ops replayed from *ancestor* to *descendant*, oldest first.
+
+        Follows first parents, as a checkout does. ``None`` when *ancestor* is
+        not on that path.
+        """
+        path = self.first_parent_path(descendant)
+        ids = [commit.id for commit in path]
+        if ancestor not in ids:
+            return None
+        return [op for commit in path[ids.index(ancestor) + 1 :] for op in commit.ops]
+
     def linearize(self) -> list[Commit]:
         """The single path through a linear history, oldest first.
 

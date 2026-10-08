@@ -159,6 +159,43 @@ def test_a_rename_collides_with_an_edit_to_the_thing_renamed() -> None:
     assert result.conflicts
 
 
+def test_a_rename_hinted_for_its_own_side_conflicts_as_a_rename() -> None:
+    """A hint is emitted as a rename, so it belongs to the side that renamed."""
+    from graflo.architecture.evolution.autogenerate import RenameHints
+
+    base = _person(["id"])
+    renamed = _manifest([_vertex("customer", ["id"], ["id"])])
+    edited = _person(["id", "age"])
+
+    merged, result = merge_three_way(
+        base,
+        renamed,
+        edited,
+        left_hints=RenameHints(vertices={"person": "customer"}),
+    )
+    assert merged is None
+    (conflict,) = result.conflicts
+    assert [op.op for op in conflict.left_ops] == ["rename_vertices"]
+    assert [op.op for op in conflict.right_ops] == ["add_vertex_properties"]
+
+
+def test_hints_from_ops_chain_renames_and_drop_names_the_base_lacks() -> None:
+    from graflo.architecture.evolution.autogenerate import RenameHints
+
+    hints = RenameHints.from_ops(
+        [
+            RenameVerticesOp(renames={"person": "customer"}),
+            ops_module.RenameVertexPropertiesOp(renames={"customer": {"id": "key"}}),
+            RenameVerticesOp(renames={"customer": "client", "ghost": "phantom"}),
+            AddVertexPropertiesOp(additions={"client": ["age"]}),
+        ],
+        base=_person(["id"]),
+    )
+    assert hints.vertices == {"person": "client"}
+    assert hints.vertex_properties == {"client": {"id": "key"}}
+    assert hints.relations == {} and hints.resources == {}
+
+
 KNOWS = {"source": "person", "target": "company", "relation": "knows"}
 
 
@@ -634,6 +671,13 @@ def test_unrelated_lineages_have_no_merge_base() -> None:
     )
     combined = History(commits=[*history.commits, stranger])
     assert find_merge_base(combined, left.id, stranger.id) is None
+
+
+def test_the_ops_between_two_commits_follow_first_parents() -> None:
+    history, (root, left, right) = _linear_history()
+    assert history.ops_between(root.id, left.id) == list(left.ops)
+    assert history.ops_between(left.id, left.id) == []
+    assert history.ops_between(left.id, right.id) is None
 
 
 def test_a_commit_is_its_own_merge_base_with_a_descendant() -> None:

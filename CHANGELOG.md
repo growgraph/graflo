@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.16.5]
+
+### Added
+
+- **`RenameHints.from_ops`**: the renames an op list performs on a base, chained, as diff hints.
+- **`merge_three_way` / `re_merge`** take `left_hints` and `right_hints`, so a rename one side
+  made is seen as a rename on that side only.
+- **`History.ops_between`**: the ops from an ancestor commit to a descendant along first parents.
+- **`inverse_per_op`**: each op's inverse, aligned with the ops.
+
+### Fixed
+
+- **PostgreSQL introspection** marks a column unique only for a single-column `UNIQUE`
+  constraint, as the SQLAlchemy provider does; a composite constraint marks none of its columns.
+
 ## [1.16.4]
 
 ### Breaking

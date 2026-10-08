@@ -160,6 +160,116 @@ class RenameHints(ConfigBaseModel):
             )
         return self
 
+    @classmethod
+    def from_ops(cls, ops: list[ManifestOp], *, base: GraphManifest) -> RenameHints:
+        """The renames *ops* perform on *base*, as hints for diffing it.
+
+        Renames chain (``A → B`` then ``B → C`` is ``A → C``), and a property
+        rename follows its owner's later renames. A name *base* does not have is
+        left out: renaming an element the ops themselves added is part of that
+        addition, not a rename of anything in *base*.
+        """
+        vertices: dict[str, str] = {}
+        relations: dict[str, str] = {}
+        resources: dict[str, str] = {}
+        vertex_properties: dict[str, dict[str, str]] = {}
+        edge_properties: dict[str, dict[str, str]] = {}
+        for op in ops:
+            if isinstance(op, RenameVerticesOp):
+                vertices = _chain_renames(vertices, op.renames)
+                vertex_properties = {
+                    op.renames.get(owner, owner): fields
+                    for owner, fields in vertex_properties.items()
+                }
+            elif isinstance(op, RenameRelationsOp):
+                relations = _chain_renames(relations, op.renames)
+                edge_properties = {
+                    op.renames.get(owner, owner): fields
+                    for owner, fields in edge_properties.items()
+                }
+            elif isinstance(op, RenameResourcesOp):
+                resources = _chain_renames(resources, op.renames)
+            elif isinstance(op, RenameVertexPropertiesOp):
+                for owner, renames in op.renames.items():
+                    vertex_properties[owner] = _chain_renames(
+                        vertex_properties.get(owner, {}), renames
+                    )
+            elif isinstance(op, RenameEdgePropertiesOp):
+                for owner, renames in op.renames.items():
+                    edge_properties[owner] = _chain_renames(
+                        edge_properties.get(owner, {}), renames
+                    )
+
+        base_vertices = _vertices(base)
+        base_relation_fields: dict[str, set[str]] = {}
+        for (_s, _t, relation), edge in _edges(base).items():
+            if relation:
+                base_relation_fields.setdefault(relation, set()).update(
+                    edge.property_names
+                )
+        base_resources = (
+            {r.name for r in base.ingestion_model.resources}
+            if base.ingestion_model is not None
+            else set()
+        )
+        vertex_origin = {new: old for old, new in vertices.items()}
+        relation_origin = {new: old for old, new in relations.items()}
+        return cls(
+            vertices={
+                old: new
+                for old, new in vertices.items()
+                if old in base_vertices and old != new
+            },
+            relations={
+                old: new
+                for old, new in relations.items()
+                if old in base_relation_fields and old != new
+            },
+            resources={
+                old: new
+                for old, new in resources.items()
+                if old in base_resources and old != new
+            },
+            vertex_properties={
+                owner: kept
+                for owner, fields in vertex_properties.items()
+                if (vertex := base_vertices.get(vertex_origin.get(owner, owner)))
+                is not None
+                and (
+                    kept := {
+                        old: new
+                        for old, new in fields.items()
+                        if old in vertex.property_names and old != new
+                    }
+                )
+            },
+            edge_properties={
+                owner: kept
+                for owner, fields in edge_properties.items()
+                if (
+                    kept := {
+                        old: new
+                        for old, new in fields.items()
+                        if old
+                        in base_relation_fields.get(
+                            relation_origin.get(owner, owner), set()
+                        )
+                        and old != new
+                    }
+                )
+            },
+        )
+
+
+def _chain_renames(renames: dict[str, str], then: dict[str, str]) -> dict[str, str]:
+    """*renames* followed by *then*, keyed by the original names."""
+    out = {old: then.get(new, new) for old, new in renames.items()}
+    current = set(renames.values())
+    for old, new in then.items():
+        if old not in current and old not in out:
+            out[old] = new
+    return out
+
 
 def diff_manifests(
     base: GraphManifest,

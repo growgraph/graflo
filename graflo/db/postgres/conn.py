@@ -512,7 +512,7 @@ class PostgresConnection(PostgresTargetWriteMixin, Connection):
     def _get_unique_columns_pg_catalog(
         self, table_name: str, schema_name: str
     ) -> list[str]:
-        """Get columns in UNIQUE constraints using pg_catalog (fallback method)."""
+        """Single-column UNIQUE constraints via pg_catalog (fallback method)."""
         query = """
             SELECT a.attname
             FROM pg_catalog.pg_constraint con
@@ -522,6 +522,7 @@ class PostgresConnection(PostgresTargetWriteMixin, Connection):
             WHERE n.nspname = %s
               AND c.relname = %s
               AND con.contype = 'u'
+              AND cardinality(con.conkey) = 1
               AND a.attnum > 0
               AND NOT a.attisdropped
             ORDER BY array_position(con.conkey, a.attnum);
@@ -533,24 +534,28 @@ class PostgresConnection(PostgresTargetWriteMixin, Connection):
     def get_unique_columns(
         self, table_name: str, schema_name: str | None = None
     ) -> list[str]:
-        """Get column names that participate in any UNIQUE constraint.
+        """Columns carrying a single-column UNIQUE constraint.
 
-        Tries information_schema first, falls back to pg_catalog if needed.
+        A multi-column constraint says nothing about any one of its columns, so
+        it is left out. Tries information_schema first, falls back to pg_catalog.
         """
         if schema_name is None:
             schema_name = self.config.schema_name or "public"
 
         try:
             query = """
-                SELECT kcu.column_name
+                SELECT MIN(kcu.column_name)
                 FROM information_schema.table_constraints tc
                 JOIN information_schema.key_column_usage kcu
                     ON tc.constraint_name = kcu.constraint_name
                     AND tc.table_schema = kcu.table_schema
+                    AND tc.table_name = kcu.table_name
                 WHERE tc.constraint_type = 'UNIQUE'
                   AND tc.table_schema = %s
                   AND tc.table_name = %s
-                ORDER BY kcu.ordinal_position;
+                GROUP BY tc.constraint_name
+                HAVING COUNT(*) = 1
+                ORDER BY MIN(kcu.column_name);
             """
             with self.conn.cursor() as cursor:
                 cursor.execute(query, (schema_name, table_name))

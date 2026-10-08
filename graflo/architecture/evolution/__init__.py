@@ -266,7 +266,14 @@ _AUTOGENERATE_EXPORTS = frozenset(
 )
 
 _INVERSE_EXPORTS = frozenset(
-    {"IRREVERSIBLE", "invert_op", "invert_ops", "irreversible_reason", "is_reversible"}
+    {
+        "IRREVERSIBLE",
+        "inverse_per_op",
+        "invert_op",
+        "invert_ops",
+        "irreversible_reason",
+        "is_reversible",
+    }
 )
 
 _INVERSE_PLAN_EXPORTS = frozenset(
@@ -517,6 +524,7 @@ __all__ = [
     "graph_hash",
     "identity_to_ops",
     "ingestion_hash",
+    "inverse_per_op",
     "invert_op",
     "invert_ops",
     "irreversible_reason",
