@@ -16,6 +16,7 @@ from graflo.architecture.evolution.hashing import manifest_hash
 from graflo.architecture.evolution.inverse import (
     _HANDLERS,
     IRREVERSIBLE,
+    inverse_per_op,
     invert_op,
     invert_ops,
     irreversible_reason,
@@ -658,3 +659,24 @@ class TestInvertSequence:
 
         assert len(inverses) == 1
         assert any("merge_vertices" in blocker for blocker in blockers)
+
+
+def test_each_op_gets_its_own_inverse_in_order() -> None:
+    manifest = _manifest()
+    forward = [
+        op_from_dict(
+            {"op": "add_vertex_properties", "additions": {"party": ["phone"]}}
+        ),
+        op_from_dict({"op": "rename_vertices", "renames": {"party": "client"}}),
+    ]
+    inverses = inverse_per_op(forward, manifest=manifest)
+
+    assert len(inverses) == len(forward)
+    assert all(inverse is not None for inverse in inverses)
+    assert [inverse.op for inverse in inverses if inverse] == [
+        "remove_vertex_properties",
+        "rename_vertices",
+    ]
+    rename_back = inverses[1]
+    assert rename_back is not None
+    assert rename_back.model_dump()["renames"] == {"client": "party"}

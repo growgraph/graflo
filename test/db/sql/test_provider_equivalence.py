@@ -32,7 +32,8 @@ CREATE TABLE {SCHEMA}.author (
 CREATE TABLE {SCHEMA}.field (
     id    integer PRIMARY KEY,
     name  text NOT NULL,
-    level integer
+    level integer,
+    UNIQUE (name, level)
 );
 CREATE TABLE {SCHEMA}.author_field (
     author_id integer NOT NULL REFERENCES {SCHEMA}.author(id),
