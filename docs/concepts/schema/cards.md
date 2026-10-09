@@ -138,6 +138,8 @@ for vertex in schema.core_schema.vertex_config.vertices:
 
 ## What to read next
 
+- [Schema context for a language model](llm_context.md): slice a schema around
+  seeds and render it for extraction.
 - [Vertex identity](vertex_identity.md): the identity modes a `VertexCard`
   reports.
 - [Backend indexes](backend_indexes.md): the indexes that make a vertex type an

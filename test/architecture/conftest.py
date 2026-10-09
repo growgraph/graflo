@@ -647,3 +647,91 @@ def context_schema():
             vertex_indexes={"person": [Index(fields=["name"])]},
         ),
     )
+
+
+@pytest.fixture()
+def extraction_schema():
+    """Schema exercising what text extraction renders: descriptions, synonyms,
+    anchors, units, lists, every identity mode, secondary identity, and edge
+    properties."""
+    from graflo.architecture.schema.core import CoreSchema
+    from graflo.architecture.schema.document import Schema
+    from graflo.architecture.schema.edge import Edge
+    from graflo.architecture.schema.metadata import GraphMetadata
+    from graflo.architecture.schema.semantics import FieldSemantics, Semantics
+    from graflo.architecture.schema.vertex import Field, SecondaryIdentity, Vertex
+
+    vertices = [
+        Vertex(
+            name="Person",
+            description="A human  actor.",
+            semantics=Semantics(
+                iri="https://schema.org/Person", synonyms=["employee", "staff"]
+            ),
+            properties=[
+                Field(name="email", type="string"),
+                Field(name="phone", type="string"),
+                Field(name="name", type="string", description="Full name."),
+                Field(name="tags", type="list", item_type="string"),
+            ],
+            identity=["email"],
+            secondary_identities=[SecondaryIdentity(fields=["phone"])],
+        ),
+        Vertex(
+            name="Company",
+            properties=[Field(name="tax_id", type="string"), Field(name="title")],
+            identity=["tax_id"],
+        ),
+        Vertex(
+            name="Substation",
+            properties=[
+                Field(name="code", type="string"),
+                Field(
+                    name="voltage",
+                    type="float",
+                    semantics=FieldSemantics(unit="kV", synonyms=["rating"]),
+                ),
+            ],
+            hash_identity_properties=["code"],
+        ),
+        Vertex(
+            name="Machine",
+            properties=[Field(name="serial"), Field(name="plate_no")],
+            identity_funnel={
+                "branches": [
+                    {"id": "by_serial", "fields": ["serial"]},
+                    {"id": "by_plate", "fields": ["plate_no"]},
+                ]
+            },
+        ),
+        Vertex(
+            name="WorkOrder",
+            properties=[Field(name="summary", type="string")],
+            assigned=True,
+        ),
+        Vertex(
+            name="Note",
+            properties=[Field(name="body", type="string")],
+            blank=True,
+        ),
+    ]
+    edges = [
+        Edge(
+            source="Person",
+            target="Company",
+            relation="WORKS_AT",
+            description="Employment.",
+            properties=[Field(name="since", type="datetime")],
+        ),
+        Edge(
+            source="Company", target="Substation", relation="OPERATES", directed=False
+        ),
+        Edge(source="Note", target="WorkOrder", relation=None),
+    ]
+    return Schema(
+        metadata=GraphMetadata(name="extraction-fixture", version="1.0.0"),
+        core_schema=CoreSchema(
+            vertex_config=VertexConfig(vertices=vertices),
+            edge_config=EdgeConfig(edges=edges),
+        ),
+    )

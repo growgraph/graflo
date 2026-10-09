@@ -196,3 +196,47 @@ def test_max_hops_bounds_candidates(wide_schema):
     _, near = subschema(wide_schema, ["v30"], budget=UNBOUNDED, max_hops=1)
     _, far = subschema(wide_schema, ["v30"], budget=UNBOUNDED, max_hops=3)
     assert near.budget.elements_used < far.budget.elements_used
+
+
+def test_edge_seed_admits_the_edge_and_both_endpoints(wide_schema):
+    sliced, _ = subschema(wide_schema, [("v10", "v11", "r10")], budget=UNBOUNDED)
+    vertex_names = {v.name for v in sliced.core_schema.vertex_config.vertices}
+    assert {"v10", "v11"} <= vertex_names
+    assert ("v10", "v11", "r10") in sliced.core_schema.edge_config
+
+
+def test_edge_seed_survives_a_tight_budget(wide_schema):
+    seed = ("v10", "v11", "r10")
+    sliced, report = subschema(
+        wide_schema, [seed], budget=Budget(max_elements=1, max_tokens=None)
+    )
+    assert {v.name for v in sliced.core_schema.vertex_config.vertices} == {"v10", "v11"}
+    assert [e.edge_id for e in sliced.core_schema.edge_config.values()] == [seed]
+    assert report.budget.exhausted_by == "elements"
+
+
+def test_edge_seed_survives_token_trimming(wide_schema):
+    seed = ("v00", "v02", "hub")
+    sliced, _ = subschema(wide_schema, [seed], budget=Budget(max_tokens=1))
+    assert seed in sliced.core_schema.edge_config
+
+
+def test_rejects_unknown_seed_edge(context_schema):
+    with pytest.raises(KeyError):
+        subschema(context_schema, [("person", "city", "works_at")])
+
+
+def test_mixes_vertex_and_edge_seeds(context_schema):
+    sliced, _ = subschema(
+        context_schema,
+        ["orphan", ("company", "city", "hq_in")],
+        budget=Budget(max_elements=4, max_tokens=None),
+    )
+    vertex_names = {v.name for v in sliced.core_schema.vertex_config.vertices}
+    assert {"orphan", "company", "city"} <= vertex_names
+    assert ("company", "city", "hq_in") in sliced.core_schema.edge_config
+
+
+def test_relationless_edge_seed(context_schema):
+    sliced, _ = subschema(context_schema, [("doc", "person", None)], budget=UNBOUNDED)
+    assert ("doc", "person", None) in sliced.core_schema.edge_config

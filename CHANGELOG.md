@@ -14,6 +14,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   resources of a manifest, or infers schema, resources and bindings from the ontology when it has none.
 - **`RdfInferenceManager.create_bindings(data_file=…)`**: connectors read the data from a file other
   than the ontology.
+- **`render_type_sheet`** (`graflo.architecture.schema.context`): a schema as a byte-deterministic,
+  closed-world type sheet for a language-model prompt.
+- **`instance_json_schema`**: the flat JSON Schema of one extraction (vertices, edges, unmapped;
+  enums from the schema), valid as an OpenAI strict, `json_object` or Ollama output format.
+- **`iter_elements`** / **`ElementText`**: one retrieval text per vertex, edge and property, with
+  synonyms, IRIs and units; versioned by `ELEMENT_TEXT_VERSION`.
+- **`coerce_value`** (`graflo.architecture.schema.coerce`): a raw value coerced to its field's
+  `FieldType`, stripping the declared unit; failures raise a typed `CoercionError`.
+- **`subschema`** accepts an edge id as a seed and admits the edge with both endpoints.
+
+### Changed
+
+- Value inference reads `YYYY-MM-DDTHH:MM` (no seconds) as `DATETIME`.
 
 ## [1.16.5]
 

@@ -66,7 +66,7 @@ def _drop_properties_for(vertex: Vertex, max_properties: int | None) -> list[str
 
 def subschema(
     schema: Schema,
-    seeds: Sequence[str],
+    seeds: Sequence[str | EdgeId],
     *,
     budget: Budget | None = None,
     max_hops: int = 3,
@@ -78,11 +78,13 @@ def subschema(
 
     Seeds are always admitted, even when the budget cannot afford them: a slice
     that omits what the caller explicitly asked about answers a different
-    question than the one posed.
+    question than the one posed. An edge seed admits the edge and both of its
+    endpoints, which then count as vertex seeds.
 
     Args:
         schema: Source schema. Never mutated.
-        seeds: Vertex types to centre the slice on. Must all be declared.
+        seeds: Vertex types, or edge ids ``(source, target, relation)``, to
+            centre the slice on. Must all be declared.
         budget: Element and token ceilings. Defaults to :class:`Budget`.
         max_hops: How far from a seed a type may be and still be a candidate.
         weights: Ranking weights for admission order.
@@ -97,11 +99,24 @@ def subschema(
         KeyError: if a seed is not declared in *schema*.
     """
     if not seeds:
-        raise ValueError("subschema requires at least one seed vertex type")
+        raise ValueError("subschema requires at least one seed vertex type or edge")
 
     graph = graph or SchemaGraph.from_schema(schema)
     budget = budget or Budget()
-    seed_list = list(dict.fromkeys(seeds))
+    declared_edges = set(graph.edge_ids)
+    seed_vertices: list[str] = []
+    seed_edges: list[EdgeId] = []
+    for seed in seeds:
+        if isinstance(seed, str):
+            seed_vertices.append(seed)
+            continue
+        edge_id: EdgeId = (seed[0], seed[1], seed[2])
+        if edge_id not in declared_edges:
+            raise KeyError(f"Unknown seed edge {edge_id!r}")
+        if edge_id not in seed_edges:
+            seed_edges.append(edge_id)
+        seed_vertices.extend(edge_id[:2])
+    seed_list = list(dict.fromkeys(seed_vertices))
     for seed in seed_list:
         if seed not in graph.vertex_types:
             raise KeyError(
@@ -140,8 +155,12 @@ def subschema(
     )
 
     admitted: list[str] = list(seed_list)
-    elements_used = len(admitted)
-    tokens_used = envelope_cost + sum(vertex_cost[name] for name in admitted)
+    elements_used = len(admitted) + len(seed_edges)
+    tokens_used = (
+        envelope_cost
+        + sum(vertex_cost[name] for name in admitted)
+        + sum(edge_cost[edge_id] for edge_id in seed_edges)
+    )
     exhausted: str = "none"
 
     for signal in ranked:
@@ -163,12 +182,15 @@ def subschema(
         tokens_used += cost
 
     admitted_set = set(admitted)
+    seed_edge_set = set(seed_edges)
     rank_position = {signal.name: index for index, signal in enumerate(ranked)}
     candidate_edges = sorted(
         (
             edge_id
             for edge_id in graph.edge_ids
-            if edge_id[0] in admitted_set and edge_id[1] in admitted_set
+            if edge_id[0] in admitted_set
+            and edge_id[1] in admitted_set
+            and edge_id not in seed_edge_set
         ),
         key=lambda edge_id: (
             min(rank_position[edge_id[0]], rank_position[edge_id[1]]),
@@ -208,7 +230,7 @@ def subschema(
         selection = select_induced(
             schema.core_schema,
             keep_vertices=set(seed_list) | set(trimmable_vertices),
-            keep_edge_ids=set(trimmable_edges),
+            keep_edge_ids=seed_edge_set | set(trimmable_edges),
             connectivity="induced",
         )
         sliced = build_subschema(schema, selection, drop_properties=drop_properties)
@@ -216,7 +238,7 @@ def subschema(
         estimated = estimate_tokens(payload)
         if budget.max_tokens is None or estimated <= budget.max_tokens:
             break
-        # Seeds are never trimmed: a slice that drops what the caller asked about
+        # Seeds — vertex and edge — are never trimmed: a slice that drops what the caller asked about
         # answers a different question. If the seeds alone blow the budget, the
         # overrun is reported rather than hidden.
         if trimmable_edges:

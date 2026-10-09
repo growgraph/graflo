@@ -35,8 +35,9 @@ from graflo.architecture.schema.vertex import FieldType
 #: Path segment appended when descending into a list of objects, e.g. ``items[].sku``.
 LIST_MARKER = "[]"
 
-_ISO_DATETIME_PATTERN = re.compile(
-    r"^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)?$"
+#: An ISO 8601 date, or date and time (seconds optional), with an optional offset.
+ISO_DATETIME_PATTERN = re.compile(
+    r"^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?$"
 )
 _LONG_TEXT_THRESHOLD = 256
 
@@ -267,7 +268,7 @@ def infer_field_type(values: list[Any]) -> tuple[FieldType, FieldType | None]:
     if all(isinstance(value, str) for value in non_null):
         if all(UUID_PATTERN.match(value) for value in non_null):
             return FieldType.UUID, None
-        if all(_ISO_DATETIME_PATTERN.match(value) for value in non_null):
+        if all(ISO_DATETIME_PATTERN.match(value) for value in non_null):
             return FieldType.DATETIME, None
 
     return FieldType.STRING, None

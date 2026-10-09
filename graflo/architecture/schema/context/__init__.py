@@ -34,6 +34,16 @@ from graflo.architecture.schema.context.card import (
     build_transform_card,
     build_vertex_card,
 )
+from graflo.architecture.schema.context.element_text import (
+    ELEMENT_TEXT_VERSION,
+    ElementText,
+    edge_text,
+    extractable_properties,
+    field_text,
+    iter_elements,
+    minted_key_fields,
+    vertex_text,
+)
 from graflo.architecture.schema.context.elision import (
     ElidedEdge,
     ElidedVertex,
@@ -45,20 +55,24 @@ from graflo.architecture.schema.context.graph import (
     SchemaPath,
     neighborhood_distances,
 )
+from graflo.architecture.schema.context.instance_shape import instance_json_schema
 from graflo.architecture.schema.context.rank import (
     RankingWeights,
     VertexSignals,
     score_vertices,
 )
 from graflo.architecture.schema.context.subschema import subschema
+from graflo.architecture.schema.context.type_sheet import render_type_sheet
 
 __all__ = [
+    "ELEMENT_TEXT_VERSION",
     "BaseCard",
     "Budget",
     "BudgetAccounting",
     "ConnectorCard",
     "DatabaseProfileCard",
     "EdgeCard",
+    "ElementText",
     "ElidedEdge",
     "ElidedVertex",
     "ElisionReport",
@@ -81,8 +95,16 @@ __all__ = [
     "build_resource_card",
     "build_transform_card",
     "build_vertex_card",
+    "edge_text",
     "estimate_tokens",
+    "extractable_properties",
+    "field_text",
+    "instance_json_schema",
+    "iter_elements",
+    "minted_key_fields",
     "neighborhood_distances",
+    "render_type_sheet",
     "score_vertices",
     "subschema",
+    "vertex_text",
 ]
