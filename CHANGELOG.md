@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.17.0s]
+
+### Added
+
+- **`RenameHints.to_ops`**: the rename ops a set of hints stands for.
+- **`land_rdf_facts`** (`graflo.hq.rdf_landing`): binds the classes of an RDF facts file to the
+  resources of a manifest, or infers schema, resources and bindings from the ontology when it has none.
+- **`RdfInferenceManager.create_bindings(data_file=…)`**: connectors read the data from a file other
+  than the ontology.
+
 ## [1.16.5]
 
 ### Added

@@ -385,6 +385,7 @@ class RdfInferenceManager:
         *,
         endpoint_url: str | None = None,
         graph_uri: str | None = None,
+        data_file: str | Path | None = None,
     ) -> Bindings:
         """Create :class:`Bindings` from an RDF ontology.
 
@@ -397,6 +398,7 @@ class RdfInferenceManager:
             source: Path to an RDF file containing the ontology.
             endpoint_url: SPARQL endpoint for the data (ABox) at runtime.
             graph_uri: Named graph containing the data.
+            data_file: RDF file holding the data, when it is not *source*.
 
         Returns:
             Bindings with one SparqlConnector per class.
@@ -412,7 +414,7 @@ class RdfInferenceManager:
                 rdf_class=cls_uri,
                 endpoint_url=endpoint_url,
                 graph_uri=graph_uri,
-                rdf_file=Path(source) if not endpoint_url else None,
+                rdf_file=Path(data_file or source) if not endpoint_url else None,
                 typed_objects=typed.get(cls_name, []),
             )
             bindings.add_connector(connector)

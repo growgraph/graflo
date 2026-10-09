@@ -194,6 +194,10 @@ def test_hints_from_ops_chain_renames_and_drop_names_the_base_lacks() -> None:
     assert hints.vertices == {"person": "client"}
     assert hints.vertex_properties == {"client": {"id": "key"}}
     assert hints.relations == {} and hints.resources == {}
+    assert [op.op for op in hints.to_ops()] == [
+        "rename_vertices",
+        "rename_vertex_properties",
+    ]
 
 
 KNOWS = {"source": "person", "target": "company", "relation": "knows"}

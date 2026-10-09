@@ -160,6 +160,29 @@ class RenameHints(ConfigBaseModel):
             )
         return self
 
+    def to_ops(self) -> list[ManifestOp]:
+        """The rename ops these hints stand for, in the order a diff emits them."""
+        ops: list[ManifestOp] = []
+        if self.vertices:
+            ops.append(RenameVerticesOp(renames=dict(self.vertices)))
+        if self.relations:
+            ops.append(RenameRelationsOp(renames=dict(self.relations)))
+        if self.resources:
+            ops.append(RenameResourcesOp(renames=dict(self.resources)))
+        if self.vertex_properties:
+            ops.append(
+                RenameVertexPropertiesOp(
+                    renames={k: dict(v) for k, v in self.vertex_properties.items()}
+                )
+            )
+        if self.edge_properties:
+            ops.append(
+                RenameEdgePropertiesOp(
+                    renames={k: dict(v) for k, v in self.edge_properties.items()}
+                )
+            )
+        return ops
+
     @classmethod
     def from_ops(cls, ops: list[ManifestOp], *, base: GraphManifest) -> RenameHints:
         """The renames *ops* perform on *base*, as hints for diffing it.
@@ -404,26 +427,7 @@ def _apply_quietly(base: GraphManifest, ops: list[ManifestOp]) -> GraphManifest 
 
 
 def _rename_ops(hints: RenameHints) -> list[ManifestOp]:
-    ops: list[ManifestOp] = []
-    if hints.vertices:
-        ops.append(RenameVerticesOp(renames=dict(hints.vertices)))
-    if hints.relations:
-        ops.append(RenameRelationsOp(renames=dict(hints.relations)))
-    if hints.resources:
-        ops.append(RenameResourcesOp(renames=dict(hints.resources)))
-    if hints.vertex_properties:
-        ops.append(
-            RenameVertexPropertiesOp(
-                renames={k: dict(v) for k, v in hints.vertex_properties.items()}
-            )
-        )
-    if hints.edge_properties:
-        ops.append(
-            RenameEdgePropertiesOp(
-                renames={k: dict(v) for k, v in hints.edge_properties.items()}
-            )
-        )
-    return ops
+    return hints.to_ops()
 
 
 def _vertex_structure_ops(
