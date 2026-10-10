@@ -95,7 +95,12 @@ from graflo.db.conn import (
     SchemaExistsError,
     consume_insert_edges_kwargs,
 )
-from graflo.db.cypher import cypher_rel_pattern, rel_merge_props_map_from_row_props
+from graflo.db.cypher import (
+    cypher_rel_pattern,
+    partition_by_absent_merge_props,
+    rel_absent_upsert_clause,
+    rel_merge_props_map_from_row_props,
+)
 from graflo.db.cypher.delete import delete_nodes, delete_relationships
 from graflo.db.field_type_support import assert_schema_supported
 from graflo.db.graph_introspection import GraphSchemaInferencer
@@ -907,28 +912,48 @@ class MemgraphConnection(Connection):
         source_match = ", ".join([f"{k}: row.source.{k}" for k in match_keys_source])
         target_match = ", ".join([f"{k}: row.target.{k}" for k in match_keys_target])
 
-        merge_props: tuple[str, ...] | None = None
-        if relationship_merge_properties_raw:
-            merge_props = tuple(relationship_merge_properties_raw)
-        if merge_props:
-            map_clause = rel_merge_props_map_from_row_props(merge_props)
-            merge_line = f"MERGE (s)-[r:{relation_name} {{{map_clause}}}]->(t)"
-        else:
-            merge_line = f"MERGE (s)-[r:{relation_name}]->(t)"
-
-        q = f"""
+        merge_props: tuple[str, ...] = tuple(relationship_merge_properties_raw or ())
+        groups = (
+            partition_by_absent_merge_props(
+                batch,
+                merge_props,
+                props_of=lambda row: row["props"],
+                ends_of=lambda row: (row["source"], row["target"]),
+            )
+            if merge_props
+            else [((), batch)]
+        )
+        for absent, group in groups:
+            if absent:
+                upsert = rel_absent_upsert_clause(
+                    relation_name,
+                    merge_props,
+                    absent,
+                    props_expr="row.props",
+                    source="s",
+                    target="t",
+                )
+            else:
+                if merge_props:
+                    map_clause = rel_merge_props_map_from_row_props(merge_props)
+                    merge_line = f"MERGE (s)-[r:{relation_name} {{{map_clause}}}]->(t)"
+                else:
+                    merge_line = f"MERGE (s)-[r:{relation_name}]->(t)"
+                upsert = (
+                    f"{merge_line}\n"
+                    "ON CREATE SET r = row.props\n"
+                    "ON MATCH SET r += row.props"
+                )
+            q = f"""
             UNWIND $batch AS row
             MATCH (s:{source_class} {{ {source_match} }})
             MATCH (t:{target_class} {{ {target_match} }})
-            {merge_line}
-            ON CREATE SET r = row.props
-            ON MATCH SET r += row.props
-        """
-
-        if not dry:
-            cursor = self.conn.cursor()
-            cursor.execute(q, {"batch": batch})
-            cursor.close()
+            {upsert}
+            """
+            if not dry:
+                cursor = self.conn.cursor()
+                cursor.execute(q, {"batch": group})
+                cursor.close()
 
     def fetch_docs(
         self,

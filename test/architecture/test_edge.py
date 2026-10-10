@@ -312,9 +312,10 @@ def test_tigergraph_runtime_fixed_relation_has_no_relation_attr(vertex_config_kg
     assert w is not None and w.direct_names == ["date"]
 
 
-def test_relationship_merge_property_names_defaults_to_direct_weights(
+def test_relationship_merge_property_names_is_empty_without_an_identity(
     vertex_config_kg,
 ):
+    """Properties are written, never matched: the endpoints and relation key the edge."""
     vertex_config = VertexConfig.from_dict(vertex_config_kg)
     edge = Edge.from_dict(
         {
@@ -327,7 +328,7 @@ def test_relationship_merge_property_names_defaults_to_direct_weights(
     profile = DatabaseProfile(db_flavor=DBType.NEO4J)
     vc_db = VertexConfigDBAware(vertex_config, profile)
     ec_db = EdgeConfigDBAware(EdgeConfig(edges=[edge]), vc_db, profile)
-    assert ec_db.relationship_merge_property_names(edge) == ["date", "relation"]
+    assert ec_db.relationship_merge_property_names(edge) == []
 
 
 def test_relationship_merge_property_names_prefers_first_identity(

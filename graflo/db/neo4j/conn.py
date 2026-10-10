@@ -42,7 +42,12 @@ from graflo.db.conn import (
     SchemaExistsError,
     consume_insert_edges_kwargs,
 )
-from graflo.db.cypher import cypher_rel_pattern, rel_merge_props_map_from_row_index
+from graflo.db.cypher import (
+    cypher_rel_pattern,
+    partition_by_absent_merge_props,
+    rel_absent_upsert_clause,
+    rel_merge_props_map_from_row_index,
+)
 from graflo.db.cypher.delete import delete_nodes, delete_relationships
 from graflo.db.cypher.traversal import cypher_graph_neighbors
 from graflo.db.field_type_support import assert_schema_supported
@@ -588,26 +593,42 @@ class Neo4jConnection(Connection):
 
         match_clause = "WHERE " + " AND ".join(source_match_str + target_match_str)
 
-        merge_props: tuple[str, ...] | None = None
-        if relationship_merge_properties_raw:
-            merge_props = tuple(relationship_merge_properties_raw)
-        if merge_props:
-            map_clause = rel_merge_props_map_from_row_index(merge_props)
-            merge_pattern = f"(source)-[r:{relation_name} {{{map_clause}}}]->(target)"
-        else:
-            merge_pattern = f"(source)-[r:{relation_name}]->(target)"
-
-        q = f"""
+        merge_props: tuple[str, ...] = tuple(relationship_merge_properties_raw or ())
+        rows = list(docs_edges or [])
+        groups = (
+            partition_by_absent_merge_props(
+                rows,
+                merge_props,
+                props_of=lambda row: row[2] if len(row) > 2 else None,
+                ends_of=lambda row: (row[0], row[1]),
+            )
+            if merge_props
+            else [((), rows)]
+        )
+        for absent, group in groups:
+            if absent:
+                upsert = rel_absent_upsert_clause(
+                    relation_name, merge_props, absent, props_expr="row[2]"
+                )
+            elif merge_props:
+                map_clause = rel_merge_props_map_from_row_index(merge_props)
+                upsert = (
+                    f"MERGE (source)-[r:{relation_name} {{{map_clause}}}]->(target)\n"
+                    "SET r += row[2]"
+                )
+            else:
+                upsert = (
+                    f"MERGE (source)-[r:{relation_name}]->(target)\nSET r += row[2]"
+                )
+            q = f"""
             WITH $batch AS batch
             UNWIND batch as row
             MATCH (source:{source_class}),
                   (target:{target_class}) {match_clause}
-                        MERGE {merge_pattern}
-                SET r += row[2]
-
-        """
-        if not dry:
-            self.execute(q, batch=docs_edges)
+            {upsert}
+            """
+            if not dry:
+                self.execute(q, batch=group)
 
     def insert_return_batch(
         self, docs: list[dict[str, Any]], class_name: str

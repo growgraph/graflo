@@ -330,29 +330,20 @@ class EdgeConfigDBAware:
         return runtime
 
     def relationship_merge_property_names(self, edge: Edge) -> list[str]:
-        """Relationship properties used for edge upsert/MERGE keys (per backend).
+        """Relationship properties that, with the endpoints, key an edge (per backend).
 
-        Uniqueness is ``(source_id, *identity_fields, target_id)`` for the **first**
-        logical ``identities`` key (endpoints are matched separately on vertices).
-        Additional ``identities`` keys are compiled into separate unique indexes
-        via :meth:`compile_identity_indexes` but do not change the writer merge key.
-
-        If that key yields no relationship fields, or ``identities`` is empty,
-        falls back to all declared edge attribute names. On PostgreSQL a
-        ``relation`` token yields no field and no fallback: each relation has its
-        own edge table, so the endpoints already key it.
+        An edge is keyed by its endpoints and relation. The **first** logical
+        ``identities`` key adds the properties it names, which is how parallel
+        edges between the same two vertices stay distinct; every other property
+        is written, never matched on. Additional ``identities`` keys are
+        compiled into separate indexes via :meth:`compile_identity_indexes` but
+        do not change the writer's key. Without ``identities`` the list is empty.
         """
-        db_flavor = self.db_profile.db_flavor
-        if edge.identities:
-            first = edge.identities[0]
-            props = self._identity_tokens_to_relationship_properties(first, db_flavor)
-            if props:
-                return props
-            if db_flavor == DBType.POSTGRES and "relation" in first:
-                return []
-        if edge.property_names:
-            return list(edge.property_names)
-        return []
+        if not edge.identities:
+            return []
+        return self._identity_tokens_to_relationship_properties(
+            edge.identities[0], self.db_profile.db_flavor
+        )
 
     @staticmethod
     def _identity_tokens_to_relationship_properties(

@@ -358,9 +358,19 @@ def _create_edge_key(
         raise RuntimeError(
             f"Cannot create the unique key of edge table {schema}.{table}: "
             f"{exc}. If the table holds duplicate edge rows (same endpoints and "
-            "merge properties), remove them and try again; the key also needs "
-            "PostgreSQL 15 or later."
+            "identity properties), remove them and try again. Edges told apart "
+            "only by a property are parallel edges: declare "
+            "`identities: [[source, target, <property>]]` on the edge to keep "
+            "them. The key also needs PostgreSQL 15 or later."
         ) from exc
+
+
+_KEY_COLUMNS_SQL = (
+    "SELECT array_agg(a.attname::text ORDER BY k.n) FROM pg_index i "
+    "CROSS JOIN LATERAL unnest(i.indkey::int2[]) WITH ORDINALITY AS k(attnum, n) "
+    "JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum "
+    "WHERE i.indexrelid = to_regclass(%s)"
+)
 
 
 def _ensure_edge_key(
@@ -369,7 +379,7 @@ def _ensure_edge_key(
     """Give *table* its key over *columns* unless the catalogue shows it in place.
 
     A table defined by an older release lacks the key an edge write conflicts
-    on. The table is locked first, against writers on other connections: two
+    on, or has one over other columns, which is rebuilt. The table is locked first, against writers on other connections: two
     ``CREATE INDEX`` of one name would race, and each holding its ``SHARE``
     lock into its insert would deadlock the other.
 
@@ -377,28 +387,34 @@ def _ensure_edge_key(
         RuntimeError: The key cannot be built, as over duplicate edge rows.
     """
     qualified = f"{_quote_ident(schema)}.{_quote_ident(table)}"
+    key_name = f"{_quote_ident(schema)}.{_quote_ident(_edge_key_index_name(table))}"
     cursor.execute(
-        "SELECT to_regclass(%s), to_regclass(%s)",
+        f"SELECT to_regclass(%s), to_regclass(%s), ({_KEY_COLUMNS_SQL})",
         (
-            f"{_quote_ident(schema)}.{_quote_ident(_edge_key_index_name(table))}",
+            key_name,
             f"{_quote_ident(schema)}.{_quote_ident(_edge_unique_index_name(table))}",
+            key_name,
         ),
     )
-    key, stale = cursor.fetchone()
-    if key is not None and stale is None:
+    key, stale, stored = cursor.fetchone()
+    current = list(stored or []) == list(columns)
+    if key is not None and stale is None and current:
         return
     cursor.execute(f"LOCK TABLE {qualified} IN SHARE ROW EXCLUSIVE MODE")
+    if key is not None and not current:
+        # A key over other columns, as an older release keyed every property.
+        cursor.execute(f"DROP INDEX IF EXISTS {key_name}")
     _create_edge_key(cursor, schema, table, columns)
 
 
 def _edge_key_columns(schema: Schema | None, edge: Edge) -> list[str]:
     """Property columns that, with the endpoints, key a row of *edge*'s table.
 
-    The edge's merge properties, so the index matches the ``ON CONFLICT``
-    target ``DBWriter`` writes with; every declared property without a schema.
+    The properties the edge's identity names, so the index matches the
+    ``ON CONFLICT`` target ``DBWriter`` writes with; none without a schema.
     """
     if schema is None:
-        return [field.name for field in edge.properties]
+        return []
     edge_config = schema.resolve_db_aware(DBType.POSTGRES).edge_config
     return edge_config.relationship_merge_property_names(edge)
 
@@ -821,7 +837,7 @@ class PostgresTargetWriteMixin:
                 )
                 cursor.execute(create_without_keys)
             try:
-                _create_edge_key(cursor, pg_schema, table, key)
+                _ensure_edge_key(cursor, pg_schema, table, key)
             except Exception:
                 self.conn.rollback()
                 raise

@@ -113,27 +113,28 @@ schema. Pass it yourself when you call `define_vertex_indexes` or
 
 ## Edge upserts and `MERGE` (Neo4j, Memgraph, FalkorDB)
 
-On the Cypher backends an edge is written with `MERGE`. Its endpoints are
-matched on their vertex identities. The relationship itself is merged on a map
-of relationship properties, so that two edges between the same endpoints with
-different property values stay two edges.
+An edge is identified by its endpoints and its relation. On the Cypher
+backends it is written with `MERGE`: the endpoints are matched on their vertex
+identities, and the relationship on its type. Without `identities` there is one
+edge per pair of endpoints and relation, and the last record's properties
+overwrite the stored ones. Properties are written, never matched on.
 
-GraFlo takes the property names for that map from the first entry of the
-edge's `identities`, leaving out the `source` and `target` tokens and turning a
-`relation` token into the relationship's `relation` property. If `identities`
-is empty or names no relationship property, it uses all the edge's declared
-`properties`. If the edge declares neither, it merges on the endpoints and the
-relation alone: one edge per pair of endpoints, whose properties the last
-record overwrites.
+To keep several edges between the same two vertices, declare which properties
+tell them apart: `identities: [[source, target, since]]` merges on `since` as
+well. GraFlo takes those names from the first entry of `identities`, leaving
+out the `source` and `target` tokens and turning a `relation` token into the
+relationship's `relation` property. A record that lacks one of them matches an
+edge that lacks it too.
 
 PostgreSQL keys every edge table on the same properties, less a `relation`
 token, since each relation has its own table: a unique index over the endpoint
-columns and the merge properties, `NULLS NOT DISTINCT`, so it needs PostgreSQL
-15 or later. An edge write that finds its key taken leaves the row as stored,
-or updates its other properties under `edges_on_duplicate: upsert`. An edge
-table created by an earlier version gains the key at schema definition or on
-its first ingest, which fails with a clear error if the table holds duplicate
-edges.
+columns and the identity properties, `NULLS NOT DISTINCT`, so it needs
+PostgreSQL 15 or later. An edge write that finds its key taken leaves the row
+as stored, or updates its other properties under `edges_on_duplicate: upsert`.
+An edge table whose key is missing or covers other columns, as one created by
+an earlier version, gets its key at schema definition or on its first ingest.
+That fails with a clear error if the table holds rows the key would merge,
+such as parallel edges told apart by a property no identity names.
 
 An edge's `identities` also feed edge indexes, which are defined with the
 schema. The `MERGE` key is chosen separately, when the graph is written. Keep

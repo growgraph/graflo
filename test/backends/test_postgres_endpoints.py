@@ -54,9 +54,9 @@ class _Cursor:
     def execute(self, query: Any, params: Any = None) -> None:
         return None
 
-    def fetchone(self) -> tuple[str, None]:
-        """The catalogue holds the edge key and no stale index."""
-        return (f"{TABLE}_edge_key", None)
+    def fetchone(self) -> tuple[str, None, list[str]]:
+        """The catalogue holds the edge key over the endpoints and no stale index."""
+        return (f"{TABLE}_edge_key", None, ["source__a", "source__b", "target_id"])
 
 
 class _Pg:

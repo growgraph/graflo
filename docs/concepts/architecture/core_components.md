@@ -165,9 +165,10 @@ edges:
 - `identities`: lists of tokens that make an edge unique, so that several edges
   between the same two vertices stay distinct. `source` and `target` stand for
   the endpoints; any other token is an edge property and is added to
-  `properties` if missing. Neo4j, Memgraph and FalkorDB match an existing edge
-  (Cypher `MERGE`) on the properties of the first identity, or on all edge
-  properties when no identity names one; see
+  `properties` if missing. Without `identities` an edge is keyed by its
+  endpoints and relation alone, and its other properties are written, never
+  matched on. Neo4j, Memgraph and FalkorDB match an existing edge (Cypher
+  `MERGE`) on the endpoints, relation and the properties of the first identity; see
   [backend indexes](../schema/backend_indexes.md#edge-upserts-and-merge-neo4j-memgraph-falkordb).
 - `directed` (default `true`): see the next section.
 - `description`, `semantics`: documentation, as on a vertex.

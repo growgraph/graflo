@@ -27,12 +27,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Value inference reads `YYYY-MM-DDTHH:MM` (no seconds) as `DATETIME`.
+- **Breaking: an edge is keyed by its endpoints and relation**, plus only the properties its first
+  `identities` entry names; its other properties are written, never matched on. An edge without
+  `identities` no longer merges on all its declared properties, so parallel edges told apart by
+  a property need `identities: [[source, target, <property>]]`. A PostgreSQL edge key over other
+  columns is rebuilt at schema definition or on the first write.
 
 ### Fixed
 
 - **`DBWriter.write(..., resource_name=None)`** no longer adds edges between every blank vertex and
   every document of an adjoining type; a resource-less container (`migrate_graph` included) keeps
   exactly the edges it carries.
+- **Neo4j, Memgraph and FalkorDB edge writes** no longer fail when a record lacks a property its
+  edge's identity names. As on PostgreSQL, absence is part of the key: the edge matches an
+  existing one lacking the same properties.
 
 ## [1.16.5]
 

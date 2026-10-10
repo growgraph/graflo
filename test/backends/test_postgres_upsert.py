@@ -15,6 +15,9 @@ from graflo.db.postgres.target_write import edge_key_ddl
 
 EDGE_TABLE = "person_org_works_edges"
 
+#: What the key probe reads: the key index, the stale index, the key's columns.
+Catalog = tuple[str | None, str | None, list[str] | None]
+
 
 def _render(query: Any) -> str:
     """*query* as SQL text, rendered without a live connection."""
@@ -32,7 +35,7 @@ class _Cursor:
         self,
         executed: list[str],
         fail_on: str | None,
-        catalog: tuple[str | None, str | None],
+        catalog: Catalog,
     ) -> None:
         self.executed = executed
         self._fail_on = fail_on
@@ -50,7 +53,7 @@ class _Cursor:
             raise RuntimeError("could not create unique index")
         self.executed.append(text)
 
-    def fetchone(self) -> tuple[str | None, str | None]:
+    def fetchone(self) -> Catalog:
         return self._catalog
 
 
@@ -58,7 +61,7 @@ class _Conn:
     def __init__(
         self,
         fail_on: str | None = None,
-        catalog: tuple[str | None, str | None] = (None, None),
+        catalog: Catalog = (None, None, None),
     ) -> None:
         self.executed: list[str] = []
         self.commits = 0
@@ -81,7 +84,7 @@ class _Pg:
         self,
         schema: Schema | None = None,
         fail_on: str | None = None,
-        catalog: tuple[str | None, str | None] = (None, None),
+        catalog: Catalog = (None, None, None),
     ) -> None:
         self.config = type("C", (), {"schema_name": "g"})()
         self.conn = _Conn(fail_on, catalog)
@@ -412,7 +415,9 @@ def test_the_edge_table_is_keyed_on_the_schema_merge_properties() -> None:
 
     PostgresConnection._create_edge_table(cast(Any, pg), _edge(schema))
 
-    assert pg.conn.executed[1:] == [
+    assert pg.conn.executed[1].startswith("SELECT to_regclass(")
+    assert pg.conn.executed[2:] == [
+        f'LOCK TABLE "g"."{EDGE_TABLE}" IN SHARE ROW EXCLUSIVE MODE',
         f'DROP INDEX IF EXISTS "g"."{EDGE_TABLE}_edge_uniq"',
         (
             f'CREATE UNIQUE INDEX IF NOT EXISTS "{EDGE_TABLE}_edge_key" ON '
@@ -441,14 +446,42 @@ def test_the_relation_token_adds_no_key_column(identity, key) -> None:
     assert pg.conn.executed[-1].endswith(f"{key} NULLS NOT DISTINCT")
 
 
-def test_without_a_schema_the_edge_table_is_keyed_on_all_properties() -> None:
+def test_without_an_identity_the_edge_table_is_keyed_on_its_endpoints() -> None:
+    schema = _schema([])
+    pg = _Pg(schema)
+
+    PostgresConnection._create_edge_table(cast(Any, pg), _edge(schema))
+
+    assert pg.conn.executed[-1].endswith(
+        '("source_id", "target_id") NULLS NOT DISTINCT'
+    )
+
+
+def test_without_a_schema_the_edge_table_is_keyed_on_its_endpoints() -> None:
     pg = _Pg()
 
     PostgresConnection._create_edge_table(cast(Any, pg), _edge(_schema([])))
 
     assert pg.conn.executed[-1].endswith(
-        '("source_id", "target_id", "since", "note") NULLS NOT DISTINCT'
+        '("source_id", "target_id") NULLS NOT DISTINCT'
     )
+
+
+def test_defining_a_table_keyed_on_other_columns_rebuilds_its_key() -> None:
+    schema = _schema([])
+    wider = ["source_id", "target_id", "since", "note"]
+    pg = _Pg(schema, catalog=(f"{EDGE_TABLE}_edge_key", None, wider))
+
+    PostgresConnection._create_edge_table(cast(Any, pg), _edge(schema))
+
+    assert pg.conn.executed[-3:] == [
+        f'DROP INDEX IF EXISTS "g"."{EDGE_TABLE}_edge_key"',
+        DROP_STALE,
+        (
+            f'CREATE UNIQUE INDEX IF NOT EXISTS "{EDGE_TABLE}_edge_key" ON '
+            f'"g"."{EDGE_TABLE}" ("source_id", "target_id") NULLS NOT DISTINCT'
+        ),
+    ]
 
 
 def test_an_edge_table_holding_duplicates_is_refused_with_a_clear_error() -> None:
@@ -465,6 +498,8 @@ def test_an_edge_table_holding_duplicates_is_refused_with_a_clear_error() -> Non
 
 LOCK = f'LOCK TABLE "g"."{EDGE_TABLE}" IN SHARE ROW EXCLUSIVE MODE'
 DROP_STALE = f'DROP INDEX IF EXISTS "g"."{EDGE_TABLE}_edge_uniq"'
+DROP_KEY = f'DROP INDEX IF EXISTS "g"."{EDGE_TABLE}_edge_key"'
+SINCE_KEY = ["source_id", "target_id", "since"]
 
 
 def _write_since(pg: _Pg) -> None:
@@ -520,7 +555,7 @@ def test_a_second_edge_write_on_the_connection_issues_no_ddl(logged_writes) -> N
 
 
 def test_a_table_already_keyed_is_written_without_ddl(logged_writes) -> None:
-    pg = _Pg(catalog=(f"{EDGE_TABLE}_edge_key", None))
+    pg = _Pg(catalog=(f"{EDGE_TABLE}_edge_key", None, SINCE_KEY))
 
     _write_since(pg)
 
@@ -530,11 +565,34 @@ def test_a_table_already_keyed_is_written_without_ddl(logged_writes) -> None:
 
 
 def test_a_stale_index_beside_the_key_is_still_dropped(logged_writes) -> None:
-    pg = _Pg(catalog=(f"{EDGE_TABLE}_edge_key", f"{EDGE_TABLE}_edge_uniq"))
+    pg = _Pg(catalog=(f"{EDGE_TABLE}_edge_key", f"{EDGE_TABLE}_edge_uniq", SINCE_KEY))
 
     _write_since(pg)
 
     assert DROP_STALE in pg.conn.executed
+    assert DROP_KEY not in pg.conn.executed
+
+
+def test_a_key_over_other_columns_is_rebuilt_on_write(logged_writes) -> None:
+    wider = [*SINCE_KEY, "note"]
+    pg = _Pg(catalog=(f"{EDGE_TABLE}_edge_key", None, wider))
+
+    _write_since(pg)
+
+    _probe, lock, drop_key, drop, create, insert = pg.conn.executed
+    assert (lock, drop_key, drop) == (LOCK, DROP_KEY, DROP_STALE)
+    assert _columns(create, " ON ") == [f'"{c}"' for c in SINCE_KEY]
+    assert insert.startswith("INSERT INTO")
+
+
+def test_a_rebuild_over_parallel_edges_names_identities(logged_writes) -> None:
+    pg = _Pg(
+        catalog=(f"{EDGE_TABLE}_edge_key", None, [*SINCE_KEY, "note"]),
+        fail_on="CREATE UNIQUE",
+    )
+
+    with pytest.raises(RuntimeError, match="identities"):
+        _write_since(pg)
 
 
 def test_an_edge_table_with_duplicates_is_refused_on_write(logged_writes) -> None:

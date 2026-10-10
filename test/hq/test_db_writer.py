@@ -986,7 +986,11 @@ def _postgres_edge_kwargs(
                             "target": "org",
                             "relation": "works_at",
                             "properties": ["since", "grade"],
-                            "identities": identities or [["source", "target", "since"]],
+                            "identities": (
+                                [["source", "target", "since"]]
+                                if identities is None
+                                else identities
+                            ),
                         }
                     ]
                 },
@@ -1036,6 +1040,13 @@ def test_postgres_edges_upsert_when_the_model_asks_for_it(monkeypatch):
 
     assert call["relationship_merge_properties"] == ("since",)
     assert call["on_duplicate"] == "upsert"
+
+
+def test_edges_without_an_identity_are_keyed_on_their_endpoints(monkeypatch):
+    """Their properties are written, never matched on."""
+    call = _postgres_edge_kwargs(monkeypatch, "upsert", identities=[])
+
+    assert call.get("relationship_merge_properties") is None
 
 
 def test_postgres_edges_keyed_by_relation_conflict_on_their_endpoints(monkeypatch):
