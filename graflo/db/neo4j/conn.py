@@ -81,6 +81,10 @@ def _cypher_escape_identifier(name: str) -> str:
     return name.replace("`", "``")
 
 
+#: Neo4j's built-in user, taken when a password comes without a username.
+DEFAULT_NEO4J_USERNAME = "neo4j"
+
+
 class Neo4jConnection(Connection):
     """Neo4j-specific implementation of the Connection interface.
 
@@ -113,10 +117,11 @@ class Neo4jConnection(Connection):
         # Ensure url is not None - GraphDatabase.driver requires a non-None URI
         if config.url is None:
             raise ValueError("Neo4j connection requires a URL to be configured")
-        # Handle None values in auth tuple
+        # A password is never dropped: without a username it is Neo4j's built-in
+        # user's, and only a config with no password connects unauthenticated.
         auth = None
-        if config.username is not None and config.password is not None:
-            auth = (config.username, config.password)
+        if config.password is not None:
+            auth = (config.username or DEFAULT_NEO4J_USERNAME, config.password)
         self._driver = GraphDatabase.driver(uri=config.url, auth=auth)
         self.conn = self._driver.session()
 

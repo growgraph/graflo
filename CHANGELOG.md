@@ -38,6 +38,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`DBWriter.write(..., resource_name=None)`** no longer adds edges between every blank vertex and
   every document of an adjoining type; a resource-less container (`migrate_graph` included) keeps
   exactly the edges it carries.
+- **A Neo4j password given without a username** authenticates as `neo4j` instead of being
+  dropped, which connected unauthenticated and was refused by the server.
 - **Neo4j, Memgraph and FalkorDB edge writes** no longer fail when a record lacks a property its
   edge's identity names. As on PostgreSQL, absence is part of the key: the edge matches an
   existing one lacking the same properties.
