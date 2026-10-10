@@ -28,6 +28,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Value inference reads `YYYY-MM-DDTHH:MM` (no seconds) as `DATETIME`.
 
+### Fixed
+
+- **`DBWriter.write(..., resource_name=None)`** no longer adds edges between every blank vertex and
+  every document of an adjoining type; a resource-less container (`migrate_graph` included) keeps
+  exactly the edges it carries.
+
 ## [1.16.5]
 
 ### Added

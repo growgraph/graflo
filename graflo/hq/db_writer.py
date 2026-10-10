@@ -216,8 +216,8 @@ class DBWriter:
 
         # A container that no resource produced (``migrate_graph`` writes an
         # exported graph through an empty ingestion model) has no resource to
-        # consult, and needs none: extra weights and endpoint selections are
-        # resource-level ingestion features.
+        # consult, and needs none: extra weights, endpoint selections and the
+        # blank-sibling join below are resource-level ingestion features.
         resource = (
             self.ingestion_model.fetch_resource(resource_name)
             if resource_name is not None or self.ingestion_model.resources
@@ -226,10 +226,12 @@ class DBWriter:
 
         await self._push_vertices(gc, conn_conf)
         await self._attach_vertices(gc, conn_conf)
-        # O(blank vertices x edges x documents) of pure Python. Called straight from
-        # the event loop it stalled every other coroutine — including the prefetch
-        # that is supposed to overlap with the write.
-        await asyncio.to_thread(self._resolve_blank_edges, gc, conn_conf)
+        if resource is not None:
+            # Joins each blank vertex to its siblings from the same cast. A
+            # resource-less container carries its edges explicitly, and the join
+            # would pair unrelated documents. O(blank vertices x edges x
+            # documents) of pure Python, so off the event loop.
+            await asyncio.to_thread(self._resolve_blank_edges, gc, conn_conf)
         if resource is not None:
             await self._enrich_extra_weights(gc, conn_conf, resource)
         await self._push_edges(gc, conn_conf, resource)
