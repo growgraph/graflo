@@ -1031,6 +1031,27 @@ class VertexConfig(ConfigBaseModel):
             if v.hash_identity_properties or v.identity_funnel is not None
         ]
 
+    def has_vertex(self, name: str) -> bool:
+        """Whether *name* is a declared vertex type; O(1), unlike ``vertex_set``."""
+        return name in self._get_vertices_map()
+
+    def is_blank(self, name: str) -> bool:
+        """Whether *name* is in :attr:`blank_vertices`, without building the list."""
+        vertex = self._get_vertices_map().get(name)
+        return vertex is not None and vertex.blank
+
+    def is_assigned(self, name: str) -> bool:
+        """Whether *name* is in :attr:`assigned_vertices`, without building the list."""
+        vertex = self._get_vertices_map().get(name)
+        return vertex is not None and vertex.assigned
+
+    def is_hash_identity(self, name: str) -> bool:
+        """Whether *name* is in :attr:`hash_identity_vertices`, without building it."""
+        vertex = self._get_vertices_map().get(name)
+        return vertex is not None and bool(
+            vertex.hash_identity_properties or vertex.identity_funnel is not None
+        )
+
     @property
     def identity_funnel_vertices(self) -> list[str]:
         """Vertex names whose synthetic identity comes from a funnel."""

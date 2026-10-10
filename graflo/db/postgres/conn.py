@@ -161,6 +161,10 @@ class PostgresConnection(PostgresTargetWriteMixin, Connection):
                     f"Error closing PostgreSQL connection: {e}", exc_info=True
                 )
 
+    def reset_after_use(self) -> None:
+        """Roll back the transaction a read leaves open, so its locks are released."""
+        self.conn.rollback()
+
     def _check_information_schema_reliable(self, schema_name: str) -> bool:
         """Check if information_schema is reliable for the given schema.
 

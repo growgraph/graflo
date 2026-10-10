@@ -309,7 +309,7 @@ class TestWriteResolutionLog:
 
         async def _write(batch, resource_name=None, conn_conf=None):
             del batch, resource_name, conn_conf
-            caster._db_writer = SimpleNamespace(stats=stats)  # ty: ignore[invalid-assignment]
+            caster._db_writer = SimpleNamespace(stats=stats, close=lambda: None)  # ty: ignore[invalid-assignment]
 
         caster.process_batch = _write  # ty: ignore[invalid-assignment]
         caster.ingestion_model._resources = {"fake_resource": MagicMock()}
@@ -351,3 +351,52 @@ class TestWriteResolutionLog:
 
         (message,) = self._logged(caplog)
         assert "attached ci" in message and "unmatched=2" in message
+
+
+class TestWriterLifetime:
+    """The run-scoped writer keeps connections open; the run closes them."""
+
+    @staticmethod
+    def _ingest(caster: Caster, writer: MagicMock, *, fail: bool) -> None:
+        async def _write(batch, resource_name=None, conn_conf=None):
+            del batch, resource_name, conn_conf
+            caster._db_writer = writer
+            if fail:
+                raise RuntimeError("write failed")
+
+        caster.process_batch = _write  # ty: ignore[invalid-assignment]
+        caster.ingestion_model._resources = {"fake_resource": MagicMock()}
+        registry = SimpleNamespace(
+            get_data_sources=lambda name: [_AcknowledgedSource(1)]
+        )
+        asyncio.run(
+            caster.ingest_data_sources(registry, conn_conf=_TARGET)  # ty: ignore[invalid-argument-type]
+        )
+
+    @pytest.mark.parametrize("fail", [False, True])
+    def test_a_run_closes_its_writer(self, fail: bool) -> None:
+        caster = _caster()
+        writer = MagicMock()
+        writer.stats.is_empty.return_value = True
+
+        try:
+            self._ingest(caster, writer, fail=fail)
+        except Exception:
+            pass
+
+        writer.close.assert_called_once_with()
+
+    def test_a_run_whose_bulk_finalize_fails_closes_its_writer(self) -> None:
+        caster = _caster()
+        writer = MagicMock()
+        writer.stats.is_empty.return_value = True
+
+        async def _failing_finalize(conn_conf):
+            raise RuntimeError("finalize failed")
+
+        caster._finalize_bulk_session = _failing_finalize  # ty: ignore[invalid-assignment]
+
+        with pytest.raises(RuntimeError, match="finalize failed"):
+            self._ingest(caster, writer, fail=False)
+
+        writer.close.assert_called_once_with()

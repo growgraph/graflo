@@ -312,6 +312,13 @@ class Connection(abc.ABC):
     def close(self):
         """Close the database connection."""
 
+    def reset_after_use(self) -> None:
+        """End whatever a unit of work left open, before the connection is reused.
+
+        A no-op unless the backend holds per-connection state between calls,
+        such as an open transaction.
+        """
+
     def define_indexes(self, schema: Schema):
         """Define indexes for vertices and edges in the schema.
 

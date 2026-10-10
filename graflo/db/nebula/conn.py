@@ -131,37 +131,7 @@ class NebulaConnection(Connection):
     def _use_space(self, space_name: str) -> None:
         self._adapter.use_space(space_name)
         self._space_name = space_name
-        self._load_tag_fields()
-
-    def _load_tag_fields(self) -> None:
-        """Discover existing tags and their fields from the current space."""
-        try:
-            rs = self._adapter.execute("SHOW TAGS")
-            tag_names = [r.get("Name", r.get("name", "")) for r in rs.rows_as_dicts()]
-        except Exception as e:
-            # Expected on a space that does not exist yet; anything else leaves
-            # _tag_fields empty, which downstream reads as "tag has no fields".
-            logger.debug("Could not list tags in space '%s': %s", self._space_name, e)
-            return
-        for tag in tag_names:
-            if not tag:
-                continue
-            try:
-                desc = self._adapter.execute(f"DESCRIBE TAG `{tag}`")
-                self._tag_fields[tag] = [
-                    r.get("Field", r.get("field", "")) for r in desc.rows_as_dicts()
-                ]
-            except Exception as e:
-                # SHOW TAGS listed it, so failing to describe it is not a
-                # missing-space race — the tag stays absent from _tag_fields and
-                # every write against it will build an empty property list.
-                logger.warning(
-                    "Could not describe tag '%s' in space '%s': %s. "
-                    "Writes to this tag may omit properties.",
-                    tag,
-                    self._space_name,
-                    e,
-                )
+        self._tag_fields = {}
 
     def _wait_for_dml_ready(self, tag_name: str) -> None:
         """Wait until DML operations are possible on a tag.
@@ -223,7 +193,29 @@ class NebulaConnection(Connection):
         return render_filters_cypher(filters, doc_name)
 
     def _tag_field_names(self, tag_name: str) -> list[str]:
-        return self._tag_fields.get(tag_name, [])
+        """The fields of *tag_name*, described on first use and then cached.
+
+        Described per tag rather than for the whole space at connect, so a
+        connection's cost does not grow with the number of tags. A tag that
+        cannot be described has no fields and is described again next time.
+        """
+        fields = self._tag_fields.get(tag_name)
+        if fields is not None:
+            return fields
+        try:
+            desc = self._adapter.execute(f"DESCRIBE TAG `{tag_name}`")
+        except Exception as e:
+            logger.warning(
+                "Could not describe tag '%s' in space '%s': %s. "
+                "Writes to this tag may omit properties.",
+                tag_name,
+                self._space_name,
+                e,
+            )
+            return []
+        fields = [r.get("Field", r.get("field", "")) for r in desc.rows_as_dicts()]
+        self._tag_fields[tag_name] = fields
+        return fields
 
     # ------------------------------------------------------------------
     # Connection ABC – lifecycle

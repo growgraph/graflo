@@ -113,9 +113,8 @@ def ensure_digest_identities_in_acc_vertex(
     objects exposing a ``.vertex`` dict). Shaped like
     :func:`~graflo.architecture.schema.identity_uuid.ensure_assigned_uuids_in_acc_vertex`.
     """
-    for vname in vertex_config.hash_identity_vertices:
-        by_loc = acc_vertex.get(vname)
-        if not by_loc:
+    for vname, by_loc in acc_vertex.items():
+        if not by_loc or not vertex_config.is_hash_identity(vname):
             continue
         vertex = vertex_config._get_vertex_by_name(vname)
         identity_fields = vertex_config.identity_fields(vname)

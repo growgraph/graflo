@@ -358,12 +358,12 @@ class FalkordbConnection(Connection):
             logger.warning(
                 "Schema is None: identity indexes cannot be ensured without schema"
             )
+        db_vertex = (
+            schema.resolve_db_aware(DBType.FALKORDB).vertex_config
+            if schema is not None
+            else None
+        )
         for c in vertex_config.vertex_set:
-            db_vertex = (
-                schema.resolve_db_aware(DBType.FALKORDB).vertex_config
-                if schema is not None
-                else None
-            )
             index_list = list(
                 schema.db_profile.vertex_secondary_indexes(c)
                 if schema is not None

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
+from typing import Any
+from unittest.mock import Mock
 
 import pytest
 
@@ -300,6 +302,148 @@ def test_other_targets_keep_their_concurrency(monkeypatch):
     conn_conf = ArangoConfig(uri="http://localhost:8529", username="root", password="x")
 
     assert _high_water_of_concurrent_writes(monkeypatch, conn_conf, 4) > 1
+
+
+# -- write slots: per-relation locks and connection reuse -----------------------
+
+_NEO4J = Neo4jConfig(uri="bolt://localhost:7687", username="u", password="p")
+
+
+def _two_relation_writer(max_concurrent: int) -> DBWriter:
+    vertex_config = VertexConfig(
+        vertices=[
+            Vertex(name="a", properties=[Field(name="id")], identity=["id"]),
+            Vertex(name="b", properties=[Field(name="id")], identity=["id"]),
+        ],
+    )
+    edge_config = EdgeConfig(
+        edges=[
+            Edge(source="a", target="b", relation="x"),
+            Edge(source="a", target="b", relation="y"),
+        ]
+    )
+    schema = Schema(
+        metadata=GraphMetadata(name="test"),
+        core_schema=CoreSchema(vertex_config=vertex_config, edge_config=edge_config),
+        db_profile=DatabaseProfile(db_flavor=DBType.NEO4J),
+    )
+    return DBWriter(
+        schema=schema,
+        ingestion_model=_build_ingestion_model(schema),
+        max_concurrent=max_concurrent,
+    )
+
+
+def _edges(*relations: str) -> GraphContainer:
+    return GraphContainer(
+        vertices={},
+        edges={("a", "b", r): [({"id": "1"}, {"id": "2"}, {})] for r in relations},
+        linear=[],
+    )
+
+
+class _SlowWritesDB:
+    """Records how many writes overlap, vertex and edge alike."""
+
+    def __init__(self):
+        self.active = 0
+        self.high_water = 0
+        self.events: list[str] = []
+
+    def _write(self, kind: str) -> None:
+        import time
+
+        self.active += 1
+        self.high_water = max(self.high_water, self.active)
+        self.events.append(f"start {kind}")
+        time.sleep(0.05)
+        self.events.append(f"end {kind}")
+        self.active -= 1
+
+    def upsert_docs_batch(self, docs, class_name, match_keys, **kwargs):
+        self._write("vertex")
+
+    def insert_edges_batch(self, **kwargs):
+        self._write("edge")
+
+
+def _slow_manager(
+    db: Any,
+    opened: list[int] | None = None,
+    closed: list[int] | None = None,
+) -> type:
+    class _Manager:
+        def __init__(self, connection_config):
+            pass
+
+        def __enter__(self):
+            if opened is not None:
+                opened.append(1)
+            return db
+
+        def __exit__(self, exc_type, exc, tb):
+            if closed is not None:
+                closed.append(1)
+            return False
+
+    return _Manager
+
+
+def test_distinct_relations_write_in_parallel_on_cypher_targets(monkeypatch):
+    """The per-collection lock guards one relation, not every relation."""
+    writer = _two_relation_writer(max_concurrent=4)
+    db = _SlowWritesDB()
+    monkeypatch.setattr("graflo.hq.db_writer.ConnectionManager", _slow_manager(db))
+
+    asyncio.run(writer._push_edges(_edges("x", "y"), _NEO4J))
+
+    assert db.high_water == 2
+
+
+def test_a_writer_waiting_on_a_lock_does_not_hold_a_slot(monkeypatch):
+    """Writes to one relation queue on its lock; a vertex write takes the free
+    slot at once instead of waiting behind a queued edge write."""
+    writer = _two_relation_writer(max_concurrent=2)
+    db = _SlowWritesDB()
+    monkeypatch.setattr("graflo.hq.db_writer.ConnectionManager", _slow_manager(db))
+    vertices = GraphContainer(vertices={"a": [{"id": "1"}]}, edges={}, linear=[])
+
+    async def _vertices_once_edges_queue() -> None:
+        await asyncio.sleep(0.01)
+        await writer._push_vertices(vertices, _NEO4J)
+
+    async def _writes() -> None:
+        await asyncio.gather(
+            writer._push_edges(_edges("x"), _NEO4J),
+            writer._push_edges(_edges("x"), _NEO4J),
+            _vertices_once_edges_queue(),
+        )
+
+    asyncio.run(_writes())
+
+    assert db.events.index("start vertex") < db.events.index("end edge")
+
+
+def test_a_writer_run_opens_at_most_max_concurrent_connections(monkeypatch):
+    writer = _two_relation_writer(max_concurrent=2)
+    db = _SlowWritesDB()
+    opened: list[int] = []
+    monkeypatch.setattr(
+        "graflo.hq.db_writer.ConnectionManager", _slow_manager(db, opened)
+    )
+    vertices = GraphContainer(
+        vertices={"a": [{"id": "1"}], "b": [{"id": "2"}]}, edges={}, linear=[]
+    )
+
+    async def _batches() -> None:
+        for _ in range(3):
+            await writer._push_vertices(vertices, _NEO4J)
+            await writer._push_edges(_edges("x", "y"), _NEO4J)
+
+    asyncio.run(_batches())
+    writer.close()
+
+    assert 0 < len(opened) <= 2
 
 
 # -- extra weights: stored vertex fields copied onto a document's edges ---------
@@ -1169,3 +1313,137 @@ def test_a_resource_less_write_keeps_only_its_explicit_edges(tmp_path):
     with ConnectionManager(connection_config=conn_conf) as conn:
         edges = conn.fetch_all_edges("note", "machine", "about")
     assert len(edges) == 1
+
+
+def test_closing_a_writer_closes_every_connection_it_opened(monkeypatch):
+    writer = _two_relation_writer(max_concurrent=2)
+    opened: list[int] = []
+    closed: list[int] = []
+    monkeypatch.setattr(
+        "graflo.hq.db_writer.ConnectionManager",
+        _slow_manager(_SlowWritesDB(), opened, closed),
+    )
+
+    asyncio.run(writer._push_edges(_edges("x", "y"), _NEO4J))
+    assert closed == []
+    writer.close()
+
+    assert len(closed) == len(opened) > 0
+
+
+def test_a_connection_whose_write_failed_is_not_reused(monkeypatch):
+    class _FailingOnce(_SlowWritesDB):
+        failed = False
+
+        def insert_edges_batch(self, **kwargs):
+            if not self.failed:
+                self.failed = True
+                raise RuntimeError("write failed")
+            super().insert_edges_batch(**kwargs)
+
+    writer = _two_relation_writer(max_concurrent=1)
+    opened: list[int] = []
+    closed: list[int] = []
+    monkeypatch.setattr(
+        "graflo.hq.db_writer.ConnectionManager",
+        _slow_manager(_FailingOnce(), opened, closed),
+    )
+
+    with pytest.raises(RuntimeError, match="write failed"):
+        asyncio.run(writer._push_edges(_edges("x"), _NEO4J))
+    asyncio.run(writer._push_edges(_edges("x"), _NEO4J))
+
+    assert (len(opened), len(closed)) == (2, 1)
+    writer.close()
+
+
+def test_a_connection_is_reset_before_it_is_reused(monkeypatch):
+    from graflo.db.conn import Connection
+
+    db = Mock(spec=Connection)
+    writer = _two_relation_writer(max_concurrent=1)
+    monkeypatch.setattr("graflo.hq.db_writer.ConnectionManager", _slow_manager(db))
+
+    asyncio.run(writer._push_edges(_edges("x"), _NEO4J))
+
+    db.reset_after_use.assert_called_once_with()
+    writer.close()
+
+
+def test_the_file_backend_opens_a_connection_per_write(monkeypatch, tmp_path):
+    """Its connection flushes the on-disk index on close, which readers need."""
+    from graflo.connections.graflo_backend import GraFloBackendConfig
+
+    writer = _two_relation_writer(max_concurrent=1)
+    opened: list[int] = []
+    closed: list[int] = []
+    monkeypatch.setattr(
+        "graflo.hq.db_writer.ConnectionManager",
+        _slow_manager(_SlowWritesDB(), opened, closed),
+    )
+    conf = GraFloBackendConfig(output_dir=tmp_path)
+
+    asyncio.run(writer._push_edges(_edges("x", "y"), conf))
+
+    assert len(opened) == len(closed) == 2
+
+
+def test_memgraph_writes_one_edge_type_at_a_time(monkeypatch):
+    """Memgraph aborts concurrent transactions that change one node's edges."""
+    from graflo.connections.onto import MemgraphConfig
+
+    writer = _two_relation_writer(max_concurrent=4)
+    db = _SlowWritesDB()
+    monkeypatch.setattr("graflo.hq.db_writer.ConnectionManager", _slow_manager(db))
+
+    asyncio.run(
+        writer._push_edges(
+            _edges("x", "y"), MemgraphConfig(uri="bolt://localhost:7687")
+        )
+    )
+
+    assert db.high_water == 1
+
+
+def test_a_connection_returned_after_close_is_closed(monkeypatch):
+    """A write still running when the run closes its writer is not left open."""
+    writer = _two_relation_writer(max_concurrent=1)
+    opened: list[int] = []
+    closed: list[int] = []
+    monkeypatch.setattr(
+        "graflo.hq.db_writer.ConnectionManager",
+        _slow_manager(_SlowWritesDB(), opened, closed),
+    )
+
+    with writer._connection(_NEO4J):
+        writer.close()
+
+    assert len(closed) == len(opened) == 1
+
+
+def test_closing_a_writer_carries_on_past_a_connection_that_fails_to_close(
+    monkeypatch,
+):
+    writer = _two_relation_writer(max_concurrent=2)
+    exits: list[int] = []
+
+    class _Manager:
+        def __init__(self, connection_config):
+            pass
+
+        def __enter__(self):
+            return _SlowWritesDB()
+
+        def __exit__(self, exc_type, exc, tb):
+            exits.append(1)
+            if len(exits) == 1:
+                raise RuntimeError("close failed")
+            return False
+
+    monkeypatch.setattr("graflo.hq.db_writer.ConnectionManager", _Manager)
+    with writer._connection(_NEO4J), writer._connection(_NEO4J):
+        pass
+
+    writer.close()
+
+    assert len(exits) == 2

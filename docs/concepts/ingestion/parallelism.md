@@ -124,8 +124,9 @@ When throughput matters, use `dynamic_edges` to discover edges, not to load:
     create it. GraFlo therefore writes each vertex type and each relation
     through one connection at a time on those databases, while different
     types still write in parallel. The file backend is written the same
-    way. PostgreSQL, ArangoDB, TigerGraph and NebulaGraph accept fully
-    concurrent writes.
+    way. Memgraph writes one edge type at a time: it aborts concurrent
+    transactions that change the edges of one node. PostgreSQL, ArangoDB,
+    TigerGraph and NebulaGraph accept fully concurrent writes.
 
 ## What to read next
 

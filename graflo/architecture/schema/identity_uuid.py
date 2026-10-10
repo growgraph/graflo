@@ -59,9 +59,8 @@ def ensure_assigned_uuids_in_acc_vertex(
     ``acc_vertex`` maps vertex name -> location -> list of ``VertexRep`` (or
     objects with a ``.vertex`` dict attribute).
     """
-    for vname in vertex_config.assigned_vertices:
-        by_loc = acc_vertex.get(vname)
-        if not by_loc:
+    for vname, by_loc in acc_vertex.items():
+        if not by_loc or not vertex_config.is_assigned(vname):
             continue
         identity_fields = vertex_config.identity_fields(vname)
         preferred = identity_fields[0] if identity_fields else "id"

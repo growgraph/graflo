@@ -30,7 +30,7 @@ Example:
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Iterable, Iterator
+from collections.abc import Collection, Iterable, Iterator
 from typing import Any, cast
 
 from pydantic import (
@@ -490,6 +490,9 @@ class EdgeConfig(ConfigBaseModel):
         ),
     )
     _edges_map: dict[EdgeId, Edge] = PrivateAttr()
+    # Per source vertex, (declaration rank, edge id); entries are replaced, not
+    # appended to, so a reader on another thread sees a whole tuple.
+    _edges_by_source: dict[str, tuple[tuple[int, EdgeId], ...]] = PrivateAttr()
 
     @model_validator(mode="after")
     def _normalize_inverse_table(self) -> EdgeConfig:
@@ -635,6 +638,10 @@ class EdgeConfig(ConfigBaseModel):
         if duplicates:
             raise ValueError(f"duplicate edge definitions: {duplicates}")
         object.__setattr__(self, "_edges_map", {e.edge_id: e for e in self.edges})
+        by_source: dict[str, tuple[tuple[int, EdgeId], ...]] = {}
+        for rank, edge_id in enumerate(self._edges_map):
+            by_source[edge_id[0]] = (*by_source.get(edge_id[0], ()), (rank, edge_id))
+        object.__setattr__(self, "_edges_by_source", by_source)
         return self
 
     @staticmethod
@@ -736,12 +743,32 @@ class EdgeConfig(ConfigBaseModel):
         if edge_key in self._edges_map:
             self._edges_map[edge_key].update(edge)
         else:
+            rank = len(self._edges_map)
             self._edges_map[edge_key] = edge
             self.edges.append(edge)
+            source = edge_key[0]
+            self._edges_by_source[source] = (
+                *self._edges_by_source.get(source, ()),
+                (rank, edge_key),
+            )
 
         self._edges_map[edge_key].finish_init(
             vertex_config=vertex_config,
         )
+
+    def ids_between(self, vertices: Collection[str]) -> list[EdgeId]:
+        """Ids of the edges whose source and target are both in *vertices*.
+
+        In declaration order, at a cost that follows the edges leaving
+        *vertices* rather than every declared edge.
+        """
+        found = [
+            ranked
+            for source in vertices
+            for ranked in self._edges_by_source.get(source, ())
+            if ranked[1][1] in vertices
+        ]
+        return [edge_id for _, edge_id in sorted(found)]
 
     def declared(self, edge_id: EdgeId) -> Edge | None:
         """The edge that declares *edge_id*, or ``None`` if none does.

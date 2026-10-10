@@ -151,7 +151,7 @@ class VertexRouterActor(VertexProducingActor):
     def _get_or_create_wrapper(self, vertex_type: str) -> ActorWrapper | None:
         from .wrapper import ActorWrapper
 
-        if vertex_type not in self.vertex_config.vertex_set:
+        if not self.vertex_config.has_vertex(vertex_type):
             return None
         # Fast path without the lock: dict reads are atomic, and a wrapper is only
         # published after finish_init completes, so it is never seen half-built.

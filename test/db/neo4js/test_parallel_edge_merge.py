@@ -18,6 +18,8 @@ def test_neo4j_rel_merge_map_uses_bracket_access() -> None:
 @patch("graflo.db.neo4j.conn.GraphDatabase.driver")
 def test_insert_edges_batch_includes_merge_properties_in_cypher(mock_driver) -> None:
     session = MagicMock()
+    # Edge writes run in a managed write transaction; record its queries here.
+    session.execute_write.side_effect = lambda work: work(session)
     mock_driver.return_value = MagicMock()
     mock_driver.return_value.session.return_value = session
 

@@ -335,11 +335,12 @@ def assemble_edges(
         return
 
     populated = {v for v, dd in ctx.acc_vertex.items() if any(dd.values())}
-    # A snapshot: another cast worker may register an edge on this config while
-    # this document is assembled.
-    for edge_id, edge in list(edge_config.items()):
+    # A snapshot of the edges among the populated types: another cast worker may
+    # register an edge on this config while this document is assembled.
+    for edge_id in edge_config.ids_between(populated):
+        edge = edge_config.edge_for(edge_id)
         s, t, _ = edge_id
-        if (s, t) in explicit_pairs or s not in populated or t not in populated:
+        if (s, t) in explicit_pairs:
             continue
         if inferable is not None and edge_id not in inferable:
             continue

@@ -141,3 +141,50 @@ def test_an_untyped_introspection_raises_no_type_drift() -> None:
     )
     drift = compare_live_schema(_declared(), observed, db_flavor=DBType.NEO4J)
     assert not drift.has_drift
+
+
+class _PostgresCatalog:
+    """The catalogue a graflo-written PostgreSQL namespace answers with."""
+
+    def __init__(self, tables: dict[str, list[str]], comments: dict[str, str]):
+        from types import SimpleNamespace
+
+        self.config = SimpleNamespace(schema_name="plant")
+        self._tables = tables
+        self._comments = comments
+
+    def get_tables(self, schema_name: str | None = None) -> list[dict[str, Any]]:
+        return [
+            {"table_name": name, "description": self._comments.get(name, "")}
+            for name in self._tables
+        ]
+
+    def get_table_columns(
+        self, table_name: str, schema_name: str | None = None
+    ) -> list[dict[str, Any]]:
+        return [{"name": c, "type": "text"} for c in self._tables[table_name]]
+
+
+def test_a_postgres_database_matching_its_schema_has_no_drift() -> None:
+    from typing import cast
+
+    from graflo.db.postgres.target_write import (
+        PostgresTargetWriteMixin,
+        edge_table_comment,
+        edge_table_name,
+    )
+
+    edges = edge_table_name("line", "machine", "uses")
+    catalog = _PostgresCatalog(
+        {
+            "machine": ["key", "model"],
+            "line": ["key"],
+            edges: ["id", "source_key", "target_key"],
+        },
+        {edges: edge_table_comment("line", "machine", "uses")},
+    )
+    observed = PostgresTargetWriteMixin.introspect_graph_schema(cast(Any, catalog))
+
+    drift = compare_live_schema(_declared(), observed, db_flavor=DBType.POSTGRES)
+
+    assert (drift.undeclared_edges, drift.missing_edges) == ([], [])

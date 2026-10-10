@@ -415,8 +415,9 @@ def test_the_edge_table_is_keyed_on_the_schema_merge_properties() -> None:
 
     PostgresConnection._create_edge_table(cast(Any, pg), _edge(schema))
 
-    assert pg.conn.executed[1].startswith("SELECT to_regclass(")
-    assert pg.conn.executed[2:] == [
+    assert pg.conn.executed[1].startswith(f'COMMENT ON TABLE "g"."{EDGE_TABLE}"')
+    assert pg.conn.executed[2].startswith("SELECT to_regclass(")
+    assert pg.conn.executed[3:] == [
         f'LOCK TABLE "g"."{EDGE_TABLE}" IN SHARE ROW EXCLUSIVE MODE',
         f'DROP INDEX IF EXISTS "g"."{EDGE_TABLE}_edge_uniq"',
         (
@@ -713,3 +714,75 @@ def test_the_stale_unique_index_is_dropped_by_the_name_postgres_stored() -> None
     table = "p" * 60
 
     assert target_write._edge_unique_index_name(table) == f"{table}_ed"
+
+
+def test_an_edge_table_is_commented_with_its_triple(monkeypatch) -> None:
+    schema = _schema([])
+    pg = _Pg(schema)
+    params: list[Any] = []
+    record = _Cursor.execute
+
+    def _execute(self, query: Any, args: Any = None) -> None:
+        params.append(args)
+        record(self, query, args)
+
+    monkeypatch.setattr(_Cursor, "execute", _execute)
+
+    PostgresConnection._create_edge_table(cast(Any, pg), _edge(schema))
+
+    assert params[1] == (target_write.edge_table_comment("person", "org", "works"),)
+
+
+def test_a_postgres_connection_ends_its_transaction_before_reuse() -> None:
+    pg = _Pg()
+
+    PostgresConnection.reset_after_use(cast(Any, pg))
+
+    assert pg.conn.rollbacks == 1
+
+
+def test_defining_an_edge_table_does_not_resolve_the_schema(monkeypatch) -> None:
+    schema = _schema([["source", "target", "since"]])
+    pg = _Pg(schema)
+    calls: list[object] = []
+    resolve = Schema.resolve_db_aware
+
+    def _counting(self: Schema, *args: Any, **kwargs: Any) -> Any:
+        calls.append(args)
+        return resolve(self, *args, **kwargs)
+
+    monkeypatch.setattr(Schema, "resolve_db_aware", _counting)
+
+    PostgresConnection._create_edge_table(cast(Any, pg), _edge(schema))
+
+    assert calls == []
+    assert pg.conn.executed[-1].endswith(
+        '("source_id", "target_id", "since") NULLS NOT DISTINCT'
+    )
+
+
+# -- DDL transaction size ---------------------------------------------------------
+
+
+def test_each_vertex_table_is_created_in_its_own_transaction() -> None:
+    schema = _schema([])
+    pg = _Pg(schema)
+
+    PostgresConnection._define_vertex_tables(cast(Any, pg), schema)
+
+    creates = [q for q in pg.conn.executed if q.startswith("CREATE TABLE")]
+    assert len(creates) == pg.conn.commits == 2
+
+
+def test_clearing_data_carries_on_past_a_missing_table() -> None:
+    schema = _schema([])
+    pg = _Pg(schema, fail_on='"g"."person"')
+
+    PostgresConnection.clear_data(cast(Any, pg), schema)
+
+    truncated = [q for q in pg.conn.executed if q.startswith("TRUNCATE")]
+    assert truncated == [
+        'TRUNCATE TABLE "g"."org" CASCADE',
+        f'TRUNCATE TABLE "g"."{EDGE_TABLE}" CASCADE',
+    ]
+    assert (pg.conn.rollbacks, pg.conn.commits) == (1, 2)

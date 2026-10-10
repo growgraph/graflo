@@ -612,17 +612,21 @@ class Caster:
             if self._db_writer is not None and not self._db_writer.stats.is_empty():
                 logger.info("Write resolution:\n%s", self._db_writer.stats.summary())
             try:
-                await self._finalize_bulk_session(conn_conf)
-            except BaseException:
-                await self._release_staged_sources(loaded=False)
-                raise
-            await self._release_staged_sources(loaded=True)
-            # The cast pool outlives individual batches on purpose; the run is where
-            # it stops.
-            self._document_caster.close()
-            self._ingest_bindings = None
-            self._connection_provider = EmptyConnectionProvider()
-            self._db_writer = None
+                try:
+                    await self._finalize_bulk_session(conn_conf)
+                except BaseException:
+                    await self._release_staged_sources(loaded=False)
+                    raise
+                await self._release_staged_sources(loaded=True)
+            finally:
+                # The cast pool and the writer's connections outlive individual
+                # batches on purpose; the run is where they stop.
+                self._document_caster.close()
+                if self._db_writer is not None:
+                    self._db_writer.close()
+                self._ingest_bindings = None
+                self._connection_provider = EmptyConnectionProvider()
+                self._db_writer = None
 
     def ingest(
         self,

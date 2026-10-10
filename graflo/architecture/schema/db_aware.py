@@ -106,6 +106,30 @@ class EdgeRuntime:
         )
 
 
+def relationship_merge_properties(edge: Edge, db_flavor: DBType) -> list[str]:
+    """Relationship properties that, with the endpoints, key *edge* on *db_flavor*.
+
+    See :meth:`EdgeConfigDBAware.relationship_merge_property_names`; needs no
+    db-aware projection, only the edge's first ``identities`` key.
+    """
+    if not edge.identities:
+        return []
+    fields: list[str] = []
+    for token in edge.identities[0]:
+        if token in ("source", "target"):
+            continue
+        if token == "relation":
+            if db_flavor not in (DBType.TIGERGRAPH, DBType.POSTGRES):
+                fields.append("relation")
+            continue
+        fields.append(token)
+    deduped: list[str] = []
+    for field in fields:
+        if field not in deduped:
+            deduped.append(field)
+    return deduped
+
+
 class VertexConfigDBAware:
     """DB-aware projection wrapper for `VertexConfig`."""
 
@@ -129,6 +153,18 @@ class VertexConfigDBAware:
     def hash_identity_vertices(self):
         return self.logical.hash_identity_vertices
 
+    def has_vertex(self, name: str) -> bool:
+        return self.logical.has_vertex(name)
+
+    def is_blank(self, name: str) -> bool:
+        return self.logical.is_blank(name)
+
+    def is_assigned(self, name: str) -> bool:
+        return self.logical.is_assigned(name)
+
+    def is_hash_identity(self, name: str) -> bool:
+        return self.logical.is_hash_identity(name)
+
     @property
     def vertices(self):
         return self.logical.vertices
@@ -144,7 +180,7 @@ class VertexConfigDBAware:
         identity = self.logical.identity_fields(vertex_name)
         if identity:
             return identity
-        if vertex_name in self.logical.blank_vertices:
+        if self.logical.is_blank(vertex_name):
             return ["_key"] if self.db_profile.db_flavor == DBType.ARANGO else ["id"]
         return identity
 
@@ -339,30 +375,7 @@ class EdgeConfigDBAware:
         compiled into separate indexes via :meth:`compile_identity_indexes` but
         do not change the writer's key. Without ``identities`` the list is empty.
         """
-        if not edge.identities:
-            return []
-        return self._identity_tokens_to_relationship_properties(
-            edge.identities[0], self.db_profile.db_flavor
-        )
-
-    @staticmethod
-    def _identity_tokens_to_relationship_properties(
-        identity_key: list[str], db_flavor: DBType
-    ) -> list[str]:
-        fields: list[str] = []
-        for token in identity_key:
-            if token in ("source", "target"):
-                continue
-            if token == "relation":
-                if db_flavor not in (DBType.TIGERGRAPH, DBType.POSTGRES):
-                    fields.append("relation")
-                continue
-            fields.append(token)
-        deduped: list[str] = []
-        for field in fields:
-            if field not in deduped:
-                deduped.append(field)
-        return deduped
+        return relationship_merge_properties(edge, self.db_profile.db_flavor)
 
     def compile_identity_indexes(self) -> None:
         db_flavor = self.db_profile.db_flavor

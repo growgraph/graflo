@@ -9,7 +9,9 @@ from psycopg2 import sql
 
 from graflo.db.postgres.target_write import (
     PostgresTargetWriteMixin,
+    edge_table_comment,
     edge_table_name,
+    resolve_edge_table,
     split_edge_table_name,
     vertex_table_name,
 )
@@ -28,6 +30,57 @@ def test_edge_table_name_with_relation() -> None:
 def test_edge_table_name_without_relation() -> None:
     assert edge_table_name("person", "department", None) == (
         "person_department_relates_edges"
+    )
+
+
+LONG_SOURCE = "regulatory_reporting_obligation"
+LONG_TARGET = "consolidated_legal_entity"
+
+
+def test_a_long_edge_table_name_fits_postgres_and_keeps_its_suffix() -> None:
+    table = edge_table_name(LONG_SOURCE, LONG_TARGET, "is_filed_on_behalf_of")
+
+    assert len(table.encode("utf-8")) <= 63
+    assert table.endswith("_edges")
+    assert table == edge_table_name(LONG_SOURCE, LONG_TARGET, "is_filed_on_behalf_of")
+
+
+def test_long_triples_sharing_a_prefix_get_distinct_tables() -> None:
+    first = edge_table_name(LONG_SOURCE, LONG_TARGET, "is_filed_on_behalf_of_a")
+    second = edge_table_name(LONG_SOURCE, LONG_TARGET, "is_filed_on_behalf_of_b")
+
+    assert first != second
+
+
+def test_a_table_comment_resolves_a_shortened_edge_table() -> None:
+    table = edge_table_name(LONG_SOURCE, LONG_TARGET, "is_filed_on_behalf_of")
+    comment = edge_table_comment(LONG_SOURCE, LONG_TARGET, "is_filed_on_behalf_of")
+
+    assert split_edge_table_name(table, [LONG_SOURCE, LONG_TARGET]) is None
+    assert resolve_edge_table(table, comment, [LONG_SOURCE, LONG_TARGET]) == (
+        LONG_SOURCE,
+        LONG_TARGET,
+        "is_filed_on_behalf_of",
+    )
+
+
+def test_a_relationless_comment_resolves_like_the_name() -> None:
+    table = edge_table_name("person", "department", None)
+    comment = edge_table_comment("person", "department", None)
+    vertices = ["person", "department"]
+
+    assert resolve_edge_table(table, comment, vertices) == split_edge_table_name(
+        table, vertices
+    )
+
+
+def test_without_a_comment_an_edge_table_resolves_by_name() -> None:
+    table = edge_table_name("person", "department", "works_in")
+
+    assert resolve_edge_table(table, "", ["person", "department"]) == (
+        "person",
+        "department",
+        "works_in",
     )
 
 
@@ -106,14 +159,20 @@ class _FakeConn:
 class _Target(PostgresTargetWriteMixin):
     """Minimal harness exposing only what `delete_graph_structure` touches."""
 
-    def __init__(self, present: list[str]) -> None:
+    def __init__(
+        self, present: list[str], comments: dict[str, str] | None = None
+    ) -> None:
         self._fake = _FakeConn()
         self.conn = self._fake
         self.config = SimpleNamespace(schema_name="gf_test")
         self._present = present
+        self._comments = comments or {}
 
     def get_tables(self, schema_name: str | None = None) -> list[dict[str, Any]]:
-        return [{"table_name": t} for t in self._present]
+        return [
+            {"table_name": t, "description": self._comments.get(t, "")}
+            for t in self._present
+        ]
 
     def dropped(self) -> set[str]:
         names: set[str] = set()
@@ -157,3 +216,22 @@ def test_delete_graph_structure_delete_all_drops_everything() -> None:
     target = _Target(present)
     target.delete_graph_structure(delete_all=True)
     assert target.dropped() == set(present)
+
+
+def test_dropping_a_vertex_drops_its_shortened_edge_tables() -> None:
+    table = edge_table_name(LONG_SOURCE, LONG_TARGET, "is_filed_on_behalf_of")
+    comment = edge_table_comment(LONG_SOURCE, LONG_TARGET, "is_filed_on_behalf_of")
+    target = _Target([LONG_SOURCE, LONG_TARGET, table], comments={table: comment})
+
+    target.delete_graph_structure(vertex_types=(LONG_SOURCE,), delete_all=False)
+
+    assert target.dropped() == {LONG_SOURCE, table}
+
+
+def test_each_dropped_table_is_committed_on_its_own() -> None:
+    present = ["node", "other", "node_other_owns_edges"]
+    target = _Target(present)
+
+    target.delete_graph_structure(delete_all=True)
+
+    assert target._fake.commits == len(present)

@@ -80,6 +80,8 @@ def test_the_absent_clause_matches_unset_properties_and_never_merges_on_null():
 @patch("graflo.db.neo4j.conn.GraphDatabase.driver")
 def test_neo4j_writes_a_row_without_its_merge_property_apart(mock_driver):
     session = MagicMock()
+    # Edge writes run in a managed write transaction; record its queries here.
+    session.execute_write.side_effect = lambda work: work(session)
     mock_driver.return_value = MagicMock()
     mock_driver.return_value.session.return_value = session
     conn = Neo4jConnection(Neo4jConfig(uri="bolt://localhost:7687"))

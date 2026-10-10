@@ -87,6 +87,10 @@ class LiveSchemaDrift(BaseModel):
 
 def _edge_storage_name(db_aware: Any, edge: Any, flavor: DBType) -> str:
     """The relation name an introspected edge of *edge*'s type reports."""
+    if flavor == DBType.POSTGRES:
+        # Introspection resolves each edge table back to its relation; the
+        # table name itself is never reported.
+        return edge.relation or "relates"
     from graflo.db.traversal import edge_query_name
 
     return edge_query_name(db_aware, edge, flavor) or edge.relation

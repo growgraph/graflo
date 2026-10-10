@@ -281,6 +281,8 @@ class MemgraphConnection(Connection):
         self.conn = mgclient.connect(**connect_kwargs)
         self.conn.autocommit = True
         self._database_name = config.database or "memgraph"
+        # (label, key) pairs whose MERGE index this connection already ensured.
+        self._merge_indexed: set[tuple[str, str]] = set()
 
     def execute(self, query: str, **kwargs) -> QueryResult:
         """Execute a raw OpenCypher query against the database.
@@ -510,12 +512,12 @@ class MemgraphConnection(Connection):
             logger.warning(
                 "Schema is None: identity indexes cannot be ensured without schema"
             )
+        db_vertex = (
+            schema.resolve_db_aware(DBType.MEMGRAPH).vertex_config
+            if schema is not None
+            else None
+        )
         for label in vertex_config.vertex_set:
-            db_vertex = (
-                schema.resolve_db_aware(DBType.MEMGRAPH).vertex_config
-                if schema is not None
-                else None
-            )
             index_list = list(
                 schema.db_profile.vertex_secondary_indexes(label)
                 if schema is not None
@@ -775,16 +777,21 @@ class MemgraphConnection(Connection):
         if not sanitized_docs:
             return
 
-        # Auto-create index on match_keys for MERGE performance (idempotent)
-        cursor = self.conn.cursor()
-        for key in match_keys:
-            try:
-                cursor.execute(f"CREATE INDEX ON :{class_name}({key})")
-                logger.debug(f"Created index on {class_name}.{key}")
-            except Exception as e:
-                if "already exists" not in str(e).lower():
-                    logger.debug(f"Index on {class_name}.{key}: {e}")
-        cursor.close()
+        # Auto-create index on match_keys for MERGE performance, once per
+        # connection: the statement is DDL, and Memgraph takes a unique-access
+        # lock for it even when the index exists.
+        missing = [k for k in match_keys if (class_name, k) not in self._merge_indexed]
+        if missing:
+            cursor = self.conn.cursor()
+            for key in missing:
+                try:
+                    cursor.execute(f"CREATE INDEX ON :{class_name}({key})")
+                    logger.debug(f"Created index on {class_name}.{key}")
+                except Exception as e:
+                    if "already exists" not in str(e).lower():
+                        logger.debug(f"Index on {class_name}.{key}: {e}")
+                self._merge_indexed.add((class_name, key))
+            cursor.close()
 
         # Build the MERGE clause with match keys
         index_str = ", ".join([f"{k}: row.{k}" for k in match_keys_list])

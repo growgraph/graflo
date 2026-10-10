@@ -841,4 +841,9 @@ class GraphEngine:
         ingestion_model = IngestionModel(resources=[])
         ingestion_model.finish_init(schema.core_schema)
         writer = DBWriter(schema=schema, ingestion_model=ingestion_model)
-        asyncio.run(writer.write(gc=data, conn_conf=target_config, resource_name=None))
+        try:
+            asyncio.run(
+                writer.write(gc=data, conn_conf=target_config, resource_name=None)
+            )
+        finally:
+            writer.close()

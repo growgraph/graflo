@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.17.1]
+
+### Changed
+
+- **Breaking: a PostgreSQL edge table name longer than 63 bytes** is shortened with a hash
+  before `_edges`, and every edge table carries a comment naming its source, target and relation.
+  Edge tables with such names written by earlier releases must be recreated.
+- **`DBWriter`** keeps its connections for the run, reusing them across batches, instead of
+  opening one per vertex type and edge per batch; `close()` releases them, and ingestion calls it.
+- **Neo4j** edge writes run in a managed write transaction, which retries transient errors such as
+  deadlocks; vertex and edge writes return only once committed.
+- **NebulaGraph** describes a tag on first use instead of reading the whole tag catalogue on
+  every connection; **Memgraph** creates its MERGE index once per connection, not per batch.
+- **PostgreSQL** creates, truncates and drops each table in its own transaction.
+- Edge inference and blank-edge joins visit only the edges between the vertex types a document or
+  batch carries, not every declared edge.
+
+### Fixed
+
+- **Neo4j, FalkorDB and file-backend edge writes** lock per edge type, as documented, instead of
+  serializing every edge type on one lock; Memgraph still writes one edge type at a time. A write
+  waiting on a lock no longer holds a `max_concurrent` slot.
+- **ArangoDB edge upserts** (`edges_on_duplicate: upsert`) keep distinct relations and
+  weight-distinguished edges between the same two vertices instead of keeping only the first,
+  and store `relation` on the edge.
+- **An ingestion run whose bulk finalize fails** still closes its cast pool and connections.
+- **PostgreSQL live drift** no longer reports every edge type as both missing and undeclared.
+- **PostgreSQL `clear_data`** truncates the remaining tables after one that does not exist.
+
 ## [1.17.0]
 
 ### Added

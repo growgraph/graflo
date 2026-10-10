@@ -25,7 +25,7 @@ Example:
 
 import logging
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, LiteralString, cast
 
 from neo4j import GraphDatabase
 from neo4j.exceptions import ClientError
@@ -138,6 +138,11 @@ class Neo4jConnection(Connection):
         cursor = self.conn.run(query, **kwargs)
         return cursor
 
+    def reset_after_use(self) -> None:
+        """Start a fresh session: closing one finishes any result left pending."""
+        self.conn.close()
+        self.conn = self._driver.session()
+
     def close(self):
         """Close the Neo4j connection and session."""
         # Close session first, then the underlying driver
@@ -215,10 +220,10 @@ class Neo4jConnection(Connection):
             logger.warning(
                 "Schema is None: identity indexes cannot be ensured without schema"
             )
+        db_vertex = (
+            schema.resolve_db_aware(DBType.NEO4J).vertex_config if schema else None
+        )
         for c in vertex_config.vertex_set:
-            db_vertex = (
-                schema.resolve_db_aware(DBType.NEO4J).vertex_config if schema else None
-            )
             index_list = list(
                 schema.db_profile.vertex_secondary_indexes(c)
                 if schema is not None
@@ -546,7 +551,9 @@ class Neo4jConnection(Connection):
             ON CREATE set n += row
         """
         if not dry:
-            self.execute(q, batch=docs)
+            # Consumed so the write has committed, and raised any error, before
+            # the call returns; ``run`` alone returns before the commit.
+            self.execute(q, batch=docs).consume()
 
     def insert_edges_batch(
         self,
@@ -633,7 +640,15 @@ class Neo4jConnection(Connection):
             {upsert}
             """
             if not dry:
-                self.execute(q, batch=group)
+                # A managed write transaction: edge types sharing endpoint nodes
+                # are written concurrently, and the deadlocks that can cause are
+                # transient errors the driver retries.
+                query = cast(LiteralString, q)
+                self.conn.execute_write(
+                    lambda tx, query=query, group=group: tx.run(
+                        query, batch=group
+                    ).consume()
+                )
 
     def insert_return_batch(
         self, docs: list[dict[str, Any]], class_name: str

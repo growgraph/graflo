@@ -447,7 +447,7 @@ def render_weights(
     for w in vertex_weights:
         weights: list[dict] = []
         vertex = w.name
-        if vertex is None or vertex not in vertex_config.vertex_set:
+        if vertex is None or not vertex_config.has_vertex(vertex):
             continue
         vertex_lists = acc_vertex.get(vertex, {})
 

@@ -102,15 +102,12 @@ def _arango_edge_upsert_key_exprs(
 def _arango_edge_uniq_weight_keys(
     uniq_weight_fields: Any,
     uniq_weight_collections: Any,
-    relation_name: str | None,
 ) -> list[str]:
     keys: list[str] = []
     if uniq_weight_fields is not None:
         keys.extend(uniq_weight_fields)
     if uniq_weight_collections is not None:
         keys.extend(uniq_weight_collections)
-    if relation_name is not None:
-        keys.append("relation")
     return keys
 
 
@@ -118,10 +115,18 @@ def _arango_edge_upsert_match_literal(
     ups_from: str,
     ups_to: str,
     weight_keys: list[str],
+    relation_name: str | None,
 ) -> str:
+    """The UPSERT search document. ``edge`` is the ``[source, target, weight]``
+    row, so weights are read from ``edge[2]``."""
     inner = f"'_from': {ups_from}, '_to': {ups_to}"
+    if relation_name is not None:
+        # The relation is matched by the one being written, never as a weight.
+        weight_keys = [k for k in weight_keys if k != "relation"]
     if weight_keys:
-        inner += ", " + ", ".join(f"'{k}': edge.{k}" for k in weight_keys)
+        inner += ", " + ", ".join(f"'{k}': edge[2].{k}" for k in weight_keys)
+    if relation_name is not None:
+        inner += f", 'relation': '{relation_name}'"
     return "{" + inner + "}"
 
 
@@ -1025,6 +1030,10 @@ class ArangoConnection(Connection):
             target_class, match_keys_target, 1
         )
         doc_definition = f"MERGE({{_from : {result_from}, _to : {result_to}}}, edge[2])"
+        if relation_name is not None:
+            doc_definition = (
+                f"MERGE({doc_definition}, {{'relation': '{relation_name}'}})"
+            )
         logger.debug(" source_filter = %s", source_filter)
         logger.debug(" target_filter = %s", target_filter)
         logger.debug(" doc = %s", doc_definition)
@@ -1036,20 +1045,15 @@ class ArangoConnection(Connection):
             weight_keys = _arango_edge_uniq_weight_keys(
                 opts.uniq_weight_fields,
                 opts.uniq_weight_collections,
-                relation_name,
             )
             upsert_literal = _arango_edge_upsert_match_literal(
-                ups_from, ups_to, weight_keys
+                ups_from, ups_to, weight_keys, relation_name
             )
             logger.debug(" upsert clause: %s", upsert_literal)
             clauses = f"UPSERT {upsert_literal} INSERT doc UPDATE {{}}"
             options = "OPTIONS {exclusive: true}"
         elif opts.on_duplicate == "ignore":
-            if relation_name is None:
-                doc_clause = "doc"
-            else:
-                doc_clause = f"MERGE(doc, {{'relation': '{relation_name}' }})"
-            clauses = f"INSERT {doc_clause}"
+            clauses = "INSERT doc"
             options = "OPTIONS {exclusive: true, ignoreErrors: true}"
         else:
             raise AssertionError(f"unexpected on_duplicate: {opts.on_duplicate!r}")

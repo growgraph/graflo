@@ -92,6 +92,8 @@ source edge type, with the same records. On a PostgreSQL target the vertex
 types are tables, and each edge type is a table named
 `{source}_{target}_{relation}_edges` with `source_id` and `target_id` columns,
 or a column per identity field for a vertex type with a composite identity.
+A name longer than 63 bytes is shortened with a hash before `_edges`; the
+table comment records its source, target and relation.
 
 ## Options
 

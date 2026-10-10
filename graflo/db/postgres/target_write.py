@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 from collections.abc import Callable, Collection, Sequence
 from functools import partial
@@ -13,6 +14,7 @@ from psycopg2.extras import execute_values
 
 from graflo.architecture.graph_types import EdgeDirection
 from graflo.architecture.schema import Schema
+from graflo.architecture.schema.db_aware import relationship_merge_properties
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import (
     Field,
@@ -56,19 +58,26 @@ def _pg_clip(name: str, size: int = _PG_IDENTIFIER_BYTES) -> str:
     return name.encode("utf-8")[:size].decode("utf-8", "ignore")
 
 
-def _pg_index_name(name: str) -> str:
-    """*name* as an index name PostgreSQL keeps whole.
+def _pg_short_name(name: str, suffix: str = "") -> str:
+    """``name + suffix`` as an identifier PostgreSQL keeps whole.
 
-    A name within 63 bytes is returned unchanged. A longer one becomes a head
-    and ``_`` plus 8 hex digits of its SHA-1, within 63 bytes: truncation alone
-    would let two names sharing a prefix become one, and
-    ``CREATE INDEX IF NOT EXISTS`` would then skip the second index.
+    A name within 63 bytes is returned unchanged. A longer one becomes a head of
+    *name*, ``_`` plus 8 hex digits of the whole name's SHA-1, then *suffix*,
+    within 63 bytes: truncation alone would let two names sharing a prefix
+    become one, and ``CREATE ... IF NOT EXISTS`` would then skip the second.
     """
-    if len(name.encode("utf-8")) <= _PG_IDENTIFIER_BYTES:
-        return name
-    digest = hashlib.sha1(name.encode("utf-8")).hexdigest()[:_PG_DIGEST_LENGTH]
-    head = _pg_clip(name, _PG_IDENTIFIER_BYTES - _PG_DIGEST_LENGTH - 1).rstrip("_")
-    return f"{head}_{digest}"
+    whole = f"{name}{suffix}"
+    if len(whole.encode("utf-8")) <= _PG_IDENTIFIER_BYTES:
+        return whole
+    digest = hashlib.sha1(whole.encode("utf-8")).hexdigest()[:_PG_DIGEST_LENGTH]
+    budget = _PG_IDENTIFIER_BYTES - _PG_DIGEST_LENGTH - 1 - len(suffix.encode("utf-8"))
+    head = _pg_clip(name, budget).rstrip("_")
+    return f"{head}_{digest}{suffix}"
+
+
+def _pg_index_name(name: str) -> str:
+    """*name* as an index name PostgreSQL keeps whole (see :func:`_pg_short_name`)."""
+    return _pg_short_name(name)
 
 
 _LIST_ITEM_TO_PG_ARRAY: dict[str, str] = {
@@ -194,10 +203,48 @@ _PG_AGGREGATIONS: dict[AggregationType, str] = {
 #: :func:`vertex_table_name` is the identity function on the vertex type name.
 EDGE_TABLE_SUFFIX = "_edges"
 
+#: Prefix of the table comment naming an edge table's ``(source, target,
+#: relation)``; a shortened table name cannot be parsed back into it.
+EDGE_TABLE_COMMENT_PREFIX = "graflo:edge "
+
 
 def edge_table_name(source: str, target: str, relation: str | None) -> str:
+    """``{source}_{target}_{relation}_edges``, digest-shortened past 63 bytes."""
     rel = relation or "relates"
-    return f"{source}_{target}_{rel}{EDGE_TABLE_SUFFIX}"
+    return _pg_short_name(f"{source}_{target}_{rel}", EDGE_TABLE_SUFFIX)
+
+
+def edge_table_comment(source: str, target: str, relation: str | None) -> str:
+    """The comment an edge table carries: its triple, readable without the schema."""
+    triple = {"source": source, "target": target, "relation": relation or "relates"}
+    return EDGE_TABLE_COMMENT_PREFIX + json.dumps(triple, sort_keys=True)
+
+
+def resolve_edge_table(
+    table: str, comment: str | None, vertex_names: Collection[str]
+) -> tuple[str, str, str] | None:
+    """``(source, target, relation)`` of an edge table, from its comment or name.
+
+    The comment written by :func:`edge_table_comment` wins; a table without one
+    is parsed by :func:`split_edge_table_name`.
+    """
+    if comment and comment.startswith(EDGE_TABLE_COMMENT_PREFIX):
+        try:
+            triple = json.loads(comment[len(EDGE_TABLE_COMMENT_PREFIX) :])
+            return triple["source"], triple["target"], triple["relation"]
+        except (ValueError, KeyError, TypeError):
+            logger.warning("Unreadable edge comment on table %s: %r", table, comment)
+    return split_edge_table_name(table, vertex_names)
+
+
+def edge_table_comment_ddl(
+    schema: str, table: str, comment: str
+) -> tuple[str, tuple[str]]:
+    """``COMMENT ON TABLE`` for an edge table, with the comment as a parameter."""
+    return (
+        f"COMMENT ON TABLE {_quote_ident(schema)}.{_quote_ident(table)} IS %s",
+        (comment,),
+    )
 
 
 def split_edge_table_name(
@@ -415,8 +462,7 @@ def _edge_key_columns(schema: Schema | None, edge: Edge) -> list[str]:
     """
     if schema is None:
         return []
-    edge_config = schema.resolve_db_aware(DBType.POSTGRES).edge_config
-    return edge_config.relationship_merge_property_names(edge)
+    return relationship_merge_properties(edge, DBType.POSTGRES)
 
 
 def _key_text(value: Any) -> str | None:
@@ -656,7 +702,9 @@ class PostgresTargetWriteMixin:
         delete_all: bool = False,
     ) -> None:
         pg_schema = _pg_schema_name(self.config)
-        present = [row["table_name"] for row in self.get_tables(schema_name=pg_schema)]
+        rows = self.get_tables(schema_name=pg_schema)
+        present = [row["table_name"] for row in rows]
+        comments = {row["table_name"]: row.get("description") for row in rows}
         tables: list[str] = []
         if delete_all:
             tables = list(present)
@@ -673,12 +721,14 @@ class PostgresTargetWriteMixin:
                 t for t in present if not t.endswith(EDGE_TABLE_SUFFIX)
             }
             for table in present:
-                parts = split_edge_table_name(table, vertex_universe)
+                parts = resolve_edge_table(table, comments[table], vertex_universe)
                 if parts is None:
                     continue
                 source, target, _ = parts
                 if source in dropped or target in dropped:
                     tables.append(table)
+        # One transaction per table: a drop holds its table's locks until
+        # commit, and thousands of tables would exceed the lock table.
         for table in tables:
             q = sql.SQL("DROP TABLE IF EXISTS {}.{} CASCADE").format(
                 sql.Identifier(pg_schema),
@@ -686,7 +736,7 @@ class PostgresTargetWriteMixin:
             )
             with self.conn.cursor() as cursor:
                 cursor.execute(q)
-        self.conn.commit()
+            self.conn.commit()
 
     def _pg_schema_exists(self, schema_name: str) -> bool:
         rows = self.read(
@@ -761,17 +811,21 @@ class PostgresTargetWriteMixin:
             edge_table_name(e.source, e.target, e.relation)
             for e in schema.core_schema.edge_config.values()
         )
-        with self.conn.cursor() as cursor:
-            for table in table_names:
-                q = sql.SQL("TRUNCATE TABLE {}.{} CASCADE").format(
-                    sql.Identifier(pg_schema),
-                    sql.Identifier(table),
-                )
-                try:
+        # One transaction per table, so a missing table aborts only its own
+        # statement and no transaction holds every table's lock.
+        for table in table_names:
+            q = sql.SQL("TRUNCATE TABLE {}.{} CASCADE").format(
+                sql.Identifier(pg_schema),
+                sql.Identifier(table),
+            )
+            try:
+                with self.conn.cursor() as cursor:
                     cursor.execute(q)
-                except Exception:
-                    logger.debug("Skipping truncate for missing table %s", table)
-        self.conn.commit()
+            except Exception:
+                self.conn.rollback()
+                logger.debug("Skipping truncate for missing table %s", table)
+                continue
+            self.conn.commit()
 
     def _define_postgres_tables(self, schema: Schema) -> None:
         self._define_vertex_tables(schema)
@@ -799,9 +853,11 @@ class PostgresTargetWriteMixin:
                 sql.SQL(", ").join(col_defs),
                 pk,
             )
+            # One transaction per table: thousands of tables in one would
+            # exceed the lock table (``max_locks_per_transaction``).
             with self.conn.cursor() as cursor:
                 cursor.execute(create_q)
-        self.conn.commit()
+            self.conn.commit()
 
     def _create_edge_table(self, edge: Edge) -> None:
         pg_schema = _pg_schema_name(self.config)
@@ -836,6 +892,13 @@ class PostgresTargetWriteMixin:
                     exc,
                 )
                 cursor.execute(create_without_keys)
+            cursor.execute(
+                *edge_table_comment_ddl(
+                    pg_schema,
+                    table,
+                    edge_table_comment(edge.source, edge.target, edge.relation),
+                )
+            )
             try:
                 _ensure_edge_key(cursor, pg_schema, table, key)
             except Exception:
@@ -1004,11 +1067,13 @@ class PostgresTargetWriteMixin:
             return
         pg_schema = _pg_schema_name(self.config)
         table = vertex_table_name(class_name)
-        present = [row["table_name"] for row in self.get_tables(pg_schema)]
+        catalog = self.get_tables(pg_schema)
+        present = [row["table_name"] for row in catalog]
+        comments = {row["table_name"]: row.get("description") for row in catalog}
         vertex_tables = {t for t in present if not t.endswith(EDGE_TABLE_SUFFIX)}
         referencing: list[tuple[str, list[str]]] = []
         for other in present:
-            parts = split_edge_table_name(other, vertex_tables | {table})
+            parts = resolve_edge_table(other, comments[other], vertex_tables | {table})
             if parts is None:
                 continue
             source, target, _ = parts
@@ -1398,7 +1463,9 @@ class PostgresTargetWriteMixin:
         )
 
         pg_schema = _pg_schema_name(self.config)
-        present = [row["table_name"] for row in self.get_tables(schema_name=pg_schema)]
+        rows = self.get_tables(schema_name=pg_schema)
+        present = [row["table_name"] for row in rows]
+        comments = {row["table_name"]: row.get("description") for row in rows}
         vertex_tables = [t for t in present if not t.endswith(EDGE_TABLE_SUFFIX)]
 
         def columns(table: str) -> tuple[list[str], dict[str, FieldType]]:
@@ -1428,7 +1495,7 @@ class PostgresTargetWriteMixin:
 
         edges: list[GraphEdgeIntrospection] = []
         for table in present:
-            parts = split_edge_table_name(table, vertex_tables)
+            parts = resolve_edge_table(table, comments[table], vertex_tables)
             if parts is None:
                 continue
             source, target, relation = parts

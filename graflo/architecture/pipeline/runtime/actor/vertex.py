@@ -48,7 +48,7 @@ def undeclared_mapping_targets(
     vertex_config: VertexConfig, vertex: str, from_doc: Mapping[str, str]
 ) -> list[str]:
     """The ``from`` targets *vertex* does not declare as properties."""
-    if vertex not in vertex_config.vertex_set:
+    if not vertex_config.has_vertex(vertex):
         return []
     declared = set(vertex_config.property_names(vertex))
     return sorted(target for target in from_doc if target not in declared)
@@ -127,7 +127,7 @@ class VertexActor(VertexProducingActor):
         if init_ctx.strict_references and self.from_doc:
             refuse_undeclared_mapping(self.vertex_config, self.name, self.from_doc)
         self._key_fields = None
-        if self.name in self.vertex_config.vertex_set:
+        if self.vertex_config.has_vertex(self.name):
             self._key_fields = (
                 self.vertex_config.identity_fields(self.name)
                 if self.find is None
@@ -246,9 +246,8 @@ class VertexActor(VertexProducingActor):
             and self.name not in self.allowed_vertex_names
         ):
             return ctx
-        if (
-            self.allowed_vertex_names is None
-            and self.name not in self.vertex_config.vertex_set
+        if self.allowed_vertex_names is None and not self.vertex_config.has_vertex(
+            self.name
         ):
             return ctx
 
@@ -315,7 +314,7 @@ class VertexActor(VertexProducingActor):
             if passthrough_doc:
                 agg.append(passthrough_doc)
 
-        if self.name in self.vertex_config.hash_identity_vertices:
+        if self.vertex_config.is_hash_identity(self.name):
             # A digest vertex's key is synthetic: a value the record carries
             # under that name (a source `id` column, a mapping, a positional
             # transform output) would key the document instead of the digest.

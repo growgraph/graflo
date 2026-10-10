@@ -717,9 +717,9 @@ class DatabaseProfile(ConfigBaseModel):
         target_storage: str,
         purpose: str | None = None,
     ) -> str | None:
-        spec = self._edge_variant_spec(edge_id, purpose=purpose)
         if self.db_flavor != DBType.ARANGO:
             return None
+        spec = self._edge_variant_spec(edge_id, purpose=purpose)
         tokens = [source_storage, target_storage]
         purpose = spec.purpose if spec is not None else purpose
         if purpose is not None:

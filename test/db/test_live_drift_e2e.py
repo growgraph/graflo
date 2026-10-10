@@ -15,13 +15,15 @@ import pytest
 from graflo.db.manager import ConnectionManager
 from graflo.hq.caster import IngestionParams
 from graflo.hq.graph_engine import GraphEngine
+from graflo.onto import DBType
 from test.db.backends import backend_params, config_for
 from test.db.test_traversal_mixed_e2e import ROWS, TYPES, _manifest
 
 SPACE = "gf_live_drift_e2e"
 
-#: The Cypher family, where a property can be planted with one statement.
-BACKENDS = backend_params(["neo4j", "memgraph", "falkordb"])
+#: The Cypher family, where a property can be planted with one statement, and
+#: PostgreSQL, whose edge types are read back from table names and comments.
+BACKENDS = backend_params(["neo4j", "memgraph", "falkordb", "postgres"])
 
 
 @pytest.fixture(scope="module", params=BACKENDS)
@@ -64,6 +66,8 @@ def test_a_freshly_ingested_graph_shows_no_undeclared_property(live) -> None:
 
 def test_a_planted_property_is_reported(live) -> None:
     engine, config, schema = live
+    if config.connection_type == DBType.POSTGRES:
+        pytest.skip("the property is planted with Cypher")
     with ConnectionManager(connection_config=config) as db:
         db.execute("MATCH (n:machine {key: 'M1'}) SET n.model_series = 'h200'")
     try:

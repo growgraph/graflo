@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Coroutine
-from contextlib import AsyncExitStack
+import queue
+import threading
+from collections.abc import Coroutine, Iterator
+from contextlib import AsyncExitStack, contextmanager
 from typing import Any, TypeVar, cast
 from uuid import uuid4
 
@@ -33,7 +35,7 @@ from graflo.architecture.schema.identity_uuid import (
 )
 from graflo.architecture.schema.physical_keys import PhysicalKeys
 from graflo.connections.onto import DBConfig
-from graflo.db.conn import ConnectionCapability
+from graflo.db.conn import Connection, ConnectionCapability
 from graflo.db.manager import ConnectionManager
 from graflo.db.resolve import key_tuple
 from graflo.hq.endpoint_resolve import (
@@ -55,10 +57,19 @@ _T = TypeVar("_T")
 # MERGE, by contrast, is check-then-create per transaction: two concurrent
 # writers merging the same key can BOTH create, leaving duplicate nodes unless
 # a uniqueness constraint exists (which graflo does not require). Flavors not
-# listed here get a per-collection write lock when batches or sources overlap.
+# listed here write each vertex type and each relation through one batch at a
+# time.
 _CONCURRENT_UPSERT_SAFE_FLAVORS = frozenset(
     {DBType.POSTGRES, DBType.ARANGO, DBType.TIGERGRAPH, DBType.NEBULA}
 )
+
+# Flavors that write one edge type at a time: Memgraph aborts concurrent
+# transactions that change the edges of one node, and does not retry them.
+_SERIAL_EDGE_FLAVORS = frozenset({DBType.MEMGRAPH})
+
+# Flavors whose connection is opened per write rather than kept for the run:
+# the file backend flushes its on-disk index on close, and readers need it.
+_UNPOOLED_FLAVORS = frozenset({DBType.GRAFLO_BACKEND})
 
 
 async def _gather_settled(aws: list[Coroutine[Any, Any, _T]]) -> list[_T]:
@@ -156,10 +167,76 @@ class DBWriter:
         self._semaphore: asyncio.Semaphore | None = None
         self._semaphore_loop: asyncio.AbstractEventLoop | None = None
         self._semaphore_bound: int | None = None
-        self._collection_locks: dict[str, asyncio.Lock] = {}
+        self._collection_locks: dict[tuple[str | None, ...], asyncio.Lock] = {}
         self._collection_locks_loop: asyncio.AbstractEventLoop | None = None
         self._reported_undeclared_edges: set[tuple] = set()
+        # Idle connections per config object, as (manager, connection) pairs.
+        self._pools: dict[int, tuple[DBConfig, queue.SimpleQueue[tuple[Any, Any]]]] = {}
+        self._pools_lock = threading.Lock()
         self.stats = WriteStats()
+
+    def close(self) -> None:
+        """Close the connections this writer keeps for its run.
+
+        A connection still in use is closed when its work returns. A failure to
+        close one is logged, not raised, so it neither stops the others closing
+        nor replaces the error a failed run is raising.
+        """
+        with self._pools_lock:
+            pools, self._pools = self._pools, {}
+        for _, idle in pools.values():
+            while True:
+                try:
+                    manager, _ = idle.get_nowait()
+                except queue.Empty:
+                    break
+                self._close_quietly(manager)
+
+    @staticmethod
+    def _close_quietly(manager: Any) -> None:
+        try:
+            manager.__exit__(None, None, None)
+        except Exception:
+            logger.warning("Could not close a database connection", exc_info=True)
+
+    @contextmanager
+    def _connection(self, conn_conf: DBConfig) -> Iterator[Any]:
+        """A connection to *conn_conf* for one unit of work, kept for the run.
+
+        Connections are opened lazily and reused, so a run holds at most as
+        many as it ran operations at once (``max_concurrent`` for writes). Each
+        is used by one thread at a time; one whose work raised is closed rather
+        than reused. :meth:`close` closes the rest.
+        """
+        if conn_conf.connection_type in _UNPOOLED_FLAVORS:
+            with ConnectionManager(connection_config=conn_conf) as db:
+                yield db
+            return
+        with self._pools_lock:
+            entry = self._pools.get(id(conn_conf))
+            if entry is None:
+                entry = (conn_conf, queue.SimpleQueue())
+                self._pools[id(conn_conf)] = entry
+        idle = entry[1]
+        try:
+            manager, db = idle.get_nowait()
+        except queue.Empty:
+            manager = ConnectionManager(connection_config=conn_conf)
+            db = manager.__enter__()
+        try:
+            yield db
+            if isinstance(db, Connection):
+                db.reset_after_use()
+        except BaseException:
+            self._close_quietly(manager)
+            raise
+        with self._pools_lock:
+            # A writer closed while this work ran has dropped the pool.
+            kept = self._pools.get(id(conn_conf)) is entry
+            if kept:
+                idle.put((manager, db))
+        if not kept:
+            self._close_quietly(manager)
 
     # ------------------------------------------------------------------
     # Public API
@@ -208,7 +285,7 @@ class DBWriter:
             stored_schema = materialize_physical_schema(self._named_for(conn_conf))
 
             def _append() -> None:
-                with ConnectionManager(connection_config=conn_conf) as db:
+                with self._connection(conn_conf) as db:
                     db.bulk_load_append(bulk_session_id, stored_gc, stored_schema)
 
             await asyncio.to_thread(_append)
@@ -342,19 +419,21 @@ class DBWriter:
 
         async def _push_one(vcol: str, data: list[dict]):
             async with AsyncExitStack() as stack:
-                await self._acquire_write_slot(stack, conn_conf, vc.vertex_dbname(vcol))
+                await self._acquire_write_slot(
+                    stack, conn_conf, ("vertex", vc.vertex_dbname(vcol))
+                )
 
                 def _sync():
-                    with ConnectionManager(connection_config=conn_conf) as db:
-                        if vcol in vc.hash_identity_vertices:
+                    with self._connection(conn_conf) as db:
+                        if vc.is_hash_identity(vcol):
                             self._assign_hash_identity_ids(
                                 vcol=vcol, data=data, conn_conf=conn_conf
                             )
-                        elif vcol in vc.assigned_vertices:
+                        elif vc.is_assigned(vcol):
                             self._assign_assigned_vertex_ids(
                                 vcol=vcol, data=data, conn_conf=conn_conf
                             )
-                        elif vcol in vc.blank_vertices:
+                        elif vc.is_blank(vcol):
                             self._assign_blank_vertex_ids(
                                 vcol=vcol, data=data, conn_conf=conn_conf
                             )
@@ -535,7 +614,7 @@ class DBWriter:
             async with self._db_semaphore(conn_conf):
 
                 def _sync() -> tuple[list[dict[str, Any]], AttachStats]:
-                    with ConnectionManager(connection_config=conn_conf) as db:
+                    with self._connection(conn_conf) as db:
                         return self._resolve_attached(
                             db, vcol, docs, selector, conn_conf=conn_conf, policy=policy
                         )
@@ -549,11 +628,11 @@ class DBWriter:
             if filled:
                 async with AsyncExitStack() as stack:
                     await self._acquire_write_slot(
-                        stack, conn_conf, vc.vertex_dbname(vcol)
+                        stack, conn_conf, ("vertex", vc.vertex_dbname(vcol))
                     )
 
                     def _sync() -> None:
-                        with ConnectionManager(connection_config=conn_conf) as db:
+                        with self._connection(conn_conf) as db:
                             self._upsert_attached(db, vcol, filled, conn_conf=conn_conf)
 
                     await asyncio.to_thread(_sync)
@@ -641,11 +720,7 @@ class DBWriter:
         # Records landing on one vertex become one row, later records winning:
         # a batch upsert may not touch the same row twice.
         filled = fuse_doc_basis(filled, tuple(identity_fields))
-        if (
-            vcol in vc.hash_identity_vertices
-            or vcol in vc.assigned_vertices
-            or vcol in vc.blank_vertices
-        ):
+        if vc.is_hash_identity(vcol) or vc.is_assigned(vcol) or vc.is_blank(vcol):
             # Owners of a generated key mirrored it the same way when written.
             self._mirror_default_identity(vcol=vcol, data=filled, conn_conf=conn_conf)
         return filled, stats
@@ -686,12 +761,12 @@ class DBWriter:
     def _resolve_blank_edges(self, gc: GraphContainer, conn_conf: DBConfig) -> None:
         """Extend edge lists for blank vertices after their keys are resolved."""
         vc = self._db_aware_for(conn_conf).vertex_config
+        # Only edges between types this batch carries can be joined.
+        present = self.schema.core_schema.edge_config.ids_between(set(gc.vertices))
         for vcol in vc.blank_vertices:
-            for edge_id, _ in self.schema.core_schema.edge_config.items():  # noqa: PERF102
+            for edge_id in present:
                 vfrom, vto, _relation = edge_id
                 if vcol == vfrom or vcol == vto:
-                    if vfrom not in gc.vertices or vto not in gc.vertices:
-                        continue
                     if edge_id not in gc.edges:
                         gc.edges[edge_id] = []
                     source_docs = gc.vertices[vfrom]
@@ -745,9 +820,9 @@ class DBWriter:
         vc = self._db_aware_for(conn_conf).vertex_config
 
         def _sync() -> None:
-            with ConnectionManager(connection_config=conn_conf) as db:
+            with self._connection(conn_conf) as db:
                 for edge, weight in rules:
-                    if weight.name not in vc.vertex_set:
+                    if not vc.has_vertex(weight.name):
                         logger.error(f"{weight.name} not a valid vertex")
                         continue
                     self._enrich_edges_from_stored_vertex(
@@ -861,7 +936,7 @@ class DBWriter:
             async with self._db_semaphore(conn_conf):
 
                 def _sync() -> list:
-                    with ConnectionManager(connection_config=conn_conf) as db:
+                    with self._connection(conn_conf) as db:
                         return self._resolve_endpoints(
                             db=db,
                             docs=docs,
@@ -877,14 +952,25 @@ class DBWriter:
         async def _insert_one(edge_id: tuple, edge: Edge, edge_docs: list) -> None:
             async with AsyncExitStack() as stack:
                 # Cypher relationship MERGE has the same concurrent
-                # check-then-create race as node MERGE; lock per relation store.
-                await self._acquire_write_slot(
-                    stack, conn_conf, f"edge:{ec.runtime(edge).storage_name()}"
+                # check-then-create race as node MERGE. Two edge ids never MERGE
+                # one pattern (their labels or relation type differ), so the
+                # lock is per concrete id -- the container key, since a
+                # ``relation_field`` template's schema relation is None.
+                source, target, relation = edge_id
+                lock_key: tuple[str | None, ...] = (
+                    ("edge",)
+                    if conn_conf.connection_type in _SERIAL_EDGE_FLAVORS
+                    else (
+                        "edge",
+                        vc.vertex_dbname(source),
+                        vc.vertex_dbname(target),
+                        relation,
+                    )
                 )
+                await self._acquire_write_slot(stack, conn_conf, lock_key)
 
                 def _sync() -> None:
-                    _, _, relation = edge_id
-                    with ConnectionManager(connection_config=conn_conf) as db:
+                    with self._connection(conn_conf) as db:
                         runtime = ec.runtime(edge)
                         source_keys = tuple(vc.identity_fields(edge.source))
                         target_keys = tuple(vc.identity_fields(edge.target))
@@ -1068,21 +1154,27 @@ class DBWriter:
         return self._semaphore
 
     async def _acquire_write_slot(
-        self, stack: AsyncExitStack, conn_conf: DBConfig, collection: str
+        self,
+        stack: AsyncExitStack,
+        conn_conf: DBConfig,
+        collection: tuple[str | None, ...],
     ) -> None:
         """Enter the semaphore and, when the backend's upsert can race with
         itself (Cypher MERGE has no cross-transaction atomicity), a
         per-collection lock so the same collection is written by one batch at a
-        time while distinct collections still proceed in parallel."""
+        time while distinct collections still proceed in parallel.
+
+        The lock is taken before the semaphore, so a write queued behind its
+        collection does not hold a ``max_concurrent`` slot while it waits.
+        """
+        if conn_conf.connection_type not in _CONCURRENT_UPSERT_SAFE_FLAVORS:
+            loop = asyncio.get_running_loop()
+            if self._collection_locks_loop is not loop:
+                self._collection_locks = {}
+                self._collection_locks_loop = loop
+            lock = self._collection_locks.setdefault(collection, asyncio.Lock())
+            await stack.enter_async_context(lock)
         await stack.enter_async_context(self._db_semaphore(conn_conf))
-        if conn_conf.connection_type in _CONCURRENT_UPSERT_SAFE_FLAVORS:
-            return
-        loop = asyncio.get_running_loop()
-        if self._collection_locks_loop is not loop:
-            self._collection_locks = {}
-            self._collection_locks_loop = loop
-        lock = self._collection_locks.setdefault(collection, asyncio.Lock())
-        await stack.enter_async_context(lock)
 
     def _db_aware_for(self, conn_conf: DBConfig) -> SchemaDBAware:
         """Return a cached :class:`SchemaDBAware` for *conn_conf*'s DB flavor.

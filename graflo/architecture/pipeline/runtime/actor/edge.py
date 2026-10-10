@@ -612,8 +612,8 @@ class EdgeActor(Actor):
             self.allowed_vertex_names is None
             and self.vertex_config is not None
             and (
-                self.edge.source not in self.vertex_config.vertex_set
-                or self.edge.target not in self.vertex_config.vertex_set
+                not self.vertex_config.has_vertex(self.edge.source)
+                or not self.vertex_config.has_vertex(self.edge.target)
             )
         ):
             return ctx
@@ -661,9 +661,8 @@ class EdgeActor(Actor):
             assert self._static_source is not None
             source_type = self._static_source
 
-        if (
-            self.vertex_config is not None
-            and source_type not in self.vertex_config.vertex_set
+        if self.vertex_config is not None and not self.vertex_config.has_vertex(
+            source_type
         ):
             logger.debug(
                 "EdgeActor: source type '%s' not in vertex_set, skipping", source_type
@@ -685,9 +684,8 @@ class EdgeActor(Actor):
             assert self._static_target is not None
             target_type = self._static_target
 
-        if (
-            self.vertex_config is not None
-            and target_type not in self.vertex_config.vertex_set
+        if self.vertex_config is not None and not self.vertex_config.has_vertex(
+            target_type
         ):
             logger.debug(
                 "EdgeActor: target type '%s' not in vertex_set, skipping", target_type
