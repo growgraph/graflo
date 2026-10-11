@@ -400,3 +400,25 @@ class TestWriterLifetime:
             self._ingest(caster, writer, fail=False)
 
         writer.close.assert_called_once_with()
+
+
+class TestCasterClose:
+    """A caller driving ``process_batch`` itself releases the run's resources."""
+
+    def test_closing_a_caster_closes_its_writer(self) -> None:
+        caster = _caster()
+        writer = MagicMock()
+        caster._db_writer = writer
+
+        caster.close()
+
+        writer.close.assert_called_once_with()
+        assert caster._db_writer is None
+
+    def test_a_caster_closes_on_leaving_its_block(self) -> None:
+        writer = MagicMock()
+
+        with _caster() as caster:
+            caster._db_writer = writer
+
+        writer.close.assert_called_once_with()

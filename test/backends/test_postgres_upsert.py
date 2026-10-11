@@ -415,9 +415,14 @@ def test_the_edge_table_is_keyed_on_the_schema_merge_properties() -> None:
 
     PostgresConnection._create_edge_table(cast(Any, pg), _edge(schema))
 
-    assert pg.conn.executed[1].startswith(f'COMMENT ON TABLE "g"."{EDGE_TABLE}"')
-    assert pg.conn.executed[2].startswith("SELECT to_regclass(")
-    assert pg.conn.executed[3:] == [
+    assert pg.conn.executed[1].startswith("SELECT obj_description(")
+    assert pg.conn.executed[2:5] == [
+        "SAVEPOINT graflo_edge_comment",
+        f'COMMENT ON TABLE "g"."{EDGE_TABLE}" IS %s',
+        "RELEASE SAVEPOINT graflo_edge_comment",
+    ]
+    assert pg.conn.executed[5].startswith("SELECT to_regclass(")
+    assert pg.conn.executed[6:] == [
         f'LOCK TABLE "g"."{EDGE_TABLE}" IN SHARE ROW EXCLUSIVE MODE',
         f'DROP INDEX IF EXISTS "g"."{EDGE_TABLE}_edge_uniq"',
         (
@@ -719,18 +724,20 @@ def test_the_stale_unique_index_is_dropped_by_the_name_postgres_stored() -> None
 def test_an_edge_table_is_commented_with_its_triple(monkeypatch) -> None:
     schema = _schema([])
     pg = _Pg(schema)
-    params: list[Any] = []
+    params: dict[str, Any] = {}
     record = _Cursor.execute
 
     def _execute(self, query: Any, args: Any = None) -> None:
-        params.append(args)
+        params[_render(query)] = args
         record(self, query, args)
 
     monkeypatch.setattr(_Cursor, "execute", _execute)
 
     PostgresConnection._create_edge_table(cast(Any, pg), _edge(schema))
 
-    assert params[1] == (target_write.edge_table_comment("person", "org", "works"),)
+    assert params[f'COMMENT ON TABLE "g"."{EDGE_TABLE}" IS %s'] == (
+        target_write.edge_table_comment("person", "org", "works"),
+    )
 
 
 def test_a_postgres_connection_ends_its_transaction_before_reuse() -> None:
@@ -786,3 +793,53 @@ def test_clearing_data_carries_on_past_a_missing_table() -> None:
         f'TRUNCATE TABLE "g"."{EDGE_TABLE}" CASCADE',
     ]
     assert (pg.conn.rollbacks, pg.conn.commits) == (1, 2)
+
+
+# -- edge table comment ------------------------------------------------------------
+
+
+class _CommentedCursor(_Cursor):
+    """Answers the comment probe with *comment*; other probes as the catalog."""
+
+    comment: str | None = None
+
+    def execute(self, query: Any, params: Any = None) -> None:
+        self._last = _render(query)
+        super().execute(query, params)
+
+    def fetchone(self) -> Any:
+        if "obj_description" in self._last:
+            return (self.comment,)
+        return super().fetchone()
+
+
+def _commented(monkeypatch, comment: str | None) -> None:
+    monkeypatch.setattr(_CommentedCursor, "comment", comment)
+    monkeypatch.setattr(
+        _Conn,
+        "cursor",
+        lambda self: _CommentedCursor(self.executed, self._fail_on, self._catalog),
+    )
+
+
+def test_an_edge_table_already_carrying_its_comment_is_left_alone(monkeypatch) -> None:
+    schema = _schema([])
+    _commented(monkeypatch, target_write.edge_table_comment("person", "org", "works"))
+    pg = _Pg(schema)
+
+    PostgresConnection._create_edge_table(cast(Any, pg), _edge(schema))
+
+    assert not any(q.startswith("COMMENT") for q in pg.conn.executed)
+
+
+def test_a_refused_comment_leaves_the_table_defined(monkeypatch, caplog) -> None:
+    schema = _schema([])
+    _commented(monkeypatch, None)
+    pg = _Pg(schema, fail_on="COMMENT ON")
+
+    PostgresConnection._create_edge_table(cast(Any, pg), _edge(schema))
+
+    assert "ROLLBACK TO SAVEPOINT graflo_edge_comment" in pg.conn.executed
+    assert pg.conn.executed[-1].startswith("CREATE UNIQUE INDEX")
+    assert (pg.conn.rollbacks, pg.conn.commits) == (0, 1)
+    assert "could not comment" in caplog.text.lower()

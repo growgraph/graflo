@@ -11,7 +11,7 @@ import logging
 import sys
 from collections.abc import Callable, Coroutine
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Self, cast
 
 import pandas as pd
 from suthing import Timer
@@ -79,6 +79,24 @@ class Caster:
         # session is loaded; their sources hear about them, and are closed, then.
         self._staged_batches: list[tuple[AbstractDataSource, int]] = []
         self._staged_sources: list[AbstractDataSource] = []
+
+    def close(self) -> None:
+        """Release the cast worker pools and the writer's database connections.
+
+        Ingestion runs call it when they end; a caller driving
+        :meth:`process_batch` or :meth:`process_resource` itself calls it (or
+        uses the caster as a context manager) when done. The caster stays usable.
+        """
+        self._document_caster.close()
+        if self._db_writer is not None:
+            self._db_writer.close()
+            self._db_writer = None
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
 
     async def _ensure_bulk_session(self, conn_conf: DBConfig) -> str | None:
         return await self._bulk_coordinator.ensure_session(conn_conf)
@@ -621,12 +639,9 @@ class Caster:
             finally:
                 # The cast pool and the writer's connections outlive individual
                 # batches on purpose; the run is where they stop.
-                self._document_caster.close()
-                if self._db_writer is not None:
-                    self._db_writer.close()
+                self.close()
                 self._ingest_bindings = None
                 self._connection_provider = EmptyConnectionProvider()
-                self._db_writer = None
 
     def ingest(
         self,

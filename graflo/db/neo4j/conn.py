@@ -85,6 +85,19 @@ def _cypher_escape_identifier(name: str) -> str:
 DEFAULT_NEO4J_USERNAME = "neo4j"
 
 
+def _create_schema_rule(db: Any, query: str) -> None:
+    """Run an index or constraint DDL statement; an existing rule is not an error."""
+    try:
+        db.execute(query)
+    except ClientError as e:
+        if e.code in _BENIGN_DUPLICATE_SCHEMA_CODES:
+            logger.debug(
+                "Skipping index/constraint creation (already present): %s", e.message
+            )
+            return
+        raise
+
+
 class Neo4jConnection(Connection):
     """Neo4j-specific implementation of the Connection interface.
 
@@ -211,7 +224,8 @@ class Neo4jConnection(Connection):
         """Define indexes for vertex labels.
 
         Creates indexes for each vertex label based on the configuration.
-        Neo4j has no implicit identity index; identity is prepended when schema is provided.
+        Neo4j has no implicit identity index; the identity, as a uniqueness
+        constraint, is prepended when schema is provided.
 
         Args:
             vertex_config: Vertex configuration containing index definitions
@@ -267,10 +281,12 @@ class Neo4jConnection(Connection):
                 self._add_index(rel_label, index_obj, is_vertex_index=False)
 
     def _add_index(self, obj_name, index: Index, is_vertex_index=True):
-        """Add an index (or relationship uniqueness constraint) to label/rel type.
+        """Add an index or a uniqueness constraint to a label or relationship type.
 
-        Vertex secondary indexes always use ``CREATE INDEX``. For relationships,
-        ``Index.unique`` emits a Neo4j uniqueness constraint when possible.
+        ``Index.unique`` emits a uniqueness constraint, which Neo4j backs with
+        its own index; otherwise a range index. A composite vertex constraint
+        the server refuses (Community edition may) falls back to an index, with
+        a warning that the identity is not enforced as unique.
 
         Args:
             obj_name: Label or relationship type name
@@ -278,31 +294,32 @@ class Neo4jConnection(Connection):
             is_vertex_index: If True, create index on nodes, otherwise on relationships
         """
         fields_str = ", ".join([f"x.{f}" for f in index.fields])
-        fields_str2 = "_".join(index.fields)
-        index_name = f"{obj_name}_{fields_str2}"
-        if is_vertex_index:
-            formula = f"(x:{obj_name})"
-            q = f"CREATE INDEX {index_name} IF NOT EXISTS FOR {formula} ON ({fields_str});"
-        elif index.unique and index.fields:
-            req = ", ".join([f"x.{f}" for f in index.fields])
-            q = (
-                f"CREATE CONSTRAINT {index_name} IF NOT EXISTS "
-                f"FOR ()-[x:{obj_name}]-() REQUIRE ({req}) IS UNIQUE;"
-            )
-        else:
-            formula = f"()-[x:{obj_name}]-()"
-            q = f"CREATE INDEX {index_name} IF NOT EXISTS FOR {formula} ON ({fields_str});"
-
+        index_name = f"{obj_name}_{'_'.join(index.fields)}"
+        formula = f"(x:{obj_name})" if is_vertex_index else f"()-[x:{obj_name}]-()"
+        plain = (
+            f"CREATE INDEX {index_name} IF NOT EXISTS FOR {formula} ON ({fields_str});"
+        )
+        if not (index.unique and index.fields):
+            _create_schema_rule(self, plain)
+            return
+        req = fields_str if len(index.fields) == 1 else f"({fields_str})"
+        constraint = (
+            f"CREATE CONSTRAINT {index_name} IF NOT EXISTS "
+            f"FOR {formula} REQUIRE {req} IS UNIQUE;"
+        )
         try:
-            self.execute(q)
+            _create_schema_rule(self, constraint)
         except ClientError as e:
-            if e.code in _BENIGN_DUPLICATE_SCHEMA_CODES:
-                logger.debug(
-                    "Skipping index/constraint creation (already present): %s",
-                    e.message,
-                )
-                return
-            raise
+            if not is_vertex_index or len(index.fields) == 1:
+                raise
+            logger.warning(
+                "Neo4j refused a uniqueness constraint on %s(%s): %s. Creating an "
+                "index instead; the identity is not enforced as unique.",
+                obj_name,
+                ", ".join(index.fields),
+                e.message,
+            )
+            _create_schema_rule(self, plain)
 
     def _drop_all_user_indexes_and_constraints(self) -> None:
         """Remove non-system indexes and constraints for the active database.

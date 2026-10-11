@@ -83,8 +83,8 @@ logs a warning, because every filtered read on that tag then fails with
 
 | Backend | Identity index | Declared vertex indexes | Declared edge indexes |
 |---|---|---|---|
-| Neo4j | One index over the identity fields, created with the other indexes. An index, not a uniqueness constraint | `CREATE INDEX` over the fields; `unique` is not applied | A relationship index, or a uniqueness constraint when `unique: true` |
-| Memgraph | One single-property index per identity field, created with the other indexes and again on the match fields when vertices are written | One single-property index per field | One `CREATE EDGE INDEX ON :<relation>(<field>)` per field |
+| Neo4j | A uniqueness constraint over the identity fields, created with the other indexes. If the server refuses a composite constraint (Community edition may), a plain index with a warning | `CREATE INDEX`, or a uniqueness constraint when `unique: true` | A relationship index, or a uniqueness constraint when `unique: true` |
+| Memgraph | One single-property index per identity field and a uniqueness constraint over all of them, created with the other indexes; the match-field indexes are ensured again once per connection when vertices are written | One single-property index per field, plus a uniqueness constraint when `unique: true` | One `CREATE EDGE INDEX ON :<relation>(<field>)` per field |
 | FalkorDB | One index per identity field, created with the other indexes | One index per field | One relationship index per field |
 | NebulaGraph | A tag index over the identity fields, always created, because `LOOKUP` and filtered `MATCH` need it | A tag index | An edge index |
 | ArangoDB | A unique persistent index over the identity fields, created with the collection; none when the identity is `_key`, which ArangoDB indexes itself | As declared, with `unique` and `type` applied | As declared, on each edge collection |

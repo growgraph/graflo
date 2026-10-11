@@ -454,6 +454,32 @@ def _ensure_edge_key(
     _create_edge_key(cursor, schema, table, columns)
 
 
+def _ensure_edge_comment(cursor: Any, schema: str, table: str, comment: str) -> None:
+    """Comment *table* with *comment* unless it already carries it.
+
+    Written under a savepoint: commenting needs ownership, and a table another
+    role owns stays defined, with a warning, instead of aborting the transaction.
+    """
+    qualified = f"{_quote_ident(schema)}.{_quote_ident(table)}"
+    cursor.execute("SELECT obj_description(to_regclass(%s), 'pg_class')", (qualified,))
+    row = cursor.fetchone()
+    if row is not None and row[0] == comment:
+        return
+    cursor.execute("SAVEPOINT graflo_edge_comment")
+    try:
+        cursor.execute(*edge_table_comment_ddl(schema, table, comment))
+    except Exception as exc:
+        cursor.execute("ROLLBACK TO SAVEPOINT graflo_edge_comment")
+        logger.warning(
+            "Could not comment edge table %s (%s); introspection then reads its "
+            "triple from the name, which fails for a shortened name.",
+            table,
+            exc,
+        )
+        return
+    cursor.execute("RELEASE SAVEPOINT graflo_edge_comment")
+
+
 def _edge_key_columns(schema: Schema | None, edge: Edge) -> list[str]:
     """Property columns that, with the endpoints, key a row of *edge*'s table.
 
@@ -892,12 +918,11 @@ class PostgresTargetWriteMixin:
                     exc,
                 )
                 cursor.execute(create_without_keys)
-            cursor.execute(
-                *edge_table_comment_ddl(
-                    pg_schema,
-                    table,
-                    edge_table_comment(edge.source, edge.target, edge.relation),
-                )
+            _ensure_edge_comment(
+                cursor,
+                pg_schema,
+                table,
+                edge_table_comment(edge.source, edge.target, edge.relation),
             )
             try:
                 _ensure_edge_key(cursor, pg_schema, table, key)

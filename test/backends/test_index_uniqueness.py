@@ -68,3 +68,91 @@ def test_a_declared_relationship_index_is_a_plain_index_on_neo4j() -> None:
     plain, constraint = fake.queries
     assert plain.startswith("CREATE INDEX")
     assert constraint.startswith("CREATE CONSTRAINT")
+
+
+# -- vertex uniqueness on Neo4j ----------------------------------------------------
+
+
+def _client_error(code: str) -> Exception:
+    from neo4j.exceptions import Neo4jError
+
+    return Neo4jError._hydrate_neo4j(code=code, message="refused")
+
+
+class _Refusing(_Recorder):
+    """Refuses every constraint with *code*; indexes go through."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__()
+        self._code = code
+
+    def execute(self, query: str) -> None:
+        if query.startswith("CREATE CONSTRAINT"):
+            raise _client_error(self._code)
+        super().execute(query)
+
+
+def test_a_single_field_vertex_identity_is_a_uniqueness_constraint() -> None:
+    fake = _Recorder()
+
+    Neo4jConnection._add_index(
+        cast(Any, fake), "person", Index(fields=["id"], unique=True)
+    )
+
+    assert fake.queries == [
+        (
+            "CREATE CONSTRAINT person_id IF NOT EXISTS "
+            "FOR (x:person) REQUIRE x.id IS UNIQUE;"
+        )
+    ]
+
+
+def test_a_composite_vertex_identity_is_a_composite_constraint() -> None:
+    fake = _Recorder()
+
+    Neo4jConnection._add_index(
+        cast(Any, fake), "person", Index(fields=["name", "born"], unique=True)
+    )
+
+    assert fake.queries == [
+        (
+            "CREATE CONSTRAINT person_name_born IF NOT EXISTS "
+            "FOR (x:person) REQUIRE (x.name, x.born) IS UNIQUE;"
+        )
+    ]
+
+
+def test_a_refused_composite_constraint_falls_back_to_an_index(caplog) -> None:
+    fake = _Refusing("Neo.ClientError.Statement.UnsupportedAdministrationCommand")
+
+    Neo4jConnection._add_index(
+        cast(Any, fake), "person", Index(fields=["name", "born"], unique=True)
+    )
+
+    assert fake.queries == [
+        (
+            "CREATE INDEX person_name_born IF NOT EXISTS FOR (x:person) "
+            "ON (x.name, x.born);"
+        )
+    ]
+    assert "not enforced as unique" in caplog.text
+
+
+def test_a_refused_single_field_constraint_raises() -> None:
+    import pytest
+
+    fake = _Refusing("Neo.ClientError.Schema.ConstraintCreationFailed")
+
+    with pytest.raises(Exception, match="refused"):
+        Neo4jConnection._add_index(
+            cast(Any, fake), "person", Index(fields=["id"], unique=True)
+        )
+
+
+def test_a_non_unique_vertex_index_stays_an_index() -> None:
+    fake = _Recorder()
+
+    Neo4jConnection._add_index(cast(Any, fake), "person", Index(fields=["email"]))
+
+    (query,) = fake.queries
+    assert query.startswith("CREATE INDEX person_email")

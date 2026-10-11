@@ -55,13 +55,15 @@ _T = TypeVar("_T")
 # (collection-level write lock), and the keyed REST/NGQL upserts of TigerGraph
 # and Nebula cannot create duplicate vertices for the same identity. Cypher
 # MERGE, by contrast, is check-then-create per transaction: two concurrent
-# writers merging the same key can BOTH create, leaving duplicate nodes unless
-# a uniqueness constraint exists (which graflo does not require). Flavors not
+# writers merging the same key can BOTH create a node, or, under the identity
+# constraint Neo4j and Memgraph get, one fails. Flavors not
 # listed here write each vertex type and each relation through one batch at a
 # time.
 _CONCURRENT_UPSERT_SAFE_FLAVORS = frozenset(
     {DBType.POSTGRES, DBType.ARANGO, DBType.TIGERGRAPH, DBType.NEBULA}
 )
+
+_CYPHER_FLAVORS = frozenset({DBType.NEO4J, DBType.MEMGRAPH, DBType.FALKORDB})
 
 # Flavors that write one edge type at a time: Memgraph aborts concurrent
 # transactions that change the edges of one node, and does not retry them.
@@ -993,11 +995,7 @@ class DBWriter:
                                 "dry": self.dry,
                                 "collection_name": runtime.storage_name(),
                             }
-                            if conn_conf.connection_type in (
-                                DBType.NEO4J,
-                                DBType.FALKORDB,
-                                DBType.MEMGRAPH,
-                            ):
+                            if conn_conf.connection_type in _CYPHER_FLAVORS:
                                 if merge_props is not None:
                                     edge_kw["relationship_merge_properties"] = (
                                         merge_props
@@ -1213,6 +1211,13 @@ class DBWriter:
         conn_type: DBType,
     ) -> tuple[list, str | None]:
         """Project logical edge docs into DB-specific relation representation."""
+        if conn_type in _CYPHER_FLAVORS:
+            # The relationship type the profile names for this concrete relation,
+            # as the read path and index DDL resolve it.
+            edge = runtime.edge
+            return docs, runtime.db_profile.edge_relation_name(
+                (edge.source, edge.target, relation), default_relation=relation
+            )
         if conn_type != DBType.TIGERGRAPH:
             return docs, relation
 

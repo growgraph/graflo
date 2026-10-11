@@ -91,6 +91,8 @@ class NebulaConnection(Connection):
         self._adapter: NebulaClientAdapter = create_adapter(config)
         self._space_name: str | None = None
         self._tag_fields: dict[str, list[str]] = {}
+        # Tags whose describe failure was already warned about on this connection.
+        self._undescribed: set[str] = set()
 
         if config.schema_name:
             # A missing space is legitimate here — define_schema creates it —
@@ -205,7 +207,11 @@ class NebulaConnection(Connection):
         try:
             desc = self._adapter.execute(f"DESCRIBE TAG `{tag_name}`")
         except Exception as e:
-            logger.warning(
+            # Warned once per tag and connection; a write per batch retries it.
+            level = logging.DEBUG if tag_name in self._undescribed else logging.WARNING
+            self._undescribed.add(tag_name)
+            logger.log(
+                level,
                 "Could not describe tag '%s' in space '%s': %s. "
                 "Writes to this tag may omit properties.",
                 tag_name,

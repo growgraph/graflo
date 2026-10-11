@@ -67,3 +67,17 @@ def test_a_tag_that_does_not_exist_has_no_fields(adapter: _Adapter) -> None:
     db = _connect()
 
     assert db._tag_field_names("missing") == []
+
+
+def test_a_tag_that_cannot_be_described_warns_once(adapter: _Adapter, caplog) -> None:
+    import logging
+
+    db = _connect()
+
+    with caplog.at_level(logging.DEBUG, logger="graflo.db.nebula.conn"):
+        db._tag_field_names("missing")
+        db._tag_field_names("missing")
+
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert adapter.statements.count("DESCRIBE TAG `missing`") == 2

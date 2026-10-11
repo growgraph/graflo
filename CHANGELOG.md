@@ -19,6 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **NebulaGraph** describes a tag on first use instead of reading the whole tag catalogue on
   every connection; **Memgraph** creates its MERGE index once per connection, not per batch.
 - **PostgreSQL** creates, truncates and drops each table in its own transaction.
+- **Neo4j** creates a vertex identity, and any vertex index declared `unique: true`, as a
+  uniqueness constraint; a composite constraint the server refuses falls back to an index with a
+  warning. **Memgraph** adds a uniqueness constraint over the identity and drops unique
+  constraints with the vertices they cover.
+- **`Caster.close()`**, also on leaving a `with` block, releases the cast pools and the writer's
+  connections for callers driving `process_batch` or `process_resource` themselves.
 - Edge inference and blank-edge joins visit only the edges between the vertex types a document or
   batch carries, not every declared edge.
 
@@ -33,6 +39,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **An ingestion run whose bulk finalize fails** still closes its cast pool and connections.
 - **PostgreSQL live drift** no longer reports every edge type as both missing and undeclared.
 - **PostgreSQL `clear_data`** truncates the remaining tables after one that does not exist.
+- **Neo4j, Memgraph and FalkorDB edge writes** use the relation name a `DatabaseProfile` edge spec
+  sets, as reads and index definitions already did.
+- **PostgreSQL** defines an edge table another role owns, with a warning, instead of failing on its
+  comment; a table already carrying its comment is not commented again.
+- **NebulaGraph** warns once per connection about a tag it cannot describe, not on every batch.
 
 ## [1.17.0]
 

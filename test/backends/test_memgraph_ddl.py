@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from graflo.db.memgraph.conn import edge_property_index_query
 
 
@@ -45,4 +47,100 @@ def test_an_upsert_creates_its_merge_index_once_per_connection(monkeypatch) -> N
 
     assert [s for s in fake.statements if s.startswith("CREATE INDEX")] == [
         "CREATE INDEX ON :person(id)"
+    ]
+
+
+def _memgraph(monkeypatch) -> tuple[Any, _Conn]:
+    from graflo.connections.onto import MemgraphConfig
+    from graflo.db.memgraph import conn as memgraph_conn
+
+    fake = _Conn()
+    monkeypatch.setattr(memgraph_conn.mgclient, "connect", lambda **kwargs: fake)
+    return memgraph_conn.MemgraphConnection(
+        MemgraphConfig(uri="bolt://localhost:7687")
+    ), fake
+
+
+def test_a_vertex_identity_is_indexed_and_constrained_unique(monkeypatch) -> None:
+    from graflo.architecture.schema import Schema
+
+    schema = Schema.model_validate(
+        {
+            "metadata": {"name": "people"},
+            "core_schema": {
+                "vertex_config": {
+                    "vertices": [
+                        {
+                            "name": "person",
+                            "properties": ["name", "born"],
+                            "identity": ["name", "born"],
+                        }
+                    ]
+                },
+                "edge_config": {"edges": []},
+            },
+            "db_profile": {"db_flavor": "memgraph"},
+        }
+    )
+    db, fake = _memgraph(monkeypatch)
+
+    db.define_vertex_indexes(schema.core_schema.vertex_config, schema)
+
+    assert fake.statements == [
+        "CREATE INDEX ON :person(name)",
+        "CREATE INDEX ON :person(born)",
+        "CREATE CONSTRAINT ON (n:person) ASSERT n.name, n.born IS UNIQUE",
+    ]
+
+
+class _CatalogCursor(_Cursor):
+    """Answers ``SHOW CONSTRAINT INFO`` with a fixed catalogue."""
+
+    description = [
+        type("Column", (), {"name": name})()
+        for name in ("constraint type", "label", "properties", "data_type")
+    ]
+
+    def fetchall(self) -> list[tuple]:
+        return [
+            ("unique", "person", ["name", "born"], ""),
+            ("exists", "person", "name", ""),
+            ("unique", "org", ["code"], ""),
+        ]
+
+
+class _CatalogConn(_Conn):
+    def cursor(self) -> _Cursor:
+        return _CatalogCursor(self.statements)
+
+
+def _memgraph_with_catalog(monkeypatch) -> tuple[Any, _Conn]:
+    from graflo.connections.onto import MemgraphConfig
+    from graflo.db.memgraph import conn as memgraph_conn
+
+    fake = _CatalogConn()
+    monkeypatch.setattr(memgraph_conn.mgclient, "connect", lambda **kwargs: fake)
+    return memgraph_conn.MemgraphConnection(
+        MemgraphConfig(uri="bolt://localhost:7687")
+    ), fake
+
+
+def test_deleting_everything_drops_the_unique_constraints(monkeypatch) -> None:
+    db, fake = _memgraph_with_catalog(monkeypatch)
+
+    db.delete_graph_structure(delete_all=True)
+
+    assert [s for s in fake.statements if s.startswith("DROP")] == [
+        "DROP CONSTRAINT ON (n:person) ASSERT n.name, n.born IS UNIQUE",
+        "DROP CONSTRAINT ON (n:org) ASSERT n.code IS UNIQUE",
+    ]
+
+
+def test_deleting_a_label_drops_only_its_unique_constraints(monkeypatch) -> None:
+    db, fake = _memgraph_with_catalog(monkeypatch)
+
+    db.delete_graph_structure(vertex_types=("org",))
+
+    assert [s for s in fake.statements if s.startswith("DROP")] == [
+        "DROP CONSTRAINT ON (n:org) ASSERT n.code IS UNIQUE",
     ]

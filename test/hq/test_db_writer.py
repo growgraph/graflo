@@ -1447,3 +1447,20 @@ def test_closing_a_writer_carries_on_past_a_connection_that_fails_to_close(
     writer.close()
 
     assert len(exits) == 2
+
+
+def test_a_cypher_edge_is_written_under_the_profile_relation_name(monkeypatch):
+    """Reads and DDL use the profile's relation name; writes must too."""
+    writer = _two_relation_writer(max_concurrent=1)
+    writer.schema.db_profile.set_edge_name_spec(("a", "b", "x"), relation_name="X_REL")
+    written: list[str] = []
+
+    class _DB(_SlowWritesDB):
+        def insert_edges_batch(self, **kwargs):
+            written.append(kwargs["relation_name"])
+
+    monkeypatch.setattr("graflo.hq.db_writer.ConnectionManager", _slow_manager(_DB()))
+
+    asyncio.run(writer._push_edges(_edges("x", "y"), _NEO4J))
+
+    assert sorted(written) == ["X_REL", "y"]
