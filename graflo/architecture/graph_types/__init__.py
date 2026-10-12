@@ -19,6 +19,7 @@ Submodules (for lighter imports):
 - ``enums`` — EdgeMapping, EncodingType, IndexType, EdgeType, EdgeDirection, EdgeCastingType
 - ``index_config`` — ABCFields, Weight, Index
 - ``container`` — GraphContainer
+- ``pending`` — PendingEdge, EdgeEndpoint (edges awaiting a secondary-identity lookup)
 - ``location`` — LocationIndex, ProvenancePath
 - ``transform`` — TransformPayload, VertexRep, merge helpers
 - ``context`` — ExtractionContext, AssemblyContext, observations, ActionContext
@@ -59,6 +60,7 @@ from graflo.architecture.graph_types.identifiers import (
 )
 from graflo.architecture.graph_types.index_config import ABCFields, Index, Weight
 from graflo.architecture.graph_types.location import LocationIndex, ProvenancePath
+from graflo.architecture.graph_types.pending import EdgeEndpoint, PendingEdge
 from graflo.architecture.graph_types.transform import (
     TransformPayload,
     VertexRep,
@@ -72,6 +74,7 @@ __all__ = [
     "AssemblyContext",
     "EdgeCastingType",
     "EdgeDirection",
+    "EdgeEndpoint",
     "EdgeId",
     "EdgeIntent",
     "EdgeMapping",
@@ -86,6 +89,7 @@ __all__ = [
     "IndexType",
     "ItemsView",
     "LocationIndex",
+    "PendingEdge",
     "ProvenancePath",
     "ResourceCastResult",
     "TransformCastFailure",

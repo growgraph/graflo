@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.18.0]
+
+### Added
+
+- **`write_container`** (`graflo.hq.container_write`): defines a schema on the target (reusing an
+  existing definition) and upserts a `GraphContainer` by identity, without an ingestion resource;
+  `PendingEdge` endpoints known only by a secondary identity are looked up once the container is
+  written, so an endpoint the container carries is found (an ambiguous match is skipped by
+  default). Returns a `ContainerWriteReport`.
+- **`PendingEdge`, `EdgeEndpoint`** (`graflo.architecture.graph_types`): an edge waiting for a
+  secondary-identity lookup at write time.
+
+### Fixed
+
+- **`subschema()`** admits the edges between its seeds before any non-seed vertex, and admits a
+  non-seed vertex only together with the edges joining it to what is already in the slice; trimming
+  to the token ceiling drops non-seed vertices (with their edges) before the edges between seeds. A
+  tight budget no longer elides how the seeds relate, or admits a type the slice cannot connect.
+
 ## [1.17.1]
 
 ### Changed

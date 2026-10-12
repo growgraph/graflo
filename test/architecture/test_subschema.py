@@ -240,3 +240,59 @@ def test_mixes_vertex_and_edge_seeds(context_schema):
 def test_relationless_edge_seed(context_schema):
     sliced, _ = subschema(context_schema, [("doc", "person", None)], budget=UNBOUNDED)
     assert ("doc", "person", None) in sliced.core_schema.edge_config
+
+
+def _star_with_linked_seeds() -> Schema:
+    """Seeds ``a`` and ``b`` share an edge; ``a`` has many one-hop neighbours."""
+    names = ["a", "b", *(f"n{i}" for i in range(6))]
+    vertices = [
+        Vertex(name=name, properties=[Field(name="id", type="string")], identity=["id"])
+        for name in names
+    ]
+    edges = [Edge(source="a", target="b", relation="link")]
+    edges += [Edge(source="a", target=f"n{i}", relation="near") for i in range(6)]
+    return Schema(
+        metadata=GraphMetadata(name="star", version="1.0.0"),
+        core_schema=CoreSchema(
+            vertex_config=VertexConfig(vertices=vertices),
+            edge_config=EdgeConfig(edges=edges),
+        ),
+    )
+
+
+def test_the_edge_between_seeds_comes_before_neighbours():
+    sliced, report = subschema(
+        _star_with_linked_seeds(), ["a", "b"], budget=Budget(max_elements=3)
+    )
+    assert sliced.core_schema.vertex_config.vertex_set == {"a", "b"}
+    assert [e.edge_id for e in sliced.core_schema.edge_config.edges] == [
+        ("a", "b", "link")
+    ]
+    assert report.budget.exhausted_by == "elements"
+
+
+def test_trimming_drops_neighbours_before_the_edge_between_seeds():
+    schema = _star_with_linked_seeds()
+    seeds_only, _ = subschema(
+        schema, ["a", "b"], budget=Budget(max_elements=3, max_tokens=None)
+    )
+    ceiling = estimate_tokens(seeds_only.to_minimal_canonical_dict())
+    sliced, _ = subschema(
+        schema, ["a", "b"], budget=Budget(max_elements=None, max_tokens=ceiling)
+    )
+    assert ("a", "b", "link") in {
+        e.edge_id for e in sliced.core_schema.edge_config.edges
+    }
+    assert sliced.core_schema.vertex_config.vertex_set == {"a", "b"}
+
+
+def test_a_neighbour_is_admitted_with_the_edge_that_joins_it():
+    sliced, _ = subschema(
+        _star_with_linked_seeds(), ["a"], budget=Budget(max_elements=3)
+    )
+    vertices = sliced.core_schema.vertex_config.vertex_set
+    edges = {e.edge_id for e in sliced.core_schema.edge_config.edges}
+    assert len(vertices) == 2
+    assert len(edges) == 1
+    (edge,) = edges
+    assert set(edge[:2]) == vertices

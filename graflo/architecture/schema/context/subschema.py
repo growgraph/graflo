@@ -81,6 +81,14 @@ def subschema(
     question than the one posed. An edge seed admits the edge and both of its
     endpoints, which then count as vertex seeds.
 
+    Admission order is: seeds, the edges between seeds, then ranked non-seed
+    vertices, each together with the edges joining it to what is already
+    admitted, then any remaining edges among everything admitted. A vertex
+    whose joining edges do not fit is not admitted: a type the slice cannot
+    connect is noise. Trimming to the token ceiling runs the other way and
+    spares the edges between seeds until every non-seed vertex is gone, so a
+    tight budget never trades how the seeds relate for a type further away.
+
     Args:
         schema: Source schema. Never mutated.
         seeds: Vertex types, or edge ids ``(source, target, relation)``, to
@@ -162,7 +170,42 @@ def subschema(
         + sum(edge_cost[edge_id] for edge_id in seed_edges)
     )
     exhausted: str = "none"
+    seed_edge_set = set(seed_edges)
+    rank_position = {signal.name: index for index, signal in enumerate(ranked)}
 
+    def _edge_rank(edge_id: EdgeId) -> tuple[int, tuple[str, str, str]]:
+        return (
+            min(rank_position[edge_id[0]], rank_position[edge_id[1]]),
+            edge_sort_key(edge_id),
+        )
+
+    between_seeds = sorted(
+        (
+            edge_id
+            for edge_id in graph.edge_ids
+            if edge_id[0] in seed_set
+            and edge_id[1] in seed_set
+            and edge_id not in seed_edge_set
+        ),
+        key=_edge_rank,
+    )
+    seed_pair_edges: list[EdgeId] = []
+    for edge_id in between_seeds:
+        if budget.max_elements is not None and elements_used + 1 > budget.max_elements:
+            exhausted = "elements"
+            break
+        cost = edge_cost[edge_id]
+        if budget.max_tokens is not None and tokens_used + cost > budget.max_tokens:
+            exhausted = "tokens"
+            break
+        seed_pair_edges.append(edge_id)
+        elements_used += 1
+        tokens_used += cost
+
+    admitted_set = set(admitted)
+    taken_edges = seed_edge_set | set(seed_pair_edges)
+    # Each admitted non-seed vertex with the edges that joined it.
+    units: list[tuple[str, list[EdgeId]]] = []
     for signal in ranked:
         if signal.name in seed_set:
             continue
@@ -170,32 +213,47 @@ def subschema(
         # `exhausted` and never stops admission of reachable candidates.
         if signal.hop_distance is None:
             continue
-        if budget.max_elements is not None and elements_used + 1 > budget.max_elements:
+        name = signal.name
+        joining = sorted(
+            (
+                edge_id
+                for edge_id in graph.edge_ids
+                if edge_id not in taken_edges
+                and name in edge_id[:2]
+                and all(end == name or end in admitted_set for end in edge_id[:2])
+            ),
+            key=_edge_rank,
+        )
+        unit_elements = 1 + len(joining)
+        unit_tokens = vertex_cost[name] + sum(edge_cost[e] for e in joining)
+        if (
+            budget.max_elements is not None
+            and elements_used + unit_elements > budget.max_elements
+        ):
             exhausted = "elements"
             break
-        cost = vertex_cost[signal.name]
-        if budget.max_tokens is not None and tokens_used + cost > budget.max_tokens:
+        if (
+            budget.max_tokens is not None
+            and tokens_used + unit_tokens > budget.max_tokens
+        ):
             exhausted = "tokens"
             break
-        admitted.append(signal.name)
-        elements_used += 1
-        tokens_used += cost
+        admitted.append(name)
+        admitted_set.add(name)
+        taken_edges.update(joining)
+        units.append((name, joining))
+        elements_used += unit_elements
+        tokens_used += unit_tokens
 
-    admitted_set = set(admitted)
-    seed_edge_set = set(seed_edges)
-    rank_position = {signal.name: index for index, signal in enumerate(ranked)}
     candidate_edges = sorted(
         (
             edge_id
             for edge_id in graph.edge_ids
             if edge_id[0] in admitted_set
             and edge_id[1] in admitted_set
-            and edge_id not in seed_edge_set
+            and edge_id not in taken_edges
         ),
-        key=lambda edge_id: (
-            min(rank_position[edge_id[0]], rank_position[edge_id[1]]),
-            edge_sort_key(edge_id),
-        ),
+        key=_edge_rank,
     )
 
     admitted_edges: list[EdgeId] = []
@@ -223,14 +281,20 @@ def subschema(
     # separators, list wrappers), so the greedy pass can overshoot by a few
     # percent. Measure the assembled slice and trim until the ceiling actually
     # holds — a budget that is exceeded by the payload it produced is not a
-    # budget. Least valuable first: edges, then lowest-ranked non-seed vertices.
+    # budget. Least valuable first: edges admitted last, then lowest-ranked
+    # non-seed vertices with the edges that joined them, then edges between
+    # seeds.
     trimmable_edges = list(admitted_edges)
-    trimmable_vertices = [name for name in admitted if name not in seed_set]
+    trimmable_units = list(units)
+    trimmable_seed_pairs = list(seed_pair_edges)
     while True:
         selection = select_induced(
             schema.core_schema,
-            keep_vertices=set(seed_list) | set(trimmable_vertices),
-            keep_edge_ids=seed_edge_set | set(trimmable_edges),
+            keep_vertices=set(seed_list) | {name for name, _ in trimmable_units},
+            keep_edge_ids=seed_edge_set
+            | set(trimmable_edges)
+            | {edge_id for _, joined in trimmable_units for edge_id in joined}
+            | set(trimmable_seed_pairs),
             connectivity="induced",
         )
         sliced = build_subschema(schema, selection, drop_properties=drop_properties)
@@ -243,8 +307,10 @@ def subschema(
         # overrun is reported rather than hidden.
         if trimmable_edges:
             trimmable_edges.pop()
-        elif trimmable_vertices:
-            trimmable_vertices.pop()
+        elif trimmable_units:
+            trimmable_units.pop()
+        elif trimmable_seed_pairs:
+            trimmable_seed_pairs.pop()
         else:
             break
         exhausted = "tokens"

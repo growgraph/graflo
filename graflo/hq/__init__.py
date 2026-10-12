@@ -13,6 +13,8 @@ from typing import Any
 
 _EXPORTS: dict[str, str] = {
     "CastBatchResult": "graflo.hq.caster",
+    "ContainerWriteReport": "graflo.hq.container_write",
+    "write_container": "graflo.hq.container_write",
     "Caster": "graflo.hq.caster",
     "DocCastFailure": "graflo.hq.caster",
     "DocErrorBudgetExceeded": "graflo.hq.caster",
@@ -31,6 +33,7 @@ _EXPORTS: dict[str, str] = {
 __all__ = [
     "CastBatchResult",
     "Caster",
+    "ContainerWriteReport",
     "DBWriter",
     "DocCastFailure",
     "DocErrorBudgetExceeded",
@@ -43,6 +46,7 @@ __all__ = [
     "SQLInferenceManager",
     "Sanitizer",
     "failure_sinks_from_ingestion_params",
+    "write_container",
 ]
 
 
