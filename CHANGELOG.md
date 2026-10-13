@@ -15,6 +15,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`merge3.keep_both`**: a conflict resolution that keeps both sides when one side renames — the
   other side's edits are applied first and carried by the rename.
 
+### Changed
+
+- **`ResourceSample.description` is `None` unless the source declares one**; file samples and
+  uncommented tables no longer get a "Sampled from …" placeholder.
+
+### Fixed
+
+- **Sampling through a `TableConnector` binding** carries the table and column comments, the
+  primary and foreign keys and the row estimate, as `sample_postgres` does.
+
 ## [1.18.0] - 2026-10-12
 
 ### Added

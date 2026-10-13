@@ -384,3 +384,75 @@ def test_bindings_with_no_connection_say_why_nothing_was_sampled(
 ) -> None:
     with pytest.raises(ValueError, match=r"users: .*requires a PostgresConfig"):
         sampler.sample_bindings(_table_bindings())
+
+
+def test_a_file_sample_claims_no_description(sampler: ResourceSampler) -> None:
+    """A description is what the source says; a file says nothing about itself."""
+    assert sampler.sample_file(SOURCE_DIR / "customers.csv").description is None
+
+
+class _DeclaringPostgres:
+    """Answers a table connector's sampling as a commented, keyed table would."""
+
+    def __init__(self, config) -> None:
+        self.config = config
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc) -> None:
+        return None
+
+    def get_table_sample_rows(self, table_name, schema_name=None, limit=None):
+        return [{"id": 1, "user_id": 7, "total": 9.5}]
+
+    def get_tables(self, schema_name=None):
+        return [
+            {"table_name": "users", "description": ""},
+            {"table_name": "orders", "description": "What customers bought"},
+        ]
+
+    def get_table_columns(self, table_name, schema_name=None):
+        return [
+            {"name": "id", "description": ""},
+            {"name": "total", "description": "Gross, in cents"},
+        ]
+
+    def get_primary_keys(self, table_name, schema_name=None):
+        return ["id"]
+
+    def get_foreign_keys(self, table_name, schema_name=None):
+        return [
+            {
+                "column": "user_id",
+                "references_table": "users",
+                "references_column": "id",
+            }
+        ]
+
+    def get_table_row_count_estimate(self, table_name, schema_name=None):
+        return 1200
+
+
+def test_a_table_connector_carries_what_the_table_declares(
+    sampler: ResourceSampler, monkeypatch
+) -> None:
+    from graflo.architecture.contract.bindings import TableConnector
+    from graflo.db.postgres import conn as pg_conn
+
+    monkeypatch.setattr(pg_conn, "PostgresConnection", _DeclaringPostgres)
+    sample = sampler.sample_connector(
+        TableConnector(table_name="orders", schema_name="public", name="orders_c"),
+        resource_name="orders",
+        config=_pg("shop"),
+    )
+    assert sample.docs == [{"id": 1, "user_id": 7, "total": 9.5}]
+    assert sample.description == "What customers bought"
+    assert sample.field_descriptions == {"total": "Gross, in cents"}
+    assert sample.primary_key == ["id"]
+    assert sample.foreign_keys == [
+        ForeignKeyHint(
+            field="user_id", references_resource="users", references_field="id"
+        )
+    ]
+    assert sample.total_estimate == 1200

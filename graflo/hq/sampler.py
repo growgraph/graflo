@@ -111,6 +111,43 @@ def _jsonable(value: Any, *, max_cell_chars: int) -> tuple[Any, bool]:
     return str(value), False
 
 
+def _declared_table_facts(
+    conn: Any, table_name: str, schema_name: str | None
+) -> dict[str, Any]:
+    """What PostgreSQL declares about one table, as :class:`ResourceSample` fields.
+
+    The table and column comments, the primary and foreign keys and the planner's
+    row estimate -- the same facts :meth:`ResourceSampler.sample_postgres` reads
+    by introspection, for a single table.
+    """
+    comment = next(
+        (
+            str(row.get("description") or "")
+            for row in conn.get_tables(schema_name)
+            if row.get("table_name") == table_name
+        ),
+        "",
+    )
+    return {
+        "description": comment or None,
+        "field_descriptions": {
+            str(column["name"]): str(column["description"])
+            for column in conn.get_table_columns(table_name, schema_name)
+            if column.get("description")
+        },
+        "primary_key": list(conn.get_primary_keys(table_name, schema_name)),
+        "foreign_keys": [
+            ForeignKeyHint(
+                field=str(fk["column"]),
+                references_resource=str(fk["references_table"]),
+                references_field=fk.get("references_column"),
+            )
+            for fk in conn.get_foreign_keys(table_name, schema_name)
+        ],
+        "total_estimate": conn.get_table_row_count_estimate(table_name, schema_name),
+    }
+
+
 class ResourceSampler:
     """Fetch bounded document samples from connectors.
 
@@ -188,7 +225,6 @@ class ResourceSampler:
             connector=connector.name,
             docs=docs,
             truncated=truncated,
-            description=f"Sampled from file {path.name}",
         )
 
     def sample_files(
@@ -291,8 +327,7 @@ class ResourceSampler:
                         ],
                         truncated=truncated,
                         total_estimate=table.row_count_estimate,
-                        description=table.description
-                        or f"Sampled from table {table.schema_name}.{table.name}",
+                        description=table.description or None,
                         field_descriptions={
                             column.name: column.description
                             for column in table.columns
@@ -360,12 +395,16 @@ class ResourceSampler:
                     schema_name=connector.schema_name,
                     limit=self.max_docs,
                 )
+                declared = _declared_table_facts(
+                    conn, connector.table_name, connector.schema_name
+                )
             docs, truncated = self._normalize_docs(rows)
             return ResourceSample(
                 resource_name=resource_name,
                 connector=connector.name or resource_name,
                 docs=docs,
                 truncated=truncated,
+                **declared,
             )
 
         raise ValueError(
