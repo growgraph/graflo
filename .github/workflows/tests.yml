@@ -36,3 +36,21 @@ jobs:
                 --ignore=test/db
                 --ignore=test/data_source
                 --ignore=test/object_storage
+
+    # The public API against the newest release tag: a break needs a deprecation
+    # shim (graflo._compat) or a major version bump.
+    api:
+        runs-on: ubuntu-latest
+        steps:
+        -   uses: actions/checkout@v5
+            with:
+                fetch-depth: 0
+
+        -   name: Install uv
+            uses: astral-sh/setup-uv@v7
+            with:
+                version: "0.12.21"
+                python-version: "3.11"
+
+        -   name: Check for breaking changes
+            run: uv run --no-project --with "griffe>=2.3,<3" python .github/scripts/api_breaks.py

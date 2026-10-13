@@ -5,7 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.18.0]
+## [Unreleased]
+
+### Added
+
+- **Deprecation helpers** (`graflo._compat`): `deprecated`, `warn_deprecated` and `rename_key` name
+  the deprecating and removing versions. CI fails on a public-API break against the last release
+  unless the version is a new major.
+- **`merge3.keep_both`**: a conflict resolution that keeps both sides when one side renames — the
+  other side's edits are applied first and carried by the rename.
+
+## [1.18.0] - 2026-10-12
 
 ### Added
 
@@ -64,7 +74,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   comment; a table already carrying its comment is not commented again.
 - **NebulaGraph** warns once per connection about a tag it cannot describe, not on every batch.
 
-## [1.17.0]
+## [1.17.0] - 2026-10-10
 
 ### Added
 
@@ -103,7 +113,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   edge's identity names. As on PostgreSQL, absence is part of the key: the edge matches an
   existing one lacking the same properties.
 
-## [1.16.5]
+## [1.16.5] - 2026-10-08
 
 ### Added
 
@@ -118,7 +128,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **PostgreSQL introspection** marks a column unique only for a single-column `UNIQUE`
   constraint, as the SQLAlchemy provider does; a composite constraint marks none of its columns.
 
-## [1.16.4]
+## [1.16.4] - 2026-10-07
 
 ### Breaking
 
@@ -182,7 +192,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **PostgreSQL** index names longer than 63 bytes are shortened with a digest instead of being
   truncated into collisions.
 
-## [1.16.3]
+## [1.16.3] - 2026-10-07
 
 ### Added
 
@@ -200,7 +210,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Fuseki's volume holds only `/fuseki/run`, so it starts on a fresh volume and picks up image upgrades.
   Neo4j has a healthcheck, and `start-all.sh` waits for health checks before returning.
 
-## [1.16.2]
+## [1.16.2] - 2026-10-06
 
 ### Added
 
@@ -233,7 +243,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`merge_vertices` / `canonicalize` / `remove_vertices`** propagate to edge-step `links`; steps
   with all links removed are dropped.
 
-## [1.16.1]
+## [1.16.1] - 2026-10-04
 
 ### Breaking
 
@@ -268,7 +278,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **TigerGraph bulk load** stages data-read relations under the declaring relation-less edge.
 - **Hash/funnel-keyed vertices** always key on digest; source `id` values are discarded at cast.
 
-## [1.16.0]
+## [1.16.0] - 2026-10-04
 
 ### Breaking
 
@@ -290,7 +300,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`MergeOutcome.kinds`**, **`build_naming`**, **`naming_table`**, **`suggest_merge_op`**;
   **`graflo merge`**: naming table on refusal, `--dry-run`, **`--suggest FILE`**.
 
-## [1.15.1]
+## [1.15.1] - 2026-10-01
 
 ### Changed
 
@@ -307,7 +317,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Non-unique edge indexes no longer replace the unique identity index on an edge.
 - **`graflo rehash`** preserves distinct ids per naming root.
 
-## [1.15.0]
+## [1.15.0] - 2026-10-01
 
 ### Breaking
 
@@ -368,7 +378,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Filter values bind as parameters on ArangoDB, Neo4j, Memgraph, FalkorDB, and PostgreSQL; Nebula
   and TigerGraph use literals and refuse unsafe values.
 
-## [1.14.1]
+## [1.14.1] - 2026-09-30
 
 ### Added
 
@@ -487,7 +497,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`LocalKeySource.gate` / `gate_prefix` and `graflo.util.transform.gated_tagged_key`.** Use
   `when`.
 
-## [1.14.0]
+## [1.14.0] - 2026-09-28
 
 ### Added
 
@@ -592,7 +602,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   samples through the connection that provider resolves for it, the way ingestion does. When
   nothing can be sampled, the error names each skipped resource and why.
 
-## [1.13.5]
+## [1.13.5] - 2026-09-22
 
 ### Added
 
@@ -673,7 +683,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `remove_vertex_properties` and `remove_edge_properties` re-added bare names;
   they now restore declared fields with type, description, and grounding.
 
-## [1.13.4]
+## [1.13.4] - 2026-09-21
 
 ### Added
 
@@ -818,7 +828,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   key must name a declared vertex property.
 
 
-## [1.13.3]
+## [1.13.3] - 2026-09-16
 
 ### Added
 
@@ -976,7 +986,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Two heads of one history need the three-way `graflo merge3`, which the hint
   now names.
 
-## [1.13.2]
+## [1.13.2] - 2026-09-16
 
 ### Added
 
@@ -1152,7 +1162,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Identity alignment over a `vertex_router` with no `type_map`** resolves the producing level and gates each member by its own name. Routers now produce every class the schema declares; explicit steps outrank pass-through. `ensure_extracted_fields` widens all routers at the level.
 - **Runtime resource scope includes every class a router can emit**, not only names mentioned in steps — fixes skipped records after a partial `type_map` or rename.
 
-## [1.13.1]
+## [1.13.1] - 2026-09-14
 
 ### Added
 
@@ -1193,7 +1203,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`xml2json` console script** pointed at removed `graflo.cli.plot_schema`; umbrella CLI and `sh/generate_examples_figs.sh` updated.
 - **`AuxNodeType.INDEX`** was a `StrEnum` duplicate of `FIELD`; dead `knapsack()` helper removed from `plot_manifest.py`.
 
-## [1.13.0]
+## [1.13.0] - 2026-09-10
 
 ### Added
 
@@ -1252,7 +1262,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`replace_edge_identities` had no inverse** (now restored from the pre-state keys when the new keys add no property); **`ensure_extracted_fields`** is declared irreversible with a reason.
 - **`retarget_edges`, `rename_edge_properties` and `remove_edge_properties` were classified as schema-only**, so the schema-artifact guard let them through with their ingestion half dropped.
 
-## [1.12.3]
+## [1.12.3] - 2026-09-07
 
 ### Added
 
@@ -1278,7 +1288,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`compose_manifests` hung under `name_conflict="prefix_right"`** when a name already started with `r_` (`_prefixed` is idempotent). Disambiguation is now ordinal (`r_x`, `r_x_2`, …).
 
-## [1.12.2]
+## [1.12.2] - 2026-09-06
 
 ### Added
 
@@ -1301,7 +1311,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`merge_row_doc_with_transform_buffer`.** Alias introduced alongside the canonical name and never called.
 
 
-## [1.12.1]
+## [1.12.1] - 2026-09-04
 
 ### Added
 
@@ -1317,7 +1327,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Also: `ComposeManifestsOp.identity_alignments` is typed (`list[IdentityAlignment]`) rather than `list[Any]` behind an `object.__setattr__` validator — the alignment declaration models moved into `ops.py` beside the equivalences, re-exported from `alignment.py`; `compose_manifests(canonical_maps=...)` takes side-tagged `(side, CanonicalMap)` pairs; and `apply_rename_relations` gained the edge-id collision guard vertices already had. Example 19 is one n-ary declaration, and its conflicting-cluster demo authors an overlap.
 
 
-## [1.12.0]
+## [1.12.0] - 2026-09-02
 
 ### Added
 
@@ -1425,7 +1435,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   Ontology bumped to **1.6.0** (additive: two individuals, one property), with `graflo-context.jsonld` and the docs viz regenerated.
 
-## [1.11.2]
+## [1.11.2] - 2026-09-02
 
 ### Added
 
@@ -1444,7 +1454,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `FunnelIdentityTarget` was missing from the `graflo.architecture.evolution` façade exports (every other identity target was there); importing it required reaching into `evolution.ops`.
 
 
-## [1.11.1]
+## [1.11.1] - 2026-08-31
 
 ### Added
 
@@ -1518,7 +1528,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Dead package directories** `graflo/db/{connection,protocols,transports,grafeo}/` and `test/db/grafeos/`, plus the empty `graflo/db/postgres/heuristics.py`. None contained a single `.py` file — only stale bytecode from an abandoned protocol/transport split — and nothing imported them. The orphaned `docs/reference/db/postgres/heuristics.md` went with them; the `db/connection/*` reference pages stay, since those are deliberate "moved" redirects rather than module stubs.
 
-## [1.11.0]
+## [1.11.0] - 2026-08-30
 
 ### Added
 
@@ -1540,7 +1550,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   A parametrised test asserts every `NameCase` member has an individual and survives the round trip, because `add_enum_individual` emits *nothing* for an unmapped value — the mechanism by which `FieldType.UUID` and `LIST` came to be dropped unnoticed.
 
-## [1.10.5]
+## [1.10.5] - 2026-08-08
 
 ### Fixed
 
@@ -1588,7 +1598,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`graflo ingest` raised `TypeError` on every invocation.** `--n-threads` was removed from `IngestionParams` but its `click.option` was left behind, so Click always passed an argument the callback did not accept. The option is gone and `--batch-size` now takes its default from `IngestionParams` rather than drifting from it.
 
 
-## [1.10.4]
+## [1.10.4] - 2026-08-06
 
 ### Added
 
@@ -1648,7 +1658,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`_dict_to_field` preservation** — Fixed a bug where `_dict_to_field` dropped custom/new fields during manual dictionary mapping. The function now delegates directly to `Field.model_validate`, ensuring that strict validation and fields like `semantics` are preserved.
 
-## [1.10.3]
+## [1.10.3] - 2026-08-03
 
 ### Added
 
@@ -1686,7 +1696,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `Edge.directed` states its contract: an assertion about the *model* (endpoint order carries no meaning), honoured by each backend to the extent it can, mutually exclusive with `EdgePhysicalSpec.reverse_edge`. The module docstring carries the per-backend table. Also records a known gap — `identities` keys resolve `source` / `target` positionally even on an undirected edge, so `(a, b)` and `(b, a)` still count as two keys; canonical ordering is roadmap **(15)**.
 
-## [1.10.2]
+## [1.10.2] - 2026-07-31
 
 ### Added
 
@@ -1714,7 +1724,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Hash-identity vertices are no longer collapsed and dropped during casting.** Fixed vertex casting in hash-identity mode to prevent incorrect document merging and drop behaviors by computing digest identities at assembly time.
 - **Identity funnels survive renames and merges.** Ensured identity funnels survive rename and merge operations. `RenameVertexPropertiesOp` now correctly processes funnel branch structures, and `merge_vertex_models` safely propagates funnels, rejecting inconsistent funnel definitions.
 
-## [1.10.1]
+## [1.10.1] - 2026-07-30
 
 ### Added
 
@@ -1734,7 +1744,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ChunkerFactory._guess_chunker_type` raises the documented `ValueError` for a file with no extension instead of `IndexError`, so callers scanning a directory can skip it like any other unknown type.
 - The CSV/TSV chunker no longer raises `RuntimeError: generator raised StopIteration` (PEP 479) on an empty file; it yields no rows.
 
-## [1.10.0]
+## [1.10.0] - 2026-07-29
 
 
 ### Changed
@@ -1771,7 +1781,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 - **`MergeVerticesOp` degraded identity mode** — `merge_vertex_models` carried only `blank`, dropping `assigned`, `hash_identity_properties`, and `secondary_identities`, so merging an `assigned` or `hash` vertex silently produced a `natural` one. All four now propagate, with the mutual exclusions (`blank`/`assigned`, `assigned`/hash, blank-with-secondaries) checked at merge time so the error names the merge instead of surfacing from pydantic. A secondary identity that would restate the merged primary is dropped rather than raising.
 - **`assert_field_type_supported` crashed while building its own error message** — `db_type.value` raised `AttributeError` when `db_flavor` arrived as a bare string from a validated config model. Only reachable on the raise path, which is why callers passing a real `DBType` never hit it.
 
-## [1.9.0]
+## [1.9.0] - 2026-07-29
 
 ### Added
 
@@ -1793,7 +1803,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 - GraFlo file backend `fetch_docs` ignored `filters` and could not read back buffered writes (no `INDEX.json`), so it was not read-your-writes.
 - `merge_doc_basis` rebuilt `VertexRep` objects field-by-field, dropping observation-level flags.
 
-## [1.8.16]
+## [1.8.16] - 2026-07-27
 
 ### Fixed
 
@@ -1810,7 +1820,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 
 - Docs: [Kafka connector](docs/concepts/connectors/kafka_connector.md); API pagination **`carry_params`** / nullable **`limit_param`** in [API connector](docs/concepts/connectors/api_connector.md); cross-links for Kafka / identity modes.
 
-## [1.8.15]
+## [1.8.15] - 2026-07-23
 
 ### Added
 
@@ -1819,7 +1829,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 - **`VertexConfig.assigned_vertices`**; helpers in **`graflo.db.identity_uuid`** (`ensure_assigned_uuid`, `validate_uuid_value`, …).
 - Docs: four identity modes and blank vs assigned in [vertex identity](docs/concepts/schema/vertex_identity.md); UUID moved to supported field types.
 
-## [1.8.14]
+## [1.8.14] - 2026-07-23
 
 ### Added
 
@@ -1830,7 +1840,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 
 - **`APIDataSource`** pagination helpers accept list envelopes via dotted paths (e.g. ``0.next_offset``); batch metadata and next-offset/cursor reads no longer require a top-level object.
 
-## [1.8.13]
+## [1.8.13] - 2026-07-22
 
 ### Added
 
@@ -1838,7 +1848,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 - **Backend type support policy** (`graflo.db.field_type_support`) — native list storage or **raise** (`UnsupportedFieldTypeError`); no silent JSON/`STRING` downgrade. TigerGraph DDL emits `LIST<T>`; Postgres emitter uses `T[]`; Nebula define/DDL raises; Cypher/Arango validate at define.
 - Docs: supported vs planned field-type matrix and per-backend LIST table in [core components](docs/concepts/architecture/core_components.md).
 
-## [1.8.12]
+## [1.8.12] - 2026-07-22
 
 ### Added
 
@@ -1848,7 +1858,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 
 - **TigerGraph schema batching** — `SCHEMA_CHANGE` jobs now batch `ADD VERTEX` and `ADD EDGE` statements in separate phases with order-preserving splits, so edges are never applied before their endpoint vertex types exist.
 
-## [1.8.11]
+## [1.8.11] - 2026-07-01
 
 ### Added
 
@@ -1869,7 +1879,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 
 - [Vertex identity modes](docs/concepts/schema/vertex_identity.md); updates to [core components](docs/concepts/architecture/core_components.md), [backend indexes](docs/concepts/schema/backend_indexes.md), [creating a manifest](docs/getting_started/creating_manifest.md), and [examples index](docs/examples/index.md).
 
-## [1.8.9]
+## [1.8.9] - 2026-06-21
 
 ### Added
 
@@ -1883,7 +1893,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 - **`APIDataSource`** — parses paginated JSON via **`pagination.response`**; advances offset from **`next_offset_path`** when configured (URL always built from connector **`base_url` + `path`**); merges batch metadata into each row.
 - **Documentation** — [API connector and pagination](docs/concepts/connectors/api_connector.md), quickstart, and data-source reference updated for the request/response model, stop/advance rules, and **`auto_detect`**.
 
-## [1.8.7]
+## [1.8.7] - 2026-06-17
 
 ### Added
 
@@ -1903,7 +1913,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 - **API env wiring docs** — [API connector and pagination](docs/concepts/connectors/api_connector.md), quickstart, data-source reference, and [Example 14](docs/examples/api-env-config/index.md) document **`register_all_api_configs_from_env`** and proxy-scoped env prefixes.
 - **Ingestion scope docs** — `IngestionParams.connectors` documented in README, quickstart, [features and practices](docs/concepts/operations/migration_and_practices.md), architecture diagrams, and data-source reference.
 
-## [1.8.6]
+## [1.8.6] - 2026-06-15
 
 ### Added
 
@@ -1923,7 +1933,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 - **[Example 13](docs/examples/file-backend-export/index.md)** — step-by-step walkthrough and `examples/14-file-backend-export/export_migrate.py` CLI.
 - **README**, **quickstart**, and **docs index** — PostgreSQL target, bi-directional graph workflows, and links to the new pages.
 
-## [1.8.5]
+## [1.8.5] - 2026-06-12
 
 ### Changed
 
@@ -1944,7 +1954,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 - **Docs** — API reference pages for each TigerGraph submodule under `docs/reference/db/tigergraph/`.
 - **[Manifest evolution](docs/concepts/schema/manifest_evolution.md)** — **`ProjectManifestOp`** subgraph projection recipe and operations table entry.
 
-## [1.8.2]
+## [1.8.2] - 2026-06-09
 
 ### Added
 
@@ -1957,13 +1967,13 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 
 - **Breaking:** API ingestion must use manifest `bindings` (`APIConnector` + `connector_connection`); removed `DataSourceFactory.create_api_data_source`, inline `APIConfig` auth/URL construction, and CLI `--data-source-config-path` support for `source_type: api`.
 
-## [1.8.1]
+## [1.8.1] - 2026-06-02
 
 ### Added
 
 - **`AddInverseEdgesOp`** — manifest evolution op (`add_inverse_edges`) that backfills inverse schema edges and ingestion mirrors for a `{forward_relation: inverse_relation}` map, with deduplication by `(source, target, relation)`.
 
-## [1.8.0]
+## [1.8.0] - 2026-05-29
 
 ### Added
 - **GraFlo meta-ontology** — OWL vocabulary at `https://ontology.growgraph.dev/graflo` (`owl:versionIRI` `…/1.0.0`, `owl:versionInfo` `1.0.0`) describing `GraphManifest`, `Schema`, `IngestionModel`, `ProtoTransform`, pipeline actor steps, bindings, and related enumerations. Shipped as `graflo/rdf/ontology/graflo.ttl` plus JSON-LD context `graflo-context.jsonld`.
@@ -1977,7 +1987,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 - **Interactive ontology visualization** — custom hierarchical class graph (rectangular nodes, subClassOf and optional property edges, pan/zoom) embedded on the GraFlo ontology page; built via `docs/_build/scripts/build_ontology_viz.py` with committed assets under `docs/assets/graflo-ontology-viz/`.
 - **README** and **docs index** — feature overview and quick links for manifest ↔ RDF workflows.
 
-## [1.7.33]
+## [1.7.33] - 2026-05-21
 
 ### Added
 
@@ -1994,7 +2004,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 
 - **`TableConnector.filters`** — coerced through `parse_filter_expression` at connector validation (fail fast on malformed shorthand).
 
-## [1.7.32]
+## [1.7.32] - 2026-05-21
 
 ### Added
 
@@ -2005,7 +2015,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 - **Rename transforms** — partial per-document rename (absent source keys are ignored); **`TransformPayload.removed_keys`** lists only source keys actually renamed in that row.
 - **`drop_trivial_input_fields`** — no longer controls transform missing-key policy (use **`fail_fast`** instead).
 
-## [1.7.31]
+## [1.7.31] - 2026-05-19
 
 ### Added
 
@@ -2024,7 +2034,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 
 - **[Features and practices](docs/concepts/operations/migration_and_practices.md)** — TigerGraph token caching under Performance Optimization.
 
-## [1.7.30]
+## [1.7.30] - 2026-05-18
 
 ### Added
 
@@ -2049,13 +2059,13 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 - **[Architecture diagrams](docs/concepts/architecture/diagrams.md)** — contract and blank-vertex model aligned with 1.7.30.
 - **[Creating a manifest](docs/getting_started/creating_manifest.md)** — **`tolerate_transform_errors`** and blank vertex YAML.
 
-## [1.7.29]
+## [1.7.29] - 2026-05-16
 
 ### Added
 
 - **Empty-identity filter on cast batches** — after resource casting, **`Caster`** can drop vertex docs and edge tuples whose schema identity fields are all missing, `null`, or `""` before **`DBWriter`** (identity rules from **`VertexConfig`**, not **`GraphContainer`**). Controlled by **`IngestionParams.drop_empty_identity_docs`** (default **`true`**). Blank vertex collections are exempt.
 
-## [1.7.27]
+## [1.7.27] - 2026-05-14
 
 ### Added
 
@@ -2076,7 +2086,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 - **`creating_manifest.md`** — `connectors` may include optional **`time_filter`** on file/table connectors.
 
 
-## [1.7.26]
+## [1.7.26] - 2026-05-11
 
 ### Breaking
 
@@ -2104,7 +2114,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 - **Propagation coverage for new ops** across manifest surfaces:
   schema (`core_schema`), ingestion resources/selectors, and `DatabaseProfile` (`edge_specs`, edge defaults/indexes).
 
-## [1.7.25]
+## [1.7.25] - 2026-05-11
 
 ### Fixed
 
@@ -2255,7 +2265,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
   `extraction_scope`, `role`) are consolidated in a shared
   `VertexExtractionOptionsConfig`, and actor-specific models inherit from it.
 
-## [1.7.20]- 2026-04-19
+## [1.7.20] - 2026-04-19
 
 ### Changed
 
@@ -2549,7 +2559,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 ### Documentation
 - Concepts: [Transforms](docs/concepts/ingestion/transforms.md) — grouped calls, YAML shorthands, strategy rules, and config reference tidying.
 
-## [1.7.3]
+## [1.7.3] - 2026-03-18
 
 ### Added
 - **Key-target transform support**:
@@ -2569,7 +2579,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 ### Documentation
 - Added concepts documentation examples for key-level transforms (`target: keys`).
 
-## [1.7.2]
+## [1.7.2] - 2026-03-17
 
 ### Changed
 - **Transform declarations and actor DSL**:
@@ -2592,7 +2602,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 ### Documentation
 - Updated docs to clarify GraFlo as a graph schema transformation DSL and refreshed transform declaration examples for list-based transform registries and `transform.call.use` references
 
-## [1.7.0]
+## [1.7.0] - 2026-03-13
 
 ### Added
 - **Schema migration framework (v1)**:

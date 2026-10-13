@@ -25,6 +25,7 @@ from graflo.architecture.evolution.merge3 import (
     build_recipe,
     describe_slot,
     find_merge_base,
+    keep_both,
     merge_three_way,
     op_reads,
     op_slots,
@@ -995,3 +996,121 @@ def test_adding_a_resource_conflicts_with_removing_a_field_it_maps() -> None:
     assert merge3._field_slot("person", "email") in {
         tuple(c.slot) for c in result.conflicts
     }
+
+
+# ── keeping both sides ──────────────────────────────────────────────────────
+
+
+def _customer(properties: list[str]) -> GraphManifest:
+    return _manifest([_vertex("Customer", properties, ["id"])])
+
+
+def _account(properties: list[str]) -> GraphManifest:
+    return _manifest([_vertex("Account", properties, ["id"])])
+
+
+def _rename_against_edit(rename_on: str):
+    """A rename of ``Customer`` on one side, a new ``tier`` on it on the other."""
+    from graflo.architecture.evolution.autogenerate import RenameHints
+
+    base = _customer(["id"])
+    renamed, edited = _account(["id"]), _customer(["id", "tier"])
+    hint = RenameHints(vertices={"Customer": "Account"})
+    if rename_on == "left":
+        return base, renamed, edited, {"left_hints": hint}
+    return base, edited, renamed, {"right_hints": hint}
+
+
+@pytest.mark.parametrize("rename_on", ["left", "right"])
+def test_keeping_both_carries_the_edit_through_the_rename(rename_on: str) -> None:
+    base, left, right, hints = _rename_against_edit(rename_on)
+    _none, result = merge_three_way(base, left, right, **hints)
+    (conflict,) = result.conflicts
+
+    resolution = keep_both(base, conflict)
+    assert resolution is not None
+    assert resolution.slot == conflict.slot
+    assert [op.op for op in resolution.ops] == [
+        "add_vertex_properties",
+        "rename_vertices",
+    ]
+    assert resolution.rationale == "kept both sides"
+
+    merged, resolved = merge_three_way(
+        base, left, right, resolutions=[resolution], **hints
+    )
+    assert resolved.clean
+    assert merged is not None
+    (vertex,) = _core(merged).vertex_config.vertices
+    assert vertex.name == "Account"
+    assert {f.name for f in vertex.properties} == {"id", "tier"}
+
+
+def test_keeping_both_is_the_same_merge_whichever_side_renamed() -> None:
+    merged_hashes = set()
+    for rename_on in ("left", "right"):
+        base, left, right, hints = _rename_against_edit(rename_on)
+        _none, result = merge_three_way(base, left, right, **hints)
+        resolution = keep_both(base, result.conflicts[0], rationale="v2 + v3")
+        assert resolution is not None and resolution.rationale == "v2 + v3"
+        _merged, resolved = merge_three_way(
+            base, left, right, resolutions=[resolution], **hints
+        )
+        merged_hashes.add(resolved.merged_hash)
+    assert len(merged_hashes) == 1
+
+
+def test_keeping_both_refuses_when_both_sides_rename() -> None:
+    from graflo.architecture.evolution.autogenerate import RenameHints
+
+    base = _customer(["id"])
+    left, right = _account(["id"]), _manifest([_vertex("Client", ["id"], ["id"])])
+    _none, result = merge_three_way(
+        base,
+        left,
+        right,
+        left_hints=RenameHints(vertices={"Customer": "Account"}),
+        right_hints=RenameHints(vertices={"Customer": "Client"}),
+    )
+    assert result.conflicts
+    assert all(keep_both(base, conflict) is None for conflict in result.conflicts)
+
+
+def test_re_merge_replays_a_kept_both_resolution() -> None:
+    base, left, right, hints = _rename_against_edit("left")
+    _none, result = merge_three_way(base, left, right, **hints)
+    resolution = keep_both(base, result.conflicts[0])
+    assert resolution is not None
+    recipe = build_recipe(base, left, right, resolutions=[resolution])
+
+    merged, replayed = re_merge(recipe, base, left, right, **hints)
+    assert replayed.clean
+    assert merged is not None
+    assert _core(merged).vertex_config.vertex_set == {"Account"}
+    assert any("1 recorded resolution(s) replayed" in w for w in replayed.warnings)
+
+
+def test_keeping_both_refuses_ops_that_do_not_apply_together() -> None:
+    """One side adds ``mail``; the other renames ``email`` onto that name."""
+    from graflo.architecture.evolution.autogenerate import RenameHints
+
+    base = _person(["id", "email"])
+    renamed, added = _person(["id", "mail"]), _person(["id", "email", "mail"])
+    _none, result = merge_three_way(
+        base,
+        renamed,
+        added,
+        left_hints=RenameHints(vertex_properties={"person": {"email": "mail"}}),
+    )
+    (conflict,) = result.conflicts
+    assert keep_both(base, conflict) is None
+
+
+def test_keeping_both_refuses_when_neither_side_renames() -> None:
+    """Without a rename, applying both lists in sequence would let one side win."""
+    base = _people_and_companies([])
+    removed = _manifest([_vertex("person", ["id"], ["id"])])
+    linked = _people_and_companies([KNOWS])
+    _none, result = merge_three_way(base, removed, linked)
+    (conflict,) = result.conflicts
+    assert keep_both(base, conflict) is None

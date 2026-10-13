@@ -139,6 +139,14 @@ CI does not run the database suites, so run them locally before a change to a ba
 
 `pyproject.toml` sets `required-version` for uv, and the workflows pin the same line. A different uv minor rewrites `uv.lock` with identical content, so change both together.
 
+## Compatibility
+
+GraFlo follows [Semantic Versioning](https://semver.org/). Within a major version, public names and manifest keys are not removed or renamed without a deprecation first:
+
+- Deprecate in a minor release with `graflo._compat`: `@deprecated(since=..., removed_in=..., use=...)` on a callable, `rename_key(...)` in a `mode="before"` validator for a renamed config key. Remove in the next major.
+- CI compares the public API with the newest release tag (`.github/scripts/api_breaks.py`) and fails on a break unless `pyproject.toml` already declares a new major version.
+- A change to a contract field's default moves content hashes: bump `CANON_VERSION` as well (see [Versioning](concepts/schema/versioning.md)).
+
 ## Pull Request Process
 
 1. Ensure your PR description clearly describes the problem and solution

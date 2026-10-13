@@ -1245,6 +1245,57 @@ def take_right(
     )
 
 
+#: Ops that move a thing to a new name: whatever was applied to the old name
+#: before them travels with it.
+_RENAMING_OPS: tuple[type, ...] = (
+    ops.RenameVerticesOp,
+    ops.RenameVertexPropertiesOp,
+    ops.RenameRelationsOp,
+    ops.RenameEdgePropertiesOp,
+    ops.RenameResourcesOp,
+    ops.CanonicalizeOp,
+)
+
+
+def _renames(side_ops: list[Any]) -> bool:
+    return any(isinstance(op, _RENAMING_OPS) for op in side_ops)
+
+
+def keep_both(
+    base: GraphManifest, conflict: MergeConflict, *, rationale: str | None = None
+) -> ConflictResolution | None:
+    """Resolve *conflict* by keeping both sides' ops, when one side renames.
+
+    The renaming side's ops go last, so its rename carries the other side's
+    edits to the new name and no op needs rewriting.
+
+    Returns ``None`` unless exactly one side renames -- without a rename, both
+    op lists in sequence mean the later one wins, which is not "both" -- or when
+    the combined ops do not apply to *base*. :func:`merge_three_way` applies a resolution to the base,
+    preceded only by ops that neither touch nor read its slot, so applying it to
+    *base* alone is the same check.
+    """
+    from .apply import apply_evolution
+
+    left_ops, right_ops = list(conflict.left_ops), list(conflict.right_ops)
+    left_renames, right_renames = _renames(left_ops), _renames(right_ops)
+    if left_renames == right_renames:
+        return None
+    ordered = [*right_ops, *left_ops] if left_renames else [*left_ops, *right_ops]
+    resolution = ConflictResolution(
+        slot=list(conflict.slot),
+        ops=ops_from_dicts(ops_to_dicts(ordered)),
+        rationale=rationale or "kept both sides",
+    )
+    try:
+        apply_evolution(
+            base, list(resolution.ops), bump_version=False, finish_init=False
+        )
+    except Exception:
+        return None
+    return resolution
+
+
 def describe_slot(slot: Slot) -> str:
     """A slot as a human reads it: ``vertex/person/field/age``."""
     return "/".join(slot)
@@ -1261,6 +1312,7 @@ __all__ = [
     "build_recipe",
     "describe_slot",
     "find_merge_base",
+    "keep_both",
     "merge_three_way",
     "op_slots",
     "re_merge",
