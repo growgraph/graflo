@@ -14,14 +14,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unless the version is a new major.
 - **`merge3.keep_both`**: a conflict resolution that keeps both sides when one side renames — the
   other side's edits are applied first and carried by the rename.
+- **`graflo.db.sql.table_shape`** says what a table's keys decide: `relation`, `entity`, or `either`
+  (two foreign keys and a key of its own, which the schema cannot settle). `own_key` and
+  `referenced_tables` come with it.
 
 ### Changed
 
 - **`ResourceSample.description` is `None` unless the source declares one**; file samples and
   uncommented tables no longer get a "Sampled from …" placeholder.
+- **SQL inference keeps a link table's own key.** An edge inferred from a table with a primary key
+  outside its foreign keys carries that key as a property and as its identity, so two rows between
+  the same pair stay two edges. A key column named like an endpoint's identity field is renamed
+  after the table (`purchases.id` → `purchases_id`).
+- **SQL inference makes a table another table refers to a vertex**, even with two foreign keys.
 
 ### Fixed
 
+- **`diff_manifests` emits `replace_edge_identities`** when an edge's keys change; the change was
+  previously reported as not expressible.
 - **Sampling through a `TableConnector` binding** carries the table and column comments, the
   primary and foreign keys and the row estimate, as `sample_postgres` does.
 

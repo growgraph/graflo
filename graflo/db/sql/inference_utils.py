@@ -6,10 +6,28 @@ from PostgreSQL table and column names using heuristics and fuzzy matching.
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from graflo.util.fuzzy_matcher import FuzzyMatcher
+
+
+def edge_property_names(
+    table_name: str, columns: Collection[str], endpoint_fields: Collection[str]
+) -> dict[str, str]:
+    """Edge property name per column of an edge table.
+
+    A column keeps its name unless an endpoint vertex carries a field of that
+    name: endpoint fields are read into the edge after the row's, so the
+    property would hold the endpoint's value. Such a column is named after its
+    table (``purchases.id`` becomes ``purchases_id``).
+    """
+    taken = set(endpoint_fields)
+    return {
+        column: f"{table_name}_{column}" if column in taken else column
+        for column in columns
+    }
 
 
 def fuzzy_match_fragment(

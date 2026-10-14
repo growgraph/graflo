@@ -62,6 +62,7 @@ from .ops import (
     ChangeFieldTypesOp,
     DeclareEdgeInversesOp,
     EdgeFieldSemanticsTarget,
+    EdgeIdentitiesEntry,
     EdgeIndexEntry,
     EdgeSelector,
     FieldSemanticsTarget,
@@ -79,6 +80,7 @@ from .ops import (
     RenameResourcesOp,
     RenameVertexPropertiesOp,
     RenameVerticesOp,
+    ReplaceEdgeIdentitiesOp,
     ReplaceIdentityOp,
     ReplaceResourcesOp,
     RetractEdgeInversesOp,
@@ -699,9 +701,35 @@ def _edge_property_ops(
         ops.append(AddEdgePropertiesOp(additions=additions))
     if type_changes:
         ops.append(ChangeFieldTypesOp(edges=type_changes))
+    # Keys change between the additions they may name and the removals of
+    # properties an old key named.
+    rekeyed = [
+        EdgeIdentitiesEntry(
+            source=source,
+            target=target_name,
+            relation=relation,
+            identities=[list(key) for key in new_edge.identities],
+        )
+        for (source, target_name, relation), new_edge in sorted(
+            target_edges.items(), key=lambda item: _edge_sort_key(item[0])
+        )
+        if (old_edge := base_edges.get((source, target_name, relation))) is not None
+        and _identity_keys(old_edge) != _identity_keys(new_edge)
+    ]
+    if rekeyed:
+        ops.append(ReplaceEdgeIdentitiesOp(edges=rekeyed))
     if removals:
         ops.append(RemoveEdgePropertiesOp(removals=removals))
     return ops
+
+
+def _identity_keys(edge: Edge) -> set[tuple[str, ...]]:
+    return {tuple(key) for key in edge.identities}
+
+
+def _edge_sort_key(key: tuple[str, str, str | None]) -> tuple[str, str, str]:
+    source, target, relation = key
+    return source, target, relation or ""
 
 
 def _edge_fields_differ(old: Edge, new: Edge) -> bool:

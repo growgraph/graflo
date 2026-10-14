@@ -83,7 +83,8 @@ GraFlo classifies each table by its keys, and a link table also by its name:
 | Table | Becomes |
 |---|---|
 | No primary key | Nothing. The table is skipped |
-| Primary key of two or more columns, exactly two foreign keys, or a name starting with `rel_` | An edge. The first foreign key in column order is the source, the second the target. The relation is a word of the table name that names neither endpoint (`maintained` in `machine_maintained_by_technician`). The other non-key columns become edge properties |
+| Referenced by another table's foreign key | A vertex type, whatever its other keys: an edge cannot be the end of another edge |
+| Primary key of two or more columns, exactly two foreign keys, or a name starting with `rel_` | An edge. The first foreign key in column order is the source, the second the target. The relation is a word of the table name that names neither endpoint (`maintained` in `machine_maintained_by_technician`). The other columns become edge properties. A primary-key column that is not a foreign key also keys the edge, so two rows between the same pair stay two edges |
 | Primary key, not an edge, and at least one column that is neither a primary nor a foreign key | A vertex type. Its identity is the primary key; every column becomes a property |
 | Primary key and key columns only, not an edge | Nothing |
 
@@ -102,10 +103,13 @@ Check the draft for these cases, which inference gets wrong by construction:
 
 - **A table with exactly two foreign keys becomes an edge**, even when it
   describes a thing of its own. A `work_order` table that references both
-  `machine` and `technician` becomes an edge from machine to technician; its
-  own primary key is dropped and its other columns become edge properties.
-  The schema cannot tell the two cases apart. If it should be a vertex type,
-  name it when you infer; its foreign keys then become edges from it:
+  `machine` and `technician` becomes an edge from machine to technician. Its
+  own primary key keys the edge and is kept as a property; a key column named
+  like an endpoint's identity field is renamed after the table
+  (`work_order.id` becomes `work_order_id`). The schema cannot tell the two
+  cases apart (`graflo.db.sql.table_shape` calls such a table `either`). If it
+  should be a vertex type, name it when you infer; its foreign keys then become
+  edges from it:
 
     ```python
     manifest = engine.infer_manifest(

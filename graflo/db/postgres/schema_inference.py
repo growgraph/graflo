@@ -7,17 +7,28 @@ This module provides functionality to infer graflo Schema objects from PostgreSQ
 from __future__ import annotations
 
 import logging
+from collections.abc import Collection
 
 from graflo.architecture.onto_sql import EdgeTableInfo, SchemaIntrospectionResult
 from graflo.architecture.schema import CoreSchema, GraphMetadata, Schema
 from graflo.architecture.schema.database_features import DatabaseProfile
 from graflo.architecture.schema.edge import Edge, EdgeConfig
 from graflo.architecture.schema.vertex import Field, FieldType, Vertex, VertexConfig
+from graflo.db.sql.inference_utils import edge_property_names
 from graflo.db.sql.provider import SqlMetadataProvider
 from graflo.db.sql.types import SqlTypeMapper
 from graflo.onto import DBType
 
 logger = logging.getLogger(__name__)
+
+
+def edge_endpoint_fields(
+    vertex_config: VertexConfig, source: str, target: str
+) -> set[str]:
+    """Fields an edge reads from its endpoint vertices: their identities."""
+    return set(vertex_config.identity_fields(source)) | set(
+        vertex_config.identity_fields(target)
+    )
 
 
 class PostgresSchemaInferencer:
@@ -232,27 +243,37 @@ class PostgresSchemaInferencer:
             )
             return mapped_type
 
-    def infer_edge_weights(self, edge_table_info: EdgeTableInfo) -> list[Field] | None:
+    def infer_edge_weights(
+        self,
+        edge_table_info: EdgeTableInfo,
+        endpoint_fields: Collection[str] = (),
+    ) -> list[Field] | None:
         """Infer edge attributes from edge table columns with types.
 
         Uses PostgreSQL column types and optionally samples data to infer accurate types.
 
         Args:
             edge_table_info: Edge table information from introspection
+            endpoint_fields: Identity fields of the edge's endpoints; a column of
+                the same name is renamed (:func:`edge_property_names`).
+
+        A primary-key column that does not name an endpoint is kept: it is what
+        the row is known by (see :meth:`edge_key`).
 
         Returns:
             List of attribute fields if there are non-key columns, None otherwise.
         """
         columns = edge_table_info.columns
-        pk_columns = set(edge_table_info.primary_key)
-        fk_columns = {fk.column for fk in edge_table_info.foreign_keys}
+        endpoint_columns = {fk.column for fk in edge_table_info.foreign_keys} | {
+            edge_table_info.source_column,
+            edge_table_info.target_column,
+        }
 
-        # Find non-PK, non-FK columns (these become weights)
-        weight_columns = [
-            col
-            for col in columns
-            if col.name not in pk_columns and col.name not in fk_columns
-        ]
+        # Every column but the endpoints' (these become weights)
+        weight_columns = [col for col in columns if col.name not in endpoint_columns]
+        names = edge_property_names(
+            edge_table_info.name, [col.name for col in weight_columns], endpoint_fields
+        )
 
         if not weight_columns:
             return None
@@ -261,13 +282,14 @@ class PostgresSchemaInferencer:
         direct_weights = []
         for col in weight_columns:
             raw_type, item_type = self.type_mapper.map_field(col.type)
+            name = names[col.name]
             if raw_type == FieldType.LIST.value:
                 if item_type is None:
-                    direct_weights.append(Field(name=col.name, type=None))
+                    direct_weights.append(Field(name=name, type=None))
                 else:
                     direct_weights.append(
                         Field(
-                            name=col.name,
+                            name=name,
                             type=FieldType.LIST,
                             item_type=FieldType(item_type),
                         )
@@ -281,7 +303,7 @@ class PostgresSchemaInferencer:
                 col.type,
             )
             direct_weights.append(
-                Field(name=col.name, type=FieldType(refined) if refined else None)
+                Field(name=name, type=FieldType(refined) if refined else None)
             )
 
         logger.debug(
@@ -290,6 +312,25 @@ class PostgresSchemaInferencer:
         )
 
         return direct_weights
+
+    @staticmethod
+    def edge_key(edge_table_info: EdgeTableInfo) -> list[str]:
+        """Primary-key columns of an edge table that do not name an endpoint.
+
+        An edge is otherwise keyed by its endpoints and relation, so two rows
+        between the same pair -- the same client ordering the same item twice --
+        would fold into one edge. Keyed by these columns as well, each row stays
+        its own edge.
+        """
+        endpoint_columns = {fk.column for fk in edge_table_info.foreign_keys} | {
+            edge_table_info.source_column,
+            edge_table_info.target_column,
+        }
+        return [
+            column
+            for column in edge_table_info.primary_key
+            if column not in endpoint_columns
+        ]
 
     def infer_edge_config(
         self,
@@ -330,12 +371,20 @@ class PostgresSchemaInferencer:
                 )
                 continue
 
-            attrs = self.infer_edge_weights(edge_table_info) or []
+            endpoint_fields = edge_endpoint_fields(
+                vertex_config, source_table, target_table
+            )
+            attrs = self.infer_edge_weights(edge_table_info, endpoint_fields) or []
+            names = edge_property_names(
+                table_name, self.edge_key(edge_table_info), endpoint_fields
+            )
+            key = list(names.values())
             edge = Edge(
                 source=source_table,
                 target=target_table,
                 properties=attrs,
                 relation=edge_table_info.relation,
+                identities=[key] if key else [],
             )
 
             edges.append(edge)

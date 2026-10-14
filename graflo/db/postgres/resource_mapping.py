@@ -20,8 +20,10 @@ from graflo.architecture.contract.ingestion.steps.references import (
 )
 from graflo.architecture.onto_sql import ReferenceEdgeInfo
 from graflo.architecture.schema.vertex import VertexConfig
+from graflo.db.postgres.schema_inference import edge_endpoint_fields
 from graflo.db.sql.inference_utils import (
     detect_separator,
+    edge_property_names,
     split_by_separator,
 )
 
@@ -143,6 +145,28 @@ class PostgresResourceMapper:
         )
 
         apply: list[dict[str, Any]] = []
+
+        # A column named like an endpoint's identity field is carried under the
+        # name the inferred edge declares for it.
+        endpoint_columns = {fk.column for fk in edge_table_info.foreign_keys} | {
+            source_column,
+            target_column,
+        }
+        renames = {
+            column: name
+            for column, name in edge_property_names(
+                table_name,
+                [
+                    col.name
+                    for col in edge_table_info.columns
+                    if col.name not in endpoint_columns
+                ],
+                edge_endpoint_fields(vertex_config, source_table, target_table),
+            ).items()
+            if column != name
+        }
+        if renames:
+            apply.append({"type": "transform", "rename": renames})
 
         if source_column:
             apply.append(

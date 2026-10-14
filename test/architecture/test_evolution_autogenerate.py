@@ -258,6 +258,42 @@ class TestEdgePropertiesAreAddressedPerRelation:
         assert [op.op for op in ops] == ["add_edge_properties"]
         assert ops[0].additions == {"places": ["p"]}
 
+    def test_an_edge_gaining_a_key_replays(self) -> None:
+        base = _manifest([PARTY, ORDER], edges=[{**PLACES, "properties": ["ref"]}])
+        target = _manifest(
+            [PARTY, ORDER],
+            edges=[{**PLACES, "properties": ["ref"], "identities": [["ref"]]}],
+        )
+
+        ops = _assert_replays(base, target)
+
+        assert [op.op for op in ops] == ["replace_edge_identities"]
+        assert ops[0].edges[0].identities == [["ref"]]
+
+    def test_an_edge_gaining_a_keyed_property_replays(self) -> None:
+        base = _manifest([PARTY, ORDER], edges=[PLACES])
+        target = _manifest(
+            [PARTY, ORDER],
+            edges=[{**PLACES, "properties": ["ref"], "identities": [["ref"]]}],
+        )
+
+        ops = _assert_replays(base, target)
+
+        assert [op.op for op in ops] == [
+            "add_edge_properties",
+            "replace_edge_identities",
+        ]
+
+    def test_an_edge_losing_its_key_replays(self) -> None:
+        keyed = {**PLACES, "properties": ["ref"], "identities": [["ref"]]}
+        base = _manifest([PARTY, ORDER], edges=[keyed])
+        target = _manifest([PARTY, ORDER], edges=[{**PLACES, "properties": ["ref"]}])
+
+        ops = _assert_replays(base, target)
+
+        assert [op.op for op in ops] == ["replace_edge_identities"]
+        assert ops[0].edges[0].identities == []
+
     def test_a_relation_less_edge_change_is_reported(self) -> None:
         bare = {"source": "party", "target": "order"}
         base = _manifest([PARTY, ORDER], edges=[bare])

@@ -1,13 +1,21 @@
 core_schema:
     edge_config:
         edges:
-        -   properties:
+        -   identities:
+            -   -   follows_id
+            properties:
+            -   name: follows_id
+                type: INT
             -   name: created_at
                 type: DATETIME
             relation: follows
             source: users
             target: users
-        -   properties:
+        -   identities:
+            -   -   purchases_id
+            properties:
+            -   name: purchases_id
+                type: INT
             -   name: purchase_date
                 type: DATETIME
             -   name: quantity

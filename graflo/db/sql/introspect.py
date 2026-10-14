@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Collection
-from typing import Any
+from typing import Any, Literal
 
 from graflo.architecture.onto_sql import (
     ColumnInfo,
@@ -32,6 +32,15 @@ from graflo.db.sql.inference_utils import (
 from graflo.db.sql.provider import SqlMetadataProvider
 
 logger = logging.getLogger(__name__)
+
+TableShape = Literal["relation", "entity", "either"]
+"""How far a table's keys decide what it is in a graph.
+
+``relation``: a relationship, nothing more (an edge). ``entity``: a thing of its
+own (a vertex). ``either``: two foreign keys and a key of its own, which the
+schema cannot settle -- an order is a thing, a follow is not, and both look the
+same.
+"""
 
 
 def is_edge_like_table(
@@ -70,6 +79,55 @@ def is_edge_like_table(
     pk_set = set(pk_columns)
     # If all PK columns are FK columns and we have at least 2 FKs, it's likely an edge table
     return bool(pk_set.issubset(fk_column_names) and len(fk_columns) >= 2)
+
+
+def own_key(pk_columns: list[str], fk_columns: list[dict[str, Any]]) -> list[str]:
+    """Primary-key columns that are not foreign keys: what the row is known by."""
+    fk_column_names = {fk["column"] for fk in fk_columns}
+    return [column for column in pk_columns if column not in fk_column_names]
+
+
+def table_shape(
+    table_name: str,
+    pk_columns: list[str],
+    fk_columns: list[dict[str, Any]],
+    *,
+    referenced: bool = False,
+) -> TableShape:
+    """What a table's keys say it is: a relation, an entity, or either.
+
+    A table another table refers to is an entity whatever its shape, since an
+    edge cannot be the end of another edge. A table that is not edge-like
+    (:func:`is_edge_like_table`) is an entity. An edge-like table with exactly
+    two foreign keys and a primary key of its own outside them is ``either``;
+    every other edge-like table is a relation.
+
+    Args:
+        table_name: Name of the table.
+        pk_columns: Primary-key column names.
+        fk_columns: Foreign keys, each a dict with ``column``.
+        referenced: Whether another table's foreign key refers to this one.
+    """
+    if referenced and pk_columns:
+        return "entity"
+    if not is_edge_like_table(table_name, pk_columns, fk_columns):
+        return "entity"
+    if len(fk_columns) == 2 and own_key(pk_columns, fk_columns):
+        return "either"
+    return "relation"
+
+
+def referenced_tables(
+    provider: SqlMetadataProvider, schema_name: str | None = None
+) -> set[str]:
+    """Tables that a foreign key of another table refers to."""
+    referenced: set[str] = set()
+    for table_info in provider.get_tables(schema_name):
+        table_name = table_info["table_name"]
+        for fk in provider.get_foreign_keys(table_name, schema_name):
+            if fk["references_table"] != table_name:
+                referenced.add(fk["references_table"])
+    return referenced
 
 
 def foreign_keys_in_column_order(
@@ -127,7 +185,8 @@ def detect_vertex_tables(
         schema_name: Schema name. If None, uses 'public' or config schema_name.
         entity_tables: Tables that are entities whatever their shape. A table
             with two foreign keys looks like a relationship; naming it here
-            makes it a vertex and its foreign keys references.
+            makes it a vertex and its foreign keys references. A table another
+            table refers to is an entity without being named.
 
     Returns:
         List of vertex table information dictionaries
@@ -136,6 +195,7 @@ def detect_vertex_tables(
         schema_name = default_schema
 
     tables = provider.get_tables(schema_name)
+    referenced = referenced_tables(provider, schema_name)
     vertex_tables = []
 
     for table_info in tables:
@@ -154,7 +214,7 @@ def detect_vertex_tables(
         if not pk_columns:
             continue  # Skip tables without primary keys
 
-        named_entity = table_name in entity_tables
+        named_entity = table_name in entity_tables or table_name in referenced
 
         # Skip edge-like tables
         if not named_entity and is_edge_like_table(table_name, pk_columns, fk_columns):
@@ -233,6 +293,7 @@ def detect_edge_tables(
         vertex_table_names: Optional list of vertex table names for fuzzy matching.
                           If None, will be inferred from detect_vertex_tables().
         entity_tables: Tables that are entities whatever their shape; never edges.
+            Neither is a table another table refers to.
 
     Returns:
         List of edge table information dictionaries with source_table and target_table
@@ -257,6 +318,7 @@ def detect_edge_tables(
     matcher = FuzzyMatcher(vertex_table_names, threshold=0.6, enable_cache=True)
 
     tables = provider.get_tables(schema_name)
+    referenced = referenced_tables(provider, schema_name)
     edge_tables = []
 
     for table_info in tables:
@@ -269,8 +331,14 @@ def detect_edge_tables(
             continue
 
         # Check if table is edge-like
-        if table_name in entity_tables or not is_edge_like_table(
-            table_name, pk_columns, fk_columns
+        if table_name in entity_tables or (
+            table_shape(
+                table_name,
+                pk_columns,
+                fk_columns,
+                referenced=table_name in referenced,
+            )
+            == "entity"
         ):
             continue
 
@@ -605,9 +673,11 @@ def introspect_schema(
     Args:
         schema_name: Schema name. If None, uses 'public' or config schema_name.
         entity_tables: Tables that are entities whatever their shape. Whether a
-            table with two foreign keys is a relationship or an entity that
-            refers to two others cannot be read from the schema; it is taken
-            for a relationship unless named here.
+            table with two foreign keys and a key of its own is a relationship
+            or an entity that refers to two others cannot be read from the
+            schema (:func:`table_shape` calls it ``either``); it is taken for a
+            relationship that keeps its key unless named here. A table another
+            table refers to is always an entity.
 
     Returns:
         SchemaIntrospectionResult: vertex and edge tables, the edges stated by

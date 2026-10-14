@@ -13,7 +13,11 @@ from sqlalchemy import create_engine
 from graflo.architecture.contract.bindings import Bindings, TableConnector
 from graflo.architecture.onto_sql import ForeignKeyInfo, VertexTableInfo
 from graflo.db.sql.alchemy import SqlAlchemyMetadataProvider
-from graflo.db.sql.introspect import infer_reference_edges, introspect_schema
+from graflo.db.sql.introspect import (
+    infer_reference_edges,
+    introspect_schema,
+    table_shape,
+)
 from graflo.hq.auto_join import enrich_edge_connector_with_joins
 from graflo.hq.sql_inferencer import SQLInferenceArtifacts, SQLInferenceManager
 
@@ -244,6 +248,27 @@ class TestEntityTables:
         assert _ids(entities, ("purchases", "customers", "customer")) == [(1, 7)]
         assert _ids(entities, ("purchases", "products", "product")) == [(1, 9)]
 
+    def test_a_relation_keeps_the_key_of_its_table(self, inferred) -> None:
+        purchases = next(
+            edge
+            for edge in inferred.schema.core_schema.edge_config.edges
+            if (edge.source, edge.target) == ("customers", "products")
+        )
+
+        assert purchases.identities == [["purchases_id"]]
+        assert [f.name for f in purchases.properties] == ["purchases_id", "quantity"]
+
+    def test_two_rows_between_the_same_pair_stay_two_edges(self, inferred) -> None:
+        purchases = inferred.ingestion_model.fetch_resource("purchases")
+        edge_id = ("customers", "products", "purchases")
+
+        first = purchases({"id": 1, "customer_id": 7, "product_id": 9, "quantity": 2})
+        again = purchases({"id": 2, "customer_id": 7, "product_id": 9, "quantity": 5})
+
+        assert [w for _, _, w in first[edge_id]] == [{"purchases_id": 1, "quantity": 2}]
+        assert [w for _, _, w in again[edge_id]] == [{"purchases_id": 2, "quantity": 5}]
+        assert [(u["id"], v["id"]) for u, v, _ in again[edge_id]] == [(7, 9)]
+
     def test_an_unknown_entity_table_is_refused(self, provider) -> None:
         with pytest.raises(ValueError, match="'nowhere'"):
             introspect_schema(provider, entity_tables=["nowhere"])
@@ -251,3 +276,63 @@ class TestEntityTables:
     def test_an_entity_table_needs_a_primary_key(self, provider) -> None:
         with pytest.raises(ValueError, match="'audit_log'.*primary key"):
             introspect_schema(provider, entity_tables=["audit_log"])
+
+
+REFERENCED_DDL = """
+CREATE TABLE clients (client_no INTEGER PRIMARY KEY, name TEXT);
+CREATE TABLE items (item_code TEXT PRIMARY KEY, label TEXT);
+CREATE TABLE orders (
+    order_no INTEGER PRIMARY KEY,
+    client_no INTEGER NOT NULL REFERENCES clients(client_no),
+    item_code TEXT NOT NULL REFERENCES items(item_code),
+    qty INTEGER
+);
+CREATE TABLE shipments (
+    shipment_no INTEGER PRIMARY KEY,
+    order_no INTEGER NOT NULL REFERENCES orders(order_no),
+    shipped_on TEXT
+);
+"""
+
+
+class TestTableShape:
+    @pytest.mark.parametrize(
+        ("pk", "fks", "referenced", "shape"),
+        [
+            (["a_id", "b_id"], ["a_id", "b_id"], False, "relation"),
+            (["id"], ["a_id", "b_id"], False, "either"),
+            (["id"], ["a_id", "b_id"], True, "entity"),
+            (["id"], ["a_id"], False, "entity"),
+            (["id"], ["a_id", "b_id", "c_id"], False, "entity"),
+        ],
+    )
+    def test_the_keys_decide_only_what_they_can(
+        self, pk: list[str], fks: list[str], referenced: bool, shape: str
+    ) -> None:
+        columns = [{"column": column} for column in fks]
+
+        assert table_shape("t", pk, columns, referenced=referenced) == shape
+
+    def test_a_table_another_table_refers_to_is_an_entity(self, tmp_path: Path) -> None:
+        path = tmp_path / "source.db"
+        connection = sqlite3.connect(path)
+        connection.executescript(REFERENCED_DDL)
+        connection.commit()
+        connection.close()
+        engine = create_engine(f"sqlite:///{path}")
+        try:
+            artifacts = SQLInferenceManager(
+                SqlAlchemyMetadataProvider(engine)
+            ).infer_artifacts()
+        finally:
+            engine.dispose()
+
+        vertex_config = artifacts.schema.core_schema.vertex_config
+        assert vertex_config.identity_fields("orders") == ["order_no"]
+        edges = _edge_ids(artifacts)
+        assert ("shipments", "orders", "order_no") in edges
+        assert ("orders", "clients", "client_no") in edges
+        assert ("orders", "items", "item_code") in edges
+        assert not any(
+            (source, target) == ("clients", "items") for source, target, _ in edges
+        )

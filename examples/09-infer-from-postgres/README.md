@@ -80,8 +80,12 @@ The script saves the inferred schema to
 core_schema:
     edge_config:
         edges:
-        # ... follows: users to users, with created_at
-        -   properties:
+        # ... follows: users to users, keyed by follows_id, with created_at
+        -   identities:
+            -   -   purchases_id
+            properties:
+            -   name: purchases_id
+                type: INT
             -   name: purchase_date
                 type: DATETIME
             -   name: quantity
@@ -108,12 +112,15 @@ core_schema:
   are one vertex.
 - `purchases` and `follows` have two foreign keys each, so each becomes an edge.
   The first foreign key gives the source, the second the target, and the table
-  name the relation. The columns that are not keys become edge properties.
+  name the relation. The other columns become edge properties. The table's own
+  `id` keys the edge, so two purchases of one product by one user stay two
+  edges; it is named `purchases_id` because the endpoints already have an `id`.
 - Column types become property types: integers `INT`, decimals `FLOAT`, text
   `STRING`, timestamps `DATETIME`.
 
-The resources are not in this file. The one for `purchases` reads `user_id`
-into a `users` vertex and `product_id` into a `products` vertex. The schema
+The resources are not in this file. The one for `purchases` renames `id` to
+`purchases_id`, reads `user_id` into a `users` vertex and `product_id` into a
+`products` vertex. The schema
 declares an edge between those two types, so GraFlo adds the edge.
 
 ### 4. Ingest
@@ -146,8 +153,8 @@ The database holds:
 |---|---|---|
 | `users` vertices | 4 | One per row of `users`; `purchases` and `follows` refer to the same four by `id` |
 | `products` vertices | 4 | One per row of `products` |
-| `purchases` edges, `users` to `products` | 6 | One per row, with `purchase_date`, `quantity` and `total_amount` |
-| `follows` edges, `users` to `users` | 5 | One per row, with `created_at` |
+| `purchases` edges, `users` to `products` | 6 | One per row, keyed by `purchases_id`, with `purchase_date`, `quantity` and `total_amount` |
+| `follows` edges, `users` to `users` | 5 | One per row, keyed by `follows_id`, with `created_at` |
 
 ## What inference needs
 
@@ -156,7 +163,8 @@ The rules, in short:
 - A table without a primary key is skipped, with a warning that names it.
 - A table becomes an edge when it has exactly two foreign keys, a primary key
   of two or more columns, or a name that starts with `rel_`, unless you name
-  it in `entity_tables`.
+  it in `entity_tables` or another table's foreign key refers to it. Its own
+  primary key, if it has one, keys the edge.
 - Any other table with a primary key and at least one column that is not a key
   becomes a vertex type.
 - A foreign key of a vertex table becomes an edge to the table it references.

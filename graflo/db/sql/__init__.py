@@ -12,19 +12,27 @@ reflection, or from somewhere else entirely.
 """
 
 from graflo.db.sql.introspect import (
+    TableShape,
     build_raw_tables,
     detect_edge_tables,
     detect_vertex_tables,
     introspect_schema,
     is_edge_like_table,
+    own_key,
+    referenced_tables,
+    table_shape,
 )
 from graflo.db.sql.provider import SqlMetadataProvider
 
 __all__ = [
     "SqlMetadataProvider",
+    "TableShape",
     "build_raw_tables",
     "detect_edge_tables",
     "detect_vertex_tables",
     "introspect_schema",
     "is_edge_like_table",
+    "own_key",
+    "referenced_tables",
+    "table_shape",
 ]
