@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.18.2] - 2026-10-14
 
 ### Added
 
@@ -34,6 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A three-way merge decision reaches only its own slot.** Each side's change set is split one op
+  per slot before reconciling, so taking one side no longer drops the other side's unrelated edits, and
+  different choices on conflicts from one kind of change no longer refuse the merge.
 - **An edge to a looked-up vertex is no longer dropped** when an earlier vertex step took the
   transform output its `from` names; an explicit `from` reads it regardless of step order.
 - An edge step naming an end by both type and role now says `source_role` / `target_role` in its

@@ -1114,3 +1114,177 @@ def test_keeping_both_refuses_when_neither_side_renames() -> None:
     _none, result = merge_three_way(base, removed, linked)
     (conflict,) = result.conflicts
     assert keep_both(base, conflict) is None
+
+
+# ── a decision reaches its own slot only ────────────────────────────────────
+#
+# The differ emits one op per kind for the whole manifest -- every property any
+# vertex gains sits in one ``add_vertex_properties``. A conflict must still hold
+# only the part of that op at its slot, or deciding it decides unrelated edits too.
+
+
+def _typed(name: str, fields: dict[str, str], identity: list[str]) -> dict:
+    return {
+        "name": name,
+        "properties": [
+            {"name": field, **({"type": kind} if kind else {})}
+            for field, kind in fields.items()
+        ],
+        "identity": identity,
+    }
+
+
+def test_a_conflict_holds_only_the_ops_at_its_slot() -> None:
+    from graflo.architecture.evolution.autogenerate import RenameHints
+
+    base = _manifest(
+        [_vertex("Customer", ["id"], ["id"]), _vertex("company", ["id"], ["id"])]
+    )
+    renamed = _manifest(
+        [_vertex("Account", ["id"], ["id"]), _vertex("company", ["id"], ["id"])]
+    )
+    edited = _manifest(
+        [
+            _vertex("Customer", ["id", "tier"], ["id"]),
+            _vertex("company", ["id", "name"], ["id"]),
+        ]
+    )
+    hint = RenameHints(vertices={"Customer": "Account"})
+    _none, result = merge_three_way(base, renamed, edited, left_hints=hint)
+
+    (conflict,) = result.conflicts
+    (edit,) = conflict.right_ops
+    assert isinstance(edit, AddVertexPropertiesOp)
+    assert list(edit.additions) == ["Customer"]
+
+
+def test_taking_a_side_keeps_the_other_sides_unrelated_edits() -> None:
+    from graflo.architecture.evolution.autogenerate import RenameHints
+
+    base = _manifest(
+        [_vertex("Customer", ["id"], ["id"]), _vertex("company", ["id"], ["id"])]
+    )
+    renamed = _manifest(
+        [_vertex("Account", ["id"], ["id"]), _vertex("company", ["id"], ["id"])]
+    )
+    edited = _manifest(
+        [
+            _vertex("Customer", ["id", "tier"], ["id"]),
+            _vertex("company", ["id", "name"], ["id"]),
+        ]
+    )
+    hint = RenameHints(vertices={"Customer": "Account"})
+    _none, result = merge_three_way(base, renamed, edited, left_hints=hint)
+
+    merged, resolved = merge_three_way(
+        base,
+        renamed,
+        edited,
+        resolutions=[take_left(result.conflicts[0])],
+        left_hints=hint,
+    )
+    assert resolved.clean
+    assert merged is not None
+    fields = {
+        v.name: {f.name for f in v.properties}
+        for v in _core(merged).vertex_config.vertices
+    }
+    assert fields == {"Account": {"id"}, "company": {"id", "name"}}
+
+
+def test_different_choices_on_conflicts_from_one_op_merge() -> None:
+    base = _manifest(
+        [_vertex("person", ["id"], ["id"]), _vertex("company", ["id"], ["id"])]
+    )
+    left = _manifest(
+        [
+            _typed("person", {"id": "", "age": "INT"}, ["id"]),
+            _typed("company", {"id": "", "name": "STRING"}, ["id"]),
+        ]
+    )
+    right = _manifest(
+        [
+            _typed("person", {"id": "", "age": "STRING"}, ["id"]),
+            _typed("company", {"id": "", "name": "INT"}, ["id"]),
+        ]
+    )
+    _none, result = merge_three_way(base, left, right)
+    by_vertex = {c.slot_key[1]: c for c in result.conflicts}
+    assert set(by_vertex) == {"person", "company"}
+
+    merged, resolved = merge_three_way(
+        base,
+        left,
+        right,
+        resolutions=[take_left(by_vertex["person"]), take_right(by_vertex["company"])],
+    )
+    assert resolved.clean
+    assert merged is not None
+    types = {
+        (v.name, f.name): str(f.type)
+        for v in _core(merged).vertex_config.vertices
+        for f in v.properties
+        if f.name != "id"
+    }
+    assert types == {("person", "age"): "INT", ("company", "name"): "INT"}
+
+
+def test_agreement_survives_an_unrelated_edit_on_one_side() -> None:
+    base = _manifest(
+        [_vertex("person", ["id"], ["id"]), _vertex("company", ["id"], ["id"])]
+    )
+    left = _manifest(
+        [
+            _vertex("person", ["id", "age"], ["id"]),
+            _vertex("company", ["id", "name"], ["id"]),
+        ]
+    )
+    right = _manifest(
+        [_vertex("person", ["id", "age"], ["id"]), _vertex("company", ["id"], ["id"])]
+    )
+    merged, result = merge_three_way(base, left, right)
+    assert result.clean
+    assert merged is not None
+    fields = {
+        v.name: [f.name for f in v.properties]
+        for v in _core(merged).vertex_config.vertices
+    }
+    assert fields == {"person": ["id", "age"], "company": ["id", "name"]}
+
+
+def test_a_written_resolution_replaces_both_sides() -> None:
+    """The reviewer's own fix: neither side's type, two fields instead of one."""
+    base = _manifest([_vertex("product", ["id"], ["id"])])
+    left = _manifest([_typed("product", {"id": "", "category": "STRING"}, ["id"])])
+    right = _manifest([_typed("product", {"id": "", "category": "INT"}, ["id"])])
+    _none, result = merge_three_way(base, left, right)
+    (conflict,) = result.conflicts
+
+    written = ConflictResolution(
+        slot=list(conflict.slot),
+        ops=[
+            AddVertexPropertiesOp(
+                additions={
+                    "product": [
+                        {"name": "category", "type": "STRING"},
+                        {"name": "category_id", "type": "INT"},
+                    ]
+                }
+            )
+        ],
+        rationale="category names it, category_id keys it",
+    )
+    merged, resolved = merge_three_way(base, left, right, resolutions=[written])
+    assert resolved.clean
+    assert merged is not None
+    (product,) = _core(merged).vertex_config.vertices
+    assert {(f.name, str(f.type)) for f in product.properties if f.name != "id"} == {
+        ("category", "STRING"),
+        ("category_id", "INT"),
+    }
+
+
+def test_a_swap_is_not_split() -> None:
+    """``{a: b, b: a}`` only means a swap as one op; split, it collides with itself."""
+    swap = RenameVerticesOp(renames={"a": "b", "b": "a"})
+    assert merge3.split_by_slot(swap) == [swap]

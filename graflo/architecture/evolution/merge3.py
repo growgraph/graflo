@@ -22,8 +22,11 @@ Three things make the slot the right unit:
 * A **rename occupies both names**. Renaming ``person`` → ``customer`` on one
   side while the other side adds a field to ``person`` is a genuine collision,
   and it is invisible unless the rename is understood to touch the old slot too.
-* An op touching several slots is **atomic**: if any one of its slots is
-  contested, the whole op is held back. Applying half an op is not a merge.
+* Each side's ops are first **split one per slot** (:func:`split_by_slot`):
+  the differ emits one op per kind for the whole manifest, and a decision on
+  one slot must not carry another slot's edits. An op that cannot be split
+  (a swap, a pipeline) is **atomic**: if any one of its slots is contested,
+  the whole op is held back. Applying half an op is not a merge.
 * An op **reads** as well as writes. An edge added onto ``company`` writes the
   edge and depends on ``company``; the other side removing ``company`` writes a
   different slot and still cannot be merged with it (:func:`op_reads`). A read
@@ -335,6 +338,99 @@ def op_slots(op: ManifestOp) -> set[Slot]:
         )
         slots.add(("manifest",))
     return slots
+
+
+# ── one op per slot ─────────────────────────────────────────────────────────
+
+#: How an op divides into one op per slot: each payload field to split, and how.
+#: ``items`` splits a list per element, ``keys`` a mapping per key, ``entries`` a
+#: mapping per key *and* per element (or inner key) under it. An op kind absent
+#: here is never split: a resource pipeline, an inverse table, a whole block.
+_SPLITS: dict[type, tuple[tuple[str, str], ...]] = {
+    ops.AddVerticesOp: (("vertices", "items"),),
+    ops.RemoveVerticesOp: (("names", "items"),),
+    ops.RenameVerticesOp: (("renames", "keys"),),
+    ops.AddVertexPropertiesOp: (("additions", "entries"),),
+    ops.RemoveVertexPropertiesOp: (("removals", "entries"),),
+    ops.RenameVertexPropertiesOp: (("renames", "entries"),),
+    ops.ChangeFieldTypesOp: (("vertices", "entries"), ("edges", "entries")),
+    ops.ReplaceIdentityOp: (("replacements", "keys"),),
+    ops.AddSecondaryIdentitiesOp: (("additions", "keys"),),
+    ops.RemoveSecondaryIdentitiesOp: (("removals", "keys"),),
+    ops.AddVertexIndexesOp: (("indexes", "keys"),),
+    ops.RemoveVertexIndexesOp: (("indexes", "keys"),),
+    ops.SetVertexSemanticsOp: (("semantics", "keys"),),
+    ops.SetVertexDescriptionsOp: (("descriptions", "keys"),),
+    ops.SetFieldSemanticsOp: (("targets", "items"),),
+    ops.AddEdgesOp: (("edges", "items"),),
+    ops.RemoveEdgesOp: (("relations", "items"), ("edges", "items")),
+    ops.ReplaceEdgeIdentitiesOp: (("edges", "items"),),
+    ops.AddEdgeIndexesOp: (("edges", "items"),),
+    ops.RemoveEdgeIndexesOp: (("edges", "items"),),
+    ops.SetEdgeDirectedOp: (("edges", "items"),),
+    ops.SetEdgeSemanticsOp: (("edges", "items"),),
+    ops.SetEdgeDescriptionsOp: (("edges", "items"),),
+    ops.RenameRelationsOp: (("renames", "keys"),),
+    ops.AddEdgePropertiesOp: (("additions", "keys"),),
+    ops.RemoveEdgePropertiesOp: (("removals", "keys"),),
+    ops.RenameEdgePropertiesOp: (("renames", "keys"),),
+}
+
+
+def _rename_chains(op: ManifestOp) -> bool:
+    """Whether a rename map renames onto a name it also renames away.
+
+    ``{a: b, b: a}`` is a swap only as one op: split, each half collides with
+    the name the other still holds.
+    """
+    if isinstance(op, (ops.RenameVerticesOp, ops.RenameRelationsOp)):
+        maps = [op.renames]
+    elif isinstance(op, (ops.RenameVertexPropertiesOp, ops.RenameEdgePropertiesOp)):
+        maps = list(op.renames.values())
+    else:
+        return False
+    return any(
+        {canonical_key(new) for new in renames.values()}
+        & {canonical_key(old) for old in renames}
+        for renames in maps
+    )
+
+
+def split_by_slot(op: ManifestOp) -> list[ManifestOp]:
+    """*op* as one op per slot it writes, in order; ``[op]`` when it cannot split.
+
+    The differ emits one op per kind for the whole manifest, so a single
+    ``add_vertex_properties`` carries every property any vertex gained. Split,
+    a conflict holds only the part at its slot, and deciding it decides nothing
+    else.
+    """
+    shape = _SPLITS.get(type(op))
+    if shape is None or _rename_chains(op):
+        return [op]
+    from .codec import op_from_dict
+
+    payload = op_to_dict(op)
+    split_fields = {name for name, _how in shape}
+    common = {key: value for key, value in payload.items() if key not in split_fields}
+
+    pieces: list[dict[str, Any]] = []
+    for name, how in shape:
+        value = payload.get(name)
+        if not value:
+            continue
+        if how == "items":
+            pieces += [{name: [item]} for item in value]
+        elif how == "keys":
+            pieces += [{name: {key: inner}} for key, inner in value.items()]
+        else:
+            for key, inner in value.items():
+                if isinstance(inner, dict):
+                    pieces += [{name: {key: {k: v}}} for k, v in inner.items()]
+                else:
+                    pieces += [{name: {key: [entry]}} for entry in inner]
+    if len(pieces) <= 1:
+        return [op]
+    return [op_from_dict({**common, **piece}) for piece in pieces]
 
 
 # ── what an op depends on ───────────────────────────────────────────────────
@@ -873,8 +969,8 @@ def merge_three_way(
     Raises:
         MergeError: A side changed something no operation expresses -- a
             property gained by one of a relation's edges and not its siblings,
-            an edited pipeline -- so the merged manifest would silently lack
-            it. Also when the merged change set does not apply to *base*.
+            say -- so the merged manifest would silently lack it. Also when the
+            merged change set does not apply to *base*.
     """
     from .apply import apply_evolution
 
@@ -898,6 +994,9 @@ def merge_three_way(
             "a side changed something no operation expresses, so merging would "
             "drop it: " + "; ".join(warnings)
         )
+
+    left_ops = [piece for op in left_ops for piece in split_by_slot(op)]
+    right_ops = [piece for op in right_ops for piece in split_by_slot(op)]
 
     left_slots = {slot for op in left_ops for slot in op_slots(op)}
     right_slots = {slot for op in right_ops for slot in op_slots(op)}

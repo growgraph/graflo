@@ -28,6 +28,7 @@ from hypothesis import HealthCheck, assume, given, settings
 from hypothesis import strategies as st
 
 from graflo.architecture.contract.manifest import GraphManifest
+from graflo.architecture.evolution import merge3
 from graflo.architecture.evolution.apply import apply_evolution
 from graflo.architecture.evolution.autogenerate import (
     diff_manifests,
@@ -39,7 +40,11 @@ from graflo.architecture.evolution.inverse import invert_op, invert_ops
 from graflo.architecture.evolution.merge3 import (
     MergeError,
     merge_three_way,
+    op_slots,
     ops_independent,
+    split_by_slot,
+    take_left,
+    take_right,
 )
 from graflo.architecture.evolution.ops import ManifestOp
 
@@ -493,3 +498,97 @@ def test_a_clean_merge_loses_neither_side(case) -> None:
 
     assert _outcome(right, left_only) == merged_hash
     assert _outcome(left, right_only) == merged_hash
+
+
+# ── a decision is local ─────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("kind", KINDS)
+@PER_KIND
+@given(data=st.data())
+def test_an_op_split_by_slot_is_the_op(kind, data) -> None:
+    """Its pieces, applied in order, land where the op lands -- or are refused."""
+    manifest, op = data.draw(manifest_and_op(kind))
+
+    assert _outcome(manifest, split_by_slot(op)) == _outcome(manifest, [op])
+
+
+_RENAMES = {"rename_vertices", "rename_relations"}
+
+
+@st.composite
+def manifest_and_two_sequences(
+    draw: st.DrawFn,
+) -> tuple[GraphManifest, GraphManifest, GraphManifest]:
+    """A base and two branches, each one to three ops deep."""
+    base = draw(manifests())
+
+    def branch() -> GraphManifest:
+        current = base
+        for _ in range(draw(st.integers(min_value=1, max_value=3))):
+            following = _apply(current, [draw(ops_for(current))])
+            assume(following is not None)
+            assert following is not None
+            current = following
+        return current
+
+    return base, branch(), branch()
+
+
+@LAWS
+@given(manifest_and_two_sequences())
+def test_a_decision_changes_nothing_outside_its_conflict(case) -> None:
+    """Flipping one conflict's decision moves only what that conflict reaches.
+
+    Each side's change set is one op per kind for the whole manifest; a decision
+    that held a whole op would take the side's unrelated edits along with it.
+    """
+    base, left, right = case
+    try:
+        _none, result = merge_three_way(base, left, right)
+    except MergeError:
+        assume(False)
+        return
+    assume(len(result.conflicts) >= 2)
+
+    def merged(flip: int | None) -> GraphManifest | None:
+        decisions = [
+            take_right(c) if i == flip else take_left(c)
+            for i, c in enumerate(result.conflicts)
+        ]
+        try:
+            return merge_three_way(base, left, right, resolutions=decisions)[0]
+        except MergeError:
+            return None
+
+    all_left = merged(None)
+    assume(all_left is not None)
+    assert all_left is not None
+    for flip, conflict in enumerate(result.conflicts):
+        flipped = merged(flip)
+        if flipped is None:
+            continue
+        # Stated per element (a vertex, a relation): the diff may spell what
+        # moved with a different op than the one that moved it -- an edge added
+        # with a property reads back as that property -- but never on another
+        # element. A rename reaches both its names; a vertex reaches the
+        # relations incident to it, since removing it removes their edges.
+        reach = {tuple(conflict.slot)[:2]} | {
+            slot[:2]
+            for op in [*conflict.left_ops, *conflict.right_ops]
+            if op.op in _RENAMES
+            for slot in op_slots(op)
+        }
+        reach |= {
+            merge3._relation_slot(edge.relation)
+            for manifest in (base, left, right, all_left, flipped)
+            for edge in _core(manifest).edge_config.edges
+            if edge.relation is not None
+            and {merge3._vertex_slot(edge.source), merge3._vertex_slot(edge.target)}
+            & reach
+        }
+        moved, _residue = diff_manifests(all_left, flipped)
+        for op in moved:
+            assert {slot[:2] for slot in op_slots(op)} <= reach, (
+                f"flipping {conflict.slot} moved {op.op} outside it"
+            )
