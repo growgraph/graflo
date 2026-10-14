@@ -21,6 +21,7 @@ from graflo.architecture.contract.manifest import GraphManifest
 from .ops import (
     EdgeFieldSemanticsTarget,
     FieldSemanticsTarget,
+    SetEdgeDescriptionsOp,
     SetEdgeSemanticsOp,
     SetFieldSemanticsOp,
     SetVertexDescriptionsOp,
@@ -68,6 +69,29 @@ def apply_set_vertex_descriptions(
     for vertex in vertex_config.vertices:
         if vertex.name in op.descriptions:
             vertex.description = op.descriptions[vertex.name]
+
+    schema.finish_init()
+
+
+def apply_set_edge_descriptions(
+    manifest: GraphManifest, op: SetEdgeDescriptionsOp
+) -> None:
+    """Set, replace or clear the description on selected edges."""
+    schema = manifest.graph_schema
+    if schema is None:
+        raise ValueError("set_edge_descriptions requires graph_schema")
+
+    by_edge_id = {edge.edge_id: edge for edge in schema.core_schema.edge_config.edges}
+    unknown = sorted(
+        str(target.edge_id())
+        for target in op.edges
+        if target.edge_id() not in by_edge_id
+    )
+    if unknown:
+        raise ValueError(f"set_edge_descriptions: unknown edges: {unknown}")
+
+    for target in op.edges:
+        by_edge_id[target.edge_id()].description = target.description
 
     schema.finish_init()
 
@@ -153,6 +177,7 @@ def apply_set_field_semantics(manifest: GraphManifest, op: SetFieldSemanticsOp) 
 
 
 __all__ = [
+    "apply_set_edge_descriptions",
     "apply_set_edge_semantics",
     "apply_set_field_semantics",
     "apply_set_vertex_descriptions",

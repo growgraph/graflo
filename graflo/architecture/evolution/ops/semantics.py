@@ -59,6 +59,35 @@ class SetVertexDescriptionsOp(ConfigBaseModel):
     )
 
 
+class EdgeDescriptionTarget(EdgeSelector):
+    """One edge triple and the description to put on it."""
+
+    description: str | None = PydanticField(
+        default=None, description="The description; ``None`` clears it."
+    )
+
+
+class SetEdgeDescriptionsOp(ConfigBaseModel):
+    """Set or clear the human-readable description of existing edges.
+
+    The vertex op's counterpart: a relation's wording changes when a merge
+    reuses it and brings words for it, or when what it means is corrected. Like
+    the vertex op, it is never consulted at execution time.
+    """
+
+    op: Literal["set_edge_descriptions"] = "set_edge_descriptions"
+    edges: list[EdgeDescriptionTarget] = PydanticField(
+        ...,
+        description="Edge triples whose description changes, each with its text.",
+        min_length=1,
+    )
+
+    @model_validator(mode="after")
+    def _validate_unique_selectors(self) -> SetEdgeDescriptionsOp:
+        _validate_unique_edge_selectors(self.edges, kind="set_edge_descriptions")
+        return self
+
+
 class SetEdgeSemanticsOp(ConfigBaseModel):
     """Ground edge relations in an external vocabulary.
 

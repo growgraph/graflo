@@ -60,6 +60,7 @@ from .ops import (
     SanitizeOp,
     SetBindingsOp,
     SetDbProfileOp,
+    SetEdgeDescriptionsOp,
     SetEdgeDirectedOp,
     SetEdgeSemanticsOp,
     SetFieldSemanticsOp,
@@ -94,6 +95,7 @@ RevisionOp = Annotated[
     | SetEdgeDirectedOp
     | SetVertexSemanticsOp
     | SetVertexDescriptionsOp
+    | SetEdgeDescriptionsOp
     | SetEdgeSemanticsOp
     | SetFieldSemanticsOp
     | MergeVerticesOp

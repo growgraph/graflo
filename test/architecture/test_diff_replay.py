@@ -32,6 +32,7 @@ from graflo.architecture.evolution.merge_commit import build_merge_commit
 from graflo.architecture.evolution.ops import (
     MergeManifestsOp,
     RenameVerticesOp,
+    SetEdgeDescriptionsOp,
     SetVertexDescriptionsOp,
 )
 
@@ -199,6 +200,24 @@ class TestDescriptions:
         inverse = invert_op(op, manifest=base)
         assert isinstance(inverse, SetVertexDescriptionsOp)
         assert inverse.descriptions == {"party": None}
+
+    def test_an_edge_given_a_description_is_set_and_inverts(self) -> None:
+        """A reused relation that gains words: no longer a residual of the replay."""
+        refers = {"source": "party", "target": "party", "relation": "refers"}
+        base = _manifest([PARTY], edges=[refers])
+        target = _manifest(
+            [PARTY], edges=[{**refers, "description": "A party refers another."}]
+        )
+
+        [op] = _replays(base, target)
+
+        assert isinstance(op, SetEdgeDescriptionsOp)
+        assert [(e.edge_id(), e.description) for e in op.edges] == [
+            (("party", "party", "refers"), "A party refers another.")
+        ]
+        inverse = invert_op(op, manifest=base)
+        assert isinstance(inverse, SetEdgeDescriptionsOp)
+        assert inverse.edges[0].description is None
 
 
 class TestRenameReach:

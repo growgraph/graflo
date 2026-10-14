@@ -84,8 +84,10 @@ from .resources import (
     ReplaceResourcesOp,
 )
 from .semantics import (
+    EdgeDescriptionTarget,
     EdgeFieldSemanticsTarget,
     FieldSemanticsTarget,
+    SetEdgeDescriptionsOp,
     SetEdgeSemanticsOp,
     SetFieldSemanticsOp,
     SetVertexDescriptionsOp,
@@ -128,6 +130,7 @@ __all__ = [
     "DeclareEdgeInversesOp",
     "DerivationSpec",
     "DerivedBranch",
+    "EdgeDescriptionTarget",
     "EdgeFieldSemanticsTarget",
     "EdgeIdentitiesEntry",
     "EdgeIndexEntry",
@@ -176,6 +179,7 @@ __all__ = [
     "SanitizeOp",
     "SetBindingsOp",
     "SetDbProfileOp",
+    "SetEdgeDescriptionsOp",
     "SetEdgeDirectedOp",
     "SetEdgeSemanticsOp",
     "SetFieldSemanticsOp",
@@ -221,6 +225,7 @@ ManifestOp = Annotated[
     | SetDbProfileOp
     | SetVertexSemanticsOp
     | SetVertexDescriptionsOp
+    | SetEdgeDescriptionsOp
     | SetEdgeSemanticsOp
     | SetFieldSemanticsOp
     | MergeVerticesOp

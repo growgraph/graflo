@@ -129,6 +129,7 @@ are cast or written.
 | `set_edge_semantics` | Grounds edges. | yes |
 | `set_field_semantics` | Grounds properties of vertices or edges, including their `unit`. | yes |
 | `set_vertex_descriptions` | Sets or clears the description of vertex types. | yes |
+| `set_edge_descriptions` | Sets or clears the description of edges. | yes |
 
 ### Whole manifest
 

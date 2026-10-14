@@ -68,6 +68,11 @@ OP_PAYLOADS: dict[str, dict] = {
         "semantics": {"party": {"iri": "https://schema.org/Organization"}},
     },
     "set_vertex_descriptions": {"descriptions": {"party": "A trading party."}},
+    "set_edge_descriptions": {
+        "edges": [
+            {"source": "party", "target": "order", "description": "A party orders."}
+        ]
+    },
     "set_edge_semantics": {
         "edges": [{"source": "party", "target": "order"}],
         "semantics": {"iri": "https://schema.org/seller"},
@@ -227,6 +232,9 @@ SCHEMA_ONLY_PAYLOADS: dict[str, dict] = {
         "semantics": {"party": {"iri": "https://schema.org/Organization"}}
     },
     "set_vertex_descriptions": {"descriptions": {"party": "A trading party."}},
+    "set_edge_descriptions": {
+        "edges": [{**_PURCHASES, "description": "A party purchases an order."}]
+    },
 }
 
 
@@ -432,6 +440,7 @@ class TestUnionCoverage:
             "set_field_semantics",
             "set_vertex_semantics",
             "set_vertex_descriptions",
+            "set_edge_descriptions",
             "set_bindings",
             "set_db_profile",
         }
@@ -479,8 +488,8 @@ class TestUnionCoverage:
             if name.endswith("Op")
             and hasattr(getattr(ops_module, name), "model_fields")
         }
-        assert len(exported) == 46
-        assert len(_union_members()) == 45  # 46 minus the binary merge op
+        assert len(exported) == 47
+        assert len(_union_members()) == 46  # 47 minus the binary merge op
 
     def test_every_op_is_reversible_or_says_why_not(self) -> None:
         """The split quoted wherever the vocabulary is described; update both."""
@@ -492,7 +501,7 @@ class TestUnionCoverage:
         }
         assert set(_HANDLERS) | set(IRREVERSIBLE) == names
         assert not set(_HANDLERS) & set(IRREVERSIBLE)
-        assert (len(_HANDLERS), len(IRREVERSIBLE)) == (38, 8)
+        assert (len(_HANDLERS), len(IRREVERSIBLE)) == (39, 8)
 
 
 class TestRoundTrip:

@@ -77,6 +77,7 @@ KINDS = [
     "remove_edges:triple",
     "retarget_edges",
     "rename_relations",
+    "set_edge_descriptions",
     "add_edge_properties",
     "remove_edge_properties",
 ]
@@ -234,6 +235,21 @@ def _payloads(manifest: GraphManifest) -> dict[str, st.SearchStrategy[dict[str, 
                     "target": t[0][1],
                     "relation": t[0][2],
                     "new_target": t[1],
+                }
+            ],
+        }
+    )
+    out["set_edge_descriptions"] = st.tuples(
+        edge, st.one_of(st.none(), st.text("ab", min_size=1, max_size=3))
+    ).map(
+        lambda t: {
+            "op": "set_edge_descriptions",
+            "edges": [
+                {
+                    "source": t[0][0],
+                    "target": t[0][1],
+                    "relation": t[0][2],
+                    "description": t[1],
                 }
             ],
         }

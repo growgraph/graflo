@@ -288,8 +288,12 @@ class VertexActor(VertexProducingActor):
                 and not (isinstance(item, dict) and not item)
             ]
             if not consumed_from_buffer:
+                # A field an earlier vertex step took from the transform output is
+                # still this step's to read: `from` names it explicitly.
+                produced = ctx.transformed.get(lindex, {})
                 projected = {
-                    v_f: effective_doc.get(d_f) for v_f, d_f in self.from_doc.items()
+                    v_f: effective_doc.get(d_f, produced.get(d_f))
+                    for v_f, d_f in self.from_doc.items()
                 }
                 if any(v is not None for v in projected.values()):
                     agg.extend(explode_identity_lists(projected, key_fields))

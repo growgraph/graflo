@@ -100,6 +100,7 @@ from .ops import (
     SanitizeOp,
     SetBindingsOp,
     SetDbProfileOp,
+    SetEdgeDescriptionsOp,
     SetEdgeDirectedOp,
     SetEdgeSemanticsOp,
     SetFieldSemanticsOp,
@@ -2313,6 +2314,10 @@ def _dispatch_op(manifest: GraphManifest, op: Any) -> None:
         from .semantics import apply_set_vertex_descriptions
 
         apply_set_vertex_descriptions(manifest, op)
+    elif isinstance(op, SetEdgeDescriptionsOp):
+        from .semantics import apply_set_edge_descriptions
+
+        apply_set_edge_descriptions(manifest, op)
     elif isinstance(op, SetEdgeSemanticsOp):
         from .semantics import apply_set_edge_semantics
 

@@ -228,6 +228,8 @@ def op_slots(op: ManifestOp) -> set[Slot]:
         slots |= {("db_profile",)}
     elif isinstance(op, ops.SetEdgeSemanticsOp):
         slots |= {(*_edge_slot(*entry.edge_id()), "semantics") for entry in op.edges}
+    elif isinstance(op, ops.SetEdgeDescriptionsOp):
+        slots |= {(*_edge_slot(*entry.edge_id()), "description") for entry in op.edges}
 
     # ── grounding ───────────────────────────────────────────────────────────
     #
@@ -454,7 +456,10 @@ def op_reads(
                 for name in (entry.new_source, entry.new_target)
                 if name is not None
             }
-    elif isinstance(op, (ops.SetEdgeDirectedOp, ops.SetEdgeSemanticsOp)):
+    elif isinstance(
+        op,
+        (ops.SetEdgeDirectedOp, ops.SetEdgeSemanticsOp, ops.SetEdgeDescriptionsOp),
+    ):
         for selector in op.edges:
             reads |= {_vertex_slot(selector.source), _vertex_slot(selector.target)}
     elif isinstance(op, ops.ReplaceEdgeIdentitiesOp):

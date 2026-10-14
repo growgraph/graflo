@@ -38,6 +38,7 @@ from .ops import (
     AddVerticesOp,
     CanonicalizeOp,
     DeclareEdgeInversesOp,
+    EdgeDescriptionTarget,
     EdgeFieldSemanticsTarget,
     EdgeIdentitiesEntry,
     EdgeIndexEntry,
@@ -65,6 +66,7 @@ from .ops import (
     RetractEdgeInversesOp,
     SetBindingsOp,
     SetDbProfileOp,
+    SetEdgeDescriptionsOp,
     SetEdgeDirectedOp,
     SetEdgeSemanticsOp,
     SetFieldSemanticsOp,
@@ -783,6 +785,27 @@ def _invert_set_vertex_descriptions(
     return SetVertexDescriptionsOp(descriptions=prior)
 
 
+def _invert_set_edge_descriptions(
+    op: SetEdgeDescriptionsOp, manifest: GraphManifest
+) -> ManifestOp | None:
+    """Restore each edge's prior description, ``None`` included."""
+    existing = {(e.source, e.target, e.relation): e for e in _edges(manifest)}
+    prior: list[EdgeDescriptionTarget] = []
+    for target in op.edges:
+        edge = existing.get(target.edge_id())
+        if edge is None:
+            return None
+        prior.append(
+            EdgeDescriptionTarget(
+                source=target.source,
+                target=target.target,
+                relation=target.relation,
+                description=edge.description,
+            )
+        )
+    return SetEdgeDescriptionsOp(edges=prior)
+
+
 def _invert_set_edge_semantics(
     op: SetEdgeSemanticsOp, manifest: GraphManifest
 ) -> ManifestOp | None:
@@ -950,6 +973,7 @@ _HANDLERS: dict[str, Any] = {
     "set_db_profile": _invert_set_db_profile,
     "set_vertex_semantics": _invert_set_vertex_semantics,
     "set_vertex_descriptions": _invert_set_vertex_descriptions,
+    "set_edge_descriptions": _invert_set_edge_descriptions,
     "set_edge_semantics": _invert_set_edge_semantics,
     "set_field_semantics": _invert_set_field_semantics,
     "add_secondary_identities": _invert_add_secondary_identities,

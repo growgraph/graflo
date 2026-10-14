@@ -19,7 +19,7 @@ from graflo.architecture.contract.bindings import (
     SparqlConnector,
     TableConnector,
 )
-from graflo.connections.onto import PostgresConfig, SparqlEndpointConfig
+from graflo.connections.onto import DBConfig, PostgresConfig, SparqlEndpointConfig
 from graflo.connections.sources import (
     ApiAuth,
     ApiGeneralizedConnConfig,
@@ -48,6 +48,7 @@ __all__ = [
     "SparqlAuth",
     "SparqlGeneralizedConnConfig",
     "proxy_env_prefix",
+    "resolve_db_secrets_from_env",
     "resolve_secrets_from_env",
 ]
 
@@ -64,6 +65,31 @@ def proxy_env_prefix(conn_proxy: str) -> str:
     module derives its prefix from this function unless one is passed explicitly.
     """
     return _proxy_to_env_prefix(conn_proxy)
+
+
+def resolve_db_secrets_from_env(
+    config: DBConfig,
+    conn_proxy: str,
+    env_prefix: str | None = None,
+) -> DBConfig:
+    """Fill a stored database config's missing username and password from the environment.
+
+    The same rule as :func:`resolve_secrets_from_env`, for any database config,
+    a graph target included: ``{prefix}USERNAME`` / ``{prefix}PASSWORD`` fill
+    what *config* lacks and never override a stored value.
+
+    Returns:
+        A copy of *config* with missing credentials filled, or *config* itself
+        when nothing was filled.
+    """
+    prefix = env_prefix if env_prefix is not None else _proxy_to_env_prefix(conn_proxy)
+    update = {
+        field: value
+        for field in ("username", "password")
+        if (value := os.environ.get(f"{prefix}{field.upper()}") or None) is not None
+        and getattr(config, field) is None
+    }
+    return config.model_copy(update=update) if update else config
 
 
 def resolve_secrets_from_env(
@@ -97,18 +123,10 @@ def resolve_secrets_from_env(
         return os.environ.get(f"{prefix}{name}") or None
 
     if isinstance(config, (PostgresGeneralizedConnConfig, SparqlGeneralizedConnConfig)):
-        inner = config.config
-        update = {
-            field: value
-            for field, value in (
-                ("username", _env("USERNAME")),
-                ("password", _env("PASSWORD")),
-            )
-            if value is not None and getattr(inner, field) is None
-        }
-        if not update:
+        filled = resolve_db_secrets_from_env(config.config, conn_proxy, prefix)
+        if filled is config.config:
             return config
-        return config.model_copy(update={"config": inner.model_copy(update=update)})
+        return config.model_copy(update={"config": filled})
 
     if isinstance(config, ApiGeneralizedConnConfig):
         inner = config.config

@@ -26,6 +26,7 @@ from .ops import (
     DeclareEdgeInversesOp,
     DerivationSpec,
     DerivedBranch,
+    EdgeDescriptionTarget,
     EdgeFieldSemanticsTarget,
     EdgeIdentitiesEntry,
     EdgeIndexEntry,
@@ -71,6 +72,7 @@ from .ops import (
     RetargetEdgesOp,
     RetractEdgeInversesOp,
     SanitizeOp,
+    SetEdgeDescriptionsOp,
     SetEdgeDirectedOp,
     SetEdgeSemanticsOp,
     SetFieldSemanticsOp,
@@ -220,6 +222,7 @@ _PHYSICAL_EXPORTS = frozenset(
 
 _SEMANTICS_EXPORTS = frozenset(
     {
+        "apply_set_edge_descriptions",
         "apply_set_edge_semantics",
         "apply_set_field_semantics",
         "apply_set_vertex_descriptions",
@@ -369,6 +372,7 @@ __all__ = [
     "DemotedKey",
     "DerivationSpec",
     "DerivedBranch",
+    "EdgeDescriptionTarget",
     "EdgeFieldSemanticsTarget",
     "EdgeIdentitiesEntry",
     "EdgeIndexEntry",
@@ -441,6 +445,7 @@ __all__ = [
     "RetractEdgeInversesOp",
     "RevisionOp",
     "SanitizeOp",
+    "SetEdgeDescriptionsOp",
     "SetEdgeDirectedOp",
     "SetEdgeSemanticsOp",
     "SetFieldSemanticsOp",
@@ -490,6 +495,7 @@ __all__ = [
     "apply_retarget_edges",
     "apply_retract_edge_inverses",
     "apply_sanitize",
+    "apply_set_edge_descriptions",
     "apply_set_edge_directed",
     "apply_set_edge_semantics",
     "apply_set_field_semantics",

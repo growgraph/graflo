@@ -811,9 +811,13 @@ class EdgeActorConfig(EdgeEndpointMatchOptionsConfig):
                 "edge step requires 'to' (target), target_role, or target_type_field."
             )
         if self.source is not None and self.source_role is not None:
-            raise ValueError("'from' and source_type_field are mutually exclusive.")
+            raise ValueError(
+                "'from' and source_type_field/source_role are mutually exclusive."
+            )
         if self.target is not None and self.target_role is not None:
-            raise ValueError("'to' and target_type_field are mutually exclusive.")
+            raise ValueError(
+                "'to' and target_type_field/target_role are mutually exclusive."
+            )
         # Mixed mode (one static + one dynamic) is valid; both-static is pure static mode.
         if self.relation_map_only and (
             self.relation_field is None or not self.relation_map

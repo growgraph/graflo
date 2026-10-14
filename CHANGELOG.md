@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`set_edge_descriptions`** sets or clears the description of existing edges, with its inverse;
+  `diff_manifests` emits it, so a changed edge description no longer leaves a replay residual.
+- `resolve_db_secrets_from_env`: fills any database config's missing username and password
+  from `{PROXY}_USERNAME` / `_PASSWORD`, a graph target included.
 - **Deprecation helpers** (`graflo._compat`): `deprecated`, `warn_deprecated` and `rename_key` name
   the deprecating and removing versions. CI fails on a public-API break against the last release
   unless the version is a new major.
@@ -30,6 +34,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An edge to a looked-up vertex is no longer dropped** when an earlier vertex step took the
+  transform output its `from` names; an explicit `from` reads it regardless of step order.
+- An edge step naming an end by both type and role now says `source_role` / `target_role` in its
+  error, not only `source_type_field`.
 - **`diff_manifests` emits `replace_edge_identities`** when an edge's keys change; the change was
   previously reported as not expressible.
 - **Sampling through a `TableConnector` binding** carries the table and column comments, the

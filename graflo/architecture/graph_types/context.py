@@ -103,6 +103,9 @@ class ExtractionContext(ConfigBaseModel):
         acc_vertex: Local accumulation of extracted vertices
         transform_buffer: Buffer for transform payloads (defaultdict[LocationIndex, list])
         obs_buffer: Merged observation context per location (dict[LocationIndex, dict])
+        transformed: Every named transform output per location, never consumed
+            (dict[LocationIndex, dict]): a vertex step that takes a field does not
+            hide it from a later step's explicit ``from``
         vertex_observations: Explicit extracted vertex observations
         transform_observations: Explicit extracted transform observations
         edge_intents: Explicit edge intents for assembly phase
@@ -115,6 +118,7 @@ class ExtractionContext(ConfigBaseModel):
     acc_vertex: Any = Field(default_factory=outer_factory)
     transform_buffer: Any = Field(default_factory=_default_dict_transforms)
     obs_buffer: Any = Field(default_factory=_default_dict_observations)
+    transformed: Any = Field(default_factory=_default_dict_observations)
     vertex_observations: list[VertexObservation] = Field(
         default_factory=_default_vertex_observations
     )
@@ -149,6 +153,9 @@ class ExtractionContext(ConfigBaseModel):
                 provenance=ProvenancePath.from_lindex(location),
             )
         )
+        outputs = {k: v for k, v in payload.named.items() if v is not None}
+        if outputs:
+            self.transformed.setdefault(location, {}).update(outputs)
 
     def record_edge_intent(
         self,

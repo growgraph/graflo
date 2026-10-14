@@ -61,6 +61,7 @@ from .ops import (
     AddVerticesOp,
     ChangeFieldTypesOp,
     DeclareEdgeInversesOp,
+    EdgeDescriptionTarget,
     EdgeFieldSemanticsTarget,
     EdgeIdentitiesEntry,
     EdgeIndexEntry,
@@ -86,6 +87,7 @@ from .ops import (
     RetractEdgeInversesOp,
     SetBindingsOp,
     SetDbProfileOp,
+    SetEdgeDescriptionsOp,
     SetEdgeDirectedOp,
     SetEdgeSemanticsOp,
     SetFieldSemanticsOp,
@@ -805,10 +807,20 @@ def _semantics_ops(
 
     base_edges = _edges_after_renames(base, hints)
     groups: dict[str, tuple[Any, list[EdgeSelector]]] = {}
+    edge_descriptions: list[EdgeDescriptionTarget] = []
     for key, new_edge in _edges(target).items():
         old_edge = base_edges.get(key)
         if old_edge is None:
             continue
+        if old_edge.description != new_edge.description:
+            edge_descriptions.append(
+                EdgeDescriptionTarget(
+                    source=key[0],
+                    target=key[1],
+                    relation=key[2],
+                    description=new_edge.description,
+                )
+            )
         old_fields = {f.name: f for f in old_edge.properties}
         for field in new_edge.properties:
             old_field = old_fields.get(field.name)
@@ -834,6 +846,8 @@ def _semantics_ops(
         groups.setdefault(canon, (new_edge.semantics, []))[1].append(
             EdgeSelector(source=key[0], target=key[1], relation=key[2])
         )
+    if edge_descriptions:
+        ops.append(SetEdgeDescriptionsOp(edges=edge_descriptions))
     if field_targets:
         ops.append(SetFieldSemanticsOp(targets=field_targets))
     for canon in sorted(groups):

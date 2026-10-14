@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from graflo.architecture.contract.bindings import APIConnector, Bindings, TableConnector
-from graflo.connections.onto import PostgresConfig
+from graflo.connections.onto import Neo4jConfig, PostgresConfig
 from graflo.connections.provider import (
     ApiAuth,
     ApiGeneralizedConnConfig,
@@ -11,6 +11,7 @@ from graflo.connections.provider import (
     PostgresGeneralizedConnConfig,
     RestApiConnConfig,
     proxy_env_prefix,
+    resolve_db_secrets_from_env,
     resolve_secrets_from_env,
 )
 
@@ -542,3 +543,18 @@ def test_resolve_secrets_from_env_honours_explicit_prefix(
     assert isinstance(resolved, ApiGeneralizedConnConfig)
     assert resolved.config.auth is not None
     assert resolved.config.auth.token == "t0ken"
+
+
+def test_a_graph_target_takes_its_missing_credentials_from_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GRAPH_USERNAME", "neo4j")
+    monkeypatch.setenv("GRAPH_PASSWORD", "from-env")
+    stored = Neo4jConfig(uri="bolt://localhost:7687")
+
+    filled = resolve_db_secrets_from_env(stored, "graph")
+
+    assert (filled.username, filled.password) == ("neo4j", "from-env")
+    assert isinstance(filled, Neo4jConfig) and stored.password is None
+    kept = Neo4jConfig(uri="bolt://localhost:7687", password="stored")
+    assert resolve_db_secrets_from_env(kept, "graph").password == "stored"
