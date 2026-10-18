@@ -71,11 +71,11 @@ union behind examples 20 and 21.
 | 21 | [How do I combine manifests when one source decides the type per row?](router-union-alignment/index.md) | Nothing |
 | 22 | [Two people changed the same manifest. How do I merge their changes and keep the history?](version-control/index.md) | Nothing |
 
-## Profiles
+## Aspects and profiles
 
 | No. | Question | Needs to run |
 |---|---|---|
-| 23 | [How do I turn a plain schema into one that tracks state and measurements over time?](state-core-lift/index.md) | Nothing |
+| 23 | [How do I turn a plain schema into one that tracks state and measurements over time?](lift-aspects/index.md) | Nothing |
 
 ## What to read next
 

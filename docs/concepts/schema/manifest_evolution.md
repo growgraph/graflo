@@ -197,7 +197,7 @@ These commands produce or replay one:
 | `graflo commit --from-manifest A --to-manifest B` | derives the ops from A to B and records them; see [Deriving ops from two manifests](#deriving-ops-from-two-manifests) |
 | `graflo checkout --base A` | replays recorded ops to rebuild a manifest |
 | `graflo inverses realize\|repair\|switch\|withdraw ... --emit-ops FILE -o OUT` | plans ops for inverse relations, writes them, and applies them |
-| `graflo lift --spec FILE --emit-ops FILE -o OUT` | plans the ops that add state and provenance types |
+| `graflo lift --spec FILE --emit-ops FILE -o OUT` | plans the ops that add the state and provenance types; see [Aspects](aspects.md) |
 
 ## Undoing ops
 

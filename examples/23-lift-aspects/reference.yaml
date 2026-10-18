@@ -8,14 +8,14 @@
 # `State`). The file shows the full shape, and that a hand-written model can
 # pass every check of the profile.
 metadata:
-    name: state-core-reference
+    name: world-model-reference
     description: >-
         Six abstract types -- Asset, State, Observation, Event, Agent and
         SourceRecord -- plus the Asset-to-Asset topology edges, grounded in PROV-O,
         SOSA/SSN and QUDT.
 schema:
     metadata:
-        name: state-core-reference
+        name: world-model-reference
         version: "0.1.0"
         description: >-
             Abstract vocabulary for entities whose facts are qualified by when

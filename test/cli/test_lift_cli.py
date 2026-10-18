@@ -16,9 +16,7 @@ from click.testing import CliRunner
 
 from graflo.cli.main import graflo
 
-EXAMPLE = (
-    pathlib.Path(__file__).resolve().parents[2] / "examples" / "23-state-core-lift"
-)
+EXAMPLE = pathlib.Path(__file__).resolve().parents[2] / "examples" / "23-lift-aspects"
 MANIFEST_IN = EXAMPLE / "manifest_in.yaml"
 SPEC = EXAMPLE / "lift.yaml"
 

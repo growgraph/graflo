@@ -96,6 +96,7 @@ nav:
         -   Merging manifests: concepts/schema/merging_manifests.md
         -   Version control: concepts/schema/versioning.md
         -   Live schema drift: concepts/schema/live_drift.md
+        -   Aspects: concepts/schema/aspects.md
         -   Conformance profiles: concepts/schema/world_model_profile.md
         -   GraFlo ontology: concepts/schema/ontology.md
     -   Ingestion:
@@ -158,8 +159,8 @@ nav:
         -   20 - Combine two manifests: examples/manifest-union/index.md
         -   21 - Combine manifests with a routed source: examples/router-union-alignment/index.md
         -   22 - Version control for a manifest: examples/version-control/index.md
-    -   Profiles:
-        -   23 - Track state and measurements: examples/state-core-lift/index.md
+    -   Aspects and profiles:
+        -   23 - Track state and measurements: examples/lift-aspects/index.md
 -   API Reference: reference/
 -   Internals:
     -   Merge internals: internals/merge_internals.md

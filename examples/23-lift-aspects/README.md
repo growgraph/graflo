@@ -77,7 +77,7 @@ when a fact was true and where it came from:
 | `provenance` | one vertex type is grounded as an agent, and one edge in a derivation or attribution property |
 
 ```bash
-cd examples/23-state-core-lift
+cd examples/23-lift-aspects
 uv run graflo check --profile world-model manifest_in.yaml
 ```
 
@@ -241,6 +241,8 @@ as a pattern when you write such a model yourself;
 
 ## What to read next
 
+- [Aspects](../../docs/concepts/schema/aspects.md): every type, key and edge
+  each aspect adds, the lift spec, and how to fill the new types.
 - [Conformance profiles](../../docs/concepts/schema/world_model_profile.md):
   each check of the `world-model` profile, and waivers.
 - [Manifest evolution](../../docs/concepts/schema/manifest_evolution.md): the

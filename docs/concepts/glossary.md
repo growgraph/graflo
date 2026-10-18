@@ -330,7 +330,7 @@ Changing a live database so that it matches a new schema version, with `graflo m
 
 ### lift
 
-Adding one or more aspects to a manifest with `graflo lift` or `plan_lift`. The `state` aspect needs a spec that says what the types mean; the `provenance` aspect needs none. The result is a change set that changes the schema only: no resource feeds the new types until you write one.
+Adding one or more aspects to a manifest with `graflo lift` or `plan_lift`. The `state` aspect needs a spec that says what the types mean; the `provenance` aspect needs none. The result is a change set that changes the schema only: no resource feeds the new types until you write one. See [Aspects](schema/aspects.md).
 
 ```yaml
 grounding: {Machine: {iri: "http://www.w3.org/ns/sosa/FeatureOfInterest"}}
@@ -339,7 +339,7 @@ observed: [Machine]
 measured: {Machine.operating_temp: Cel}
 ```
 
-See [the state-core lift example (23)](../examples/state-core-lift/index.md).
+See [the lift example (23)](../examples/lift-aspects/index.md).
 
 ## Checks
 
@@ -361,23 +361,23 @@ The conformance profile named `world-model`, version 0.1, with six assertions: `
 
 ### aspect
 
-A vocabulary that every domain needs and none owns, added to a manifest by a lift and grounded in a standard: `provenance` and `state` today. `graflo lift --aspect NAME` picks one; by default both are lifted. See [the state-core lift example (23)](../examples/state-core-lift/index.md).
+A vocabulary that every domain needs and none owns, added to a manifest by a lift and grounded in a standard: `provenance` and `state` today. `graflo lift --aspect NAME` picks one; by default both are lifted. See [Aspects](schema/aspects.md).
 
 ### provenance aspect
 
-The types a lift adds so that a manifest can say where a fact came from: `SourceRecord`, the record a fact was read from (its address and content hash, never its content), and `Agent`, who produced it, linked by `wasDerivedFrom` and `wasAttributedTo` (PROV-O). A type named in the spec's `provenance_for` gains a `wasDerivedFrom` edge; the state and observation types always do.
+The types a lift adds so that a manifest can say where a fact came from: `SourceRecord`, the record a fact was read from (its address and content hash, never its content), and `Agent`, who produced it, linked by `wasDerivedFrom` and `wasAttributedTo` (PROV-O). A type named in the spec's `provenance_for` gains a `wasDerivedFrom` edge; the state and observation types always do. See [Aspects](schema/aspects.md#the-provenance-aspect).
 
 ### state aspect
 
-The types a lift adds so that a manifest can record how facts change: a state type and an observation type for each entity type (the thing facts are about, such as `Machine`), grounded in PROV-O and SOSA and linked by `specializationOf` and `hasFeatureOfInterest` edges.
+The types a lift adds so that a manifest can record how facts change: a state type and an observation type for each entity type (the thing facts are about, such as `Machine`), grounded in PROV-O and SOSA and linked by `specializationOf` and `hasFeatureOfInterest` edges. See [Aspects](schema/aspects.md#the-state-aspect).
 
 ### state
 
-A vertex type named `<Type>State` that holds the properties of an entity that change over time, each value valid from `valid_from` to `valid_to`: a machine keeps its serial number, and its `status` moves to `MachineState`. It is keyed on the entity's key plus `valid_from`, so each value is a separate fact rather than an overwrite of the last one. See [the state-core lift example (23)](../examples/state-core-lift/index.md).
+A vertex type named `<Type>State` that holds the properties of an entity that change over time, each value valid from `valid_from` to `valid_to`: a machine keeps its serial number, and its `status` moves to `MachineState`. It is keyed on the entity's key plus `valid_from`, so each value is a separate fact rather than an overwrite of the last one. See [the lift example (23)](../examples/lift-aspects/index.md).
 
 ### observation
 
-A vertex type named `<Type>Observation` that holds one measurement of an entity at one time: `observed_property`, `result_value`, `result_unit` (a UCUM unit such as `Cel`) and `result_time`. A temperature reading taken on a machine is one `MachineObservation`. See [the state-core lift example (23)](../examples/state-core-lift/index.md).
+A vertex type named `<Type>Observation` that holds one measurement of an entity at one time: `observed_property`, `result_value`, `result_unit` (a UCUM unit such as `Cel`) and `result_time`. A temperature reading taken on a machine is one `MachineObservation`. See [the lift example (23)](../examples/lift-aspects/index.md).
 
 ## Inference and sampling
 

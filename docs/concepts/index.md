@@ -183,6 +183,7 @@ each term one short definition and links to the page that explains it.
 | [Merging manifests](schema/merging_manifests.md) | How do I combine two manifests that model the same things under different names? |
 | [Version control](schema/versioning.md) | How do I commit, go back to and three-way merge versions of a manifest? |
 | [Live schema drift](schema/live_drift.md) | How do I find what a database holds that its schema does not declare? |
+| [Aspects](schema/aspects.md) | How do I make a schema record where a fact came from, who reported it and how it changed over time? |
 | [Conformance profiles](schema/world_model_profile.md) | What must a manifest declare to pass the `world-model` profile, and how do I waive a rule? |
 | [GraFlo ontology](schema/ontology.md) | How does a manifest turn into RDF and back, and which vocabulary does it use? |
 

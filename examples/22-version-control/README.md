@@ -206,7 +206,7 @@ becomes `['email']`, and the hash (`e294e3f07eb7`) and the merge commit
 
 ## What to read next
 
-- [Track state and measurements](../23-state-core-lift/README.md): turn a plain
+- [Track state and measurements](../23-lift-aspects/README.md): turn a plain
   schema into one that records how facts change over time.
 - [Merging two branches](../../docs/concepts/schema/versioning.md#merging-two-branches):
   slots, conflicts and merge commits in detail.
