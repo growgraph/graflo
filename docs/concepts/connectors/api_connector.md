@@ -435,6 +435,46 @@ The example above declares its shared settings once, under `connector_templates`
 
 Templates are expanded when the bindings are loaded. A `conn_proxy` at the top level of `bindings` is the label for every connector that has no `connector_connection` row.
 
+## Resuming where the last run stopped
+
+A run reads every record the endpoint returns. Re-reading records already in the graph is safe, because each one is upserted by its identity, but it is slow on an API with a rate limit. A `watermark` lets a run start where the previous one stopped:
+
+```yaml
+    - name: work_orders_api
+      path: /api/work-orders
+      resource_name: work_orders
+      params:
+        q: "plant = 'P1' order by updated"
+      watermark:
+        field: updated
+        param: q
+        template: "plant = 'P1' and updated >= '{value}' order by updated"
+```
+
+- `field` is the dot path of a value on each record that grows over time, such as a modification time.
+- `param` is the query parameter that carries the value on the next run.
+- `template` is the text of that parameter, with `{value}` where the value goes. Without a template the bare value is sent.
+
+While it reads, the data source keeps the largest `field` value among the records it has returned, as `high_water`. Values compare as numbers when both parse as numbers, and as text otherwise, so write timestamps in one sortable form, such as ISO 8601 in one time zone. GraFlo stores nothing between runs: you keep the value, and you hand it back with a [runtime connector update](runtime_updates.md) before the next run.
+
+```python
+from graflo.architecture.contract.bindings import ConnectorUpdate
+
+source = registry.get_data_sources("work_orders")[0]
+# ... after the run:
+last = source.high_water
+
+connector = bindings.get_connectors_for_resource("work_orders")[0]
+bindings.apply_connector_update(
+    ConnectorUpdate(
+        connector="work_orders_api",
+        params={**connector.params, **connector.watermark.render(last)},
+    )
+)
+```
+
+Use `>=` rather than `>` in the template. Two records can share the last value across a page boundary; `>=` reads one of them again, which the upsert absorbs, while `>` would skip it.
+
 ## Errors
 
 - An HTTP error, a connection failure that outlasts the retries, or a body that is not JSON raises a `requests.RequestException` and ends the ingestion, on whichever page it happens. Batches written before the failure stay in the graph.

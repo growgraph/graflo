@@ -124,21 +124,23 @@ schema:
                 -   machine_id
                 -   observed_property
                 -   result_time
-            -   name: Evidence
+            -   name: SourceRecord
                 properties:
-                -   name: evidence_id
+                -   name: source_record_id
                     type: STRING
                 -   name: source_uri
                     type: STRING
                 -   name: media_type
+                    type: STRING
+                -   name: content_hash
                     type: STRING
                 -   name: retrieved_at
                     type: DATETIME
                     semantics:
                         iri: http://www.w3.org/ns/prov#generatedAtTime
                 identity:
-                -   evidence_id
-                description: 'What a fact was read from: a document, an API response, a table row.'
+                -   source_record_id
+                description: 'The record a fact was read from: a document, a message, an API response, a table row. Carries where the record is and a hash of what it held, not the content itself.'
                 semantics:
                     iri: http://www.w3.org/ns/prov#Entity
                     exact_match:
@@ -201,7 +203,7 @@ schema:
                     -   http://www.w3.org/ns/sosa/hasFeatureOfInterest
                 directed: true
             -   source: MachineState
-                target: Evidence
+                target: SourceRecord
                 relation: wasDerivedFrom
                 description: What this fact was read from.
                 semantics:
@@ -210,7 +212,7 @@ schema:
                     -   http://www.w3.org/ns/prov#wasDerivedFrom
                 directed: true
             -   source: ProductionLineState
-                target: Evidence
+                target: SourceRecord
                 relation: wasDerivedFrom
                 description: What this fact was read from.
                 semantics:
@@ -219,7 +221,7 @@ schema:
                     -   http://www.w3.org/ns/prov#wasDerivedFrom
                 directed: true
             -   source: MachineObservation
-                target: Evidence
+                target: SourceRecord
                 relation: wasDerivedFrom
                 description: What this fact was read from.
                 semantics:
@@ -227,14 +229,17 @@ schema:
                     exact_match:
                     -   http://www.w3.org/ns/prov#wasDerivedFrom
                 directed: true
-            -   source: Evidence
+            -   source: SourceRecord
                 target: Agent
                 relation: wasAttributedTo
-                description: Who or what produced this evidence.
+                description: Who or what produced this record, and in which role.
                 semantics:
                     iri: http://www.w3.org/ns/prov#wasAttributedTo
                     exact_match:
                     -   http://www.w3.org/ns/prov#wasAttributedTo
+                properties:
+                -   name: role
+                    type: STRING
                 directed: true
 metadata:
     name: plant-plain

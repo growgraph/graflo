@@ -895,3 +895,32 @@ def test_round_trip_preserves_a_step_that_mirrors_its_inverse() -> None:
     assert _canonical(restored) == _canonical(manifest)
     assert restored.ingestion_model is not None
     assert restored.ingestion_model.resources[0].pipeline[-1]["edge"]["emit_inverse"]
+
+
+def test_round_trip_keeps_push_connectors_and_watermarks() -> None:
+    manifest = GraphManifest.from_dict(
+        {
+            "bindings": {
+                "connectors": [
+                    {
+                        "name": "issues",
+                        "path": "/rest/api/2/search",
+                        "watermark": {
+                            "field": "fields.updated",
+                            "param": "jql",
+                            "template": "updated >= '{value}'",
+                        },
+                    },
+                    {"name": "groundings", "kind": "push", "records_path": "items"},
+                ],
+                "resource_connector": [
+                    {"resource": "issues", "connector": "issues"},
+                    {"resource": "provenance", "connector": "groundings"},
+                ],
+            }
+        }
+    )
+    # Resource wiring travels as unordered nodes; compare with declared list order.
+    from graflo.architecture.evolution.canonicalize import canonical_payload
+
+    assert canonical_payload(_round_trip(manifest)) == canonical_payload(manifest)

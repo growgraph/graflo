@@ -5,13 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.18.3]
+
+### Added
+
+- **Aspects** (`graflo.architecture.evolution.aspects`): an aspect is a domain-free vocabulary a
+  manifest is lifted with. `state-core` is now two of them, each liftable on its own:
+  `provenance` (`SourceRecord`, `Agent`, `wasDerivedFrom`, `wasAttributedTo`; needs no spec) and
+  `state` (`<Type>State`, `<Type>Observation`; needs a spec). `graflo lift --aspect NAME` and
+  `plan_lift(..., aspects=[...])` pick them, both by default; `ASPECTS` lists them.
+  `LiftSpec.provenance_for` names the types that gain `wasDerivedFrom`.
+- **`PushConnector`** (`kind: push`, `BoundSourceKind.PUSH`): a resource source with no address;
+  `RegistryBuilder.build(pushed=...)` hands it records at run time.
+- **`APIConnector.watermark`**: `APIDataSource.high_water` holds the largest value of a declared
+  field over a run, and `WatermarkConfig.render` gives the query parameters that resume from it.
+- `ResourceSampler` samples API connectors through the connection provider.
+- The `gf:` ontology (1.8.0) declares `gf:PushConnector` and `gf:PushSource`.
 
 ### Changed
 
+- **Provenance aspect:** the vertex it mints is **`SourceRecord`** (was `Evidence`), keyed on
+  `source_record_id`, with `content_hash`; `wasAttributedTo` carries a `role` property. A lifted
+  manifest that used `Evidence` keeps it; a new lift mints `SourceRecord`.
 - **Tests:** database-free backend tests moved from `test/db` to `test/backends`, so CI runs them;
   CI runs the suite in parallel with a reduced Hypothesis budget (`HYPOTHESIS_PROFILE=full` for the
   full one), and a weekly run tests against the newest dependency versions.
+
+### Deprecated
+
+- `graflo.architecture.evolution.state_core`: import `plan_lift`, `LiftSpec`, `Grounding`,
+  `EdgeGrounding` and `LiftError` from `graflo.architecture.evolution.aspects`. Removed in 2.0.
 
 ## [1.18.2] - 2026-10-14
 

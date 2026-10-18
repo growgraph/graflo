@@ -8,14 +8,16 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from graflo.architecture.contract.bindings import (
     APIConnector,
     BoundSourceKind,
     FileConnector,
     KafkaConnector,
+    PushConnector,
     SparqlConnector,
     TableConnector,
 )
@@ -36,6 +38,7 @@ from graflo.filter.sql import datetime_range_filter
 
 if TYPE_CHECKING:
     from graflo.architecture.contract.bindings import Bindings
+    from graflo.data_source.api import APIConfig
     from graflo.hq.caster import IngestionParams
 
 logger = logging.getLogger(__name__)
@@ -63,6 +66,7 @@ class RegistryBuilder:
         connection_provider: ConnectionProvider | None = None,
         *,
         strict: bool = False,
+        pushed: Mapping[str, Sequence[Mapping[str, Any]]] | None = None,
     ) -> DataSourceRegistry:
         """Return a populated :class:`DataSourceRegistry`.
 
@@ -73,6 +77,10 @@ class RegistryBuilder:
         configuration registered, a registration error -- is logged and
         skipped; with *strict* the build raises once every resource has been
         tried, listing them all.
+
+        *pushed* holds the records for push connectors, keyed by connector
+        name. A push connector with nothing pushed is a source that cannot be
+        built.
         """
         registry = DataSourceRegistry()
         provider = connection_provider or EmptyConnectionProvider()
@@ -234,6 +242,29 @@ class RegistryBuilder:
                         if not strict:
                             logger.warning("%s, skipping", msg)
                         failures.append(msg)
+
+                elif kind == BoundSourceKind.PUSH:
+                    if not isinstance(connector, PushConnector):
+                        msg = (
+                            f"Connector '{cref}' for resource '{resource_name}' "
+                            f"is not a PushConnector"
+                        )
+                        logger.warning("%s, skipping", msg)
+                        failures.append(msg)
+                        continue
+                    records = (pushed or {}).get(connector.name)
+                    if not records:
+                        msg = (
+                            f"Push connector '{cref}' for resource "
+                            f"'{resource_name}': nothing was pushed"
+                        )
+                        if not strict:
+                            logger.warning("%s, skipping", msg)
+                        failures.append(msg)
+                        continue
+                    self._register_push_source(
+                        registry, resource_name, connector, records
+                    )
 
                 else:
                     msg = (
@@ -519,6 +550,36 @@ class RegistryBuilder:
             )
             raise
 
+    @staticmethod
+    def api_config(
+        connector: APIConnector,
+        connection_provider: ConnectionProvider,
+        *,
+        page_size_override: int | None = None,
+    ) -> APIConfig:
+        """Resolve *connector*'s connection and return its runtime request config.
+
+        Raises:
+            ValueError: No REST API connection is registered for the connector.
+        """
+        generalized = (
+            connection_provider.get_generalized_conn_config(connector)
+            if hasattr(connection_provider, "get_generalized_conn_config")
+            else None
+        )
+        if not isinstance(generalized, ApiGeneralizedConnConfig):
+            raise ValueError(
+                "no REST API connection configuration is registered for the "
+                "connector's conn_proxy"
+            )
+        runtime = generalized.config
+        return connector.build_api_config(
+            base_url=runtime.base_url,
+            auth=runtime.auth,
+            default_headers=runtime.default_headers,
+            page_size_override=page_size_override,
+        )
+
     def _register_api_sources(
         self,
         registry: DataSourceRegistry,
@@ -530,18 +591,6 @@ class RegistryBuilder:
         """Register REST API data sources for a resource."""
         from graflo.data_source.api import APIDataSource
 
-        generalized = (
-            connection_provider.get_generalized_conn_config(connector)
-            if hasattr(connection_provider, "get_generalized_conn_config")
-            else None
-        )
-        if not isinstance(generalized, ApiGeneralizedConnConfig):
-            raise ValueError(
-                "no REST API connection configuration is registered for the "
-                "connector's conn_proxy"
-            )
-
-        runtime = generalized.config
         # The connector's declared page size is what the endpoint accepts; the
         # global batch size replaces it only when the caller set one explicitly.
         page_size_override = (
@@ -550,11 +599,8 @@ class RegistryBuilder:
             and "batch_size" in ingestion_params.model_fields_set
             else None
         )
-        api_config = connector.build_api_config(
-            base_url=runtime.base_url,
-            auth=runtime.auth,
-            default_headers=runtime.default_headers,
-            page_size_override=page_size_override,
+        api_config = self.api_config(
+            connector, connection_provider, page_size_override=page_size_override
         )
         api_source = APIDataSource(config=api_config)
         registry.register(api_source, resource_name=resource_name)
@@ -565,6 +611,31 @@ class RegistryBuilder:
             api_config.url,
             resource_name,
         )
+
+    @staticmethod
+    def _register_push_source(
+        registry: DataSourceRegistry,
+        resource_name: str,
+        connector: PushConnector,
+        records: Sequence[Mapping[str, Any]],
+    ) -> None:
+        """Register pushed records as an in-memory source for a resource."""
+        from graflo.data_source.api_response import get_at_path
+        from graflo.data_source.memory import InMemoryDataSource
+
+        rows: list[dict] = []
+        for record in records:
+            if connector.records_path is None:
+                items: list[Any] = [record]
+            else:
+                found = get_at_path(record, connector.records_path)
+                items = found if isinstance(found, list) else []
+            rows.extend(
+                {**connector.row_annotations, **item}
+                for item in items
+                if isinstance(item, Mapping)
+            )
+        registry.register(InMemoryDataSource(data=rows), resource_name)
 
     def _register_kafka_sources(
         self,

@@ -1,4 +1,4 @@
-"""Lifting a manifest into one that tracks state and measurements, through Operations.
+"""Lifting a manifest with both aspects, through Operations.
 
 The claim under test is narrow and checkable: a manifest that fails every
 assertion of the ``world-model`` profile, plus a statement of what its types
@@ -14,7 +14,7 @@ import pytest
 
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.evolution import apply_evolution, invert_ops
-from graflo.architecture.evolution.state_core import LiftError, LiftSpec, plan_lift
+from graflo.architecture.evolution.aspects import LiftError, LiftSpec, plan_lift
 from graflo.architecture.profile import check_manifest_config
 from graflo.cli.io import DECLARED_KEYS, manifest_to_dict
 
@@ -155,10 +155,10 @@ def test_the_observation_scaffold_carries_its_unit_per_row() -> None:
 
 
 def test_provenance_is_expressible_even_with_nothing_to_attach() -> None:
-    """``Evidence -wasAttributedTo-> Agent`` is what makes lineage sayable."""
+    """``SourceRecord -wasAttributedTo-> Agent`` is what makes lineage sayable."""
     spec = LiftSpec(grounding={"ProductionLine": {"iri": f"{PROV}Entity"}})
     core = _lift(spec).require_schema().core_schema
-    assert {"Evidence", "Agent"} <= core.vertex_config.vertex_set
+    assert {"SourceRecord", "Agent"} <= core.vertex_config.vertex_set
     relations = {e.relation for e in core.edge_config.edges}
     assert "wasAttributedTo" in relations
 
@@ -166,7 +166,7 @@ def test_provenance_is_expressible_even_with_nothing_to_attach() -> None:
 def test_provenance_can_be_declined() -> None:
     spec = FULL_SPEC.model_copy(update={"provenance": False})
     core = _lift(spec).require_schema().core_schema
-    assert "Evidence" not in core.vertex_config.vertex_set
+    assert "SourceRecord" not in core.vertex_config.vertex_set
 
 
 def test_an_existing_unit_grounding_is_widened_not_replaced() -> None:
@@ -240,7 +240,7 @@ def test_a_name_the_lift_would_mint_and_that_already_exists_is_refused() -> None
                 "vertex_config": {
                     "vertices": [
                         {
-                            "name": "Evidence",
+                            "name": "SourceRecord",
                             "properties": [{"name": "id", "type": "STRING"}],
                             "identity": ["id"],
                         }

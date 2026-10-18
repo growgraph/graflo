@@ -1,6 +1,6 @@
 """Planning what to do about declared inverses: realize, repair, switch, withdraw.
 
-Pure planners in the manner of :mod:`graflo.architecture.evolution.state_core.plan`:
+Pure planners in the manner of :mod:`graflo.architecture.evolution.aspects.state.plan`:
 each reads a manifest, emits primitive :data:`~graflo.architecture.evolution.ops.ManifestOp`
 values and applies nothing. The op list is the reviewable artifact, ``apply_evolution``
 applies it, ``invert_ops`` undoes it, and a commit records exactly those

@@ -1,6 +1,6 @@
 # A larger model, written by hand, that passes the `world-model` profile.
 #
-# Six general types -- Asset, State, Observation, Event, Agent, Evidence -- plus
+# Six general types -- Asset, State, Observation, Event, Agent, SourceRecord -- plus
 # two Asset-to-Asset relations. Grounded in PROV-O, SOSA/SSN and QUDT.
 #
 # This is not what `graflo lift` produces: a lift adds only what its input
@@ -11,7 +11,7 @@ metadata:
     name: state-core-reference
     description: >-
         Six abstract types -- Asset, State, Observation, Event, Agent and
-        Evidence -- plus the Asset-to-Asset topology edges, grounded in PROV-O,
+        SourceRecord -- plus the Asset-to-Asset topology edges, grounded in PROV-O,
         SOSA/SSN and QUDT.
 schema:
     metadata:
@@ -134,23 +134,24 @@ schema:
                 -   {name: agent_kind, type: STRING}
                 identity: [agent_id]
 
-            -   name: Evidence
+            -   name: SourceRecord
                 description: >-
-                    What a fact was read from: a document, an API response, a
-                    table row. The attachment point for anything extracted from
-                    unstructured sources.
+                    The record a fact was read from: a document, a message, an
+                    API response, a table row. Carries where the record is and a
+                    hash of what it held, not the content itself.
                 semantics:
                     iri: http://www.w3.org/ns/prov#Entity
                     exact_match: ["http://www.w3.org/ns/prov#Entity"]
                 properties:
-                -   {name: evidence_id, type: STRING}
+                -   {name: source_record_id, type: STRING}
                 -   {name: source_uri, type: STRING}
                 -   {name: media_type, type: STRING}
+                -   {name: content_hash, type: STRING}
                 -   name: retrieved_at
                     type: DATETIME
                     semantics:
                         iri: http://www.w3.org/ns/prov#generatedAtTime
-                identity: [evidence_id]
+                identity: [source_record_id]
 
         edge_config:
             edges:
@@ -223,7 +224,7 @@ schema:
             #    source a fact came from, which is what the `provenance` check
             #    of the profile asks for.
             -   source: State
-                target: Evidence
+                target: SourceRecord
                 relation: wasDerivedFrom
                 directed: true
                 semantics:
@@ -231,14 +232,14 @@ schema:
                     exact_match: ["http://www.w3.org/ns/prov#wasDerivedFrom"]
 
             -   source: Observation
-                target: Evidence
+                target: SourceRecord
                 relation: wasDerivedFrom
                 directed: true
                 semantics:
                     iri: http://www.w3.org/ns/prov#wasDerivedFrom
                     exact_match: ["http://www.w3.org/ns/prov#wasDerivedFrom"]
 
-            -   source: Evidence
+            -   source: SourceRecord
                 target: Agent
                 relation: wasAttributedTo
                 directed: true

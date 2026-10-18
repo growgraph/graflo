@@ -15,6 +15,9 @@ from graflo.architecture.contract.bindings.connectors import (
     KafkaConnector as KafkaConnectorModel,
 )
 from graflo.architecture.contract.bindings.connectors import (
+    PushConnector as PushConnectorModel,
+)
+from graflo.architecture.contract.bindings.connectors import (
     SparqlConnector as SparqlConnectorModel,
 )
 from graflo.architecture.contract.bindings.connectors import (
@@ -22,7 +25,7 @@ from graflo.architecture.contract.bindings.connectors import (
 )
 
 GF_ONTOLOGY_IRI = "https://ontology.growgraph.dev/graflo"
-GF_VERSION = "1.7.0"
+GF_VERSION = "1.8.0"
 GF_VERSION_IRI = f"{GF_ONTOLOGY_IRI}/{GF_VERSION}"
 GF_BASE = "https://ontology.growgraph.dev/graflo/"
 GF = Namespace(GF_BASE)
@@ -68,6 +71,7 @@ TableConnector = GF.TableConnector
 SparqlConnector = GF.SparqlConnector
 APIConnector = GF.APIConnector
 KafkaConnector = GF.KafkaConnector
+PushConnector = GF.PushConnector
 ResourceConnectorBinding = GF.ResourceConnectorBinding
 ConnectorConnectionBinding = GF.ConnectorConnectionBinding
 StagingProxyBinding = GF.StagingProxyBinding
@@ -248,6 +252,7 @@ BOUND_SOURCE_KIND_INDIVIDUALS: dict[str, object] = {
     "sparql": GF.SparqlSource,
     "api": GF.ApiSource,
     "kafka": GF.KafkaSource,
+    "push": GF.PushSource,
 }
 
 TRANSFORM_TARGET_INDIVIDUALS: dict[str, object] = {
@@ -278,6 +283,7 @@ CONNECTOR_CLASSES: dict[str, object] = {
     "SparqlConnector": SparqlConnector,
     "APIConnector": APIConnector,
     "KafkaConnector": KafkaConnector,
+    "PushConnector": PushConnector,
 }
 
 CONNECTOR_CLASS_BY_RDF_TYPE: dict[URIRef, str] = {
@@ -286,6 +292,7 @@ CONNECTOR_CLASS_BY_RDF_TYPE: dict[URIRef, str] = {
     SparqlConnector: "SparqlConnector",
     APIConnector: "APIConnector",
     KafkaConnector: "KafkaConnector",
+    PushConnector: "PushConnector",
 }
 
 CONNECTOR_MODELS = {
@@ -294,6 +301,7 @@ CONNECTOR_MODELS = {
     "SparqlConnector": SparqlConnectorModel,
     "APIConnector": APIConnectorModel,
     "KafkaConnector": KafkaConnectorModel,
+    "PushConnector": PushConnectorModel,
 }
 
 ENUM_REGISTRIES: dict[str, dict[str, object]] = {

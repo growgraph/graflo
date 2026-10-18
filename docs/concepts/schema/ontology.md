@@ -35,8 +35,8 @@ flowchart TB
 | Role | IRI |
 |------|-----|
 | Ontology document | `https://ontology.growgraph.dev/graflo` |
-| Version IRI | `https://ontology.growgraph.dev/graflo/1.7.0` |
-| Version info | `1.7.0` |
+| Version IRI | `https://ontology.growgraph.dev/graflo/1.8.0` |
+| Version info | `1.8.0` |
 | Vocabulary prefix `gf:` | `https://ontology.growgraph.dev/graflo/` |
 
 The Turtle source lives in the package at `graflo/rdf/ontology/graflo.ttl`. Constants are also exposed in Python as `graflo.rdf.namespace` (`GF_ONTOLOGY_IRI`, `GF_VERSION`, `GF_VERSION_IRI`, `GF_BASE`).

@@ -24,7 +24,9 @@ from typing import Any
 from uuid import UUID
 
 from graflo.architecture.contract.bindings.connectors import (
+    APIConnector,
     FileConnector,
+    PushConnector,
     ResourceConnector,
     TableConnector,
 )
@@ -363,8 +365,13 @@ class ResourceSampler:
         *,
         resource_name: str,
         config: PostgresConfig | None = None,
+        connection_provider: ConnectionProvider | None = None,
     ) -> ResourceSample:
-        """Sample one resource through *connector*."""
+        """Sample one resource through *connector*.
+
+        A table connector needs *config*; an API connector needs a
+        *connection_provider* that resolves its ``conn_proxy``.
+        """
         if isinstance(connector, FileConnector):
             files = RegistryBuilder.discover_files(
                 connector.sub_path.expanduser(), connector=connector, limit_files=1
@@ -405,6 +412,43 @@ class ResourceSampler:
                 docs=docs,
                 truncated=truncated,
                 **declared,
+            )
+
+        if isinstance(connector, APIConnector):
+            from graflo.data_source.api import APIDataSource
+
+            if connection_provider is None:
+                raise ValueError(
+                    f"Sampling APIConnector for resource '{resource_name}' requires "
+                    "a REST API connection"
+                )
+            try:
+                api_config = RegistryBuilder.api_config(connector, connection_provider)
+            except ValueError as exc:
+                raise ValueError(
+                    f"Sampling APIConnector for resource '{resource_name}' requires "
+                    f"a REST API connection: {exc}"
+                ) from exc
+            source = APIDataSource(config=api_config)
+            rows = [
+                row
+                for batch in source.iter_batches(
+                    batch_size=self.max_docs + 1, limit=self.max_docs + 1
+                )
+                for row in batch
+            ]
+            docs, truncated = self._normalize_docs(rows)
+            return ResourceSample(
+                resource_name=resource_name,
+                connector=connector.name or resource_name,
+                docs=docs,
+                truncated=truncated,
+            )
+
+        if isinstance(connector, PushConnector):
+            raise ValueError(
+                f"Resource '{resource_name}' takes records pushed, not fetched; "
+                "there is nothing to sample"
             )
 
         raise ValueError(
@@ -480,7 +524,10 @@ class ResourceSampler:
             try:
                 samples.append(
                     self.sample_connector(
-                        connector, resource_name=str(resource), config=resource_config
+                        connector,
+                        resource_name=str(resource),
+                        config=resource_config,
+                        connection_provider=connection_provider,
                     )
                 )
             except ValueError as exc:

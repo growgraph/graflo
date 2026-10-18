@@ -324,3 +324,48 @@ class TestSparqlSources:
                 same_as="keep",
             ).hash
         )
+
+
+class TestPushedRecords:
+    @staticmethod
+    def _bindings(**connector: object) -> Bindings:
+        return Bindings.model_validate(
+            {
+                "connectors": [{"name": "pushed", "kind": "push", **connector}],
+                "resource_connector": [{"resource": "events", "connector": "pushed"}],
+            }
+        )
+
+    def _rows(
+        self, registry_bindings: Bindings, pushed: dict, *, strict: bool = False
+    ) -> list:
+        registry = RegistryBuilder(_schema(), _ingestion_model()).build(
+            registry_bindings, IngestionParams(), pushed=pushed, strict=strict
+        )
+        return [
+            row
+            for source in registry.get_data_sources("events")
+            for batch in source.iter_batches()
+            for row in batch
+        ]
+
+    def test_pushed_rows_feed_the_bound_resource(self) -> None:
+        rows = self._rows(
+            self._bindings(row_annotations={"origin": "cast"}),
+            {"pushed": [{"id": "e1"}, {"id": "e2", "origin": "own"}]},
+        )
+        assert rows == [{"origin": "cast", "id": "e1"}, {"origin": "own", "id": "e2"}]
+
+    def test_an_envelope_is_opened_at_the_records_path(self) -> None:
+        rows = self._rows(
+            self._bindings(records_path="data.items"),
+            {"pushed": [{"data": {"items": [{"id": "e1"}, {"id": "e2"}]}}]},
+        )
+        assert rows == [{"id": "e1"}, {"id": "e2"}]
+
+    def test_nothing_pushed_skips_the_resource(self) -> None:
+        assert self._rows(self._bindings(), {}) == []
+
+    def test_nothing_pushed_fails_a_strict_build(self) -> None:
+        with pytest.raises(ValueError, match="nothing was pushed"):
+            self._rows(self._bindings(), {}, strict=True)

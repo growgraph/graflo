@@ -13,13 +13,19 @@ from .connectors import (
     ConnectorUpdate,
     FileConnector,
     KafkaConnector,
+    PushConnector,
     ResourceConnector,
     SparqlConnector,
     TableConnector,
 )
 
 AnyConnector = (
-    FileConnector | TableConnector | SparqlConnector | APIConnector | KafkaConnector
+    FileConnector
+    | TableConnector
+    | SparqlConnector
+    | APIConnector
+    | KafkaConnector
+    | PushConnector
 )
 
 _TEMPLATE_METADATA_KEYS = frozenset({"name", "conn_proxy"})
@@ -476,6 +482,8 @@ class BindingsConfig(ConfigBaseModel):
             return connector.path
         if isinstance(connector, KafkaConnector):
             return connector.name or ",".join(connector.topics)
+        if isinstance(connector, PushConnector):
+            return connector.name
         raise TypeError(f"Unsupported connector type: {type(connector)!r}")
 
     @model_validator(mode="after")
@@ -574,6 +582,7 @@ class BindingsConfig(ConfigBaseModel):
                     SparqlConnector,
                     APIConnector,
                     KafkaConnector,
+                    PushConnector,
                 ),
             ):
                 result.append(c)

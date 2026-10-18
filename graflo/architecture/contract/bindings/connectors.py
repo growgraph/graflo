@@ -47,6 +47,7 @@ class BoundSourceKind(BaseEnum):
         SPARQL: SPARQL / RDF connector (endpoint or local RDF via rdflib).
         API: REST API connector (path + pagination on a runtime base URL).
         KAFKA: Kafka topic consumer (topics + group_id on a runtime bootstrap).
+        PUSH: Records handed to the resource by the caller; no address.
     """
 
     FILE = "file"
@@ -54,6 +55,7 @@ class BoundSourceKind(BaseEnum):
     SPARQL = "sparql"
     API = "api"
     KAFKA = "kafka"
+    PUSH = "push"
 
 
 class ConnectorUpdate(ConfigBaseModel):
@@ -709,6 +711,33 @@ class PaginationConfig(ConfigBaseModel):
     response: ApiResponseStructure = Field(default_factory=ApiResponseStructure)
 
 
+class WatermarkConfig(ConfigBaseModel):
+    """Where an API source left off, and how to ask it to resume from there.
+
+    The source tracks the largest value of ``field`` over the rows it yields.
+    Values compare as numbers when both parse as numbers, and as text
+    otherwise, so timestamps must be written in one sortable form (ISO 8601 in
+    one zone). The caller stores that value and renders it into the next run's
+    query parameters; GraFlo keeps no run state itself.
+
+    Attributes:
+        field: Dot path of the value on each row.
+        param: Query parameter that carries the value on the next run.
+        template: Parameter text with a ``{value}`` placeholder; ``None`` sends
+            the bare value.
+    """
+
+    field: str = Field(..., min_length=1)
+    param: str = Field(..., min_length=1)
+    template: str | None = None
+
+    def render(self, value: Any) -> dict[str, Any]:
+        """Return the query parameters that resume from *value*."""
+        if self.template is None:
+            return {self.param: value}
+        return {self.param: self.template.replace("{value}", str(value))}
+
+
 class APIConnector(ResourceConnector):
     """Connector for REST API endpoints.
 
@@ -729,6 +758,7 @@ class APIConnector(ResourceConnector):
         retry_status_forcelist: HTTP status codes to retry on. A ``Retry-After``
             header on the response sets the wait.
         verify: Verify SSL certificates.
+        watermark: Where a run left off; see :class:`WatermarkConfig`.
     """
 
     path: str = Field(..., description="Relative API endpoint path")
@@ -743,6 +773,14 @@ class APIConnector(ResourceConnector):
         default_factory=lambda: [429, 500, 502, 503, 504]
     )
     verify: bool = True
+    watermark: WatermarkConfig | None = None
+
+    def _hash_payload(self) -> dict[str, Any]:
+        payload = super()._hash_payload()
+        if payload.get("watermark") is None:
+            # Unset, it must not move the hash of connectors declared before it.
+            payload.pop("watermark", None)
+        return payload
 
     @staticmethod
     def _join_url(base_url: str, path: str) -> str:
@@ -797,7 +835,39 @@ class APIConnector(ResourceConnector):
             verify=self.verify,
             pagination=pagination,
             row_annotations=dict(self.row_annotations),
+            watermark=self.watermark,
         )
+
+
+class PushConnector(ResourceConnector):
+    """Connector for records pushed to a resource rather than fetched.
+
+    It has no address: the caller hands the records over at run time
+    (``RegistryBuilder.build(pushed=...)``), keyed by the connector name. Declaring
+    it keeps what a resource accepts versioned and reviewable like any other
+    source.
+
+    Attributes:
+        kind: Always ``push``; required, so the connector is never read as
+            another kind.
+        name: Name the pushed records are keyed by.
+        records_path: Dot path to the record list when a pushed item is an
+            envelope rather than a record.
+        row_annotations: Constant fields merged into every record (record wins).
+    """
+
+    kind: Literal["push"]
+    name: str = Field(..., min_length=1)
+    records_path: str | None = None
+
+    def matches(self, resource_identifier: str) -> bool:
+        """Match connector name or resource name."""
+        return resource_identifier == self.name or (
+            self.resource_name is not None and resource_identifier == self.resource_name
+        )
+
+    def bound_source_kind(self) -> BoundSourceKind:
+        return BoundSourceKind.PUSH
 
 
 class KafkaConnector(ResourceConnector):

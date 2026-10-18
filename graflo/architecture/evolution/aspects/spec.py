@@ -5,11 +5,12 @@ The split is not arbitrary. A lift can see *structure* -- which edges leave
 float with no unit -- but it cannot see *meaning*. Nothing in a schema says that
 ``Machine`` denotes a ``sosa:FeatureOfInterest``, or that ``temp_c``
 is degrees Celsius rather than a count, or that ``status`` is a fact that
-changes over time while ``serial_number`` is not. Those are the four things this
-spec carries, and the reason it is required rather than optional.
+changes over time while ``serial_number`` is not. Those are the things this
+spec carries, and the reason the ``state`` aspect requires it.
 
 Everything else is mechanical and never appears here: undeclared directionality,
-the scaffolding types and their groundings, the provenance edges.
+the scaffolding types and their groundings, the provenance edges. The
+``provenance`` aspect needs no spec at all.
 """
 
 from __future__ import annotations
@@ -53,7 +54,7 @@ class EdgeGrounding(Grounding):
 
 
 class LiftSpec(ConfigBaseModel):
-    """The semantic input to :func:`~graflo.architecture.evolution.state_core.plan_lift`."""
+    """The semantic input to :func:`~graflo.architecture.evolution.aspects.plan_lift`."""
 
     grounding: dict[str, Grounding] = PydanticField(
         default_factory=dict,
@@ -95,8 +96,17 @@ class LiftSpec(ConfigBaseModel):
     provenance: bool = PydanticField(
         default=True,
         description=(
-            "Add ``Evidence`` and ``Agent`` with the provenance edges that make "
-            "'where did this fact come from' answerable."
+            "Lift the ``provenance`` aspect as well: ``SourceRecord`` and ``Agent`` "
+            "with the edges that make 'where did this fact come from' answerable. "
+            "``false`` leaves it out, as does not naming the aspect."
+        ),
+    )
+    provenance_for: list[str] = PydanticField(
+        default_factory=list,
+        description=(
+            "Existing types whose facts are read from a source record: each gains "
+            "a ``wasDerivedFrom`` edge to ``SourceRecord``. The state and "
+            "observation scaffolds get one regardless."
         ),
     )
     retire: Literal["move", "keep"] = PydanticField(

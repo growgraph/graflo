@@ -1,4 +1,4 @@
-"""Planning the operations that lift a manifest into one that tracks state and measurements.
+"""Planning the state aspect: validity intervals, observations, units, groundings.
 
 A pure planner: it emits :data:`~graflo.architecture.evolution.ops.ManifestOp`
 values and applies nothing. ``apply_evolution`` applies them, ``invert_ops``
@@ -8,23 +8,26 @@ for expressing this as Operations rather than as a bespoke transform: a
 transform is a black box that either did the right thing or did not.
 
 **What a lift does not do.** It changes the *contract*, not the data flow. A
-lifted manifest declares ``<Type>State`` and ``Evidence``, but no resource
-populates them, so a manifest that carries an ``ingestion_model`` will still
-report the profile's "provenance materialised at ingest" finding afterwards --
-correctly. Scaffolding the pipelines needs resource-level ops and a statement of
-which resource feeds which type, and is deliberately out of scope here. This is
-the misreading the next reader will have, so it is also in the CLI help.
+lifted manifest declares ``<Type>State``, but no resource populates it, so a
+manifest that carries an ``ingestion_model`` will still report the profile's
+"provenance materialised at ingest" finding afterwards -- correctly.
+Scaffolding the pipelines needs resource-level ops and a statement of which
+resource feeds which type, and is deliberately out of scope here. This is the
+misreading the next reader will have, so it is also in the CLI help.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+from pydantic import Field as PydanticField
+
+from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.schema.semantics import FieldSemantics, Semantics
 from graflo.architecture.schema.vertex import Field, Vertex
 
-from ..ops import (
+from ...ops import (
     AddEdgesOp,
     AddVerticesOp,
     FieldSemanticsTarget,
@@ -36,18 +39,25 @@ from ..ops import (
     SetFieldSemanticsOp,
     SetVertexSemanticsOp,
 )
+from ..base import LiftError
+from ..spec import LiftSpec
 from . import vocabulary as vocab
-from .spec import LiftSpec
 
 
-class LiftError(ValueError):
-    """The lift cannot be planned, and the message says which declaration is missing.
+class StatePlan(ConfigBaseModel):
+    """What the state aspect planned, in the two halves a composed lift needs apart.
 
-    Raised rather than guessed. Every case here is one where the planner can see
-    that something is wrong but not what the right answer is -- an ungrounded
-    type, a name it would have to overwrite, a property it was told to move that
-    is part of the key.
+    Attributes:
+        ops: The additive ops, in application order: grounding first, then
+            structure, then the scaffolding.
+        scaffolded: Names of the ``<Type>State`` and ``<Type>Observation``
+            types the ops add, for an aspect that attaches to them.
+        retire: The destructive half, to be applied last.
     """
+
+    ops: list[ManifestOp] = PydanticField(default_factory=list)
+    scaffolded: list[str] = PydanticField(default_factory=list)
+    retire: list[ManifestOp] = PydanticField(default_factory=list)
 
 
 def _semantics(grounding: Any) -> Semantics:
@@ -65,12 +75,12 @@ def _key_fields(vertex: Vertex) -> list[Field]:
     return [by_name[name] for name in names if name in by_name]
 
 
-def plan_lift(
+def plan_state(
     manifest: GraphManifest,
     spec: LiftSpec,
     *,
     authored: dict[str, Any] | None = None,
-) -> list[ManifestOp]:
+) -> StatePlan:
     """The ops that lift *manifest* into one that tracks state and measurements.
 
     Args:
@@ -82,8 +92,8 @@ def plan_lift(
             it the planner cannot detect the fallback and does not try.
 
     Returns:
-        Ops in application order: grounding first, then structure, then the
-        scaffolding, then the removals. Ordering matters -- a property is moved
+        The additive ops, the scaffolded type names, and the removals kept
+        apart so they can run last. Ordering matters -- a property is moved
         onto its ``State`` before it is removed from the entity.
 
     Raises:
@@ -115,12 +125,10 @@ def plan_lift(
     ops += _unit_ops(spec, by_name)
     scaffold_ops, scaffolded = _scaffold_ops(spec, by_name, existing)
     ops += scaffold_ops
-    ops += _provenance_ops(spec, existing, scaffolded)
-    ops += _retire_ops(spec, by_name)
-    return ops
+    return StatePlan(ops=ops, scaffolded=scaffolded, retire=_retire_ops(spec))
 
 
-# --- 2. declared identity ---------------------------------------------------
+# --- declared identity ------------------------------------------------------
 
 
 def _identity_ops(
@@ -182,7 +190,7 @@ def _identity_fallbacks(authored: dict[str, Any]) -> set[str]:
     }
 
 
-# --- 1. grounded types ------------------------------------------------------
+# --- grounded types ---------------------------------------------------------
 
 
 def _grounding_ops(spec: LiftSpec, core: Any) -> list[ManifestOp]:
@@ -214,7 +222,7 @@ def _grounding_ops(spec: LiftSpec, core: Any) -> list[ManifestOp]:
     return ops
 
 
-# --- 3. declared directionality ---------------------------------------------
+# --- declared directionality ------------------------------------------------
 
 
 def _directionality_ops(core: Any) -> list[ManifestOp]:
@@ -239,7 +247,7 @@ def _directionality_ops(core: Any) -> list[ManifestOp]:
     return ops
 
 
-# --- 4. declared units ------------------------------------------------------
+# --- declared units ---------------------------------------------------------
 
 
 def _unit_ops(spec: LiftSpec, by_name: dict[str, Vertex]) -> list[ManifestOp]:
@@ -271,7 +279,7 @@ def _unit_ops(spec: LiftSpec, by_name: dict[str, Vertex]) -> list[ManifestOp]:
     return [SetFieldSemanticsOp(targets=targets)] if targets else []
 
 
-# --- 5. temporal validity, and 6a's attachment points -----------------------
+# --- temporal validity, and the attachment points -----------------------------
 
 
 def _scaffold_ops(
@@ -319,7 +327,7 @@ def _scaffold_ops(
     if collisions:
         raise LiftError(
             f"the lift would mint types the manifest already has: {sorted(collisions)}. "
-            "Rename them first -- silently merging into an existing type is not a "
+            "Rename them first -- silently folding into an existing type is not a "
             "lift, it is a schema change nobody asked for"
         )
 
@@ -348,38 +356,10 @@ def _moved_fields(
     return [by_field[name] for name in names]
 
 
-# --- 6. provenance ----------------------------------------------------------
-
-
-def _provenance_ops(
-    spec: LiftSpec, existing: set[str], scaffolded: list[str]
-) -> list[ManifestOp]:
-    """``Evidence`` and ``Agent``, plus the edges that make lineage expressible.
-
-    ``Evidence -wasAttributedTo-> Agent`` is emitted even when there is nothing
-    else to attach: it is what makes the schema *able* to say where a fact came
-    from, which is the question the profile asks.
-    """
-    if not spec.provenance:
-        return []
-    taken = sorted({vocab.EVIDENCE, vocab.AGENT} & existing)
-    if taken:
-        raise LiftError(
-            f"the lift would mint types the manifest already has: {taken}. Rename "
-            "them first, or set `provenance: false` if they already serve this role"
-        )
-    edges = [vocab.derived_from_edge(name) for name in scaffolded]
-    edges.append(vocab.attributed_to_edge())
-    return [
-        AddVerticesOp(vertices=[vocab.evidence_vertex(), vocab.agent_vertex()]),
-        AddEdgesOp(edges=edges),
-    ]
-
-
 # --- the destructive half, emitted last -------------------------------------
 
 
-def _retire_ops(spec: LiftSpec, by_name: dict[str, Vertex]) -> list[ManifestOp]:
+def _retire_ops(spec: LiftSpec) -> list[ManifestOp]:
     """Remove the moved properties from the entities they no longer belong on.
 
     Last, and separable: everything before this is additive, so a caller who
@@ -396,4 +376,4 @@ def _retire_ops(spec: LiftSpec, by_name: dict[str, Vertex]) -> list[ManifestOp]:
     return [RemoveVertexPropertiesOp(removals=removals)] if removals else []
 
 
-__all__ = ["LiftError", "plan_lift"]
+__all__ = ["StatePlan", "plan_state"]

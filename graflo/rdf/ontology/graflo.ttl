@@ -7,8 +7,8 @@
 @prefix prov: <http://www.w3.org/ns/prov#> .
 
 <https://ontology.growgraph.dev/graflo> a owl:Ontology ;
-    owl:versionIRI <https://ontology.growgraph.dev/graflo/1.7.0> ;
-    owl:versionInfo "1.7.0" ;
+    owl:versionIRI <https://ontology.growgraph.dev/graflo/1.8.0> ;
+    owl:versionInfo "1.8.0" ;
     rdfs:label "GraFlo Ontology"@en ;
     skos:prefLabel "GraFlo Ontology"@en ;
     rdfs:comment "OWL vocabulary describing GraFlo GraphManifest contracts: schema, ingestion, bindings, transforms, and pipeline actors."@en .
@@ -212,6 +212,12 @@ gf:KafkaConnector a owl:Class ;
     rdfs:subClassOf gf:BoundConnector ;
     rdfs:label "Kafka connector"@en ;
     skos:prefLabel "KafkaConnector"@en .
+
+gf:PushConnector a owl:Class ;
+    rdfs:subClassOf gf:BoundConnector ;
+    rdfs:label "Push connector"@en ;
+    rdfs:comment "A resource source with no address: records are handed to it by the caller."@en ;
+    skos:prefLabel "PushConnector"@en .
 
 gf:ResourceConnectorBinding a owl:Class ;
     rdfs:subClassOf gf:GrafloArtifact ;
@@ -849,6 +855,7 @@ gf:SqlTableSource a gf:BoundSourceKind ; gf:enumValue "sql_table" ; rdfs:label "
 gf:SparqlSource a gf:BoundSourceKind ; gf:enumValue "sparql" ; rdfs:label "SPARQL source" ; skos:prefLabel "SparqlSource" .
 gf:ApiSource a gf:BoundSourceKind ; gf:enumValue "api" ; rdfs:label "API source" ; skos:prefLabel "ApiSource" .
 gf:KafkaSource a gf:BoundSourceKind ; gf:enumValue "kafka" ; rdfs:label "Kafka source" ; skos:prefLabel "KafkaSource" .
+gf:PushSource a gf:BoundSourceKind ; gf:enumValue "push" ; rdfs:label "Push source" ; skos:prefLabel "PushSource" .
 
 #################################################################
 # TransformTarget individuals

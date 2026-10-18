@@ -211,6 +211,13 @@
             "target": "https://ontology.growgraph.dev/graflo/GrafloArtifact"
         },
         {
+            "id": "sub:https://ontology.growgraph.dev/graflo/PushConnector->https://ontology.growgraph.dev/graflo/BoundConnector",
+            "kind": "subClassOf",
+            "label": "subClassOf",
+            "source": "https://ontology.growgraph.dev/graflo/PushConnector",
+            "target": "https://ontology.growgraph.dev/graflo/BoundConnector"
+        },
+        {
             "id": "sub:https://ontology.growgraph.dev/graflo/Resource->https://ontology.growgraph.dev/graflo/GrafloArtifact",
             "kind": "subClassOf",
             "label": "subClassOf",
@@ -772,6 +779,10 @@
                 {
                     "label": "KafkaSource",
                     "value": "kafka"
+                },
+                {
+                    "label": "PushSource",
+                    "value": "push"
                 },
                 {
                     "label": "SparqlSource",
@@ -1358,6 +1369,15 @@
             "local": "ProtoTransform"
         },
         {
+            "comment": "A resource source with no address: records are handed to it by the caller.",
+            "datatypeProperties": [],
+            "group": "bindings",
+            "id": "https://ontology.growgraph.dev/graflo/PushConnector",
+            "kind": "gf",
+            "label": "PushConnector",
+            "local": "PushConnector"
+        },
+        {
             "comment": null,
             "datatypeProperties": [
                 {
@@ -1606,5 +1626,5 @@
         }
     ],
     "universalRoot": "https://ontology.growgraph.dev/graflo/GrafloArtifact",
-    "version": "1.7.0"
+    "version": "1.8.0"
 }

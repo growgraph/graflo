@@ -12,18 +12,19 @@ from collections.abc import Iterator
 from typing import Any
 
 import requests
-from pydantic import Field
+from pydantic import Field, PrivateAttr
 from requests.adapters import HTTPAdapter
 from requests.auth import HTTPBasicAuth, HTTPDigestAuth
 from urllib3.util.retry import Retry
 
 from graflo.architecture.base import ConfigBaseModel
-from graflo.architecture.contract.bindings import PaginationConfig
+from graflo.architecture.contract.bindings import PaginationConfig, WatermarkConfig
 from graflo.connections.sources import ApiAuth
 from graflo.data_source.api_response import (
     ResolvedApiResponse,
     detect_carry_params,
     extract_records,
+    get_at_path,
     get_batch_metadata,
     has_more_pages,
     next_cursor_value,
@@ -56,6 +57,28 @@ class APIConfig(ConfigBaseModel):
     verify: bool = True
     pagination: PaginationConfig | None = None
     row_annotations: dict[str, Any] = Field(default_factory=dict)
+    watermark: WatermarkConfig | None = None
+
+
+def _as_number(value: object) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _later(candidate: object, current: object) -> bool:
+    """True when *candidate* is past *current* as a watermark."""
+    a, b = _as_number(candidate), _as_number(current)
+    if a is not None and b is not None:
+        return a > b
+    return str(candidate) > str(current)
 
 
 class APIDataSource(AbstractDataSource):
@@ -63,10 +86,29 @@ class APIDataSource(AbstractDataSource):
 
     A request that fails after its retries raises ``requests.RequestException``
     from :meth:`iter_batches`, on whichever page it happens.
+
+    With a declared watermark, :attr:`high_water` holds the largest watermark
+    value among the rows yielded so far by the current iteration.
     """
 
     config: APIConfig
     source_type: DataSourceType = DataSourceType.API
+    _high_water: Any = PrivateAttr(default=None)
+
+    @property
+    def high_water(self) -> Any:
+        """Largest watermark value yielded so far; ``None`` without a watermark."""
+        return self._high_water
+
+    def _observe(self, row: dict[str, Any]) -> None:
+        mark = self.config.watermark
+        if mark is None:
+            return
+        value = get_at_path(row, mark.field)
+        if value is None or isinstance(value, (dict, list)):
+            return
+        if self._high_water is None or _later(value, self._high_water):
+            self._high_water = value
 
     def _create_session(self) -> requests.Session:
         session = requests.Session()
@@ -110,6 +152,7 @@ class APIDataSource(AbstractDataSource):
     ) -> Iterator[list[dict]]:
         session = self._create_session()
         total_items = 0
+        self._high_water = None
         resolved_response: ResolvedApiResponse | None = None
 
         try:
@@ -173,9 +216,9 @@ class APIDataSource(AbstractDataSource):
                 for item in items:
                     if limit is not None and total_items >= limit:
                         break
-                    batch.append(
-                        {**self.config.row_annotations, **batch_metadata, **item}
-                    )
+                    row = {**self.config.row_annotations, **batch_metadata, **item}
+                    self._observe(row)
+                    batch.append(row)
                     total_items += 1
 
                     if len(batch) >= batch_size:

@@ -10,8 +10,10 @@ machine's status last March, and who reported it?" has no answer.
 `graflo lift` rewrites the manifest so that it can answer. Values that change
 move to their own type with a validity interval, measurements get a type with a
 time and a unit, and two new types record where a fact came from and who
-reported it. You declare what the schema cannot say by itself; the lift writes
-the rest as a list of changes that you can review before you apply them.
+reported it. These are two **aspects**, `state` and `provenance`, and the lift
+applies both unless you name one. You declare what the schema cannot say by
+itself; the lift writes the rest as a list of changes that you can review
+before you apply them.
 
 ```mermaid
 flowchart LR
@@ -22,7 +24,7 @@ flowchart LR
         M2["Machine<br>machine_id, label,<br>operating_temp in Cel"]
         S["MachineState<br>machine_id, status,<br>valid_from, valid_to"]
         O["MachineObservation<br>machine_id, observed_property,<br>result_value, result_unit, result_time"]
-        E[Evidence]
+        E[SourceRecord]
         A[Agent]
         S -- specializationOf --> M2
         O -- hasFeatureOfInterest --> M2
@@ -175,9 +177,10 @@ true` on the two edges. Then the lift adds new types and their edges:
   value, its unit, and the time. The unit is a property of each row
   (`result_unit`), because one observation type holds temperatures and
   pressures alike.
-- `Evidence` and `Agent`, with the edges `wasDerivedFrom` and
+- `SourceRecord` and `Agent`, with the edges `wasDerivedFrom` and
   `wasAttributedTo`, record where a state or an observation came from and who
-  reported it.
+  reported it. A `SourceRecord` holds the address and hash of the record a fact
+  was read from, never its content; `wasAttributedTo` carries the agent's `role`.
 
 The last operation removes `status` from `Machine` and `operating_mode` from
 `ProductionLine`: they now live on the state types. Everything before it only
@@ -220,7 +223,7 @@ steps to existing ones, that fill them.
 
 [`reference.yaml`](reference.yaml) is a model written by hand that passes the
 profile: six general types (`Asset`, `State`, `Observation`, `Event`, `Agent`,
-`Evidence`) and the relations between them, grounded in PROV-O, SOSA and QUDT.
+`SourceRecord`) and the relations between them, grounded in PROV-O, SOSA and QUDT.
 A lift does not produce it: a lift adds only what its input asks for, and
 names the new types after their subject (`MachineState`, not `State`). Use it
 as a pattern when you write such a model yourself;
@@ -230,7 +233,9 @@ as a pattern when you write such a model yourself;
 
 - `retire: keep` in `lift.yaml` leaves `status` on `Machine` as its current
   value next to the history; the plan then ends before the removal.
-- `provenance: false` leaves out `Evidence` and `Agent`.
+- `--aspect state` lifts the state aspect alone, and `--aspect provenance` the
+  provenance aspect alone, which needs no spec. `provenance: false` in
+  `lift.yaml` has the same effect as leaving the aspect out.
 - `graflo check --waivers FILE` records a check that you decide not to meet,
   with a reason; the report shows it as waived, never as passed.
 

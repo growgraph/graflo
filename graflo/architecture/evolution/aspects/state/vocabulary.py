@@ -1,24 +1,9 @@
-"""The target shape a lift converts a manifest towards.
+"""The state aspect's types: how a fact changes over time, and what was measured.
 
 Not a manifest. These are the *pieces* the planner instantiates against
 whatever types the input already has, which is the difference between a
-reference model you merge onto and a transformation you apply.
-
-Two conventions the whole package rests on, both stated here so a reader does
-not have to infer them from the IRIs:
-
-**Time is grounded in PROV-O and SOSA, not OWL-Time.** ``time:hasBeginning``
-ranges over a ``time:Instant``, not a literal, so grounding a ``DATETIME``
-column in it is a claim that becomes false the moment the schema is projected to
-OWL. ``prov:generatedAtTime``, ``prov:invalidatedAtTime`` and ``sosa:resultTime``
-are literal-ranged and say the same thing truthfully. OWL-Time stays in
-``exact_match`` at the concept level, where it is about the *type*.
-
-**Units are UCUM tokens, carried per row.** An abstract observation type serves
-temperature and pressure alike, so no single unit in its schema would be
-correct; ``result_unit`` is grounded in ``qudt:ucumCode`` and travels with
-the measurement. UCUM has no currency, so currency falls back to ISO-4217 alpha
-codes (``USD``, ``EUR``).
+reference model you compose onto and a transformation you apply. Time and unit
+conventions are stated in :mod:`graflo.architecture.evolution.aspects.iris`.
 """
 
 from __future__ import annotations
@@ -27,42 +12,22 @@ from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.semantics import FieldSemantics, Semantics
 from graflo.architecture.schema.vertex import Field, FieldType, Vertex
 
-# --- vocabulary ------------------------------------------------------------
+from ..iris import (
+    PROV_ENTITY,
+    PROV_GENERATED_AT,
+    PROV_INVALIDATED_AT,
+    PROV_SPECIALIZATION_OF,
+    QUDT_UCUM_CODE,
+    SOSA_HAS_FEATURE_OF_INTEREST,
+    SOSA_HAS_SIMPLE_RESULT,
+    SOSA_OBSERVATION,
+    SOSA_OBSERVED_PROPERTY,
+    SOSA_RESULT_TIME,
+    SSN_PROPERTY,
+    TIME_PROPER_INTERVAL,
+)
+from ..provenance.vocabulary import grounded_edge
 
-PROV = "http://www.w3.org/ns/prov#"
-SOSA = "http://www.w3.org/ns/sosa/"
-SSN = "http://www.w3.org/ns/ssn/"
-TIME = "http://www.w3.org/2006/time#"
-QUDT = "http://qudt.org/schema/qudt/"
-DCTERMS = "http://purl.org/dc/terms/"
-
-PROV_ENTITY = f"{PROV}Entity"
-PROV_ACTIVITY = f"{PROV}Activity"
-PROV_AGENT = f"{PROV}Agent"
-PROV_GENERATED_AT = f"{PROV}generatedAtTime"
-PROV_INVALIDATED_AT = f"{PROV}invalidatedAtTime"
-PROV_SPECIALIZATION_OF = f"{PROV}specializationOf"
-PROV_WAS_DERIVED_FROM = f"{PROV}wasDerivedFrom"
-PROV_WAS_ATTRIBUTED_TO = f"{PROV}wasAttributedTo"
-PROV_WAS_INFLUENCED_BY = f"{PROV}wasInfluencedBy"
-
-SOSA_OBSERVATION = f"{SOSA}Observation"
-SOSA_SENSOR = f"{SOSA}Sensor"
-SOSA_FEATURE_OF_INTEREST = f"{SOSA}FeatureOfInterest"
-SOSA_HAS_FEATURE_OF_INTEREST = f"{SOSA}hasFeatureOfInterest"
-SOSA_OBSERVED_PROPERTY = f"{SOSA}observedProperty"
-SOSA_HAS_SIMPLE_RESULT = f"{SOSA}hasSimpleResult"
-SOSA_RESULT_TIME = f"{SOSA}resultTime"
-
-SSN_PROPERTY = f"{SSN}Property"
-TIME_PROPER_INTERVAL = f"{TIME}ProperInterval"
-QUDT_UCUM_CODE = f"{QUDT}ucumCode"
-DCTERMS_IS_PART_OF = f"{DCTERMS}isPartOf"
-
-#: Names the lift mints. Reserved: a manifest already using one cannot be
-#: lifted without a rename first, and the planner says so rather than colliding.
-EVIDENCE = "Evidence"
-AGENT = "Agent"
 STATE_SUFFIX = "State"
 OBSERVATION_SUFFIX = "Observation"
 
@@ -82,9 +47,6 @@ def state_type_name(vertex: str) -> str:
 def observation_type_name(vertex: str) -> str:
     """``Machine`` -> ``MachineObservation``."""
     return f"{vertex}{OBSERVATION_SUFFIX}"
-
-
-# --- the pieces ------------------------------------------------------------
 
 
 def _validity_fields() -> list[Field]:
@@ -173,56 +135,9 @@ def observation_vertex(subject: str, key_fields: list[Field]) -> Vertex:
     )
 
 
-def evidence_vertex() -> Vertex:
-    """What a fact was read from, and the attachment point for extracted data."""
-    return Vertex(
-        name=EVIDENCE,
-        description=(
-            "What a fact was read from: a document, an API response, a table row."
-        ),
-        semantics=Semantics(iri=PROV_ENTITY, exact_match=[PROV_ENTITY]),
-        properties=[
-            Field(name="evidence_id", type=FieldType.STRING),
-            Field(name="source_uri", type=FieldType.STRING),
-            Field(name="media_type", type=FieldType.STRING),
-            Field(
-                name="retrieved_at",
-                type=FieldType.DATETIME,
-                semantics=FieldSemantics(iri=PROV_GENERATED_AT),
-            ),
-        ],
-        identity=["evidence_id"],
-    )
-
-
-def agent_vertex() -> Vertex:
-    """Who or what acted or measured: a person, a team, a sensor, a system."""
-    return Vertex(
-        name=AGENT,
-        description="Who or what acted or measured.",
-        semantics=Semantics(iri=PROV_AGENT, exact_match=[PROV_AGENT, SOSA_SENSOR]),
-        properties=[
-            Field(name="agent_id", type=FieldType.STRING),
-            Field(name="label", type=FieldType.STRING),
-            Field(name="agent_kind", type=FieldType.STRING),
-        ],
-        identity=["agent_id"],
-    )
-
-
-def _edge(source: str, target: str, relation: str, iri: str, description: str) -> Edge:
-    return Edge(
-        source=source,
-        target=target,
-        relation=relation,
-        directed=True,
-        description=description,
-        semantics=Semantics(iri=iri, exact_match=[iri]),
-    )
-
-
 def specialization_edge(subject: str) -> Edge:
-    return _edge(
+    """``<Subject>State -specializationOf-> <Subject>``."""
+    return grounded_edge(
         state_type_name(subject),
         subject,
         "specializationOf",
@@ -232,7 +147,8 @@ def specialization_edge(subject: str) -> Edge:
 
 
 def feature_of_interest_edge(subject: str) -> Edge:
-    return _edge(
+    """``<Subject>Observation -hasFeatureOfInterest-> <Subject>``."""
+    return grounded_edge(
         observation_type_name(subject),
         subject,
         "hasFeatureOfInterest",
@@ -241,39 +157,13 @@ def feature_of_interest_edge(subject: str) -> Edge:
     )
 
 
-def derived_from_edge(source: str) -> Edge:
-    return _edge(
-        source,
-        EVIDENCE,
-        "wasDerivedFrom",
-        PROV_WAS_DERIVED_FROM,
-        "What this fact was read from.",
-    )
-
-
-def attributed_to_edge() -> Edge:
-    return _edge(
-        EVIDENCE,
-        AGENT,
-        "wasAttributedTo",
-        PROV_WAS_ATTRIBUTED_TO,
-        "Who or what produced this evidence.",
-    )
-
-
 __all__ = [
-    "AGENT",
-    "DCTERMS_IS_PART_OF",
-    "EVIDENCE",
-    "PROV_WAS_INFLUENCED_BY",
+    "OBSERVED_PROPERTY",
     "RESULT_TIME",
     "RESULT_UNIT",
+    "RESULT_VALUE",
     "VALID_FROM",
     "VALID_TO",
-    "agent_vertex",
-    "attributed_to_edge",
-    "derived_from_edge",
-    "evidence_vertex",
     "feature_of_interest_edge",
     "observation_type_name",
     "observation_vertex",

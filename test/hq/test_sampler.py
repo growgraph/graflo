@@ -367,7 +367,7 @@ def test_bindings_sample_each_table_through_its_own_connection(
 
     seen: dict[str, str | None] = {}
 
-    def _fake(connector, *, resource_name, config=None):
+    def _fake(connector, *, resource_name, config=None, connection_provider=None):
         seen[resource_name] = config.database if config else None
         return ResourceSample(
             resource_name=resource_name, connector=connector.name, docs=[{"id": 1}]
@@ -456,3 +456,63 @@ def test_a_table_connector_carries_what_the_table_declares(
         )
     ]
     assert sample.total_estimate == 1200
+
+
+def _api_provider(base_url: str, connector):
+    from graflo.connections.provider import (
+        ApiGeneralizedConnConfig,
+        InMemoryConnectionProvider,
+    )
+    from graflo.connections.sources import RestApiConnConfig
+
+    provider = InMemoryConnectionProvider()
+    provider.register_generalized_config(
+        conn_proxy="tracker",
+        config=ApiGeneralizedConnConfig(config=RestApiConnConfig(base_url=base_url)),
+    )
+    provider.bind_connector_to_conn_proxy(connector=connector, conn_proxy="tracker")
+    return provider
+
+
+def test_an_api_connector_is_sampled_through_its_connection() -> None:
+    from graflo.architecture.contract.bindings import APIConnector
+    from test.sources.test_api_source import _Server
+
+    issues = [{"key": f"SUP-{i}", "fields": {"summary": f"s{i}"}} for i in range(5)]
+    server = _Server(lambda query, call: (200, {}, {"issues": issues}))
+    server.start()
+    try:
+        base = server.url.rsplit("/", 1)[0]
+        connector = APIConnector(
+            name="issues",
+            path="/items",
+            pagination={"response": {"records_path": "issues"}},
+        )
+        sample = ResourceSampler(max_docs=3).sample_connector(
+            connector,
+            resource_name="issues",
+            connection_provider=_api_provider(base, connector),
+        )
+    finally:
+        server.stop()
+    assert [doc["key"] for doc in sample.docs] == ["SUP-0", "SUP-1", "SUP-2"]
+    assert sample.truncated is True
+    assert sample.connector == "issues"
+
+
+def test_an_api_connector_without_a_connection_says_so() -> None:
+    from graflo.architecture.contract.bindings import APIConnector
+
+    with pytest.raises(ValueError, match="REST API connection"):
+        ResourceSampler().sample_connector(
+            APIConnector(name="issues", path="/items"), resource_name="issues"
+        )
+
+
+def test_a_push_connector_cannot_be_sampled() -> None:
+    from graflo.architecture.contract.bindings import PushConnector
+
+    with pytest.raises(ValueError, match="pushed, not fetched"):
+        ResourceSampler().sample_connector(
+            PushConnector(kind="push", name="groundings"), resource_name="provenance"
+        )

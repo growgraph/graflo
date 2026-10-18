@@ -330,7 +330,7 @@ Changing a live database so that it matches a new schema version, with `graflo m
 
 ### lift
 
-Adding state and provenance types to a manifest with `graflo lift` or `plan_lift`, from a spec that says what the types mean. The result is a change set that changes the schema only: no resource feeds the new types until you write one.
+Adding one or more aspects to a manifest with `graflo lift` or `plan_lift`. The `state` aspect needs a spec that says what the types mean; the `provenance` aspect needs none. The result is a change set that changes the schema only: no resource feeds the new types until you write one.
 
 ```yaml
 grounding: {Machine: {iri: "http://www.w3.org/ns/sosa/FeatureOfInterest"}}
@@ -359,9 +359,17 @@ An operator's decision, with a required reason, that one assertion does not appl
 
 The conformance profile named `world-model`, version 0.1, with six assertions: `grounded-types`, `declared-identity`, `declared-directionality`, `declared-units`, `temporal` and `provenance`. Together they check that a manifest says what its types mean, how they are keyed, which way its edges run, what its numbers measure, and when and where its facts come from. See [Conformance profiles](schema/world_model_profile.md#the-world-model-profile).
 
-### state-core
+### aspect
 
-The types a lift adds so that a manifest can record how facts change and where they came from: a state type and an observation type for each entity type (the thing facts are about, such as `Machine`), plus shared `Evidence` and `Agent` types. They are grounded in the PROV-O and SOSA vocabularies and linked by `specializationOf`, `hasFeatureOfInterest`, `wasDerivedFrom` and `wasAttributedTo` edges. See [the state-core lift example (23)](../examples/state-core-lift/index.md).
+A vocabulary that every domain needs and none owns, added to a manifest by a lift and grounded in a standard: `provenance` and `state` today. `graflo lift --aspect NAME` picks one; by default both are lifted. See [the state-core lift example (23)](../examples/state-core-lift/index.md).
+
+### provenance aspect
+
+The types a lift adds so that a manifest can say where a fact came from: `SourceRecord`, the record a fact was read from (its address and content hash, never its content), and `Agent`, who produced it, linked by `wasDerivedFrom` and `wasAttributedTo` (PROV-O). A type named in the spec's `provenance_for` gains a `wasDerivedFrom` edge; the state and observation types always do.
+
+### state aspect
+
+The types a lift adds so that a manifest can record how facts change: a state type and an observation type for each entity type (the thing facts are about, such as `Machine`), grounded in PROV-O and SOSA and linked by `specializationOf` and `hasFeatureOfInterest` edges.
 
 ### state
 

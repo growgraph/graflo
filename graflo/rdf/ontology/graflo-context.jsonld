@@ -36,6 +36,7 @@
         "SparqlConnector": "gf:SparqlConnector",
         "APIConnector": "gf:APIConnector",
         "KafkaConnector": "gf:KafkaConnector",
+        "PushConnector": "gf:PushConnector",
         "BoundConnector": "gf:BoundConnector",
         "EdgeInferSpec": "gf:EdgeInferSpec",
         "ResourceConnectorBinding": "gf:ResourceConnectorBinding",
