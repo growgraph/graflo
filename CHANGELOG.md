@@ -49,7 +49,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 
 - **`graflo.architecture.evolution.state_core`**: import `plan_lift`, `LiftSpec`, `Grounding`,
-  `EdgeGrounding` and `LiftError` from `graflo.architecture.evolution.aspects`. Removed in 2.0.
+  `EdgeGrounding` and `LiftError` from `graflo.architecture.evolution.aspects`; the `plan`, `spec`
+  and `vocabulary` submodules forward to the aspects too (`EVIDENCE` and `evidence_vertex` to
+  `SOURCE_RECORD` and `source_record_vertex`). Removed in 2.0.
 
 ## [1.18.2] - 2026-10-14
 

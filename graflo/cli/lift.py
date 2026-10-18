@@ -113,13 +113,13 @@ class _LiftSetupError(click.ClickException):
 )
 def lift(
     manifest: Path,
-    aspects: tuple[str, ...],
     spec_path: Path | None,
     output: Path | None,
     ops_path: Path | None,
     dry_run: bool,
     do_check: bool,
     profile_name: str,
+    aspects: tuple[str, ...] = DEFAULT_ASPECTS,
 ) -> None:
     """Lift MANIFEST with the named aspects.
 
