@@ -23,6 +23,7 @@ import logging
 import math
 import re
 import time
+import unicodedata
 from collections import defaultdict
 from datetime import datetime
 from functools import lru_cache
@@ -592,6 +593,24 @@ def normalized_key(
     if casefold:
         key = key.casefold()
     return key or None
+
+
+def normalize_label(value: object | None) -> str | None:
+    """Return *value* in label normal form, for matching names written differently.
+
+    NFKC, casefolded, every punctuation mark and underscore read as a space,
+    whitespace collapsed: ``" PUMP-x1! "`` and ``"Pump X1"`` both give
+    ``"pump x1"``. Usable as a transform that fills a normalised label field,
+    and applied to the query side by :func:`graflo.hq.lookup.lookup_candidates`.
+
+    Returns:
+        The normal form, or ``None`` when *value* is missing or holds no word.
+    """
+    if value is None:
+        return None
+    text = unicodedata.normalize("NFKC", str(value)).casefold()
+    text = " ".join(re.sub(r"[^\w\s]|_", " ", text).split())
+    return text or None
 
 
 def affix_gated_key(

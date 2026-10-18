@@ -20,6 +20,7 @@ from graflo.architecture.contract.bindings import (
 )
 from graflo.connections.sources import ApiAuth
 from graflo.data_source.api import APIConfig, APIDataSource
+from graflo.data_source.api_response import APIBodyError
 
 #: What one request gets back: status, headers, JSON body.
 Reply = tuple[int, dict[str, str], Any]
@@ -127,6 +128,92 @@ class TestFailedPage:
         source = _source(serve(lambda query, call: (503, {}, {})).url)
         with pytest.raises(requests.HTTPError):
             _rows(source)
+
+
+SLACK_PAGED = {
+    "request": {"strategy": "cursor", "cursor_param": "cursor", "page_size": 2},
+    "response": {
+        "records_path": "messages",
+        "cursor_path": "response_metadata.next_cursor",
+        "ok_path": "ok",
+        "error_path": "error",
+    },
+}
+
+
+class TestBodyLevelErrors:
+    def test_ok_false_raises_with_the_body_code(
+        self, serve: Callable[[Responder], _Server]
+    ) -> None:
+        reply = {"ok": False, "error": "channel_not_found"}
+        source = _source(
+            serve(lambda query, call: (200, {}, reply)).url, pagination=SLACK_PAGED
+        )
+        with pytest.raises(APIBodyError, match="channel_not_found") as raised:
+            _rows(source)
+        assert raised.value.code == "channel_not_found"
+
+    def test_ok_false_on_a_later_page_raises(
+        self, serve: Callable[[Responder], _Server]
+    ) -> None:
+        def responder(query: dict[str, list[str]], call: int) -> Reply:
+            if "cursor" not in query:
+                return (
+                    200,
+                    {},
+                    {
+                        "ok": True,
+                        "messages": [{"ts": "1"}],
+                        "response_metadata": {"next_cursor": "c2"},
+                    },
+                )
+            return 200, {}, {"ok": False, "error": "missing_scope"}
+
+        source = _source(serve(responder).url, pagination=SLACK_PAGED)
+        batches = source.iter_batches(batch_size=10)
+        assert next(batches) == [{"ts": "1"}]
+        with pytest.raises(APIBodyError, match="missing_scope"):
+            next(batches)
+
+    def test_ok_true_yields_rows(self, serve: Callable[[Responder], _Server]) -> None:
+        reply = {"ok": True, "messages": [{"ts": "1"}, {"ts": "2"}]}
+        source = _source(
+            serve(lambda query, call: (200, {}, reply)).url, pagination=SLACK_PAGED
+        )
+        assert _rows(source) == [{"ts": "1"}, {"ts": "2"}]
+
+    def test_missing_ok_flag_raises(
+        self, serve: Callable[[Responder], _Server]
+    ) -> None:
+        reply = {"messages": [{"ts": "1"}]}
+        source = _source(
+            serve(lambda query, call: (200, {}, reply)).url, pagination=SLACK_PAGED
+        )
+        with pytest.raises(APIBodyError):
+            _rows(source)
+
+    def test_error_path_alone_raises_when_set(
+        self, serve: Callable[[Responder], _Server]
+    ) -> None:
+        pagination = {
+            "request": {"strategy": "offset", "page_size": 2},
+            "response": {"records_path": "items", "error_path": "error.code"},
+        }
+        reply = {"items": [], "error": {"code": "rate_limited"}}
+        source = _source(
+            serve(lambda query, call: (200, {}, reply)).url, pagination=pagination
+        )
+        with pytest.raises(APIBodyError, match="rate_limited"):
+            _rows(source)
+
+    def test_no_paths_declared_keeps_bodies_unchecked(
+        self, serve: Callable[[Responder], _Server]
+    ) -> None:
+        reply = {"ok": False, "items": [{"id": 1}], "more": False}
+        source = _source(
+            serve(lambda query, call: (200, {}, reply)).url, pagination=PAGED
+        )
+        assert _rows(source) == [{"id": 1}]
 
 
 class TestRateLimit:

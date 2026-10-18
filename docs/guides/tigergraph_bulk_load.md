@@ -9,10 +9,10 @@ first with files on local disk and then with files staged in an S3 bucket.
 ## What you need
 
 - GraFlo installed (`pip install graflo`) and a running TigerGraph. The
-  repository ships containers for TigerGraph and MinIO under `docker/`.
+  repository ships containers for TigerGraph and SeaweedFS (S3) under `docker/`.
 - A manifest that ingests into TigerGraph without bulk load. Bulk load
   changes how records are written, not what the manifest declares.
-- For S3 staging: a bucket on MinIO or another S3-compatible service, and
+- For S3 staging: a bucket on SeaweedFS or another S3-compatible service, and
   its credentials.
 
 ## Steps
@@ -105,14 +105,14 @@ engine.define_and_ingest(
 ```
 
 `ensure_staging_bucket_for_config` creates the bucket if it is missing and
-fails early if MinIO cannot be reached. At the end of the ingest GraFlo
+fails early if the S3 service cannot be reached. At the end of the ingest GraFlo
 uploads the files to `s3://<bucket>/graflo-bulk/<session id>/`, creates a
 TigerGraph data source with the same credentials, and runs the loading job
 against the uploaded objects.
 
-If TigerGraph runs in a container and MinIO on your machine, TigerGraph needs
-a different address for MinIO than GraFlo does. Set `MINIO_LOADER_ENDPOINT`
-in the settings under `docker/minio` (or `loader_endpoint_url` on `MinioConfig`);
+If TigerGraph runs in a container and the S3 service on your machine, TigerGraph needs
+a different address for it than GraFlo does. Set `S3_LOADER_ENDPOINT`
+in the settings under `docker/seaweedfs` (or `loader_endpoint_url` on `MinioConfig`);
 see [Object storage](../concepts/operations/object_storage.md#two-endpoints).
 
 ## What you should see
@@ -159,7 +159,7 @@ All options live on `TigergraphBulkLoadConfig`:
 GraFlo uploads through boto3, so any service that speaks the S3 API works when
 its address is the `endpoint_url`:
 
-- MinIO, as in the container under `docker/minio` that
+- SeaweedFS, as in the container under `docker/seaweedfs` that
   `MinioConfig.from_docker_env()` reads. TigerGraph can load from it through
   the data source GraFlo creates.
 - LocalStack, which emulates S3 among other cloud services.
@@ -181,5 +181,5 @@ its address is the `endpoint_url`:
 ## What to read next
 
 - [Object storage](../concepts/operations/object_storage.md): how bucket credentials reach GraFlo, and the helpers.
-- [Bulk load into TigerGraph (13)](../examples/tigergraph-bulk-s3/index.md): a runnable example with MinIO.
+- [Bulk load into TigerGraph (13)](../examples/tigergraph-bulk-s3/index.md): a runnable example with S3 staging.
 - [Parallelism](../concepts/ingestion/parallelism.md): what runs concurrently during ingestion, and what bulk load changes.

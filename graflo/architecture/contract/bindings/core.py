@@ -525,7 +525,44 @@ class BindingsConfig(ConfigBaseModel):
                     )
             self._append_resource_connector_hash(mapping.resource, connector_hash)
         self._rebuild_connector_to_conn_proxy()
+        self._check_parents()
         return self
+
+    def get_parent_connector(self, connector: APIConnector) -> APIConnector | None:
+        """Return the API connector whose records *connector* makes one request per."""
+        if connector.parent is None:
+            return None
+        parent_hash = self._connectors_name_index.get(connector.parent.connector)
+        parent = self._connectors_index.get(parent_hash) if parent_hash else None
+        return parent if isinstance(parent, APIConnector) else None
+
+    def _check_parents(self) -> None:
+        """Refuse a parent that is unknown, not an API connector, or in a cycle."""
+        for connector in self.connectors:
+            if not isinstance(connector, APIConnector) or connector.parent is None:
+                continue
+            seen = {connector.hash}
+            current: APIConnector = connector
+            while current.parent is not None:
+                ref = current.parent.connector
+                parent_hash = self._connectors_name_index.get(ref)
+                if parent_hash is None:
+                    raise ValueError(
+                        f"API connector '{current.name or current.path}' names an "
+                        f"unknown parent connector '{ref}'"
+                    )
+                parent = self._connectors_index[parent_hash]
+                if not isinstance(parent, APIConnector):
+                    raise ValueError(
+                        f"Parent connector '{ref}' of '{current.name or current.path}' "
+                        "is not an API connector"
+                    )
+                if parent.hash in seen:
+                    raise ValueError(
+                        f"API connector parents form a cycle through '{ref}'"
+                    )
+                seen.add(parent.hash)
+                current = parent
 
     def _resolve_connector_ref_to_hash(self, connector_ref: str) -> str:
         """Resolve a connector reference to its canonical connector hash.

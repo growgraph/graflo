@@ -1,6 +1,6 @@
 # Object storage (S3-compatible)
 
-GraFlo uses S3-compatible object storage (MinIO, AWS S3 or any service that
+GraFlo uses S3-compatible object storage (SeaweedFS, AWS S3 or any service that
 speaks the S3 API) for one job: staging CSV files for a TigerGraph bulk load,
 so that a TigerGraph loading job can read them from a bucket. This page is
 for you if you bulk-load TigerGraph and the database cannot read files from

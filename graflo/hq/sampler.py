@@ -366,11 +366,13 @@ class ResourceSampler:
         resource_name: str,
         config: PostgresConfig | None = None,
         connection_provider: ConnectionProvider | None = None,
+        bindings: Bindings | None = None,
     ) -> ResourceSample:
         """Sample one resource through *connector*.
 
         A table connector needs *config*; an API connector needs a
-        *connection_provider* that resolves its ``conn_proxy``.
+        *connection_provider* that resolves its ``conn_proxy``, and, when it
+        has a ``parent``, the *bindings* that name the parent.
         """
         if isinstance(connector, FileConnector):
             files = RegistryBuilder.discover_files(
@@ -415,21 +417,33 @@ class ResourceSampler:
             )
 
         if isinstance(connector, APIConnector):
-            from graflo.data_source.api import APIDataSource
+            from graflo.data_source.api import APIDataSource, DependentAPIDataSource
 
             if connection_provider is None:
                 raise ValueError(
                     f"Sampling APIConnector for resource '{resource_name}' requires "
                     "a REST API connection"
                 )
+            if connector.parent is not None and bindings is None:
+                raise ValueError(
+                    f"Sampling APIConnector for resource '{resource_name}' requires "
+                    f"the bindings that name its parent '{connector.parent.connector}'"
+                )
             try:
-                api_config = RegistryBuilder.api_config(connector, connection_provider)
+                source: APIDataSource | DependentAPIDataSource = (
+                    RegistryBuilder.api_source(connector, bindings, connection_provider)
+                    if bindings is not None
+                    else APIDataSource(
+                        config=RegistryBuilder.api_config(
+                            connector, connection_provider
+                        )
+                    )
+                )
             except ValueError as exc:
                 raise ValueError(
                     f"Sampling APIConnector for resource '{resource_name}' requires "
                     f"a REST API connection: {exc}"
                 ) from exc
-            source = APIDataSource(config=api_config)
             rows = [
                 row
                 for batch in source.iter_batches(
@@ -528,6 +542,7 @@ class ResourceSampler:
                         resource_name=str(resource),
                         config=resource_config,
                         connection_provider=connection_provider,
+                        bindings=bindings,
                     )
                 )
             except ValueError as exc:

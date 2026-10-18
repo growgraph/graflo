@@ -109,6 +109,7 @@ nav:
         -   Push connector: concepts/connectors/push_connector.md
         -   Runtime connector updates: concepts/connectors/runtime_updates.md
     -   Operations:
+        -   Finding the vertices a text names: concepts/operations/finding_vertices_from_text.md
         -   Graph export and migration: concepts/operations/graph_export_migration.md
         -   Removing vertices and edges: concepts/operations/deleting_instances.md
         -   Object storage: concepts/operations/object_storage.md

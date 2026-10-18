@@ -60,10 +60,7 @@ def ensure_staging_bucket_for_config(cfg: MinioConfig | None = None) -> str:
     except EndpointConnectionError as e:
         raise RuntimeError(
             f"Cannot connect to {resolved.endpoint_url!r}. "
-            "Start MinIO (e.g. `docker compose --env-file .env --profile graflo.minio up -d` "
-            "in `docker/minio`) and ensure `MINIO_API_PORT` / `MINIO_ENDPOINT` matches the "
-            "published S3 API port (default host 9000). The web console (e.g. :9001/endpoints) "
-            "is not the S3 endpoint. If `docker compose` reports 'port is already allocated', "
-            "set `MINIO_CONSOLE_PORT` and/or `MINIO_API_PORT` to free ports, remove the stuck "
-            "container (`docker rm -f graflo.minio`), and bring the stack up again."
+            "Start the S3 service (e.g. `docker compose --profile graflo.seaweedfs up -d` "
+            "in `docker/seaweedfs`) and ensure `S3_API_PORT` / `S3_ENDPOINT` matches the "
+            "published S3 API port (default host 8333)."
         ) from e

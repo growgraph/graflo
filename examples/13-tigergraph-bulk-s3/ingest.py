@@ -1,7 +1,7 @@
 """How do I load a large graph into TigerGraph quickly?
 
 Switches the TigerGraph target to bulk loading: ingestion writes CSV files,
-uploads them to S3 (MinIO here) and runs one TigerGraph loading job that reads
+uploads them to S3 (SeaweedFS here) and runs one TigerGraph loading job that reads
 them. With ``BULK_USE_S3=0`` the files stay on local disk. Run it from any
 directory:
 
@@ -63,17 +63,17 @@ def configure_bulk_load(
     )
 
     # Preflight: raises with an actionable message when the S3 API is unreachable,
-    # so a missing MinIO fails here rather than as an empty graph after a
+    # so a missing S3 service fails here rather than as an empty graph after a
     # "successful" ingest.
     ensure_staging_bucket_for_config(minio_conf)
 
     if loader_endpoint_is_loopback(minio_conf):
         logger.warning(
-            "MinIO endpoint %s is a loopback address and MINIO_LOADER_ENDPOINT is "
+            "S3 endpoint %s is a loopback address and S3_LOADER_ENDPOINT is "
             "unset, so TigerGraph's CREATE DATA_SOURCE will point there too. That "
             "works only if TigerGraph runs on this host; from a container the "
             "LOADING JOB reads nothing and the ingest still reports success. Set "
-            "MINIO_LOADER_ENDPOINT for the MinIO docker stack, or run with "
+            "S3_LOADER_ENDPOINT for the docker/seaweedfs stack, or run with "
             "BULK_USE_S3=0. Confirm either way with inspect_bulk.py.",
             minio_conf.endpoint_url,
         )

@@ -6,7 +6,7 @@ overhead dominates. TigerGraph has a faster path of its
 own: a loading job that reads CSV files.
 
 With bulk loading switched on, GraFlo writes the cast records to CSV files,
-uploads them to S3 (or an S3-compatible store such as MinIO), and runs one
+uploads them to S3 (or an S3-compatible store such as SeaweedFS), and runs one
 loading job at the end that reads them. The manifest does not change, and the
 S3 credentials stay out of it.
 
@@ -14,7 +14,7 @@ S3 credentials stay out of it.
 flowchart LR
     csv[relations.csv] --> cast[GraFlo casts rows]
     cast --> staged["CSV files<br/>in bulk_staging/"]
-    staged -- upload --> s3[(MinIO / S3)]
+    staged -- upload --> s3[(S3)]
     s3 -- LOADING JOB --> tg[(TigerGraph)]
 ```
 
@@ -24,9 +24,9 @@ companies, and several kinds of relation between them read from a column.
 ## What you need
 
 - GraFlo installed (`pip install graflo`).
-- A running TigerGraph and a running MinIO. The repository ships containers
+- A running TigerGraph and a running S3 service. The repository ships containers
   for both; see [`docker/README.md`](../../docker/README.md). TigerGraph must be
-  able to reach MinIO, because it reads the uploaded files itself.
+  able to reach the S3 service, because it reads the uploaded files itself.
 
 The scripts read connection settings from the environment files of those
 containers, not from your shell:
@@ -34,10 +34,10 @@ containers, not from your shell:
 | Setting | Read from | Variables |
 |---|---|---|
 | TigerGraph | `docker/tigergraph` | `TG_WEB` (GSQL port), `TIGERGRAPH_HOSTNAME`, `TIGERGRAPH_USERNAME`, `TIGERGRAPH_PASSWORD` (if unset there: the same variable in your shell, then `tigergraph`) |
-| MinIO address, used by GraFlo | `docker/minio` | `MINIO_ENDPOINT`, or `MINIO_HOSTNAME` and `MINIO_API_PORT` |
-| MinIO address, used by TigerGraph | `docker/minio` | `MINIO_LOADER_ENDPOINT`; without it, TigerGraph gets the address GraFlo uses |
-| MinIO credentials | `docker/minio` | `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD` |
-| Bucket | `docker/minio` | `MINIO_STAGING_BUCKET` (default `graflo-staging`) |
+| S3 address, used by GraFlo | `docker/seaweedfs` | `S3_ENDPOINT`, or `S3_HOSTNAME` and `S3_API_PORT` (default `http://127.0.0.1:8333`) |
+| S3 address, used by TigerGraph | `docker/seaweedfs` | `S3_LOADER_ENDPOINT`; without it, TigerGraph gets the address GraFlo uses |
+| S3 credentials | `docker/seaweedfs` | `S3_ACCESS_KEY`, `S3_SECRET_KEY` (the bundled service accepts any pair) |
+| Bucket | `docker/seaweedfs` | `S3_BUCKET` (default `graflo-staging`) |
 
 Three variables are read from your shell: `BULK_USE_S3` (default `1`; `0`
 keeps the files on local disk), `BULK_S3_BUCKET` (overrides the bucket) and
@@ -71,7 +71,7 @@ bindings:
 ### 2. Switch the target to bulk loading
 
 Bulk loading is a setting of the TigerGraph connection. [`ingest.py`](ingest.py)
-sets it and registers the MinIO settings under `minio_bulk`:
+sets it and registers the S3 settings under `minio_bulk`:
 
 ```python
 minio_conf = minio_config()
@@ -89,15 +89,15 @@ provider.register_generalized_config(
 ```
 
 Before ingesting, the script creates the bucket if it is missing, and fails at
-once if MinIO cannot be reached.
+once if the S3 service cannot be reached.
 
-### 3. Start MinIO
+### 3. Start the S3 service
 
 From the repository root:
 
 ```bash
-cd docker/minio
-docker compose --env-file .env --profile graflo.minio up -d
+cd docker/seaweedfs
+docker compose --profile graflo.seaweedfs up -d
 cd ../..
 ```
 
@@ -128,22 +128,21 @@ Each run writes a new session directory; `bulk_staging/` is not tracked by git.
 
 **The ingest reports success and the graph is empty.** The loading job reads
 the files itself, so an `s3://` address that TigerGraph cannot reach is not an
-error GraFlo sees. This happens when TigerGraph runs in a container and MinIO's
+error GraFlo sees. This happens when TigerGraph runs in a container and the S3 service's
 address is `127.0.0.1`: that address is valid for GraFlo on the host but not
 inside the container. `ingest.py` warns about this case before it ingests. Set
-`MINIO_LOADER_ENDPOINT` in the MinIO settings to an address valid inside the
-TigerGraph container (for example `http://172.17.0.1:9003` on Linux, or
-`http://host.docker.internal:9003` where Docker provides it), or run with
+`S3_LOADER_ENDPOINT` in the S3 settings to an address valid inside the
+TigerGraph container (for example `http://172.17.0.1:8333` on Linux, or
+`http://host.docker.internal:8333` where Docker provides it), or run with
 `BULK_USE_S3=0`, in which case TigerGraph must be able to read the local
 staging directory.
 
-**`Connection refused` on the MinIO port.** GraFlo talks to MinIO's S3 API,
-not to its web console; they use different ports (`MINIO_API_PORT` and
-`MINIO_CONSOLE_PORT`). Check that `docker ps` shows `graflo.minio` as up. If
-the container never starts, the output of `docker compose ... up` names the
-reason; `port is already allocated` means another process uses that host port.
-Choose free ports in the MinIO settings, remove the container with
-`docker rm -f graflo.minio` and start it again.
+**`Connection refused` on the S3 port.** Check that `docker ps` shows
+`graflo.seaweedfs` as up and that `S3_API_PORT` (default 8333) is the published
+port. If the container never starts, the output of `docker compose ... up` names
+the reason; `port is already allocated` means another process uses that host
+port. Choose a free `S3_API_PORT`, remove the container with
+`docker rm -f graflo.seaweedfs` and start it again.
 
 **Vertices are staged but `edge_relates.csv` is missing.** No edge reached
 staging, so the problem is in the `relations` resource, not in S3 or the

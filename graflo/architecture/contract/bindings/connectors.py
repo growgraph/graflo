@@ -641,6 +641,20 @@ class ApiResponseStructure(ConfigBaseModel):
         default=None,
         description="Dot path to the next opaque cursor token.",
     )
+    ok_path: str | None = Field(
+        default=None,
+        description=(
+            "Dot path to a success flag in every response body (e.g. ``ok``). "
+            "A body where it is not ``true`` raises, even with HTTP status 200."
+        ),
+    )
+    error_path: str | None = Field(
+        default=None,
+        description=(
+            "Dot path to an error code in the response body (e.g. ``error``). "
+            "Named in the raised error; a non-empty value raises on its own."
+        ),
+    )
     batch_metadata_paths: dict[str, str] = Field(
         default_factory=dict,
         description=(
@@ -738,6 +752,33 @@ class WatermarkConfig(ConfigBaseModel):
         return {self.param: self.template.replace("{value}", str(value))}
 
 
+#: ``{name}`` placeholders in a dependent connector's ``path`` and ``params``.
+TEMPLATE_VARIABLE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+class ParentRequest(ConfigBaseModel):
+    """Make one request per record of another API connector.
+
+    Attributes:
+        connector: Name of the parent API connector in the same bindings.
+        fields: Template variable -> dot path into a parent record. Each
+            variable fills ``{variable}`` in the child's ``path`` and string
+            ``params``; a parent record missing any of them is skipped.
+    """
+
+    connector: str = Field(..., min_length=1)
+    fields: dict[str, str] = Field(..., min_length=1)
+
+
+def template_variables(path: str, params: dict[str, Any]) -> set[str]:
+    """Return the ``{name}`` variables used in *path* and string *params*."""
+    found = set(TEMPLATE_VARIABLE.findall(path))
+    for value in params.values():
+        if isinstance(value, str):
+            found.update(TEMPLATE_VARIABLE.findall(value))
+    return found
+
+
 class APIConnector(ResourceConnector):
     """Connector for REST API endpoints.
 
@@ -759,6 +800,10 @@ class APIConnector(ResourceConnector):
             header on the response sets the wait.
         verify: Verify SSL certificates.
         watermark: Where a run left off; see :class:`WatermarkConfig`.
+        parent: Make one request per record of another API connector, with
+            ``{variable}`` in ``path`` and ``params`` filled from that record;
+            see :class:`ParentRequest`. Without its own ``conn_proxy`` mapping
+            the child uses the parent's connection.
     """
 
     path: str = Field(..., description="Relative API endpoint path")
@@ -774,12 +819,25 @@ class APIConnector(ResourceConnector):
     )
     verify: bool = True
     watermark: WatermarkConfig | None = None
+    parent: ParentRequest | None = None
+
+    @model_validator(mode="after")
+    def _check_template_variables(self) -> Self:
+        used = template_variables(self.path, self.params)
+        declared = set(self.parent.fields) if self.parent is not None else set()
+        if self.parent is not None and used - declared:
+            raise ValueError(
+                f"API connector '{self.name or self.path}' uses template variables "
+                f"{sorted(used - declared)} that parent.fields does not declare"
+            )
+        return self
 
     def _hash_payload(self) -> dict[str, Any]:
         payload = super()._hash_payload()
-        if payload.get("watermark") is None:
-            # Unset, it must not move the hash of connectors declared before it.
-            payload.pop("watermark", None)
+        for optional in ("watermark", "parent"):
+            if payload.get(optional) is None:
+                # Unset, it must not move the hash of connectors declared before it.
+                payload.pop(optional, None)
         return payload
 
     @staticmethod

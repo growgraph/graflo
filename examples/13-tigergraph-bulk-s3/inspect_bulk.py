@@ -89,7 +89,7 @@ def _report_graph(vertex_type: str, edge_type: str) -> bool:
         click.echo(
             "\nThe graph is empty. The LOADING JOB ran but read nothing — usually "
             "an s3:// URL that TigerGraph itself cannot reach. Set "
-            "MINIO_LOADER_ENDPOINT to an address valid inside the TigerGraph "
+            "S3_LOADER_ENDPOINT to an address valid inside the TigerGraph "
             "container, or re-run with BULK_USE_S3=0 so the job reads local paths."
         )
         return False

@@ -1,0 +1,21 @@
+services:
+    seaweedfs:
+        image: ${IMAGE_VERSION:-chrislusf/seaweedfs:4.48}
+        container_name: ${CONTAINER_NAME:-graflo.seaweedfs}
+        restart: "no"
+        profiles: ["${SPEC:-graflo}.seaweedfs"]
+        ports:
+        -   "${S3_API_PORT:-8333}:8333"
+        # No identities are configured, so the S3 API accepts any key pair.
+        command: server -dir=/data -s3 -s3.port=8333
+        healthcheck:
+            test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9333/cluster/healthz"]
+            interval: 5s
+            timeout: 3s
+            retries: 30
+        volumes:
+        -   seaweedfs_data:/data
+
+volumes:
+    seaweedfs_data:
+        driver: local

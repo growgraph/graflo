@@ -38,7 +38,8 @@ from graflo.filter.sql import datetime_range_filter
 
 if TYPE_CHECKING:
     from graflo.architecture.contract.bindings import Bindings
-    from graflo.data_source.api import APIConfig
+    from graflo.connections.sources import RestApiConnConfig
+    from graflo.data_source.api import APIConfig, APIDataSource, DependentAPIDataSource
     from graflo.hq.caster import IngestionParams
 
 logger = logging.getLogger(__name__)
@@ -206,6 +207,7 @@ class RegistryBuilder:
                             registry,
                             resource_name,
                             connector,
+                            bindings,
                             ingestion_params,
                             provider,
                         )
@@ -580,17 +582,99 @@ class RegistryBuilder:
             page_size_override=page_size_override,
         )
 
+    #: Request settings a child connector takes from its parent unless it sets them.
+    _INHERITED_REQUEST_SETTINGS = (
+        "headers",
+        "timeout",
+        "retries",
+        "retry_backoff_factor",
+        "retry_status_forcelist",
+        "verify",
+    )
+
+    @classmethod
+    def api_source(
+        cls,
+        connector: APIConnector,
+        bindings: Bindings,
+        connection_provider: ConnectionProvider,
+        *,
+        page_size_override: int | None = None,
+    ) -> APIDataSource | DependentAPIDataSource:
+        """Return the data source that fetches *connector*'s records.
+
+        A connector with a ``parent`` becomes one request per parent record. It
+        uses its own ``conn_proxy`` connection when it has one, else its
+        parent's, and takes the parent's request settings it does not set.
+
+        Raises:
+            ValueError: No REST API connection is registered for the connector
+                or any of its parents.
+        """
+        from graflo.data_source.api import APIDataSource, DependentAPIDataSource
+
+        parent = bindings.get_parent_connector(connector)
+        if parent is None or connector.parent is None:
+            return APIDataSource(
+                config=cls.api_config(
+                    connector,
+                    connection_provider,
+                    page_size_override=page_size_override,
+                )
+            )
+        unset = [
+            name
+            for name in cls._INHERITED_REQUEST_SETTINGS
+            if name not in connector.model_fields_set
+        ]
+        effective = connector.model_copy(
+            update={name: getattr(parent, name) for name in unset}
+        )
+        runtime = cls._runtime_connection(connector, bindings, connection_provider)
+        config = effective.build_api_config(
+            base_url=runtime.base_url,
+            auth=runtime.auth,
+            default_headers=runtime.default_headers,
+            page_size_override=page_size_override,
+        )
+        return DependentAPIDataSource(
+            parent=cls.api_source(parent, bindings, connection_provider),
+            config=config,
+            fields=dict(connector.parent.fields),
+        )
+
+    @staticmethod
+    def _runtime_connection(
+        connector: APIConnector,
+        bindings: Bindings,
+        connection_provider: ConnectionProvider,
+    ) -> RestApiConnConfig:
+        """The REST connection of *connector*, else of its nearest parent with one."""
+        current: APIConnector | None = connector
+        while current is not None:
+            generalized = (
+                connection_provider.get_generalized_conn_config(current)
+                if hasattr(connection_provider, "get_generalized_conn_config")
+                else None
+            )
+            if isinstance(generalized, ApiGeneralizedConnConfig):
+                return generalized.config
+            current = bindings.get_parent_connector(current)
+        raise ValueError(
+            "no REST API connection configuration is registered for the "
+            "connector's conn_proxy or any of its parents'"
+        )
+
     def _register_api_sources(
         self,
         registry: DataSourceRegistry,
         resource_name: str,
         connector: APIConnector,
+        bindings: Bindings,
         ingestion_params: IngestionParams,
         connection_provider: ConnectionProvider,
     ) -> None:
         """Register REST API data sources for a resource."""
-        from graflo.data_source.api import APIDataSource
-
         # The connector's declared page size is what the endpoint accepts; the
         # global batch size replaces it only when the caller set one explicitly.
         page_size_override = (
@@ -599,16 +683,18 @@ class RegistryBuilder:
             and "batch_size" in ingestion_params.model_fields_set
             else None
         )
-        api_config = self.api_config(
-            connector, connection_provider, page_size_override=page_size_override
+        api_source = self.api_source(
+            connector,
+            bindings,
+            connection_provider,
+            page_size_override=page_size_override,
         )
-        api_source = APIDataSource(config=api_config)
         registry.register(api_source, resource_name=resource_name)
 
         logger.info(
             "Created API data source for path '%s' at '%s' mapped to resource '%s'",
             connector.path,
-            api_config.url,
+            api_source.config.url,
             resource_name,
         )
 

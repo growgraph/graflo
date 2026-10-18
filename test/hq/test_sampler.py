@@ -367,7 +367,14 @@ def test_bindings_sample_each_table_through_its_own_connection(
 
     seen: dict[str, str | None] = {}
 
-    def _fake(connector, *, resource_name, config=None, connection_provider=None):
+    def _fake(
+        connector,
+        *,
+        resource_name,
+        config=None,
+        connection_provider=None,
+        bindings=None,
+    ):
         seen[resource_name] = config.database if config else None
         return ResourceSample(
             resource_name=resource_name, connector=connector.name, docs=[{"id": 1}]

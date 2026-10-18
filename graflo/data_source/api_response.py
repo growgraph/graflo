@@ -42,9 +42,41 @@ class ResolvedApiResponse(ApiResponseStructure):
             or detected.get("next_offset_path"),
             has_more_path=config.has_more_path or detected.get("has_more_path"),
             cursor_path=config.cursor_path or detected.get("cursor_path"),
+            ok_path=config.ok_path,
+            error_path=config.error_path,
             batch_metadata_paths=dict(config.batch_metadata_paths),
             auto_detect=False,
         )
+
+
+class APIBodyError(RuntimeError):
+    """A response the server answered successfully whose body reports a failure.
+
+    Attributes:
+        code: The body's error code at ``error_path``, or ``None`` if it has none.
+    """
+
+    def __init__(self, code: str | None, detail: str) -> None:
+        super().__init__(
+            f"API body reports failure ({code or 'no error code'}): {detail}"
+        )
+        self.code = code
+
+
+def check_body(body: object, resolved: ApiResponseStructure) -> None:
+    """Raise :class:`APIBodyError` when the body says the request failed.
+
+    A body fails when ``ok_path`` is set and its value is not ``True``, or when
+    ``error_path`` is set and its value is non-empty.
+    """
+    error = get_at_path(body, resolved.error_path)
+    code = str(error) if error not in (None, "", False) else None
+    if resolved.ok_path is not None:
+        flag = get_at_path(body, resolved.ok_path)
+        if flag is not True:
+            raise APIBodyError(code, f"{resolved.ok_path}={flag!r}")
+    if code is not None:
+        raise APIBodyError(code, f"{resolved.error_path}={error!r}")
 
 
 def get_at_path(obj: object, path: str | None) -> object | None:

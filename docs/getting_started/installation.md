@@ -83,7 +83,7 @@ The version you see is the one you installed. In a clone, run it as
 
 GraFlo writes to ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph
 and PostgreSQL. A clone of the repository has a Docker Compose setup for each
-of them, plus Apache Fuseki and Kafka as sources to read from and MinIO as
+of them, plus Apache Fuseki and Kafka as sources to read from and SeaweedFS as
 object storage.
 [`docker/README.md`](https://github.com/growgraph/graflo/blob/main/docker/README.md)
 explains how to start one or all of them; the examples read their connection

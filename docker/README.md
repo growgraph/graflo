@@ -17,7 +17,7 @@ This will start all available graph database services:
 - Memgraph (port 7687)
 - NebulaGraph (port 9669)
 - PostgreSQL (port 5432)
-- MinIO (API port 9000, console 9001)
+- SeaweedFS (S3 API port 8333)
 - Kafka (bootstrap port 9092)
 
 **Stop all services:**
@@ -165,27 +165,21 @@ from graflo.connections import FalkordbConfig
 config = FalkordbConfig.from_docker_env()
 ```
 
-## MinIO
+## SeaweedFS (S3)
 
-MinIO provides S3-compatible object storage ([Docker Hub image](https://hub.docker.com/r/minio/minio)). Use it for bulk staging (e.g. TigerGraph examples that upload staged CSVs).
+SeaweedFS provides S3-compatible object storage ([Docker Hub image](https://hub.docker.com/r/chrislusf/seaweedfs)). Use it for bulk staging (e.g. TigerGraph examples that upload staged CSVs).
 
 **Run:**
 ```shell
-cd minio
-docker compose --env-file .env --profile graflo.minio up -d
+cd seaweedfs
+docker compose --profile graflo.seaweedfs up -d
 ```
 
-**Endpoints:**
-- S3 API: `http://127.0.0.1:9000` (host port configurable via `MINIO_API_PORT` in `.env`)
-- Web console: `http://127.0.0.1:9001` (configurable via `MINIO_CONSOLE_PORT`)
+**Endpoint:** S3 API at `http://127.0.0.1:8333` (host port `S3_API_PORT`). No identities are configured, so the API accepts any key pair; the bucket is created on first use.
 
-The S3 API and the console use **different** host ports. Tools such as boto3 and `examples/13-tigergraph-bulk-s3` must reach the **API** port (`MINIO_API_PORT` / `MINIO_ENDPOINT`), not the console URL (e.g. `/endpoints` on the console port).
+Settings are optional and go in `docker/seaweedfs/.env` (template: `.env.example`): `S3_ENDPOINT` (or `S3_PROTOCOL`, `S3_HOSTNAME`, `S3_API_PORT`), `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_BUCKET` (default `graflo-staging`), `AWS_REGION`.
 
-**Port conflicts:** If `docker compose` fails with `port is already allocated` (often **9001**), another process is using that host port. Set `MINIO_CONSOLE_PORT` (and `MINIO_API_PORT` if needed) to free values in `docker/minio/.env`, remove any stuck container (`docker rm -f graflo.minio`), then `docker compose --env-file .env --profile graflo.minio up -d` again. While the MinIO container is not running, you will see connection refused on the API port even if something unrelated responds on 9001.
-
-When TigerGraph runs in Docker and GraFlo uploads from the host, set **`MINIO_LOADER_ENDPOINT`** (or **`MINIO_TIGERGRAPH_ENDPOINT`**) to the MinIO URL **as seen from the TigerGraph container** (e.g. `http://172.17.0.1:9003` or `http://host.docker.internal:9003`). That value is used only in the GSQL `CREATE DATA_SOURCE` for bulk loads; boto3 on the host still uses `MINIO_HOSTNAME` / `MINIO_API_PORT`.
-
-Default credentials are `minioadmin` / `minioadmin` (`MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD`). Staging bucket name defaults (`MINIO_STAGING_BUCKET`, etc.) live in `docker/minio/.env`; you can still create buckets in the console or with `mc`.
+When TigerGraph runs in Docker and GraFlo uploads from the host, set **`S3_LOADER_ENDPOINT`** to the S3 URL **as seen from the TigerGraph container** (e.g. `http://172.17.0.1:8333` or `http://host.docker.internal:8333`). That value is used only in the GSQL `CREATE DATA_SOURCE` for bulk loads; boto3 on the host uses the endpoint above.
 
 **Programmatic connection (boto3 / bulk staging):**
 ```python

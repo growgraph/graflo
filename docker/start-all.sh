@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 # Database directories
-DATABASES=("arango" "neo4j" "postgres" "falkordb" "memgraph" "nebula" "tigergraph" "fuseki" "minio" "kafka")
+DATABASES=("arango" "neo4j" "postgres" "falkordb" "memgraph" "nebula" "tigergraph" "fuseki" "seaweedfs" "kafka")
 
 # Colors for output
 GREEN='\033[0;32m'
@@ -42,7 +42,7 @@ for db in "${DATABASES[@]}"; do
         PROFILE="graflo.${db}"
 
         echo "  No .env file found, using profile: $PROFILE"
-        echo "  ${YELLOW}Warning: Some services may require .env file for proper configuration${NC}"
+        echo -e "  ${YELLOW}Warning: Some services may require .env file for proper configuration${NC}"
         docker compose --profile "$PROFILE" up -d || {
             echo -e "${RED}Failed to start $db${NC}"
             cd ..
