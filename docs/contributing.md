@@ -146,7 +146,7 @@ Property tests (Hypothesis) run under the `ci` profile by default: a fifth of ea
 GraFlo follows [Semantic Versioning](https://semver.org/). Within a major version, public names and manifest keys are not removed or renamed without a deprecation first:
 
 - Deprecate in a minor release with `graflo._compat`: `@deprecated(since=..., removed_in=..., use=...)` on a callable, `rename_key(...)` in a `mode="before"` validator for a renamed config key. Remove in the next major.
-- CI compares the public API with the newest release tag (`.github/scripts/api_breaks.py`) and fails on a break unless `pyproject.toml` already declares a new major version.
+- `.github/scripts/api_breaks.py` compares the public API with the newest release tag and fails on a break unless `pyproject.toml` already declares a new major version. It is not run in CI for now.
 - A change to a contract field's default moves content hashes: bump `CANON_VERSION` as well (see [Versioning](concepts/schema/versioning.md)).
 
 ## Pull Request Process
