@@ -55,6 +55,7 @@ logger = logging.getLogger(__name__)
 PropertiesInputType = list[str] | list["Field"] | list[dict[str, Any]]
 VertexName: TypeAlias = str
 IdentityMode: TypeAlias = Literal["natural", "hash", "blank", "assigned"]
+FieldMerge: TypeAlias = Literal["replace", "union"]
 
 
 class FieldType(BaseEnum):
@@ -199,6 +200,26 @@ class Field(ConfigBaseModel):
         default=None,
         description="Optional external-vocabulary anchors and unit for this field.",
     )
+    # Both flags are left out of a dump at their defaults, so a manifest that
+    # uses neither dumps exactly as before they existed.
+    reserved: bool = PydanticField(
+        default=False,
+        exclude_if=lambda value: value is False,
+        description=(
+            "Set only by the writer, from the caller's stamp. A reserved field is "
+            "left out of type sheets, element text and instance schemas, and a "
+            "query that names it in a projection, filter or aggregate is refused."
+        ),
+    )
+    merge: FieldMerge = PydanticField(
+        default="replace",
+        exclude_if=lambda value: value == "replace",
+        description=(
+            "How an upsert combines a value with the stored one: ``replace`` "
+            "overwrites it; ``union`` keeps every member of both lists "
+            "(LIST fields only)."
+        ),
+    )
 
     @field_validator("type", mode="before")
     @classmethod
@@ -231,6 +252,11 @@ class Field(ConfigBaseModel):
             raise ValueError(
                 f"Field '{self.name}': item_type is only allowed when type is LIST, "
                 f"got type '{type_val}'"
+            )
+        if self.merge == "union" and type_val != FieldType.LIST.value:
+            raise ValueError(
+                f"Field '{self.name}': merge 'union' needs type LIST, got "
+                f"{type_val or 'untyped'}"
             )
         return self
 
@@ -489,6 +515,16 @@ def merge_fields(
         base, other = (a, b) if a.type is not None else (b, a)
     else:
         base, other = a, b
+
+    if (a.reserved, a.merge) != (b.reserved, b.merge):
+        # A writer-only field must not turn into a readable one by a merge.
+        raise FieldMergeConflict(
+            owner,
+            f"property {a.name!r}: reserved={a.reserved}, merge={a.merge!r} vs "
+            f"reserved={b.reserved}, merge={b.merge!r}",
+            "Declare the property the same way on both sides before merging.",
+            field=a.name,
+        )
 
     try:
         semantics = merge_field_semantics(
@@ -813,6 +849,18 @@ class Vertex(ConfigBaseModel):
                     f"Vertex '{self.name}': LIST-typed property '{name}' "
                     "cannot be used in identity_funnel"
                 )
+        reserved_names = {f.name for f in merged_properties if f.reserved}
+        keyed = sorted(
+            reserved_names
+            & {*identity_names, *hash_identity_names, *funnel_field_names}
+        )
+        if keyed:
+            # The writer stamps a reserved field, so as a key it would fold
+            # every vertex of one stamp into one.
+            raise ValueError(
+                f"Vertex '{self.name}': reserved property(ies) {keyed} cannot "
+                "be part of its identity"
+            )
         seen_names = {f.name for f in merged_properties}
         augmented = list(merged_properties)
         for name in identity_names + hash_identity_names + funnel_field_names:

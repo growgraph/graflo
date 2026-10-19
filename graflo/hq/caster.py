@@ -659,22 +659,9 @@ class Caster:
         bindings = bindings or Bindings()
         ingestion_params = ingestion_params or IngestionParams()
 
-        db_flavor = target_db_config.connection_type
-        self.schema.db_profile.db_flavor = db_flavor
-        self.schema.finish_init()
-
-        allowed_resource_names = self._resolve_ingestion_scope(
-            ingestion_params, bindings=bindings
+        allowed_resource_names = self.validate_run(
+            target_db_config, bindings, ingestion_params
         )
-
-        self.ingestion_model.finish_init(
-            self.schema.core_schema,
-            strict_references=ingestion_params.strict_references,
-            dynamic_edge_feedback=ingestion_params.dynamic_edges,
-            allowed_vertex_names=self._allowed_vertex_names,
-            target_db_flavor=db_flavor,
-        )
-        self._document_caster = DocumentCaster(self.ingestion_model)
 
         if data_source_registry is not None:
             registry = data_source_registry
@@ -696,6 +683,36 @@ class Caster:
                 connection_provider=connection_provider or EmptyConnectionProvider(),
             )
         )
+
+    def validate_run(
+        self,
+        target_db_config: DBConfig,
+        bindings: Bindings,
+        ingestion_params: IngestionParams,
+    ) -> set[str] | None:
+        """Check the run's scope and the pipelines against the schema, and return
+        the resources in scope (``None``: all).
+
+        Raises on a reference ``ingestion_params.strict_references`` refuses.
+        Touches no database, so callers run it before anything that does.
+        """
+        db_flavor = target_db_config.connection_type
+        self.schema.db_profile.db_flavor = db_flavor
+        self.schema.finish_init()
+
+        allowed_resource_names = self._resolve_ingestion_scope(
+            ingestion_params, bindings=bindings
+        )
+
+        self.ingestion_model.finish_init(
+            self.schema.core_schema,
+            strict_references=ingestion_params.strict_references,
+            dynamic_edge_feedback=ingestion_params.dynamic_edges,
+            allowed_vertex_names=self._allowed_vertex_names,
+            target_db_flavor=db_flavor,
+        )
+        self._document_caster = DocumentCaster(self.ingestion_model)
+        return allowed_resource_names
 
     def _resolve_ingestion_scope(
         self,

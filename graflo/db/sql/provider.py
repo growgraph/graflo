@@ -1,6 +1,6 @@
 """What a relational source must answer to be introspected.
 
-Introspection needs seven facts about a schema. Everything downstream —
+Introspection needs eight facts about a schema. Everything downstream —
 classifying a table as an entity or a relationship, recovering edge endpoints,
 mapping columns onto typed fields — is derived from those and is the same for
 every dialect. Naming them as a protocol is what lets PostgreSQL keep its
@@ -46,6 +46,16 @@ class SqlMetadataProvider(Protocol):
         self, table_name: str, schema_name: str | None = None
     ) -> list[str]:
         """Columns carrying a single-column uniqueness constraint."""
+        ...
+
+    def get_unique_constraints(
+        self, table_name: str, schema_name: str | None = None
+    ) -> list[list[str]]:
+        """Every uniqueness constraint, single- and multi-column.
+
+        One column list per constraint, columns in constraint order, constraints
+        in a stable order. The primary key is not included.
+        """
         ...
 
     def get_foreign_keys(

@@ -22,6 +22,7 @@ from graflo.architecture.graph_types.edge_derivation import EdgeDerivation
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import VertexConfig
 from graflo.architecture.util import project_dict
+from graflo.util.paths import lookup_field
 
 logger = logging.getLogger(__name__)
 
@@ -64,12 +65,19 @@ def _lookup_obs_buffer(
     obs_buffer: dict[LocationIndex, dict[str, Any]],
     lindex: LocationIndex | None,
     field: str,
+    *,
+    dotted: bool = False,
 ) -> tuple[bool, Any]:
     current = lindex
     while current is not None:
         doc = obs_buffer.get(current)
-        if isinstance(doc, dict) and field in doc:
-            return True, doc[field]
+        if isinstance(doc, dict):
+            if field in doc:
+                return True, doc[field]
+            if dotted:
+                found, value = lookup_field(doc, field)
+                if found:
+                    return True, value
         current = current.parent()
     return False, None
 
@@ -78,9 +86,11 @@ def _lookup_obs_buffer_at_locations(
     obs_buffer: dict[LocationIndex, dict[str, Any]],
     field: str,
     locations: tuple[LocationIndex | None, ...],
+    *,
+    dotted: bool = False,
 ) -> tuple[bool, Any]:
     for loc in locations:
-        found, value = _lookup_obs_buffer(obs_buffer, loc, field)
+        found, value = _lookup_obs_buffer(obs_buffer, loc, field, dotted=dotted)
         if found:
             return True, value
     return False, None
@@ -395,14 +405,28 @@ def render_edge(
                                 obs_buffer,
                                 relation_input_field,
                                 (source_loc, target_loc, lindex),
+                                dotted=True,
                             )
                         )
+                        if not found_relation:
+                            found_relation, relation_value = lookup_field(
+                                u_tr, relation_input_field
+                            )
+                        if not found_relation:
+                            found_relation, relation_value = lookup_field(
+                                v_tr, relation_input_field
+                            )
                         if found_relation:
                             extracted_relation = relation_value
-                        elif relation_input_field in u_tr:
-                            extracted_relation = u_tr[relation_input_field]
-                        elif relation_input_field in v_tr:
-                            extracted_relation = v_tr[relation_input_field]
+                        if (
+                            derivation is not None
+                            and derivation.relation_field == relation_input_field
+                        ):
+                            keep, extracted_relation = derivation.map_relation(
+                                extracted_relation
+                            )
+                            if not keep:
+                                continue
 
                     use_key = (
                         derivation.relation_from_key

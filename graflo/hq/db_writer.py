@@ -9,10 +9,11 @@ insertion.  All heavy DB I/O lives here so that
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
 import queue
 import threading
-from collections.abc import Coroutine, Iterator
+from collections.abc import Coroutine, Generator, Iterator, Mapping, Sequence
 from contextlib import AsyncExitStack, contextmanager
 from typing import Any, TypeVar, cast
 from uuid import uuid4
@@ -24,6 +25,7 @@ from graflo.architecture.evolution.sanitize import (
 )
 from graflo.architecture.graph_types import EdgeId, GraphContainer, Weight
 from graflo.architecture.graph_types.merge import fuse_doc_basis
+from graflo.architecture.graph_types.transform import VertexRep
 from graflo.architecture.schema import EdgeRuntime, Schema, SchemaDBAware
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.identity_digest import (
@@ -34,6 +36,7 @@ from graflo.architecture.schema.identity_uuid import (
     validate_uuid_typed_identity_fields,
 )
 from graflo.architecture.schema.physical_keys import PhysicalKeys
+from graflo.architecture.schema.vertex import field_type_value, is_list_field_type
 from graflo.connections.onto import DBConfig
 from graflo.db.conn import Connection, ConnectionCapability
 from graflo.db.manager import ConnectionManager
@@ -74,7 +77,7 @@ _SERIAL_EDGE_FLAVORS = frozenset({DBType.MEMGRAPH})
 _UNPOOLED_FLAVORS = frozenset({DBType.GRAFLO_BACKEND})
 
 
-async def _gather_settled(aws: list[Coroutine[Any, Any, _T]]) -> list[_T]:
+async def _gather_settled(aws: Sequence[Coroutine[Any, Any, _T]]) -> list[_T]:
     """Await every coroutine to the end, then raise the first failure if any.
 
     Unlike a plain ``gather``, no sibling is still running when the error
@@ -202,7 +205,7 @@ class DBWriter:
             logger.warning("Could not close a database connection", exc_info=True)
 
     @contextmanager
-    def _connection(self, conn_conf: DBConfig) -> Iterator[Any]:
+    def _connection(self, conn_conf: DBConfig) -> Generator[Any, None, None]:
         """A connection to *conn_conf* for one unit of work, kept for the run.
 
         Connections are opened lazily and reused, so a run holds at most as
@@ -251,9 +254,13 @@ class DBWriter:
         resource_name: str | None,
         *,
         bulk_session_id: str | None = None,
+        stamp: Mapping[str, Any] | None = None,
     ) -> None:
         """Push *gc* to the database (vertices, attached records, extra weights,
         then edges).
+
+        Every reserved field of every element written is set from *stamp*,
+        whatever value a document carries.
 
         When *bulk_session_id* is provided, appends rows using the connection's
         native bulk interface instead of using per-record writes.
@@ -265,9 +272,14 @@ class DBWriter:
             ``extra_weights``.
 
         Raises:
-            ValueError: If *gc* carries attached records under a bulk session.
+            ValueError: If *gc* carries attached records under a bulk session,
+                or an element of a type with a reserved field and *stamp* does
+                not set it.
         """
+        check_stamp(gc, self.schema, stamp)
+        self._check_union(gc, conn_conf)
         if bulk_session_id:
+            apply_stamp(gc, self.schema, stamp)
             self._validate_bulk_resource(resource_name)
             if any(gc.attached.values()):
                 raise ValueError(
@@ -303,6 +315,7 @@ class DBWriter:
             else None
         )
 
+        apply_stamp(gc, self.schema, stamp, edges=False)
         await self._push_vertices(gc, conn_conf)
         await self._attach_vertices(gc, conn_conf)
         if resource is not None:
@@ -313,6 +326,9 @@ class DBWriter:
             await asyncio.to_thread(self._resolve_blank_edges, gc, conn_conf)
         if resource is not None:
             await self._enrich_extra_weights(gc, conn_conf, resource)
+        # Edges last: blank resolution and extra weights add rows and
+        # attributes, and the stamp must win over both.
+        apply_stamp(gc, self.schema, stamp, vertices=False)
         await self._push_edges(gc, conn_conf, resource)
 
     def delete_vertices(
@@ -447,11 +463,14 @@ class DBWriter:
                             vcol=vcol, data=data, conn_conf=conn_conf
                         )
                         identity_fields = vc.identity_fields(vcol)
+                        union = self._union_fields(vcol, conn_conf)
                         if identity_fields:
                             # One row per vertex per batch, later wins: a backend
                             # that replaces a row or refuses a second touch would
                             # otherwise lose or fail on the earlier document.
-                            writable = fuse_doc_basis(writable, tuple(identity_fields))
+                            writable = fuse_doc_basis(
+                                writable, tuple(identity_fields), union
+                            )
                         db.upsert_docs_batch(
                             keys.vertex_docs(vcol, writable),
                             vc.vertex_dbname(vcol),
@@ -459,6 +478,7 @@ class DBWriter:
                             update_keys="doc",
                             filter_uniques=True,
                             dry=self.dry,
+                            **self._union_kwargs(vcol, union, conn_conf),
                         )
                         return vcol, None
 
@@ -471,6 +491,55 @@ class DBWriter:
         for vcol, result in results:
             if result is not None:
                 gc.vertices[vcol] = result
+
+    def _check_union(self, gc: GraphContainer, conn_conf: DBConfig) -> None:
+        """Refuse a write with ``merge: union`` fields the target cannot union.
+
+        Checked once, before anything is written, on every path.
+
+        Raises:
+            ValueError: A union field on an edge (never written as a union), or
+                on a vertex type when the target lacks union support.
+        """
+        core = self.schema.core_schema
+        for edge_id, rows in gc.edges.items():
+            edge = core.edge_config.declared(edge_id)
+            if edge is not None and rows:
+                union = sorted(f.name for f in edge.properties if f.merge == "union")
+                if union:
+                    raise ValueError(
+                        f"edge {edge_id}: fields {union} merge by union, which is "
+                        "not written on edges"
+                    )
+        vc = core.vertex_config
+        if any(
+            vcol in vc.vertex_set
+            and docs
+            and any(f.merge == "union" for f in vc.properties(vcol))
+            for docs_by_type in (gc.vertices, gc.attached)
+            for vcol, docs in docs_by_type.items()
+        ):
+            ConnectionManager.require(conn_conf, ConnectionCapability.UNION_MERGE)
+
+    def _union_fields(self, vcol: str, conn_conf: DBConfig) -> tuple[str, ...]:
+        """Logical names of *vcol*'s ``merge: union`` fields."""
+        vc = self._db_aware_for(conn_conf).vertex_config
+        return tuple(f.name for f in vc.properties(vcol) if f.merge == "union")
+
+    def _union_kwargs(
+        self, vcol: str, union: tuple[str, ...], conn_conf: DBConfig
+    ) -> dict[str, Any]:
+        """``union_fields`` for an upsert, in stored names, or nothing.
+
+        Raises:
+            ValueError: If the target cannot write a union, rather than writing
+                a replace in its place.
+        """
+        if not union:
+            return {}
+        ConnectionManager.require(conn_conf, ConnectionCapability.UNION_MERGE)
+        keys = self._keys_for(conn_conf)
+        return {"union_fields": tuple(keys.vertex_fields(vcol, list(union)))}
 
     def _drop_unkeyed_docs(
         self, vcol: str, data: list[dict], conn_conf: DBConfig
@@ -721,7 +790,9 @@ class DBWriter:
             return filled, stats
         # Records landing on one vertex become one row, later records winning:
         # a batch upsert may not touch the same row twice.
-        filled = fuse_doc_basis(filled, tuple(identity_fields))
+        filled = fuse_doc_basis(
+            filled, tuple(identity_fields), self._union_fields(vcol, conn_conf)
+        )
         if vc.is_hash_identity(vcol) or vc.is_assigned(vcol) or vc.is_blank(vcol):
             # Owners of a generated key mirrored it the same way when written.
             self._mirror_default_identity(vcol=vcol, data=filled, conn_conf=conn_conf)
@@ -733,6 +804,7 @@ class DBWriter:
         """Upsert one class's resolved attached rows on their primary identity."""
         vc = self._db_aware_for(conn_conf).vertex_config
         keys = self._keys_for(conn_conf)
+        union = self._union_fields(vcol, conn_conf)
         db.upsert_docs_batch(
             keys.vertex_docs(vcol, filled),
             vc.vertex_dbname(vcol),
@@ -740,6 +812,7 @@ class DBWriter:
             update_keys="doc",
             filter_uniques=True,
             dry=self.dry,
+            **self._union_kwargs(vcol, union, conn_conf),
         )
 
     def _record_attach(self, vcol: str, selector: str, stats: AttachStats) -> None:
@@ -1235,3 +1308,117 @@ class DBWriter:
                 next_weight[relation_field] = relation
             projected.append((source_doc, target_doc, next_weight))
         return projected, relation_name
+
+
+def check_stamp(
+    gc: GraphContainer, schema: Schema, stamp: Mapping[str, Any] | None
+) -> None:
+    """Refuse a write whose stamp does not set every reserved field it needs.
+
+    Checked for every vertex, attached record and declared edge type in *gc*,
+    before anything is written. A stamp value for a ``LIST`` field must be a
+    list (or tuple) whose members match the field's ``item_type`` where that is
+    an integer type.
+
+    Raises:
+        ValueError: A reserved field the stamp does not set, or a stamp value
+            of the wrong shape.
+    """
+    for owner, fields in _reserved_by_owner(gc, schema):
+        _stamp_values(fields, stamp, owner)
+
+
+def apply_stamp(
+    gc: GraphContainer,
+    schema: Schema,
+    stamp: Mapping[str, Any] | None,
+    *,
+    vertices: bool = True,
+    edges: bool = True,
+) -> None:
+    """Set every reserved field of the elements of *gc* from *stamp*, in place.
+
+    A value a document carries is overwritten: only the caller's stamp may set
+    a reserved field. Edge attribute dicts are updated in place, so every
+    reference to them (extra weights, linear rows) sees the stamp.
+
+    Raises:
+        ValueError: As :func:`check_stamp`.
+    """
+    core = schema.core_schema
+    vc = core.vertex_config
+    if vertices:
+        for docs_by_type in (gc.vertices, gc.attached):
+            for vcol, docs in docs_by_type.items():
+                if vcol not in vc.vertex_set or not docs:
+                    continue
+                fields = [f for f in vc.properties(vcol) if f.reserved]
+                if not fields:
+                    continue
+                values = _stamp_values(fields, stamp, f"vertex {vcol!r}")
+                for doc in docs:
+                    target = doc.vertex if isinstance(doc, VertexRep) else doc
+                    target.update(copy.deepcopy(values))
+    if edges:
+        for edge_id, rows in gc.edges.items():
+            edge = core.edge_config.declared(edge_id)
+            if edge is None or not rows:
+                continue
+            fields = [f for f in edge.properties if f.reserved]
+            if not fields:
+                continue
+            values = _stamp_values(fields, stamp, f"edge {edge_id}")
+            for i, row in enumerate(rows):
+                if len(row) > 2 and isinstance(row[2], dict):
+                    row[2].update(copy.deepcopy(values))
+                else:
+                    rows[i] = (row[0], row[1], copy.deepcopy(values))
+
+
+def _reserved_by_owner(
+    gc: GraphContainer, schema: Schema
+) -> Iterator[tuple[str, list[Any]]]:
+    """``(owner label, reserved fields)`` for each type *gc* writes."""
+    core = schema.core_schema
+    vc = core.vertex_config
+    for docs_by_type in (gc.vertices, gc.attached):
+        for vcol, docs in docs_by_type.items():
+            if vcol in vc.vertex_set and docs:
+                fields = [f for f in vc.properties(vcol) if f.reserved]
+                if fields:
+                    yield f"vertex {vcol!r}", fields
+    for edge_id, rows in gc.edges.items():
+        edge = core.edge_config.declared(edge_id)
+        if edge is not None and rows:
+            fields = [f for f in edge.properties if f.reserved]
+            if fields:
+                yield f"edge {edge_id}", fields
+
+
+def _stamp_values(
+    fields: list[Any], stamp: Mapping[str, Any] | None, owner: str
+) -> dict[str, Any]:
+    """The stamp's value for each of *fields*, checked against its type."""
+    stamp = stamp or {}
+    missing = sorted(f.name for f in fields if f.name not in stamp)
+    if missing:
+        raise ValueError(
+            f"{owner} has reserved fields {missing}; write it with a stamp that "
+            "sets them"
+        )
+    values: dict[str, Any] = {}
+    for field in fields:
+        value = stamp[field.name]
+        if is_list_field_type(field.type):
+            if not isinstance(value, (list, tuple)):
+                raise ValueError(
+                    f"stamp {field.name!r} for {owner} must be a list, got "
+                    f"{type(value).__name__}"
+                )
+            value = list(value)
+            if field_type_value(field.item_type) in ("INT", "UINT") and not all(
+                isinstance(v, int) and not isinstance(v, bool) for v in value
+            ):
+                raise ValueError(f"stamp {field.name!r} for {owner} must hold integers")
+        values[field.name] = copy.deepcopy(value)
+    return values

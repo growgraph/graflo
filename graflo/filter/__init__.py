@@ -31,6 +31,7 @@ from .onto import (
     ComparisonOperator,
     FilterExpression,
     LogicalOperator,
+    conjoin,
     parse_filter_expression,
     render_conjunct,
 )
@@ -44,6 +45,7 @@ __all__ = [
     "JoinClause",
     "LogicalOperator",
     "SelectSpec",
+    "conjoin",
     "parse_filter_expression",
     "render_conjunct",
 ]

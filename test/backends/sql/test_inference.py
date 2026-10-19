@@ -7,8 +7,14 @@ specific — given the same shape, SQLite yields the same graph.
 
 from __future__ import annotations
 
+import sqlite3
+from collections.abc import Iterator
 from typing import Any, cast
 
+import pytest
+from sqlalchemy import create_engine
+
+from graflo.db.postgres.schema_inference import PostgresSchemaInferencer
 from graflo.db.sql import detect_edge_tables, detect_vertex_tables, introspect_schema
 from graflo.db.sql.introspect import foreign_keys_in_column_order
 from graflo.hq.sql_inferencer import SQLInferenceManager
@@ -61,6 +67,11 @@ class _ConstraintNameOrdered:
     def get_unique_columns(
         self, table_name: str, schema_name: str | None = None
     ) -> list[str]:
+        return []
+
+    def get_unique_constraints(
+        self, table_name: str, schema_name: str | None = None
+    ) -> list[list[str]]:
         return []
 
     def get_foreign_keys(
@@ -160,11 +171,97 @@ def test_a_full_manifest_is_inferred(sqlite_provider) -> None:
 
 def test_sampling_is_optional(sqlite_provider) -> None:
     """Inference without a provider still works — it just cannot refine types."""
-    from graflo.db.postgres.schema_inference import PostgresSchemaInferencer
-
     result = introspect_schema(sqlite_provider)
     schema = PostgresSchemaInferencer(db_flavor=DBType.ARANGO).infer_schema(result)
     assert {v.name for v in schema.core_schema.vertex_config.vertices} == {
         "author",
         "field",
     }
+
+
+#: Each table carries one kind of UNIQUE constraint next to its primary key.
+UNIQUE_DDL = """
+CREATE TABLE person (
+    id    INTEGER PRIMARY KEY,
+    email TEXT NOT NULL UNIQUE,
+    name  TEXT
+);
+CREATE TABLE listing (
+    id       INTEGER PRIMARY KEY,
+    exchange TEXT NOT NULL,
+    ticker   TEXT NOT NULL,
+    UNIQUE (exchange, ticker)
+);
+CREATE TABLE region (
+    code  TEXT PRIMARY KEY,
+    label TEXT,
+    UNIQUE (code)
+);
+"""
+
+
+@pytest.fixture(scope="module")
+def unique_provider(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Any]:
+    from graflo.db.sql.alchemy import SqlAlchemyMetadataProvider
+
+    path = tmp_path_factory.mktemp("sqlite_unique") / "source.db"
+    connection = sqlite3.connect(path)
+    connection.executescript(UNIQUE_DDL)
+    connection.commit()
+    connection.close()
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        yield SqlAlchemyMetadataProvider(engine)
+    finally:
+        engine.dispose()
+
+
+def _inferred_vertices(provider: Any) -> dict[str, Any]:
+    schema = PostgresSchemaInferencer(db_flavor=DBType.ARANGO).infer_schema(
+        introspect_schema(provider)
+    )
+    return {v.name: v for v in schema.core_schema.vertex_config.vertices}
+
+
+def test_unique_constraints_are_reported_whole(unique_provider) -> None:
+    assert unique_provider.get_unique_constraints("person") == [["email"]]
+    assert unique_provider.get_unique_constraints("listing") == [["exchange", "ticker"]]
+    assert unique_provider.get_unique_constraints("region") == [["code"]]
+
+
+def test_a_single_column_unique_becomes_a_secondary_identity(
+    unique_provider,
+) -> None:
+    person = _inferred_vertices(unique_provider)["person"]
+    assert person.identity == ["id"]
+    assert [(s.name, s.fields) for s in person.secondary_identities] == [
+        ("unique_email", ["email"])
+    ]
+
+
+def test_a_composite_unique_becomes_one_secondary_identity(unique_provider) -> None:
+    listing = _inferred_vertices(unique_provider)["listing"]
+    assert [(s.name, s.fields) for s in listing.secondary_identities] == [
+        ("unique_exchange_ticker", ["exchange", "ticker"])
+    ]
+
+
+def test_a_unique_equal_to_the_primary_key_adds_nothing(unique_provider) -> None:
+    region = _inferred_vertices(unique_provider)["region"]
+    assert region.identity == ["code"]
+    assert region.secondary_identities == []
+
+
+class TestSecondaryIdentitiesFromUnique:
+    def test_array_and_unknown_columns_are_skipped(self) -> None:
+        from graflo.db.postgres.schema_inference import (
+            secondary_identities_from_unique,
+        )
+
+        found = secondary_identities_from_unique(
+            [["tags"], ["ghost"], ["a", "b"], ["b", "a"]],
+            ["id"],
+            ["id", "tags", "a", "b"],
+            list_columns={"tags"},
+        )
+        assert [(s.name, s.fields) for s in found] == [("unique_a_b", ["a", "b"])]

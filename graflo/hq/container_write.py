@@ -61,7 +61,8 @@ def edge_label(edge_id: EdgeId) -> str:
     return f"{edge_id[0]}-{edge_id[2] or ''}-{edge_id[1]}"
 
 
-def _define(schema: Schema, conn_conf: DBConfig, recreate: bool) -> bool:
+def define_schema(schema: Schema, conn_conf: DBConfig, recreate: bool) -> bool:
+    """Define *schema* on the target, or reuse its definition; True when defined."""
     manifest = GraphManifest(
         graph_schema=schema, ingestion_model=IngestionModel(resources=[])
     )
@@ -170,7 +171,7 @@ async def write_container(
         ContainerWriteReport: counts of what was sent and what was looked up.
     """
     schema = schema.model_copy(deep=True)
-    defined = await asyncio.to_thread(_define, schema, conn_conf, recreate_schema)
+    defined = await asyncio.to_thread(define_schema, schema, conn_conf, recreate_schema)
     to_write = GraphContainer(
         vertices={
             name: [dict(doc) for doc in docs]

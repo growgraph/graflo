@@ -2,7 +2,7 @@
 
 PostgreSQL reads its own catalogue directly, which is faster and exposes column
 comments. Every other engine arrives here instead: SQLAlchemy's ``Inspector``
-answers the same seven questions against SQLite, MySQL, DuckDB, Snowflake,
+answers the same eight questions against SQLite, MySQL, DuckDB, Snowflake,
 BigQuery or anything else with a dialect installed, so schema inference is a
 property of the engine's reflection support rather than of GraFlo.
 
@@ -140,6 +140,24 @@ class SqlAlchemyMetadataProvider(SqlMetadataProvider):
             if len(columns) == 1:
                 unique.append(columns[0])
         return unique
+
+    def get_unique_constraints(
+        self, table_name: str, schema_name: str | None = None
+    ) -> list[list[str]]:
+        """Every unique constraint as a column list, in reflection order.
+
+        Repeated column lists are reported once.
+        """
+        schema = self._schema(schema_name)
+        constraints = self._reflect(
+            "get_unique_constraints", table_name, schema, default=[]
+        )
+        out: list[list[str]] = []
+        for constraint in constraints:
+            columns = list(constraint.get("column_names") or [])
+            if columns and columns not in out:
+                out.append(columns)
+        return out
 
     def get_foreign_keys(
         self, table_name: str, schema_name: str | None = None

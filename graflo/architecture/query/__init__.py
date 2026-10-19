@@ -14,6 +14,7 @@ from graflo.architecture.query.models import (
     GraphQuery,
     NeighborQuery,
     NodeQuery,
+    ReservedFieldError,
     TraverseQuery,
 )
 from graflo.architecture.query.result import QueryResult
@@ -27,5 +28,6 @@ __all__ = [
     "NodeQuery",
     "QueryCaps",
     "QueryResult",
+    "ReservedFieldError",
     "TraverseQuery",
 ]

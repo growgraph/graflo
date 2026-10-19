@@ -29,6 +29,7 @@ class FileDataSource(AbstractDataSource):
     """
 
     path: Path | str
+    # Subclasses fix it to their format; validate_assignment refuses None there.
     file_type: str | None = None
     encoding: EncodingType = EncodingType.UTF_8
     source_type: DataSourceType = DataSourceType.FILE
@@ -85,7 +86,7 @@ class JsonFileDataSource(FileDataSource):
         encoding: File encoding (default: UTF_8)
     """
 
-    file_type: str = ChunkerType.JSON.value
+    file_type: str = ChunkerType.JSON.value  # ty: ignore[invalid-mutable-override]
 
 
 class JsonlFileDataSource(FileDataSource):
@@ -99,7 +100,7 @@ class JsonlFileDataSource(FileDataSource):
         encoding: File encoding (default: UTF_8)
     """
 
-    file_type: str = ChunkerType.JSONL.value
+    file_type: str = ChunkerType.JSONL.value  # ty: ignore[invalid-mutable-override]
 
 
 class TableFileDataSource(FileDataSource):
@@ -115,7 +116,7 @@ class TableFileDataSource(FileDataSource):
     """
 
     sep: str = ","
-    file_type: str = ChunkerType.TABLE.value
+    file_type: str = ChunkerType.TABLE.value  # ty: ignore[invalid-mutable-override]
 
 
 class ParquetFileDataSource(FileDataSource):
@@ -128,4 +129,4 @@ class ParquetFileDataSource(FileDataSource):
         path: Path to the Parquet file
     """
 
-    file_type: str = ChunkerType.PARQUET.value
+    file_type: str = ChunkerType.PARQUET.value  # ty: ignore[invalid-mutable-override]

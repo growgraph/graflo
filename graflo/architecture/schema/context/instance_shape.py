@@ -18,7 +18,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from graflo.architecture.schema.context.element_text import extractable_properties
+from graflo.architecture.schema.context.element_text import (
+    extractable_edge_properties,
+    extractable_properties,
+)
 
 if TYPE_CHECKING:
     from graflo.architecture.schema.document import Schema
@@ -92,7 +95,9 @@ def instance_json_schema(schema: Schema) -> dict[str, Any]:
         {field.name for vertex in vertices for field in extractable_properties(vertex)}
     )
     relations = sorted({edge.relation for edge in edges if edge.relation is not None})
-    edge_props = sorted({field.name for edge in edges for field in edge.properties})
+    edge_props = sorted(
+        {field.name for edge in edges for field in extractable_edge_properties(edge)}
+    )
 
     relation: dict[str, Any]
     if any(edge.relation is None for edge in edges):

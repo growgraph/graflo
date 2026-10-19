@@ -60,6 +60,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Iterable
 from typing import Any
 
 import suthing
@@ -118,6 +119,18 @@ def _edge_slot(source: str, target: str, relation: str | None) -> Slot:
     if relation is None:
         return ("edge", *endpoints)
     return (*_relation_slot(relation), "edge", *endpoints)
+
+
+def _edge_field_slot(source: str, target: str, relation: str | None) -> Slot:
+    """Where a per-edge property change lands: its relation's property slot.
+
+    The same slot as the relation-wide form, so a change to one edge of a
+    relation and a change to the whole relation see each other. An edge with
+    no relation has properties under its own root.
+    """
+    if relation is None:
+        return (*_edge_slot(source, target, None), "field")
+    return (*_relation_slot(relation), "field")
 
 
 def _field_slot(vertex: str, field: str) -> Slot:
@@ -287,10 +300,13 @@ def op_slots(op: ManifestOp) -> set[Slot]:
     # ── edge properties ─────────────────────────────────────────────────────
     elif isinstance(op, ops.AddEdgePropertiesOp):
         slots |= {(*_relation_slot(rel), "field") for rel in op.additions}
+        slots |= {_edge_field_slot(*entry.edge_id()) for entry in op.per_edge}
     elif isinstance(op, ops.RemoveEdgePropertiesOp):
         slots |= {(*_relation_slot(rel), "field") for rel in op.removals}
+        slots |= {_edge_field_slot(*entry.edge_id()) for entry in op.per_edge}
     elif isinstance(op, ops.RenameEdgePropertiesOp):
         slots |= {(*_relation_slot(rel), "field") for rel in op.renames}
+        slots |= {_edge_field_slot(*entry.edge_id()) for entry in op.per_edge}
 
     # ── vertex indexes ──────────────────────────────────────────────────────
     elif isinstance(op, (ops.AddVertexIndexesOp, ops.RemoveVertexIndexesOp)):
@@ -304,6 +320,11 @@ def op_slots(op: ManifestOp) -> set[Slot]:
             slots |= {
                 (*_relation_slot(relation), "field", str(field), "type")
                 for field in fields
+            }
+        for entry in op.per_edge:
+            slots |= {
+                (*_edge_field_slot(*entry.edge_id()), str(field), "type")
+                for field in entry.fields
             }
 
     # ── ingestion ───────────────────────────────────────────────────────────
@@ -353,7 +374,11 @@ _SPLITS: dict[type, tuple[tuple[str, str], ...]] = {
     ops.AddVertexPropertiesOp: (("additions", "entries"),),
     ops.RemoveVertexPropertiesOp: (("removals", "entries"),),
     ops.RenameVertexPropertiesOp: (("renames", "entries"),),
-    ops.ChangeFieldTypesOp: (("vertices", "entries"), ("edges", "entries")),
+    ops.ChangeFieldTypesOp: (
+        ("vertices", "entries"),
+        ("edges", "entries"),
+        ("per_edge", "items"),
+    ),
     ops.ReplaceIdentityOp: (("replacements", "keys"),),
     ops.AddSecondaryIdentitiesOp: (("additions", "keys"),),
     ops.RemoveSecondaryIdentitiesOp: (("removals", "keys"),),
@@ -371,9 +396,9 @@ _SPLITS: dict[type, tuple[tuple[str, str], ...]] = {
     ops.SetEdgeSemanticsOp: (("edges", "items"),),
     ops.SetEdgeDescriptionsOp: (("edges", "items"),),
     ops.RenameRelationsOp: (("renames", "keys"),),
-    ops.AddEdgePropertiesOp: (("additions", "keys"),),
-    ops.RemoveEdgePropertiesOp: (("removals", "keys"),),
-    ops.RenameEdgePropertiesOp: (("renames", "keys"),),
+    ops.AddEdgePropertiesOp: (("additions", "keys"), ("per_edge", "items")),
+    ops.RemoveEdgePropertiesOp: (("removals", "keys"), ("per_edge", "items")),
+    ops.RenameEdgePropertiesOp: (("renames", "keys"), ("per_edge", "items")),
 }
 
 
@@ -385,8 +410,10 @@ def _rename_chains(op: ManifestOp) -> bool:
     """
     if isinstance(op, (ops.RenameVerticesOp, ops.RenameRelationsOp)):
         maps = [op.renames]
-    elif isinstance(op, (ops.RenameVertexPropertiesOp, ops.RenameEdgePropertiesOp)):
+    elif isinstance(op, ops.RenameVertexPropertiesOp):
         maps = list(op.renames.values())
+    elif isinstance(op, ops.RenameEdgePropertiesOp):
+        maps = [*op.renames.values(), *(entry.renames for entry in op.per_edge)]
     else:
         return False
     return any(
@@ -466,23 +493,36 @@ def relation_aliases(side_ops: list[ManifestOp]) -> RelationAliases:
     return aliases
 
 
+def _per_edge_reads(entries: Iterable[ops.EdgeSelector]) -> set[Slot]:
+    """The edge triples *entries* name, and the vertices they connect."""
+    return {
+        _vertex_slot(name) for entry in entries for name in (entry.source, entry.target)
+    } | {_edge_slot(*entry.edge_id()) for entry in entries}
+
+
 def _relation_endpoints(
     base: GraphManifest | None,
     relation: str,
     aliases: RelationAliases | None = None,
 ) -> set[Slot]:
-    """The vertices the edges of *relation*, or the relations it stands for, connect in *base*."""
+    """The edges of *relation*, or the relations it stands for, in *base*, and their vertices.
+
+    The edges themselves are read too: removing the relation's last edge by
+    triple leaves no relation for the op to address.
+    """
     if base is None or base.graph_schema is None:
         return set()
     wanted = {
         _relation_slot(name) for name in {relation, *(aliases or {}).get(relation, ())}
     }
-    return {
-        _vertex_slot(name)
+    edges = [
+        edge
         for edge in base.graph_schema.core_schema.edge_config.edges
         if edge.relation is not None and _relation_slot(edge.relation) in wanted
-        for name in (edge.source, edge.target)
-    }
+    ]
+    return {
+        _vertex_slot(name) for edge in edges for name in (edge.source, edge.target)
+    } | {_edge_slot(edge.source, edge.target, edge.relation) for edge in edges}
 
 
 def _key_field_reads(vertex: str, fields: list[str]) -> set[Slot]:
@@ -583,10 +623,16 @@ def op_reads(
     elif isinstance(op, ops.AddEdgePropertiesOp):
         for relation in op.additions:
             reads |= _relation_endpoints(base, relation, aliases)
+        reads |= _per_edge_reads(op.per_edge)
     elif isinstance(op, ops.RemoveEdgePropertiesOp):
         for relation in op.removals:
             reads |= _relation_endpoints(base, relation, aliases)
-    elif isinstance(op, (ops.RenameEdgePropertiesOp, ops.RenameRelationsOp)):
+        reads |= _per_edge_reads(op.per_edge)
+    elif isinstance(op, ops.RenameEdgePropertiesOp):
+        for relation in op.renames:
+            reads |= _relation_endpoints(base, relation, aliases)
+        reads |= _per_edge_reads(op.per_edge)
+    elif isinstance(op, ops.RenameRelationsOp):
         for relation in op.renames:
             reads |= _relation_endpoints(base, relation, aliases)
     elif isinstance(op, ops.MergeEdgesOp):
@@ -604,6 +650,7 @@ def op_reads(
     elif isinstance(op, ops.ChangeFieldTypesOp):
         for relation in op.edges:
             reads |= _relation_endpoints(base, relation, aliases)
+        reads |= _per_edge_reads(op.per_edge)
 
     # ── keys ────────────────────────────────────────────────────────────────
     elif isinstance(op, ops.ReplaceIdentityOp):
@@ -967,9 +1014,9 @@ def merge_three_way(
         when unresolved conflicts remain.
 
     Raises:
-        MergeError: A side changed something no operation expresses -- a
-            property gained by one of a relation's edges and not its siblings,
-            say -- so the merged manifest would silently lack it. Also when the
+        MergeError: A side changed something no operation expresses -- it
+            dropped the ingestion block, say -- so the merged manifest would
+            silently lack it. Also when the
             merged change set does not apply to *base*.
     """
     from .apply import apply_evolution

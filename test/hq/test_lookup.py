@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -15,6 +16,7 @@ from graflo.architecture.schema.semantics import FieldSemantics
 from graflo.architecture.schema.vertex import Field, Vertex, VertexConfig
 from graflo.connections.graflo_backend import GraFloBackendConfig
 from graflo.db.manager import ConnectionManager
+from graflo.filter.onto import ComparisonOperator, FilterExpression
 from graflo.hq.lookup import (
     AliasHop,
     KeyPattern,
@@ -22,10 +24,21 @@ from graflo.hq.lookup import (
     label_fields,
     lookup_candidates,
 )
+from graflo.onto import DBType
 from graflo.util.transform import normalize_label
 
 NAME = "https://schema.org/name"
 ALT_LABEL = "http://www.w3.org/2004/02/skos/core#altLabel"
+
+
+def zones_guard(zones: set[int]) -> FilterExpression:
+    """A read guard: the element shares a zone with *zones*."""
+    return FilterExpression(
+        kind="leaf",
+        field="access_zones",
+        cmp_operator=ComparisonOperator.ANY_IN,
+        value=[sorted(zones)],
+    )
 
 
 def _schema() -> Schema:
@@ -189,3 +202,56 @@ class TestLookup:
 
     def test_nothing_named_finds_nothing(self, conn: Any) -> None:
         assert lookup_candidates(conn, _schema(), "all quiet today", SPEC) == []
+
+
+class _GuardedReader:
+    """A Neo4j-flavoured stand-in that records what each read was given."""
+
+    flavor = DBType.NEO4J
+    supports_read_guard = True
+
+    def __init__(self) -> None:
+        self.resolve_kwargs: list[dict[str, Any]] = []
+        self.neighbour_kwargs: list[dict[str, Any]] = []
+
+    def require_read_guard(self) -> None:
+        pass
+
+    def resolve_vertices(self, *args: Any, **kwargs: Any) -> dict:
+        self.resolve_kwargs.append(kwargs)
+        return {0: [{"sku": "P-200", "label": "the Berlin pump", "number": "1"}]}
+
+    def graph_neighbors(self, *args: Any, **kwargs: Any) -> Any:
+        self.neighbour_kwargs.append(kwargs)
+        return SimpleNamespace(vertices={})
+
+
+def test_a_guard_reaches_every_read_the_lookup_makes() -> None:
+    reader = _GuardedReader()
+    guard = zones_guard({1})
+
+    lookup_candidates(
+        reader,
+        _schema(),
+        "the Berlin pump",
+        LookupSpec(
+            aliases=[
+                AliasHop(
+                    alias_type="Alias",
+                    relation="ALIAS_OF",
+                    target_type="Product",
+                )
+            ]
+        ),
+        guard=guard,
+    )
+
+    assert reader.resolve_kwargs
+    assert all(kw["guard"] is guard for kw in reader.resolve_kwargs)
+    assert reader.neighbour_kwargs
+    assert all(kw["guard"] is guard for kw in reader.neighbour_kwargs)
+
+
+def test_a_guard_is_refused_where_the_backend_cannot_apply_it(conn: Any) -> None:
+    with pytest.raises(NotImplementedError, match="read guard"):
+        lookup_candidates(conn, _schema(), "pump", guard=zones_guard({1}))

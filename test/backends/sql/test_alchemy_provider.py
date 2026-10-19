@@ -1,4 +1,4 @@
-"""The reflection provider answers the seven questions introspection asks.
+"""The reflection provider answers the eight questions introspection asks.
 
 Asserted against SQLite rather than PostgreSQL on purpose: PostgreSQL has its
 own catalogue path, so proving the protocol only there would prove nothing
@@ -96,6 +96,7 @@ def test_absent_constraint_reflection_is_not_fatal(sqlite_engine) -> None:
     provider._inspector = cast(Inspector, _PartialInspector(provider.inspector))
 
     assert provider.get_unique_columns("author") == []
+    assert provider.get_unique_constraints("author") == []
     assert provider.get_foreign_keys("author_field") == []
 
     # Tables and keys still reflect, so entities are still recovered.

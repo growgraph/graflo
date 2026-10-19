@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import Literal
+from collections.abc import Callable, Collection, Mapping, Sequence
+from typing import Any, Literal
 
 from pydantic import AliasChoices, model_validator
 from pydantic import Field as PydanticField
@@ -112,31 +112,138 @@ class MergeEdgesOp(ConfigBaseModel):
         return self
 
 
+def validate_per_edge(
+    by_relation: Mapping[str, Collection[str]],
+    per_edge: Sequence[EdgeSelector],
+    names: Callable[[Any], Collection[str]],
+    *,
+    kind: str,
+) -> None:
+    """Refuse an empty op, a triple named twice, and a property named both ways.
+
+    A property changed relation-wide and on one edge of that relation at once
+    has two readings, so neither is picked.
+    """
+    if not by_relation and not per_edge:
+        raise ValueError(f"{kind} requires at least one relation or per_edge entry")
+    _validate_unique_edge_selectors(per_edge, kind=kind)
+    for entry in per_edge:
+        if entry.relation is None:
+            continue
+        both = sorted(set(names(entry)) & set(by_relation.get(entry.relation, ())))
+        if both:
+            raise ValueError(
+                f"{kind}: {both} on {entry.edge_id()} are named both for relation "
+                f"{entry.relation!r} and for the edge"
+            )
+
+
+class EdgePropertyRenames(EdgeSelector):
+    """Property renames on one edge triple."""
+
+    renames: dict[str, str] = PydanticField(
+        ..., description="``{old_field: new_field}``.", min_length=1
+    )
+
+
+class EdgePropertyRemovals(EdgeSelector):
+    """Property removals on one edge triple."""
+
+    fields: list[str] = PydanticField(
+        ..., description="Names of the properties to remove.", min_length=1
+    )
+
+
+class EdgePropertyAdditions(EdgeSelector):
+    """Property additions on one edge triple."""
+
+    properties: list[str | Field] = PydanticField(
+        ...,
+        description="Properties to add: a bare name or a full field.",
+        min_length=1,
+    )
+
+    def field_names(self) -> list[str]:
+        return [
+            entry if isinstance(entry, str) else entry.name for entry in self.properties
+        ]
+
+
 class RenameEdgePropertiesOp(ConfigBaseModel):
-    """Rename edge properties for each relation across schema/profile/ingestion."""
+    """Rename edge properties across schema/profile/ingestion.
+
+    ``renames`` addresses a relation and applies to every edge on it;
+    ``per_edge`` addresses one triple, including an edge with no relation.
+    """
 
     op: Literal["rename_edge_properties"] = "rename_edge_properties"
     renames: dict[str, dict[str, str]] = PydanticField(
-        ...,
+        default_factory=dict,
         description=(
             "Per-relation edge field rename map: "
             "``{relation_name: {old_field: new_field}}``."
         ),
-        min_length=1,
     )
+    per_edge: list[EdgePropertyRenames] = PydanticField(
+        default_factory=list, description="Renames on single edge triples."
+    )
+
+    @model_validator(mode="after")
+    def _validate_targets(self) -> RenameEdgePropertiesOp:
+        validate_per_edge(
+            self.renames,
+            self.per_edge,
+            lambda entry: entry.renames,
+            kind="rename_edge_properties",
+        )
+        return self
+
+    def renames_for(self, edge_id: tuple[str, str, str | None]) -> dict[str, str]:
+        """The renames that reach the edge *edge_id*, from either form."""
+        out = dict(self.renames.get(edge_id[2], {})) if edge_id[2] is not None else {}
+        for entry in self.per_edge:
+            if entry.edge_id() == edge_id:
+                out |= entry.renames
+        return out
 
 
 class RemoveEdgePropertiesOp(ConfigBaseModel):
-    """Remove edge properties for each relation across schema/profile/ingestion."""
+    """Remove edge properties across schema/profile/ingestion.
+
+    ``removals`` addresses a relation and applies to every edge on it;
+    ``per_edge`` addresses one triple, including an edge with no relation.
+    """
 
     op: Literal["remove_edge_properties"] = "remove_edge_properties"
     removals: dict[str, list[str]] = PydanticField(
-        ...,
+        default_factory=dict,
         description=(
             "Per-relation edge field removals: ``{relation_name: [field_name, ...]}``."
         ),
-        min_length=1,
     )
+    per_edge: list[EdgePropertyRemovals] = PydanticField(
+        default_factory=list, description="Removals on single edge triples."
+    )
+
+    @model_validator(mode="after")
+    def _validate_targets(self) -> RemoveEdgePropertiesOp:
+        validate_per_edge(
+            self.removals,
+            self.per_edge,
+            lambda entry: entry.fields,
+            kind="remove_edge_properties",
+        )
+        return self
+
+    def removals_for(self, edge_id: tuple[str, str, str | None]) -> set[str]:
+        """The names removed from the edge *edge_id*, from either form."""
+        out = (
+            set(self.removals.get(edge_id[2], [])) if edge_id[2] is not None else set()
+        )
+        for entry in self.per_edge:
+            if entry.edge_id() == edge_id:
+                out |= set(entry.fields)
+        return out
 
 
 class AddEdgePropertiesOp(ConfigBaseModel):
@@ -146,17 +253,32 @@ class AddEdgePropertiesOp(ConfigBaseModel):
     :class:`~graflo.architecture.schema.vertex.Field`, as on
     :class:`AddVertexPropertiesOp`, so a typed or grounded edge property is
     one replayable step rather than an add followed by a type change.
+
+    ``additions`` addresses a relation and applies to every edge on it;
+    ``per_edge`` addresses one triple, including an edge with no relation.
     """
 
     op: Literal["add_edge_properties"] = "add_edge_properties"
     additions: dict[str, list[str | Field]] = PydanticField(
-        ...,
+        default_factory=dict,
         description=(
             "Per-relation edge property additions: "
             "``{relation_name: [field_name | Field, ...]}``."
         ),
-        min_length=1,
     )
+    per_edge: list[EdgePropertyAdditions] = PydanticField(
+        default_factory=list, description="Additions on single edge triples."
+    )
+
+    @model_validator(mode="after")
+    def _validate_targets(self) -> AddEdgePropertiesOp:
+        validate_per_edge(
+            {relation: self.field_names(relation) for relation in self.additions},
+            self.per_edge,
+            lambda entry: entry.field_names(),
+            kind="add_edge_properties",
+        )
+        return self
 
     def field_names(self, relation: str) -> list[str]:
         """The names added to *relation*, whichever shape they were written in."""
@@ -164,6 +286,14 @@ class AddEdgePropertiesOp(ConfigBaseModel):
             entry if isinstance(entry, str) else entry.name
             for entry in self.additions.get(relation, [])
         ]
+
+    def additions_for(self, edge_id: tuple[str, str, str | None]) -> list[str | Field]:
+        """The entries that reach the edge *edge_id*, from either form."""
+        out = list(self.additions.get(edge_id[2], [])) if edge_id[2] is not None else []
+        for entry in self.per_edge:
+            if entry.edge_id() == edge_id:
+                out += entry.properties
+        return out
 
 
 class AddEdgesOp(ConfigBaseModel):

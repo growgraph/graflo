@@ -405,8 +405,8 @@ def test_independence_is_about_writes_and_reads() -> None:
     assert ops_independent(add_edge, add_field)
 
 
-def test_a_change_no_op_expresses_refuses_the_merge() -> None:
-    """One sibling edge gains a field: no op says that, so merging would drop it."""
+def test_a_gain_on_one_sibling_edge_survives_a_merge() -> None:
+    """One sibling edge gains a field: a per-edge addition carries it."""
     to_city = {"source": "person", "target": "city", "relation": "knows"}
     vertices = [_vertex("person", ["id"], ["id"]), _vertex("city", ["id"], ["id"])]
     loop = {"source": "person", "target": "person", "relation": "knows"}
@@ -416,8 +416,40 @@ def test_a_change_no_op_expresses_refuses_the_merge() -> None:
         [*vertices, _vertex("order", ["id"], ["id"])], [loop, to_city]
     )
 
+    merged, result = merge_three_way(base, gained, unrelated)
+
+    assert merged is not None and not result.conflicts
+    edges = {
+        edge.edge_id: [f.name for f in edge.properties]
+        for edge in _core(merged).edge_config.edges
+    }
+    assert edges == {
+        ("person", "person", "knows"): ["since"],
+        ("person", "city", "knows"): [],
+    }
+    assert "order" in _core(merged).vertex_config.vertex_set
+
+
+def test_a_change_no_op_expresses_refuses_the_merge() -> None:
+    """Dropping the ingestion block: no op says that, so merging would lose it."""
+    base = GraphManifest.from_dict(
+        {
+            **_person(["id"]).to_dict(),
+            "ingestion_model": {
+                "resources": [{"name": "people", "pipeline": [{"vertex": "person"}]}]
+            },
+        }
+    )
+    dropped = _person(["id"])
+    unrelated = GraphManifest.from_dict(
+        {
+            **_person(["id", "age"]).to_dict(),
+            "ingestion_model": base.to_dict()["ingestion_model"],
+        }
+    )
+
     try:
-        merge_three_way(base, gained, unrelated)
+        merge_three_way(base, dropped, unrelated)
     except MergeError as refusal:
         assert "no operation expresses" in str(refusal)
     else:

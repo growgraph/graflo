@@ -568,7 +568,9 @@ class TigerGraphConnection(Connection):
     def fetch_present_documents(self, *args, **kwargs):
         return self._data.fetch_present_documents(*args, **kwargs)
 
-    def resolve_vertices(self, *args, **kwargs):
+    def resolve_vertices(self, *args, guard=None, **kwargs):
+        if guard is not None:
+            self.require_read_guard()
         return self._data.resolve_vertices(*args, **kwargs)
 
     def delete_vertices(self, *args, **kwargs):

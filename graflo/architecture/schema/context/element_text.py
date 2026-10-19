@@ -123,9 +123,21 @@ def minted_key_fields(vertex: Vertex) -> set[str]:
 
 
 def extractable_properties(vertex: Vertex) -> list[Field]:
-    """The vertex's properties a document can supply, in declared order."""
+    """The vertex's properties a document can supply, in declared order.
+
+    Minted key fields and reserved fields are left out: no text supplies them.
+    """
     minted = minted_key_fields(vertex)
-    return [field for field in vertex.properties if field.name not in minted]
+    return [
+        field
+        for field in vertex.properties
+        if field.name not in minted and not field.reserved
+    ]
+
+
+def extractable_edge_properties(edge: Edge) -> list[Field]:
+    """The edge's properties a document can supply: all but reserved fields."""
+    return [field for field in edge.properties if not field.reserved]
 
 
 def identity_label(vertex: Vertex) -> str:
@@ -184,9 +196,10 @@ def edge_text(edge: Edge) -> str:
     if description:
         parts.append(f'description: "{description}"')
     parts.extend(_semantic_parts(edge.semantics))
-    if edge.properties:
+    properties = extractable_edge_properties(edge)
+    if properties:
         parts.append(
-            f"properties: {', '.join(field_label(field) for field in edge.properties)}"
+            f"properties: {', '.join(field_label(field) for field in properties)}"
         )
     return " | ".join(parts)
 
@@ -260,5 +273,7 @@ def iter_elements(schema: Schema, *, properties: bool = True) -> Iterator[Elemen
         )
         if properties:
             yield from _property_rows(
-                edge.properties, edge_pattern(edge), edge_id=edge.edge_id
+                extractable_edge_properties(edge),
+                edge_pattern(edge),
+                edge_id=edge.edge_id,
             )

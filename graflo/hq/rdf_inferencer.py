@@ -12,6 +12,8 @@ The mapping follows these conventions:
   (source = domain class, target = range class)
 - Subject URI local name -> ``_key``
 - Inferred vertex **identity** is ``["_uri"]`` so ABox ingestion keys on stable RDF subject URIs.
+- ``owl:hasKey`` and inverse-functional datatype properties -> **secondary
+  identities** (lookup keys) on the class; ``_uri`` stays the primary identity.
 - **Object properties** (edges) become per-resource pipeline steps on the domain class that
   materialize the range vertex from the object-property field (URI reference) and emit the edge,
   including when domain and range are the same class (e.g. ``Publication`` -> ``Publication`` for ``cites``).
@@ -50,7 +52,7 @@ from graflo.architecture.schema import (
 from graflo.architecture.schema.database_features import DatabaseProfile
 from graflo.architecture.schema.edge import Edge, EdgeConfig, EdgeInverse
 from graflo.architecture.schema.vertex import Field as VertexField
-from graflo.architecture.schema.vertex import Vertex, VertexConfig
+from graflo.architecture.schema.vertex import SecondaryIdentity, Vertex, VertexConfig
 from graflo.onto import DBType
 
 logger = logging.getLogger(__name__)
@@ -192,6 +194,56 @@ def _declared_inverses(
     )
 
 
+def _declared_keys(
+    g: Any, classes: dict[str, str], fields_by_class: dict[str, list[str]]
+) -> dict[str, list[SecondaryIdentity]]:
+    """``owl:hasKey`` and inverse-functional datatype properties as secondary identities.
+
+    A ``owl:hasKey`` list becomes a key named ``has_key``, ``has_key_2``, … when
+    every property in it is a field of the class; lists are taken in sorted
+    order. An ``owl:InverseFunctionalProperty`` that is a datatype property
+    becomes a single-field key, named after the property, on each of its
+    ``rdfs:domain`` classes. Repeated field sets are kept once.
+    """
+    from rdflib import OWL, RDF, RDFS, URIRef
+    from rdflib.collection import Collection
+
+    class_names = {uri: name for name, uri in classes.items()}
+    keys: dict[str, list[SecondaryIdentity]] = {}
+
+    def add(cls_name: str, name: str, fields: list[str]) -> None:
+        declared = keys.setdefault(cls_name, [])
+        if any(set(k.fields) == set(fields) for k in declared):
+            return
+        taken = {k.name for k in declared}
+        unique, n = name, 2
+        while unique in taken:
+            unique, n = f"{name}_{n}", n + 1
+        declared.append(SecondaryIdentity(name=unique, fields=fields))
+
+    for cls_name, uri in classes.items():
+        fields = set(fields_by_class[cls_name])
+        lists = sorted(
+            {
+                tuple(_local_name(str(prop)) for prop in Collection(g, head))
+                for head in g.objects(URIRef(uri), OWL.hasKey)
+            }
+        )
+        for key_fields in lists:
+            if key_fields and set(key_fields) <= fields:
+                add(cls_name, "has_key", list(key_fields))
+
+    datatype = set(g.subjects(RDF.type, OWL.DatatypeProperty))
+    inverse_functional = set(g.subjects(RDF.type, OWL.InverseFunctionalProperty))
+    for prop in sorted(datatype & inverse_functional, key=str):
+        prop_name = _local_name(str(prop))
+        for domain in sorted({str(d) for d in g.objects(prop, RDFS.domain)}):
+            cls_name = class_names.get(domain)
+            if cls_name is not None and prop_name in fields_by_class[cls_name]:
+                add(cls_name, prop_name, [prop_name])
+    return keys
+
+
 def _load_graph(
     source: str | Path,
     *,
@@ -311,11 +363,17 @@ class RdfInferenceManager:
         logger.info("Discovered %d edges", len(edges))
 
         # -- Build Schema artefacts -------------------------------------------
+        keys = _declared_keys(g, classes, fields_by_class)
         vertices = []
         for cls_name, fields in fields_by_class.items():
             vertex_fields = [VertexField(name=f) for f in fields]
             vertices.append(
-                Vertex(name=cls_name, properties=vertex_fields, identity=["_uri"])
+                Vertex(
+                    name=cls_name,
+                    properties=vertex_fields,
+                    identity=["_uri"],
+                    secondary_identities=keys.get(cls_name, []),
+                )
             )
 
         vertex_config = VertexConfig(vertices=vertices)

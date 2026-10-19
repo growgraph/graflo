@@ -16,8 +16,21 @@ from graflo.architecture.graph_types import (
 from graflo.architecture.graph_types.merge import fuse_doc_basis
 from graflo.architecture.schema.vertex import VertexConfig, VertexName
 from graflo.onto import PRIMARY_IDENTITY_SELECTOR
+from graflo.util.paths import lookup_field
 
 from .base import ActorConstants, ActorInitContext, VertexProducingActor
+
+
+def _read_source_field(
+    doc: Mapping[str, Any], produced: Mapping[str, Any], key: str
+) -> Any:
+    """The value a ``from`` entry names: a key of the observation or of the
+    transform output, else a dot path into the observation."""
+    if key in doc:
+        return doc[key]
+    if key in produced:
+        return produced[key]
+    return lookup_field(doc, key)[1]
 
 
 def explode_identity_lists(
@@ -292,7 +305,7 @@ class VertexActor(VertexProducingActor):
                 # still this step's to read: `from` names it explicitly.
                 produced = ctx.transformed.get(lindex, {})
                 projected = {
-                    v_f: effective_doc.get(d_f, produced.get(d_f))
+                    v_f: _read_source_field(effective_doc, produced, d_f)
                     for v_f, d_f in self.from_doc.items()
                 }
                 if any(v is not None for v in projected.values()):

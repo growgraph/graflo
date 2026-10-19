@@ -27,6 +27,7 @@ from graflo.architecture.graph_types.enums import EdgeDirection
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.physical_keys import PhysicalKeys
 from graflo.architecture.schema.vertex import Vertex
+from graflo.filter.onto import FilterExpression
 from graflo.util.transform import normalize_label
 
 #: Field semantics IRIs that mark a property as a name a text may use.
@@ -140,9 +141,14 @@ def word_runs(text: str, max_words: int) -> list[str]:
 class _Reader:
     """Exact field lookups by logical names on one connection."""
 
-    def __init__(self, db: Any, schema: Schema) -> None:
+    def __init__(
+        self, db: Any, schema: Schema, guard: FilterExpression | None = None
+    ) -> None:
         self.db = db
         self.schema = schema
+        self.guard = guard
+        # Only passed when set, so a backend that predates guards is untouched.
+        self.guarded: dict[str, Any] = {"guard": guard} if guard is not None else {}
         named = with_physical_names(schema, db.flavor)
         self.keys = PhysicalKeys(named.db_profile)
         self.vertices = named.resolve_db_aware(db.flavor).vertex_config
@@ -158,14 +164,27 @@ class _Reader:
         returned: list[str],
     ) -> dict[int, list[dict[str, Any]]]:
         """Matches of each value of *values* on *field*, by position."""
-        if not values:
+        return self.find_by(
+            vertex_type, [field], [{field: v} for v in values], returned
+        )
+
+    def find_by(
+        self,
+        vertex_type: str,
+        fields: list[str],
+        docs: list[dict[str, Any]],
+        returned: list[str],
+    ) -> dict[int, list[dict[str, Any]]]:
+        """Matches of each of *docs* on all of *fields*, by position."""
+        if not docs:
             return {}
-        stored_docs = self.keys.vertex_docs(vertex_type, [{field: v} for v in values])
+        stored_docs = self.keys.vertex_docs(vertex_type, docs)
         found = self.db.resolve_vertices(
             self.vertices.vertex_dbname(vertex_type),
             stored_docs,
-            tuple(self.keys.vertex_fields(vertex_type, [field])),
+            tuple(self.keys.vertex_fields(vertex_type, fields)),
             tuple(self.keys.vertex_fields(vertex_type, returned)),
+            **self.guarded,
         )
         return {
             position: [self.keys.logical_vertex_doc(vertex_type, d) for d in docs]
@@ -182,6 +201,7 @@ class _Reader:
             direction=EdgeDirection.OUT,
             edge_types=[relation],
             schema=self.schema,
+            **self.guarded,
         )
         return list(reached.vertices.get(target, []))
 
@@ -235,6 +255,8 @@ def lookup_candidates(
     schema: Schema,
     text: str,
     spec: LookupSpec | None = None,
+    *,
+    guard: FilterExpression | None = None,
 ) -> list[Candidate]:
     """Vertices of *db* that *text* may name, best first, at most ``max_seeds``.
 
@@ -247,12 +269,20 @@ def lookup_candidates(
         text: The text to look in.
         spec: What to search; a default spec searches the label fields of
             every type.
+        guard: A trusted read guard (see ``Connection.graph_neighbors``); a
+            vertex it hides is never a candidate, and an alias is followed
+            only through elements it lets through.
 
     Returns:
         The candidates; empty when the text names nothing found.
+
+    Raises:
+        NotImplementedError: A *guard* on a backend that cannot apply one.
     """
     spec = spec or LookupSpec()
-    reader = _Reader(db, schema)
+    if guard is not None:
+        db.require_read_guard()
+    reader = _Reader(db, schema, guard)
     vertex_by_name = {v.name: v for v in schema.core_schema.vertex_config.vertices}
     alias_types = {hop.alias_type for hop in spec.aliases}
     types = spec.vertex_types or [

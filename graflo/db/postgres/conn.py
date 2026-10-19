@@ -573,6 +573,41 @@ class PostgresConnection(PostgresTargetWriteMixin, Connection):
             )
         return self._get_unique_columns_pg_catalog(table_name, schema_name)
 
+    def get_unique_constraints(
+        self, table_name: str, schema_name: str | None = None
+    ) -> list[list[str]]:
+        """Every UNIQUE constraint as a column list, via pg_catalog.
+
+        Columns follow constraint key order; constraints are ordered by name.
+        Repeated column lists are reported once.
+        """
+        if schema_name is None:
+            schema_name = self.config.schema_name or "public"
+
+        query = """
+            SELECT con.conname,
+                   array_agg(a.attname::text ORDER BY array_position(con.conkey, a.attnum))
+            FROM pg_catalog.pg_constraint con
+            JOIN pg_catalog.pg_class c ON c.oid = con.conrelid
+            JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+            JOIN pg_catalog.pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = ANY(con.conkey)
+            WHERE n.nspname = %s
+              AND c.relname = %s
+              AND con.contype = 'u'
+              AND a.attnum > 0
+              AND NOT a.attisdropped
+            GROUP BY con.conname
+            ORDER BY con.conname;
+        """
+        out: list[list[str]] = []
+        with self.conn.cursor() as cursor:
+            cursor.execute(query, (schema_name, table_name))
+            for _name, columns in cursor.fetchall():
+                column_list = list(columns)
+                if column_list and column_list not in out:
+                    out.append(column_list)
+        return out
+
     def _get_foreign_keys_pg_catalog(
         self, table_name: str, schema_name: str
     ) -> list[dict[str, Any]]:

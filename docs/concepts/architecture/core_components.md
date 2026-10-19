@@ -296,7 +296,10 @@ Two rules explain most results:
 - `vertex`: the vertex type to produce.
 - `from`: `{property: field}` for the properties whose field name differs.
   Properties with the same name as a field need no entry; the step takes them
-  from the record. This is called passthrough.
+  from the record. This is called passthrough. A field may be a dot path into
+  the record, such as `{status: fields.status.name}`; a list item is addressed
+  by its index (`links.0.key`), and a missing segment gives `None`. A field
+  name that is itself a key of the record, dots and all, is read as that key.
 - `extraction_scope`: `full` (default) allows passthrough; `mapped_only` takes
   only the properties named in `from`, plus those written by transforms at the
   same level. Use `mapped_only` when one record produces several vertices of
@@ -346,10 +349,12 @@ Endpoints, one for each side:
 The relation, one of:
 
 - `relation`: fixed.
-- `relation_field`: the record field that holds the relation; a transform may
-  compute it. `relation_map` translates raw values to relation names, and with
+- `relation_field`: the record field that holds the relation, or a dot path
+  to it as in `from` (`type.outward`); a transform may compute it.
+  `relation_map` translates raw values to relation names, and with
   `relation_map_only: true` a value that is not in the map writes no edge
-  instead of being used as the relation name.
+  instead of being used as the relation name. Under strict references such a
+  step is checked per relation in its map: each must be declared.
 - `relation_from_key: true`: the JSON key under which the record was reached
   (see the [relation from key example](../../examples/json-relation-from-key/index.md)
   (4)).

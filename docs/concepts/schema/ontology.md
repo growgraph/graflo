@@ -35,8 +35,8 @@ flowchart TB
 | Role | IRI |
 |------|-----|
 | Ontology document | `https://ontology.growgraph.dev/graflo` |
-| Version IRI | `https://ontology.growgraph.dev/graflo/1.8.0` |
-| Version info | `1.8.0` |
+| Version IRI | `https://ontology.growgraph.dev/graflo/1.9.0` |
+| Version info | `1.9.0` |
 | Vocabulary prefix `gf:` | `https://ontology.growgraph.dev/graflo/` |
 
 The Turtle source lives in the package at `graflo/rdf/ontology/graflo.ttl`. Constants are also exposed in Python as `graflo.rdf.namespace` (`GF_ONTOLOGY_IRI`, `GF_VERSION`, `GF_VERSION_IRI`, `GF_BASE`).
@@ -130,7 +130,7 @@ These are reified, string-valued terms describing a manifest, not OWL axioms ove
 
 **List field types**
 
-`gf:FieldType` has one individual for each of the nine `FieldType` members, `gf:UUID` and `gf:LIST` included, and a list's element type is given by `gf:itemType` (domain `gf:Field`, range `gf:FieldType`).
+`gf:FieldType` has one individual for each of the nine `FieldType` members, `gf:UUID` and `gf:LIST` included, and a list's element type is given by `gf:itemType` (domain `gf:Field`, range `gf:FieldType`). A field set only by the writer carries `gf:fieldReserved true`, and a list merged by union on upsert carries `gf:fieldMergeMode "union"`; both are absent at their defaults.
 
 ```yaml
 properties:

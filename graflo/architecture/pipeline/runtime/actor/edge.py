@@ -7,6 +7,7 @@ import threading
 from typing import Any
 
 from graflo.architecture.contract.ingestion.steps import EdgeActorConfig, EdgeLinkConfig
+from graflo.architecture.contract.ingestion.steps.ref import relations_written
 from graflo.architecture.graph_types import (
     EdgeId,
     ExtractionContext,
@@ -25,6 +26,7 @@ from graflo.architecture.schema.edge import Edge, EdgeConfig
 from graflo.architecture.schema.inverse_realization import inverse_emission_refusal
 from graflo.architecture.schema.vertex import VertexConfig, VertexName
 from graflo.onto import PRIMARY_IDENTITY_SELECTOR
+from graflo.util.paths import lookup_field
 
 from .base import Actor, ActorInitContext
 
@@ -113,6 +115,7 @@ class EdgeActor(Actor):
             self._static_target = None
             self._relation_map: dict[str, str] = {}
             self._relation_map_only = False
+            self._relations_written: set[str] | None = set()
             self._strict_edge_types = False
             self._rejected_edges: set[tuple[str, str, str | None]] = set()
             self._edge_cache: dict[tuple[str, str, str | None], Edge] = {}
@@ -135,6 +138,17 @@ class EdgeActor(Actor):
         self._static_target = config.target
         self._relation_map = config.relation_map or {}
         self._relation_map_only = config.relation_map_only
+        self._relations_written = relations_written(
+            config.model_dump(
+                include={
+                    "relation",
+                    "relation_field",
+                    "relation_from_key",
+                    "relation_map",
+                    "relation_map_only",
+                }
+            )
+        )
         self._strict_edge_types = config.strict_edge_types
         self._rejected_edges = set()
         self._edge_cache = {}
@@ -256,14 +270,21 @@ class EdgeActor(Actor):
             self._check_inverse_emission(init_ctx, None)
 
     def _refuse_undeclared(self, edge_id: EdgeId) -> None:
-        """Refuse a static step whose edge the schema does not declare.
+        """Refuse a static step whose edges the schema does not declare.
 
-        Checked before the step registers its edge, so the resource's edge
-        config still holds only what the schema declares.
+        A step whose relation comes from the data but can name only a closed
+        set (``relation_map_only``) is checked per relation it can write;
+        otherwise its edge, relation-less or not, is. Checked before the step
+        registers its edge, so the resource's edge config still holds only
+        what the schema declares.
         """
+        source, target, relation = edge_id
+        if relation is None and self._relation_from_data() and self._relations_written:
+            for written in sorted(self._relations_written):
+                self._refuse_undeclared((source, target, written))
+            return
         if self.edge_config is None or self.edge_config.declared(edge_id) is not None:
             return
-        source, target, relation = edge_id
         declared = sorted(
             str(r) for r in self._declared_relations(source, target) if r is not None
         )
@@ -702,7 +723,7 @@ class EdgeActor(Actor):
         # --- relation ---
         raw_relation: str | None
         if self.derivation.relation_field:
-            raw_relation = doc.get(self.derivation.relation_field)
+            raw_relation = lookup_field(doc, self.derivation.relation_field)[1]
         else:
             raw_relation = None
 

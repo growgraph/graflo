@@ -10,7 +10,7 @@ and never validates a step beyond normalizing its spelling.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -98,24 +98,33 @@ class EdgeStepView:
         return source, target, relation
 
     def relations_written(self) -> set[str] | None:
-        """Relation names the step can write, or None when that is open-ended.
+        """Relation names the step can write; see :func:`relations_written`."""
+        return relations_written(self.payload)
 
-        A fixed relation is one name. A mapped ``relation_field`` that writes
-        only what it maps (``relation_map_only``) is the map's values, plus the
-        fixed fallback. Anything else -- an unmapped field, a relation taken
-        from a document key -- can name any relation the data carries.
-        """
-        if not self.relation_is_data_driven:
-            return {self.relation} if self.relation is not None else set()
-        relation_map = self.payload.get("relation_map")
-        if (
-            self.payload.get("relation_map_only")
-            and isinstance(relation_map, dict)
-            and not self.payload.get("relation_from_key")
-        ):
-            fallback = {self.relation} if self.relation is not None else set()
-            return {str(name) for name in relation_map.values()} | fallback
-        return None
+
+def relations_written(step: Mapping[str, Any]) -> set[str] | None:
+    """Relation names an edge step can write, or None when that is open-ended.
+
+    *step* is the step's fields (``relation``, ``relation_field``,
+    ``relation_from_key``, ``relation_map``, ``relation_map_only``). A fixed
+    relation is one name. A mapped ``relation_field`` that writes only what it
+    maps (``relation_map_only``) is the map's values, plus the fixed fallback.
+    Anything else -- an unmapped field, a relation taken from a document key --
+    can name any relation the data carries.
+    """
+    value = step.get("relation")
+    relation = value if isinstance(value, str) else None
+    if not (step.get("relation_field") or step.get("relation_from_key")):
+        return {relation} if relation is not None else set()
+    relation_map = step.get("relation_map")
+    if (
+        step.get("relation_map_only")
+        and isinstance(relation_map, dict)
+        and not step.get("relation_from_key")
+    ):
+        fallback = {relation} if relation is not None else set()
+        return {str(name) for name in relation_map.values()} | fallback
+    return None
 
 
 def _nested(step: dict[str, Any]) -> tuple[str, list[Any]] | None:

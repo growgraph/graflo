@@ -277,6 +277,60 @@ class TestWatermark:
         mark = WatermarkConfig(field="ts", param="oldest")
         assert mark.render("1700000000.000100") == {"oldest": "1700000000.000100"}
 
+    @pytest.mark.parametrize(
+        "stored",
+        [
+            "2026-10-15T15:34:00.000+0000",
+            "2026-10-15T15:34:59Z",
+            "2026-10-15T17:34:00+02:00",
+            "2026-10-15T15:34:00.123456789+00:00",
+            "2026-10-15 15:34",
+            1792078440,
+            "1792078440.25",
+        ],
+    )
+    def test_a_format_renders_the_mark_in_utc_before_the_template(
+        self, stored: object
+    ) -> None:
+        mark = WatermarkConfig.model_validate(
+            {**JIRA_WATERMARK, "format": "%Y-%m-%d %H:%M"}
+        )
+        assert mark.render(stored) == {
+            "jql": "project = SUP AND updated >= '2026-10-15 15:34' ORDER BY updated"
+        }
+
+    def test_a_format_without_a_template_sends_the_formatted_value(self) -> None:
+        mark = WatermarkConfig(field="ts", param="since", format="%Y%m%dT%H%M%SZ")
+        assert mark.render("2026-10-15T15:34:07+0000") == {"since": "20261015T153407Z"}
+
+    def test_without_a_format_the_mark_is_rendered_raw(self) -> None:
+        mark = WatermarkConfig.model_validate(JIRA_WATERMARK)
+        assert mark.format is None
+        assert (
+            "'2026-10-15T15:34:00.000+0000'"
+            in mark.render("2026-10-15T15:34:00.000+0000")["jql"]
+        )
+
+    @pytest.mark.parametrize("pattern", ["%Y-%m-%d %Q", "no directives", "%%", "%"])
+    def test_a_bad_format_is_refused_at_load(self, pattern: str) -> None:
+        with pytest.raises(ValueError, match="watermark format"):
+            WatermarkConfig(field="ts", param="since", format=pattern)
+
+    @pytest.mark.parametrize("stored", ["yesterday", "", None, True, 1e300])
+    def test_a_mark_that_is_not_a_time_is_refused_at_render(
+        self, stored: object
+    ) -> None:
+        mark = WatermarkConfig(field="ts", param="since", format="%Y-%m-%d")
+        with pytest.raises(ValueError, match="watermark value"):
+            mark.render(stored)
+
+    def test_a_format_is_part_of_the_connector_hash(self) -> None:
+        plain = APIConnector(path="/search", watermark=JIRA_WATERMARK)
+        formatted = APIConnector(
+            path="/search", watermark={**JIRA_WATERMARK, "format": "%Y-%m-%d %H:%M"}
+        )
+        assert plain.hash != formatted.hash
+
     def test_the_connector_hands_its_watermark_to_the_source(self) -> None:
         connector = APIConnector(path="/search", watermark=JIRA_WATERMARK)
         config = connector.build_api_config(base_url="http://api.invalid")

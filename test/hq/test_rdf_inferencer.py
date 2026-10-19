@@ -519,3 +519,59 @@ class TestSeveralRanges:
         }
         assert by_class["Oak"].typed_objects == ["feeds"]
         assert by_class["Zebra"].typed_objects == []
+
+
+class TestDeclaredKeys:
+    """``owl:hasKey`` and inverse-functional datatype properties become lookup keys."""
+
+    _BODY = """
+ex:Person a owl:Class ; owl:hasKey ( ex:givenName ex:familyName ) .
+ex:Organization a owl:Class ; owl:hasKey ( ex:lei ) , ( ex:orgName ) .
+ex:Country a owl:Class ; owl:hasKey ( ex:capital ) .
+ex:givenName a owl:DatatypeProperty ; rdfs:domain ex:Person .
+ex:familyName a owl:DatatypeProperty ; rdfs:domain ex:Person .
+ex:email a owl:DatatypeProperty , owl:InverseFunctionalProperty ;
+    rdfs:domain ex:Person .
+ex:lei a owl:DatatypeProperty , owl:InverseFunctionalProperty ;
+    rdfs:domain ex:Organization .
+ex:orgName a owl:DatatypeProperty ; rdfs:domain ex:Organization .
+ex:capital a owl:ObjectProperty ; rdfs:domain ex:Country ; rdfs:range ex:Person .
+ex:mentor a owl:ObjectProperty , owl:InverseFunctionalProperty ;
+    rdfs:domain ex:Person ; rdfs:range ex:Person .
+"""
+
+    def _keys(self, tmp_path: Path) -> dict[str, list[tuple[str | None, list[str]]]]:
+        schema, _ = _infer_all(tmp_path, self._BODY)
+        return {
+            v.name: [(k.name, k.fields) for k in v.secondary_identities]
+            for v in schema.core_schema.vertex_config.vertices
+        }
+
+    def test_has_key_becomes_a_secondary_identity(self, tmp_path: Path) -> None:
+        keys = self._keys(tmp_path)
+        assert ("has_key", ["givenName", "familyName"]) in keys["Person"]
+
+    def test_several_has_keys_are_named_in_sorted_order(self, tmp_path: Path) -> None:
+        keys = self._keys(tmp_path)
+        assert keys["Organization"] == [
+            ("has_key", ["lei"]),
+            ("has_key_2", ["orgName"]),
+        ]
+
+    def test_inverse_functional_datatype_property_is_a_key(
+        self, tmp_path: Path
+    ) -> None:
+        keys = self._keys(tmp_path)
+        assert keys["Person"] == [
+            ("has_key", ["givenName", "familyName"]),
+            ("email", ["email"]),
+        ]
+
+    def test_keys_over_non_fields_are_ignored(self, tmp_path: Path) -> None:
+        """An object property is an edge, not a field, so it keys nothing."""
+        keys = self._keys(tmp_path)
+        assert keys["Country"] == []
+
+    def test_the_uri_stays_the_primary_identity(self, tmp_path: Path) -> None:
+        schema, _ = _infer_all(tmp_path, self._BODY)
+        assert schema.core_schema.vertex_config.identity_fields("Person") == ["_uri"]

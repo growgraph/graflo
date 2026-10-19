@@ -6,7 +6,7 @@ naming relations, recovering endpoints — never depended on PostgreSQL. Only th
 *metadata acquisition* did.
 
 This package draws that line. :class:`~graflo.db.sql.provider.SqlMetadataProvider`
-is the seam: anything that can answer seven questions about a schema can be
+is the seam: anything that can answer eight questions about a schema can be
 introspected, whether it answers them from ``pg_catalog``, from SQLAlchemy
 reflection, or from somewhere else entirely.
 """

@@ -971,6 +971,7 @@ class FalkordbConnection(Connection):
             limit=limit,
             schema=schema,
             run=run,
+            filters=filters,
         )
 
     def _edge_to_dict(self, edge) -> dict:

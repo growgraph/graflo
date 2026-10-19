@@ -83,7 +83,7 @@ def apply_change_field_types(manifest: GraphManifest, op: ChangeFieldTypesOp) ->
             new_properties.append(retyped)
         vertex.properties = new_properties
 
-    if op.edges:
+    if op.edges or op.per_edge:
         relations = {
             edge.relation
             for edge in schema.core_schema.edge_config.edges
@@ -111,9 +111,19 @@ def apply_change_field_types(manifest: GraphManifest, op: ChangeFieldTypesOp) ->
                 raise ValueError(
                     f"change_field_types: edge '{relation}' does not declare {missing}"
                 )
+        on_edge = {edge.edge_id: {f.name for f in edge.properties} for edge in edges}
+        for entry in op.per_edge:
+            if entry.edge_id() not in on_edge:
+                raise ValueError(f"change_field_types: unknown edge: {entry.edge_id()}")
+            missing = sorted(set(entry.fields) - on_edge[entry.edge_id()])
+            if missing:
+                raise ValueError(
+                    f"change_field_types: edge {entry.edge_id()} does not declare "
+                    f"{missing}"
+                )
 
         for edge in edges:
-            changes = op.edges.get(edge.relation) if edge.relation else None
+            changes = op.edge_changes_for(edge.edge_id)
             if not changes:
                 continue
             declared = {field.name for field in edge.properties}

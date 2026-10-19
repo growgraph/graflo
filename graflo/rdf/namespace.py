@@ -25,7 +25,7 @@ from graflo.architecture.contract.bindings.connectors import (
 )
 
 GF_ONTOLOGY_IRI = "https://ontology.growgraph.dev/graflo"
-GF_VERSION = "1.8.0"
+GF_VERSION = "1.9.0"
 GF_VERSION_IRI = f"{GF_ONTOLOGY_IRI}/{GF_VERSION}"
 GF_BASE = "https://ontology.growgraph.dev/graflo/"
 GF = Namespace(GF_BASE)
@@ -143,6 +143,8 @@ singularVertexNames = GF.singularVertexNames
 enumValue = GF.enumValue
 fieldType = GF.fieldType
 itemType = GF.itemType
+fieldReserved = GF.fieldReserved
+fieldMergeMode = GF.fieldMergeMode
 dbFlavor = GF.dbFlavor
 targetNamespace = GF.targetNamespace
 identityName = GF.identityName

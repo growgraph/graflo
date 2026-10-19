@@ -269,6 +269,9 @@ def detect_vertex_tables(
                     columns=column_infos,
                     primary_key=pk_columns,
                     foreign_keys=fk_infos,
+                    unique_constraints=provider.get_unique_constraints(
+                        table_name, schema_name
+                    ),
                 )
             )
 

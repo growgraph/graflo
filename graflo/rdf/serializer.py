@@ -357,6 +357,11 @@ class ManifestRdfSerializer:
                 str(field_obj.item_type),
                 ns.ENUM_REGISTRIES["field_type"],
             )
+        # Emitted only when not the default, as `directed` is.
+        if field_obj.reserved:
+            add_literal(graph, field_uri, ns.fieldReserved, True)
+        if field_obj.merge != "replace":
+            add_literal(graph, field_uri, ns.fieldMergeMode, field_obj.merge)
 
     def _emit_edge(
         self,

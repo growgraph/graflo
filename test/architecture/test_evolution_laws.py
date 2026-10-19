@@ -86,11 +86,17 @@ KINDS = [
     "set_edge_descriptions",
     "add_edge_properties",
     "remove_edge_properties",
+    "add_edge_properties:edge",
+    "remove_edge_properties:edge",
+    "rename_edge_properties:edge",
+    "change_field_types:edge",
 ]
 
 #: ``change_field_types`` is declared irreversible: no inverse is ever offered,
 #: so the inverse law has nothing to say about it.
-REVERSIBLE_KINDS = [kind for kind in KINDS if kind != "change_field_types"]
+REVERSIBLE_KINDS = [
+    kind for kind in KINDS if kind.partition(":")[0] != "change_field_types"
+]
 
 
 # ── generators ──────────────────────────────────────────────────────────────
@@ -267,6 +273,33 @@ def _payloads(manifest: GraphManifest) -> dict[str, st.SearchStrategy[dict[str, 
     )
     out["remove_edge_properties"] = st.tuples(relation, edge_field).map(
         lambda t: {"op": "remove_edge_properties", "removals": {t[0]: [t[1]]}}
+    )
+
+    def _on(e: tuple[str, str, str | None], **entry: Any) -> list[dict[str, Any]]:
+        return [{"source": e[0], "target": e[1], "relation": e[2], **entry}]
+
+    out["add_edge_properties:edge"] = st.tuples(edge, edge_field).map(
+        lambda t: {
+            "op": "add_edge_properties",
+            "per_edge": _on(t[0], properties=[t[1]]),
+        }
+    )
+    out["remove_edge_properties:edge"] = st.tuples(edge, edge_field).map(
+        lambda t: {"op": "remove_edge_properties", "per_edge": _on(t[0], fields=[t[1]])}
+    )
+    out["rename_edge_properties:edge"] = st.tuples(edge, edge_field, edge_field).map(
+        lambda t: {
+            "op": "rename_edge_properties",
+            "per_edge": _on(t[0], renames={t[1]: t[2]}),
+        }
+    )
+    out["change_field_types:edge"] = st.tuples(
+        edge, edge_field, st.sampled_from(["STRING", "INT"])
+    ).map(
+        lambda t: {
+            "op": "change_field_types",
+            "per_edge": _on(t[0], fields={t[1]: {"type": t[2]}}),
+        }
     )
     if unused_relations:
         out["rename_relations"] = st.tuples(

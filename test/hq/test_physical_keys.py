@@ -217,6 +217,9 @@ class _RecordingReader:
     graph_neighbors = Connection.graph_neighbors
     traverse = Connection.traverse
     _stored_view = Connection._stored_view
+    _guard_kwargs = Connection._guard_kwargs
+    require_read_guard = Connection.require_read_guard
+    supports_read_guard = False
 
     def __init__(self, flavor: DBType, reached: GraphContainer):
         self.flavor = flavor

@@ -13,7 +13,13 @@ from graflo.architecture.onto_sql import EdgeTableInfo, SchemaIntrospectionResul
 from graflo.architecture.schema import CoreSchema, GraphMetadata, Schema
 from graflo.architecture.schema.database_features import DatabaseProfile
 from graflo.architecture.schema.edge import Edge, EdgeConfig
-from graflo.architecture.schema.vertex import Field, FieldType, Vertex, VertexConfig
+from graflo.architecture.schema.vertex import (
+    Field,
+    FieldType,
+    SecondaryIdentity,
+    Vertex,
+    VertexConfig,
+)
 from graflo.db.sql.inference_utils import edge_property_names
 from graflo.db.sql.provider import SqlMetadataProvider
 from graflo.db.sql.types import SqlTypeMapper
@@ -29,6 +35,36 @@ def edge_endpoint_fields(
     return set(vertex_config.identity_fields(source)) | set(
         vertex_config.identity_fields(target)
     )
+
+
+def secondary_identities_from_unique(
+    unique_constraints: list[list[str]],
+    primary_key: list[str],
+    columns: Collection[str],
+    list_columns: Collection[str] = (),
+) -> list[SecondaryIdentity]:
+    """One secondary identity per UNIQUE constraint usable as a lookup key.
+
+    A constraint is skipped when its column set equals the primary key or an
+    earlier constraint, or when it names an array (LIST) or unknown column.
+    Each is named ``unique_<col1>_<col2>…`` in constraint column order.
+    """
+    known = set(columns) - set(list_columns)
+    seen: set[frozenset[str]] = {frozenset(primary_key)}
+    names: set[str] = set()
+    out: list[SecondaryIdentity] = []
+    for constraint in unique_constraints:
+        field_set = frozenset(constraint)
+        if not constraint or field_set in seen or not field_set <= known:
+            continue
+        seen.add(field_set)
+        base = "unique_" + "_".join(constraint)
+        name, n = base, 2
+        while name in names:
+            name, n = f"{base}_{n}", n + 1
+        names.add(name)
+        out.append(SecondaryIdentity(name=name, fields=list(constraint)))
+    return out
 
 
 class PostgresSchemaInferencer:
@@ -78,10 +114,12 @@ class PostgresSchemaInferencer:
 
             # Create fields from columns
             fields = []
+            list_columns: set[str] = set()
             for col in columns:
                 field_name = col.name
                 raw_type, item_type = self.type_mapper.map_field(col.type)
                 if raw_type == FieldType.LIST.value:
+                    list_columns.add(field_name)
                     if item_type is None:
                         # Avoid inventing a wrong scalar; leave untyped rather than LIST without item
                         fields.append(Field(name=field_name, type=None))
@@ -102,6 +140,12 @@ class PostgresSchemaInferencer:
                 name=table_name,
                 properties=fields,
                 identity=list(pk_columns),
+                secondary_identities=secondary_identities_from_unique(
+                    table_info.unique_constraints,
+                    pk_columns,
+                    [f.name for f in fields],
+                    list_columns,
+                ),
             )
 
             vertices.append(vertex)

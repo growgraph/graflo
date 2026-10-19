@@ -39,7 +39,7 @@ from graflo.architecture.contract.ingestion.steps.ref import (
     with_emit_inverse,
 )
 from graflo.architecture.contract.manifest import GraphManifest
-from graflo.architecture.graph_types import EdgePhysicalKey, Index
+from graflo.architecture.graph_types import EdgeId, EdgePhysicalKey, Index
 from graflo.architecture.schema.database_features import (
     DatabaseProfile,
     EdgePhysicalSpec,
@@ -63,8 +63,11 @@ from .ops import (
     DeclareEdgeInversesOp,
     EdgeDescriptionTarget,
     EdgeFieldSemanticsTarget,
+    EdgeFieldTypes,
     EdgeIdentitiesEntry,
     EdgeIndexEntry,
+    EdgePropertyAdditions,
+    EdgePropertyRemovals,
     EdgeSelector,
     FieldSemanticsTarget,
     ManifestOp,
@@ -222,6 +225,8 @@ class RenameHints(ConfigBaseModel):
                         vertex_properties.get(owner, {}), renames
                     )
             elif isinstance(op, RenameEdgePropertiesOp):
+                # Hints are per relation; a per_edge rename is diffed as a
+                # removal plus an addition.
                 for owner, renames in op.renames.items():
                     edge_properties[owner] = _chain_renames(
                         edge_properties.get(owner, {}), renames
@@ -308,7 +313,9 @@ def diff_manifests(
 
     Ops are ordered so each one's preconditions hold when it runs: renames
     first (so later ops address the new names), then additions, then property
-    and identity changes, then removals last.
+    and identity changes, then removals last. Edge property changes precede edge
+    additions: they address a whole relation, and must not reach a sibling edge
+    the diff adds with properties of its own.
     """
     hints = hints or RenameHints()
     warnings: list[str] = []
@@ -329,9 +336,9 @@ def diff_manifests(
     ops += rename_ops
     ops += _inverse_withdrawal_ops(base, target, hints)
     ops += _vertex_structure_ops(base, target, hints, warnings)
+    ops += _edge_property_ops(base, target, hints)
     ops += _edge_structure_ops(base, target, hints, warnings)
     ops += _vertex_property_ops(base, target, hints)
-    ops += _edge_property_ops(base, target, hints, warnings)
     ops += _identity_ops(base, target, hints, warnings)
     ops += _semantics_ops(base, target, hints)
     ops += _inverse_declaration_ops(
@@ -616,93 +623,114 @@ def _edge_property_ops(
     base: GraphManifest,
     target: GraphManifest,
     hints: RenameHints,
-    warnings: list[str],
 ) -> list[ManifestOp]:
-    """Edge property additions, removals and retypes, per relation.
+    """Edge property additions, removals and retypes, by relation or by edge.
 
-    The edge property ops address a *relation* and apply to every edge on it,
-    while the diff sees each ``(source, target, relation)`` edge on its own.
-    A change is expressible only when the sibling edges of a relation agree on
-    it; a change that holds on some siblings and not others is reported rather
-    than emitted, since a relation-wide op would apply it to every sibling.
+    A change every sibling edge of a relation makes alike is emitted for the
+    relation; one that differs between siblings, or that is on an edge with no
+    relation, is emitted for each edge it is on (``per_edge``), since a
+    relation-wide op would apply it to every sibling.
     """
     ops: list[ManifestOp] = []
     base_edges = _edges_after_renames(base, hints)
     target_edges = _edges(target)
 
-    by_relation: dict[str, list[tuple[Edge, Edge]]] = {}
+    by_relation: dict[str | None, list[tuple[EdgeId, Edge, Edge]]] = {}
     for key, new_edge in target_edges.items():
         old_edge = base_edges.get(key)
-        if old_edge is None:
-            continue
-        relation = key[2]
-        if relation is None:
-            if _edge_fields_differ(old_edge, new_edge):
-                warnings.append(
-                    f"edge {key[:2]} has no relation, and the edge property ops "
-                    "address a relation; its property changes are not expressed"
-                )
-            continue
-        by_relation.setdefault(relation, []).append((old_edge, new_edge))
+        if old_edge is not None:
+            by_relation.setdefault(key[2], []).append((key, old_edge, new_edge))
 
     additions: dict[str, list[str | Field]] = {}
     removals: dict[str, list[str]] = {}
-    type_changes: dict[str, dict[str, dict[str, Any]]] = {}
-    for relation, pairs in sorted(by_relation.items()):
-        new_names = [{f.name for f in new.properties} for _, new in pairs]
-        gained: dict[str, Field] = {}
-        lost: set[str] = set()
-        for old, new in pairs:
-            old_names = {f.name for f in old.properties}
-            for field in new.properties:
-                if field.name not in old_names:
-                    gained.setdefault(field.name, field)
-            lost |= old_names - {f.name for f in new.properties}
+    type_changes: dict[str, dict[str, Any]] = {}
+    add_per_edge: dict[EdgeId, list[str | Field]] = {}
+    remove_per_edge: dict[EdgeId, list[str]] = {}
+    types_per_edge: dict[EdgeId, dict[str, Any]] = {}
+    for relation, pairs in sorted(by_relation.items(), key=lambda item: item[0] or ""):
+        gained: dict[EdgeId, dict[str, Field]] = {}
+        lost: dict[EdgeId, set[str]] = {}
+        retyped: dict[EdgeId, dict[str, Any]] = {}
+        for key, old, new in pairs:
+            old_fields = {f.name: f for f in old.properties}
+            new_fields = {f.name: f for f in new.properties}
+            gained[key] = {n: f for n, f in new_fields.items() if n not in old_fields}
+            lost[key] = set(old_fields) - set(new_fields)
+            retyped[key] = _field_type_changes(old_fields, new_fields)
 
-        # Present on some old sibling => not an addition for this relation:
-        # add_edge_properties addresses every edge under the relation, and
-        # applying it would redeclare the property on the edge that has it.
-        old_any = {f.name for old, _ in pairs for f in old.properties}
-        added = sorted(
-            n
-            for n in gained
-            if n not in old_any and all(n in names for names in new_names)
+        wide_add: list[str] = []
+        wide_remove: list[str] = []
+        wide_types: dict[str, Any] = {}
+        if relation is not None:
+            # An addition is relation-wide when every sibling gains the same
+            # field and none had it; a removal when no sibling keeps it; a
+            # retype when every sibling that keeps the field changes it alike.
+            names = {n for fields in gained.values() for n in fields}
+            old_any = {f.name for _, old, _ in pairs for f in old.properties}
+            for name in sorted(names - old_any):
+                entries = [gained[key].get(name) for key, _, _ in pairs]
+                if all(entry is not None and entry == entries[0] for entry in entries):
+                    wide_add.append(name)
+            new_any = {f.name for _, _, new in pairs for f in new.properties}
+            wide_remove = sorted(set().union(*lost.values()) - new_any)
+            for name in sorted({n for changes in retyped.values() for n in changes}):
+                keeping = [
+                    key
+                    for key, old, new in pairs
+                    if name in old.property_names and name in new.property_names
+                ]
+                specs = [retyped[key].get(name) for key in keeping]
+                if all(spec is not None for spec in specs) and all(
+                    spec == specs[0] for spec in specs
+                ):
+                    wide_types[name] = specs[0]
+            if wide_add:
+                first = gained[pairs[0][0]]
+                additions[relation] = [_field_entry(first[n]) for n in wide_add]
+            if wide_remove:
+                removals[relation] = wide_remove
+            if wide_types:
+                type_changes[relation] = wide_types
+
+        for key, _, _ in pairs:
+            entries = [
+                _field_entry(field)
+                for name, field in sorted(gained[key].items())
+                if name not in wide_add
+            ]
+            if entries:
+                add_per_edge[key] = entries
+            if names_lost := sorted(lost[key] - set(wide_remove)):
+                remove_per_edge[key] = names_lost
+            if changes := {
+                n: spec for n, spec in retyped[key].items() if n not in wide_types
+            }:
+                types_per_edge[key] = changes
+
+    if additions or add_per_edge:
+        ops.append(
+            AddEdgePropertiesOp(
+                additions=additions,
+                per_edge=[
+                    EdgePropertyAdditions(**_selector(key), properties=entries)
+                    for key, entries in sorted(
+                        add_per_edge.items(), key=lambda item: _edge_sort_key(item[0])
+                    )
+                ],
+            )
         )
-        removed = sorted(n for n in lost if all(n not in names for names in new_names))
-        for name in sorted((set(gained) - set(added)) | (lost - set(removed))):
-            warnings.append(
-                f"relation {relation!r}: property {name!r} differs between sibling "
-                "edges; add/remove_edge_properties address a relation, not one edge"
+    if type_changes or types_per_edge:
+        ops.append(
+            ChangeFieldTypesOp(
+                edges=type_changes,
+                per_edge=[
+                    EdgeFieldTypes(**_selector(key), fields=changes)
+                    for key, changes in sorted(
+                        types_per_edge.items(), key=lambda item: _edge_sort_key(item[0])
+                    )
+                ],
             )
-        if added:
-            additions[relation] = [_field_entry(gained[n]) for n in added]
-        if removed:
-            removals[relation] = removed
-
-        changed: dict[str, dict[str, Any]] = {}
-        disagreeing: set[str] = set()
-        for old, new in pairs:
-            per_pair = _field_type_changes(
-                {f.name: f for f in old.properties}, {f.name: f for f in new.properties}
-            )
-            for field, spec in per_pair.items():
-                prior = changed.get(field)
-                if prior is not None and prior != spec:
-                    disagreeing.add(field)
-                changed[field] = spec
-        for field in sorted(disagreeing):
-            warnings.append(
-                f"relation {relation!r}: property {field!r} changes to different "
-                "types on sibling edges; change_field_types addresses a relation"
-            )
-            changed.pop(field)
-        if changed:
-            type_changes[relation] = changed
-
-    if additions:
-        ops.append(AddEdgePropertiesOp(additions=additions))
-    if type_changes:
-        ops.append(ChangeFieldTypesOp(edges=type_changes))
+        )
     # Keys change between the additions they may name and the removals of
     # properties an old key named.
     rekeyed = [
@@ -720,9 +748,24 @@ def _edge_property_ops(
     ]
     if rekeyed:
         ops.append(ReplaceEdgeIdentitiesOp(edges=rekeyed))
-    if removals:
-        ops.append(RemoveEdgePropertiesOp(removals=removals))
+    if removals or remove_per_edge:
+        ops.append(
+            RemoveEdgePropertiesOp(
+                removals=removals,
+                per_edge=[
+                    EdgePropertyRemovals(**_selector(key), fields=names)
+                    for key, names in sorted(
+                        remove_per_edge.items(),
+                        key=lambda item: _edge_sort_key(item[0]),
+                    )
+                ],
+            )
+        )
     return ops
+
+
+def _selector(edge_id: EdgeId) -> dict[str, Any]:
+    return {"source": edge_id[0], "target": edge_id[1], "relation": edge_id[2]}
 
 
 def _identity_keys(edge: Edge) -> set[tuple[str, ...]]:
@@ -732,18 +775,6 @@ def _identity_keys(edge: Edge) -> set[tuple[str, ...]]:
 def _edge_sort_key(key: tuple[str, str, str | None]) -> tuple[str, str, str]:
     source, target, relation = key
     return source, target, relation or ""
-
-
-def _edge_fields_differ(old: Edge, new: Edge) -> bool:
-    return {_field_key(f) for f in old.properties} != {
-        _field_key(f) for f in new.properties
-    }
-
-
-def _field_key(field: Field) -> tuple[str, str | None, str | None]:
-    """Name plus the whole type spec, for set comparison of property lists."""
-    spec = _type_spec(field)
-    return (field.name, spec["type"], spec["item_type"])
 
 
 def _field_entry(field: Field) -> str | Field:

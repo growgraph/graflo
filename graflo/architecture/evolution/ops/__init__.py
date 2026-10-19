@@ -32,6 +32,9 @@ from .canonical import CanonicalizeOp, CanonicalMap
 from .edges import (
     AddEdgePropertiesOp,
     AddEdgesOp,
+    EdgePropertyAdditions,
+    EdgePropertyRemovals,
+    EdgePropertyRenames,
     EdgeRetargetEntry,
     EdgeSelector,
     MergeEdgesOp,
@@ -43,7 +46,12 @@ from .edges import (
     SetEdgeDirectedOp,
 )
 from .equivalence import PropertyEquivalence, RelationEquivalence, VertexEquivalence
-from .field_types import ChangeFieldTypesOp, FieldTypeSpec, MergeFieldTypes
+from .field_types import (
+    ChangeFieldTypesOp,
+    EdgeFieldTypes,
+    FieldTypeSpec,
+    MergeFieldTypes,
+)
 from .identities import (
     AddSecondaryIdentitiesOp,
     AssignedIdentityTarget,
@@ -132,8 +140,12 @@ __all__ = [
     "DerivedBranch",
     "EdgeDescriptionTarget",
     "EdgeFieldSemanticsTarget",
+    "EdgeFieldTypes",
     "EdgeIdentitiesEntry",
     "EdgeIndexEntry",
+    "EdgePropertyAdditions",
+    "EdgePropertyRemovals",
+    "EdgePropertyRenames",
     "EdgeRetargetEntry",
     "EdgeSelector",
     "EnsureExtractedFields",

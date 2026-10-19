@@ -73,6 +73,7 @@ from graflo.db.resolve import (
     distinct_keys,
     index_matches_by_doc,
 )
+from graflo.filter.onto import FilterExpression, conjoin, parse_filter_expression
 from graflo.onto import (
     DB_TYPE_TO_EXPRESSION_FLAVOR,
     AggregationType,
@@ -85,7 +86,6 @@ if TYPE_CHECKING:
     from graflo.architecture.graph_types import EdgeId
     from graflo.connections.provider import ConnectionProvider
     from graflo.db.edge_direction_support import EdgeDirectionDiagnostic
-    from graflo.filter.onto import FilterExpression
 
 logger = logging.getLogger(__name__)
 ConnectionType = TypeVar("ConnectionType", bound="Connection")
@@ -166,6 +166,8 @@ class ConnectionCapability(Enum):
     SCHEMA_INTROSPECTION = "supports_schema_introspection"
     SCHEMA_DDL = "supports_schema_ddl"
     INSTANCE_DELETE = "supports_instance_delete"
+    READ_GUARD = "supports_read_guard"
+    UNION_MERGE = "supports_union_merge"
 
     @property
     def label(self) -> str:
@@ -176,6 +178,8 @@ class ConnectionCapability(Enum):
             ConnectionCapability.SCHEMA_INTROSPECTION: "schema introspection",
             ConnectionCapability.SCHEMA_DDL: "schema migration DDL",
             ConnectionCapability.INSTANCE_DELETE: "deleting vertices and edges",
+            ConnectionCapability.READ_GUARD: "a read guard on every element read",
+            ConnectionCapability.UNION_MERGE: "union-merged list fields",
         }[self]
 
 
@@ -226,6 +230,24 @@ def _walked_edge_ids(
         yield edge.edge_id
 
 
+def _refuse_reserved(
+    reserved: frozenset[str], *, filters: Any | None = None, key: Any = None
+) -> None:
+    """Refuse caller *filters* or a mapping anchor *key* naming any of *reserved*."""
+    from graflo.architecture.query.models import ReservedFieldError
+
+    named: set[str] = set(key) if isinstance(key, dict) else set()
+    if filters is not None:
+        named |= parse_filter_expression(filters).fields()
+    if named & reserved:
+        raise ReservedFieldError()
+
+
+def _reserved_names(schema: Schema, stored: Schema) -> frozenset[str]:
+    """Reserved fields under their logical and their stored names."""
+    return schema.reserved_fields() | stored.reserved_fields()
+
+
 class Connection(abc.ABC):
     """Abstract base class for database connections.
 
@@ -249,6 +271,12 @@ class Connection(abc.ABC):
     supports_graph_read: ClassVar[bool] = True
     #: Has a real :meth:`introspect_graph_schema`, rather than the raising default.
     supports_schema_introspection: ClassVar[bool] = False
+    #: Applies a ``guard`` to every vertex and edge a traversal reads, every hop.
+    #: A backend without it refuses a guard rather than reading unguarded.
+    supports_read_guard: ClassVar[bool] = False
+    #: Writes ``merge: union`` list fields as the union of the stored and the
+    #: written value. A writer refuses such a field on a backend without it.
+    supports_union_merge: ClassVar[bool] = False
     #: A migration emitter exists for this backend, so a non-dry-run apply can
     #: be attempted at all. Declaring it is what lets a caller refuse an
     #: unsupported backend **by name, before opening a connection**, instead of
@@ -642,6 +670,7 @@ class Connection(abc.ABC):
         return_keys: tuple[str, ...],
         *,
         chunk_size: int = DEFAULT_RESOLVE_CHUNK_SIZE,
+        guard: FilterExpression | None = None,
     ) -> dict[int, list[dict[str, Any]]]:
         """Locate vertices by an arbitrary field-set, preserving multiplicity.
 
@@ -664,11 +693,15 @@ class Connection(abc.ABC):
             match_keys: Field-set to match on (the secondary identity)
             return_keys: Fields to project onto the matched vertices
             chunk_size: Distinct keys per lookup query
+            guard: A trusted predicate every match must satisfy, ANDed with
+                the key match; a vertex it hides is never matched.
 
         Returns:
             dict: Position in *key_docs* -> every vertex it matched. Positions
                 with an unresolvable (partial) key or no match are absent.
         """
+        if guard is not None:
+            self.require_read_guard()
         if not key_docs or not match_keys:
             return {}
 
@@ -679,7 +712,10 @@ class Connection(abc.ABC):
         fetch_keys = list(dict.fromkeys([*match_keys, *return_keys]))
         buckets: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
         for chunk in batched(keys, chunk_size):
-            filters = build_match_filter(match_keys, chunk)
+            match = build_match_filter(match_keys, chunk)
+            # Unchanged without a guard; with one, only a backend that declares
+            # guard support gets here, and its fetch_docs parses an expression.
+            filters: Any = match if guard is None else conjoin(match, guard)
             docs = self.fetch_docs(
                 class_name,
                 filters=filters,
@@ -902,6 +938,7 @@ class Connection(abc.ABC):
         filters: Any | None = None,
         limit: int | None = None,
         schema: Schema | None = None,
+        guard: FilterExpression | None = None,
     ) -> GraphContainer:
         """Bounded neighbourhood around one anchor vertex.
 
@@ -934,6 +971,9 @@ class Connection(abc.ABC):
             limit: Maximum edges to accumulate.
             schema: Schema used for logical -> storage name resolution. Required
                 for anything but the simplest single-collection graphs.
+            guard: A trusted predicate, never taken from a request, that every
+                vertex and edge on a path must satisfy, the anchor included.
+                It names fields as stored, and reserved fields may appear in it.
 
         Returns:
             GraphContainer: vertices and edges reached, deduplicated.
@@ -941,7 +981,11 @@ class Connection(abc.ABC):
         Raises:
             UnsupportedEdgeDirectionError: if the backend cannot follow an edge
                 in the requested direction (TigerGraph without a reverse type).
+            ReservedFieldError: if *filters* name a reserved field.
+            NotImplementedError: if a *guard* is given and the backend does not
+                declare ``supports_read_guard``.
         """
+        guarded = self._guard_kwargs(guard)
         if schema is None:
             return self._graph_neighbors(
                 vertex_type,
@@ -952,8 +996,10 @@ class Connection(abc.ABC):
                 filters=filters,
                 limit=limit,
                 schema=None,
+                **guarded,
             )
         stored, keys = self._stored_view(schema)
+        _refuse_reserved(_reserved_names(schema, stored), filters=filters, key=key)
         reached = self._graph_neighbors(
             vertex_type,
             keys.anchor_key(vertex_type, key),
@@ -963,8 +1009,32 @@ class Connection(abc.ABC):
             filters=keys.edge_filter(filters, _walked_edge_ids(schema, edge_types)),
             limit=limit,
             schema=stored,
+            **guarded,
         )
         return keys.logical_container(reached, schema.core_schema.edge_config)
+
+    def require_read_guard(self) -> None:
+        """Refuse a guarded read on a backend that cannot apply the guard.
+
+        Raises:
+            NotImplementedError: unless the backend declares ``supports_read_guard``.
+        """
+        if not self.supports_read_guard:
+            raise NotImplementedError(
+                f"{type(self).__name__} cannot apply a read guard; a guarded read "
+                "is refused rather than answered unguarded"
+            )
+
+    def _guard_kwargs(self, guard: FilterExpression | None) -> dict[str, Any]:
+        """``{"guard": guard}`` for :meth:`_graph_neighbors`, or nothing.
+
+        Passed only when set, so a backend hook that predates guards keeps its
+        signature; such a backend never declares ``supports_read_guard``.
+        """
+        if guard is None:
+            return {}
+        self.require_read_guard()
+        return {"guard": guard}
 
     def _graph_neighbors(
         self,
@@ -1015,7 +1085,13 @@ class Connection(abc.ABC):
         keys = PhysicalKeys(named.db_profile)
         return (materialize_physical_schema(named) if keys.active else named), keys
 
-    def traverse(self, query: Any, *, schema: Schema) -> GraphContainer:
+    def traverse(
+        self,
+        query: Any,
+        *,
+        schema: Schema,
+        guard: FilterExpression | None = None,
+    ) -> GraphContainer:
         """Answer a :class:`~graflo.architecture.query.TraverseQuery`.
 
         The multi-seed form of :meth:`graph_neighbors`. Seeds are walked in
@@ -1033,11 +1109,22 @@ class Connection(abc.ABC):
                 layer 5 and ``architecture.query`` at layer 2; importing it at
                 module scope would be an upward import.
             schema: Required, for logical -> storage name resolution.
+            guard: As for :meth:`graph_neighbors`.
 
         Returns:
             GraphContainer: everything reached from any seed, deduplicated.
+
+        Raises:
+            ReservedFieldError: if the query names a reserved field.
+            NotImplementedError: if a *guard* is given and the backend does not
+                declare ``supports_read_guard``.
         """
+        guarded = self._guard_kwargs(guard)
         stored, keys = self._stored_view(schema)
+        reserved = _reserved_names(schema, stored)
+        query.refuse_reserved(reserved)
+        for seed in query.seeds:
+            _refuse_reserved(reserved, key=seed.get("key"))
         filters = keys.edge_filter(
             query.filters, _walked_edge_ids(schema, query.edge_relations)
         )
@@ -1052,6 +1139,7 @@ class Connection(abc.ABC):
                 filters=filters,
                 limit=query.limit,
                 schema=stored,
+                **guarded,
             )
             for vertex_type, docs in reached.vertices.items():
                 container.vertices.setdefault(vertex_type, []).extend(docs)

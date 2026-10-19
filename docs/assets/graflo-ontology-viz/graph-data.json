@@ -1056,7 +1056,16 @@
         },
         {
             "comment": "Manifest-facing field item used in vertex.properties and edge.properties.",
-            "datatypeProperties": [],
+            "datatypeProperties": [
+                {
+                    "label": "fieldMergeMode",
+                    "range": "string"
+                },
+                {
+                    "label": "fieldReserved",
+                    "range": "boolean"
+                }
+            ],
             "group": "schema",
             "id": "https://ontology.growgraph.dev/graflo/Field",
             "kind": "gf",
@@ -1626,5 +1635,5 @@
         }
     ],
     "universalRoot": "https://ontology.growgraph.dev/graflo/GrafloArtifact",
-    "version": "1.8.0"
+    "version": "1.9.0"
 }

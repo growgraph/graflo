@@ -33,6 +33,8 @@ class VertexTableInfo(BaseModel):
     columns: list[ColumnInfo]
     primary_key: list[str]
     foreign_keys: list[ForeignKeyInfo]
+    unique_constraints: list[list[str]] = []
+    """Column lists of the table's UNIQUE constraints, single- and multi-column."""
 
 
 class EdgeTableInfo(BaseModel):

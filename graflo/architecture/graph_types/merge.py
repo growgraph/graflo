@@ -11,7 +11,8 @@ Key Functions:
 
 """
 
-from typing import cast, overload
+from collections.abc import Collection
+from typing import Any, cast, overload
 
 from graflo.architecture.graph_types.transform import VertexRep
 
@@ -20,6 +21,7 @@ from graflo.architecture.graph_types.transform import VertexRep
 def fuse_doc_basis(
     docs: list[dict],
     index_keys: tuple[str, ...],
+    union_fields: Collection[str] = (),
 ) -> list[dict]: ...
 
 
@@ -27,12 +29,14 @@ def fuse_doc_basis(
 def fuse_doc_basis(
     docs: list[VertexRep],
     index_keys: tuple[str, ...],
+    union_fields: Collection[str] = (),
 ) -> list[VertexRep]: ...
 
 
 def fuse_doc_basis(
     docs: list[dict] | list[VertexRep],
     index_keys: tuple[str, ...],
+    union_fields: Collection[str] = (),
 ) -> list[dict] | list[VertexRep]:
     """Merge documents based on common index keys, preserving order.
 
@@ -52,6 +56,8 @@ def fuse_doc_basis(
     Args:
         docs: Homogeneous list of documents (all dict or all VertexRep) to merge
         index_keys: Tuple of key names to use for merging
+        union_fields: List fields fused as the union of every document's
+            members, in first-seen order; every other field is later-wins.
 
     Returns:
         Merged documents in order of first occurrence (same type as input)
@@ -66,14 +72,30 @@ def fuse_doc_basis(
             groups.setdefault((rep.lookup_only, rep.find), []).append(rep)
         fused: list[VertexRep] = []
         for group in groups.values():
-            fused.extend(cast(list[VertexRep], _fuse_group(group, index_keys)))
+            fused.extend(
+                cast(list[VertexRep], _fuse_group(group, index_keys, union_fields))
+            )
         return fused
-    return _fuse_group(docs, index_keys)
+    return _fuse_group(docs, index_keys, union_fields)
+
+
+def _union_update(
+    target: dict[str, Any], source: dict[str, Any], union_fields: Collection[str]
+) -> None:
+    """``target.update(source)``, but *union_fields* keep both sides' members."""
+    for key, value in source.items():
+        if key in union_fields and isinstance(value, list):
+            held = target.get(key)
+            members = [*(held if isinstance(held, list) else []), *value]
+            target[key] = list(dict.fromkeys(members))
+        else:
+            target[key] = value
 
 
 def _fuse_group(
     docs: list[dict] | list[VertexRep],
     index_keys: tuple[str, ...],
+    union_fields: Collection[str] = (),
 ) -> list[dict] | list[VertexRep]:
     """:func:`fuse_doc_basis` over documents that may all fuse with one another."""
     # Check if we're working with VertexRep objects
@@ -116,11 +138,11 @@ def _fuse_group(
         if is_vertexrep:
             if not (isinstance(target, VertexRep) and isinstance(source, VertexRep)):
                 raise TypeError("expected VertexRep for both target and source")
-            target.vertex.update(source.vertex)
+            _union_update(target.vertex, source.vertex, union_fields)
         else:
             if not (isinstance(target, dict) and isinstance(source, dict)):
                 raise TypeError("expected dict for both target and source")
-            target.update(source)
+            _union_update(target, source, union_fields)
 
     def copy_doc(doc: dict | VertexRep) -> dict | VertexRep:
         """Create a copy of a document."""

@@ -485,6 +485,7 @@ A run reads every record the endpoint returns. Re-reading records already in the
 - `field` is the dot path of a value on each record that grows over time, such as a modification time.
 - `param` is the query parameter that carries the value on the next run.
 - `template` is the text of that parameter, with `{value}` where the value goes. Without a template the bare value is sent.
+- `format` is an optional strftime pattern, for an API whose query language takes another time form than its records carry. The value is read as ISO 8601 (with a `Z`, `+00:00` or `+0000` offset, or none for UTC, and any fractional seconds) or, when it is a number, as epoch seconds, and rendered in UTC before the template: with `format: "%Y-%m-%d %H:%M"`, `2026-10-15T15:34:00.000+0000` is sent as `2026-10-15 15:34`. An unknown directive is refused when the manifest loads. Without a format the value is sent as stored.
 
 While it reads, the data source keeps the largest `field` value among the records it has returned, as `high_water`. Values compare as numbers when both parse as numbers, and as text otherwise, so write timestamps in one sortable form, such as ISO 8601 in one time zone. GraFlo stores nothing between runs: you keep the value, and you hand it back with a [runtime connector update](runtime_updates.md) before the next run.
 

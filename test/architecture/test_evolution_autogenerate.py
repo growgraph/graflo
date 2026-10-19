@@ -223,30 +223,52 @@ BILLS = {"source": "order", "target": "invoice", "relation": "places"}
 
 
 class TestEdgePropertiesAreAddressedPerRelation:
-    """`add/remove_edge_properties` apply to every edge on a relation."""
+    """A change all siblings share is emitted for the relation, the rest per edge."""
 
-    def test_a_gain_on_only_some_sibling_edges_is_reported_not_emitted(self) -> None:
+    def test_a_gain_on_only_some_sibling_edges_replays_per_edge(self) -> None:
         base = _manifest([PARTY, ORDER, INVOICE], edges=[PLACES, BILLS])
         target = _manifest(
             [PARTY, ORDER, INVOICE],
             edges=[{**PLACES, "properties": ["p1"]}, {**BILLS, "properties": ["p2"]}],
         )
-        ops, warnings = diff_manifests(base, target)
-        assert not any(op.op == "add_edge_properties" for op in ops)
-        assert [w for w in warnings if "sibling" in w] == [
-            (
-                "relation 'places': property 'p1' differs between sibling edges; "
-                "add/remove_edge_properties address a relation, not one edge"
-            ),
-            (
-                "relation 'places': property 'p2' differs between sibling edges; "
-                "add/remove_edge_properties address a relation, not one edge"
-            ),
+        ops = _assert_replays(base, target)
+        assert [op.op for op in ops] == ["add_edge_properties"]
+        assert ops[0].additions == {}
+        assert [(e.edge_id(), e.properties) for e in ops[0].per_edge] == [
+            (("order", "invoice", "places"), ["p2"]),
+            (("party", "order", "places"), ["p1"]),
         ]
-        _, verified = diff_manifests_verified(base, target)
-        assert any(
-            "not expressible" in w or "does not reproduce" in w for w in verified
+
+    def test_a_loss_on_only_some_sibling_edges_replays_per_edge(self) -> None:
+        base = _manifest(
+            [PARTY, ORDER, INVOICE],
+            edges=[{**PLACES, "properties": ["p"]}, {**BILLS, "properties": ["p"]}],
         )
+        target = _manifest(
+            [PARTY, ORDER, INVOICE], edges=[PLACES, {**BILLS, "properties": ["p"]}]
+        )
+        ops = _assert_replays(base, target)
+        assert [op.op for op in ops] == ["remove_edge_properties"]
+        assert [(e.edge_id(), e.fields) for e in ops[0].per_edge] == [
+            (("party", "order", "places"), ["p"])
+        ]
+
+    def test_a_retype_on_only_some_sibling_edges_replays_per_edge(self) -> None:
+        base = _manifest(
+            [PARTY, ORDER, INVOICE],
+            edges=[{**PLACES, "properties": ["p"]}, {**BILLS, "properties": ["p"]}],
+        )
+        target = _manifest(
+            [PARTY, ORDER, INVOICE],
+            edges=[
+                {**PLACES, "properties": [{"name": "p", "type": "INT"}]},
+                {**BILLS, "properties": ["p"]},
+            ],
+        )
+        ops = _assert_replays(base, target)
+        assert [op.op for op in ops] == ["change_field_types"]
+        assert ops[0].edges == {}
+        assert [e.edge_id() for e in ops[0].per_edge] == [("party", "order", "places")]
 
     def test_a_gain_on_every_sibling_edge_replays(self) -> None:
         base = _manifest([PARTY, ORDER, INVOICE], edges=[PLACES, BILLS])
@@ -257,6 +279,24 @@ class TestEdgePropertiesAreAddressedPerRelation:
         ops = _assert_replays(base, target)
         assert [op.op for op in ops] == ["add_edge_properties"]
         assert ops[0].additions == {"places": ["p"]}
+
+    def test_a_gain_does_not_reach_a_sibling_edge_added_without_it(self) -> None:
+        base = _manifest([PARTY, ORDER, INVOICE], edges=[PLACES])
+        target = _manifest(
+            [PARTY, ORDER, INVOICE], edges=[{**PLACES, "properties": ["p"]}, BILLS]
+        )
+        ops = _assert_replays(base, target)
+        assert [op.op for op in ops] == ["add_edge_properties", "add_edges"]
+
+    def test_a_loss_does_not_reach_a_sibling_edge_added_with_it(self) -> None:
+        base = _manifest(
+            [PARTY, ORDER, INVOICE], edges=[{**PLACES, "properties": ["p"]}]
+        )
+        target = _manifest(
+            [PARTY, ORDER, INVOICE], edges=[PLACES, {**BILLS, "properties": ["p"]}]
+        )
+        ops = _assert_replays(base, target)
+        assert [op.op for op in ops] == ["remove_edge_properties", "add_edges"]
 
     def test_an_edge_gaining_a_key_replays(self) -> None:
         base = _manifest([PARTY, ORDER], edges=[{**PLACES, "properties": ["ref"]}])
@@ -294,12 +334,14 @@ class TestEdgePropertiesAreAddressedPerRelation:
         assert [op.op for op in ops] == ["replace_edge_identities"]
         assert ops[0].edges[0].identities == []
 
-    def test_a_relation_less_edge_change_is_reported(self) -> None:
+    def test_a_relation_less_edge_change_replays_per_edge(self) -> None:
         bare = {"source": "party", "target": "order"}
         base = _manifest([PARTY, ORDER], edges=[bare])
         target = _manifest([PARTY, ORDER], edges=[{**bare, "properties": ["p"]}])
-        _, warnings = diff_manifests(base, target)
-        assert any("has no relation" in w for w in warnings)
+        ops = _assert_replays(base, target)
+        assert [(e.edge_id(), e.properties) for e in ops[0].per_edge] == [
+            (("party", "order", None), ["p"])
+        ]
 
 
 class TestTypedAndGroundedFieldsReplay:

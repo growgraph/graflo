@@ -454,6 +454,8 @@ class GraphEngine:
         if recreate_schema is None:
             recreate_schema = False
 
+        self._validated_caster(manifest, target_db_config, ingestion_params)
+
         # Define schema first (halts with SchemaExistsError if schema exists and recreate_schema is False)
         self.define_schema(
             manifest=manifest,
@@ -500,12 +502,12 @@ class GraphEngine:
                 ones the manifest's bindings declare.
         """
         schema = manifest.require_schema()
-        ingestion_model = manifest.require_ingestion_model()
         bindings = manifest.bindings
 
         _ensure_graph_target_namespace(schema, target_db_config, graph_target_namespace)
 
         ingestion_params = ingestion_params or IngestionParams()
+        caster = self._validated_caster(manifest, target_db_config, ingestion_params)
         if ingestion_params.clear_data:
             with ConnectionManager(connection_config=target_db_config) as db_client:
                 clear_result = db_client.clear_data(
@@ -517,11 +519,6 @@ class GraphEngine:
                         "after data clearing has completed."
                     )
 
-        caster = Caster(
-            schema=schema,
-            ingestion_model=ingestion_model,
-            ingestion_params=ingestion_params,
-        )
         caster.ingest(
             target_db_config=target_db_config,
             bindings=bindings or Bindings(),
@@ -529,6 +526,27 @@ class GraphEngine:
             connection_provider=connection_provider or self.connection_provider,
             data_source_registry=data_source_registry,
         )
+
+    @staticmethod
+    def _validated_caster(
+        manifest: GraphManifest,
+        target_db_config: DBConfig,
+        ingestion_params: IngestionParams,
+    ) -> Caster:
+        """A caster for this run, its references already checked.
+
+        Runs before ``clear_data`` or ``define_schema`` touch the target, so a
+        manifest the run refuses leaves the database as it was.
+        """
+        caster = Caster(
+            schema=manifest.require_schema(),
+            ingestion_model=manifest.require_ingestion_model(),
+            ingestion_params=ingestion_params,
+        )
+        caster.validate_run(
+            target_db_config, manifest.bindings or Bindings(), ingestion_params
+        )
+        return caster
 
     # ------------------------------------------------------------------
     # RDF / SPARQL inference

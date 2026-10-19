@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from typing import Any
 
 from graflo.architecture.graph_types import EdgeId, EdgePhysicalKey, Index
@@ -11,6 +12,7 @@ from graflo.architecture.schema.database_features import (
     DefaultPropertyValues,
     EdgePhysicalSpec,
     EdgePropertyDefaults,
+    EdgeRef,
 )
 
 logger = logging.getLogger(__name__)
@@ -437,18 +439,27 @@ def merge_relation_entries_in_db_profile(profile: DatabaseProfile) -> None:
 
 
 def apply_edge_property_rename_to_db_profile(
-    profile: DatabaseProfile, renames_by_relation: dict[str, dict[str, str]]
+    profile: DatabaseProfile,
+    renames_by_relation: dict[str, dict[str, str]],
+    *,
+    renames_by_edge: Mapping[EdgeId, dict[str, str]] | None = None,
 ) -> None:
     """Rename edge property references in edge indexes/default values."""
-    if not renames_by_relation:
+    by_edge = renames_by_edge or {}
+    if not renames_by_relation and not by_edge:
         return
-    new_specs: list[EdgePhysicalSpec] = []
-    for spec in profile.edge_specs:
-        renames = (
-            renames_by_relation.get(spec.relation, {})
-            if spec.relation is not None
+
+    def _renames(ref: EdgeRef) -> dict[str, str]:
+        out = (
+            dict(renames_by_relation.get(ref.relation, {}))
+            if ref.relation is not None
             else {}
         )
+        return out | by_edge.get(ref.edge_id, {})
+
+    new_specs: list[EdgePhysicalSpec] = []
+    for spec in profile.edge_specs:
+        renames = _renames(spec)
         new_specs.append(
             spec.model_copy(
                 update={
@@ -467,29 +478,34 @@ def apply_edge_property_rename_to_db_profile(
         return
     new_edges: list[EdgePropertyDefaults] = []
     for edge in dpv.edges:
-        renames = (
-            renames_by_relation.get(edge.relation, {})
-            if edge.relation is not None
-            else {}
-        )
+        renames = _renames(edge)
         values = {renames.get(name, name): value for name, value in edge.values.items()}
         new_edges.append(edge.model_copy(update={"values": values}, deep=True))
     object.__setattr__(dpv, "edges", new_edges)
 
 
 def apply_edge_property_removal_to_db_profile(
-    profile: DatabaseProfile, removals_by_relation: dict[str, set[str]]
+    profile: DatabaseProfile,
+    removals_by_relation: dict[str, set[str]],
+    *,
+    removals_by_edge: Mapping[EdgeId, set[str]] | None = None,
 ) -> None:
     """Remove edge property references from edge indexes/default values."""
-    if not removals_by_relation:
+    by_edge = removals_by_edge or {}
+    if not removals_by_relation and not by_edge:
         return
-    updated_specs: list[EdgePhysicalSpec] = []
-    for spec in profile.edge_specs:
-        removals = (
-            removals_by_relation.get(spec.relation, set())
-            if spec.relation is not None
+
+    def _removals(ref: EdgeRef) -> set[str]:
+        out = (
+            set(removals_by_relation.get(ref.relation, set()))
+            if ref.relation is not None
             else set()
         )
+        return out | by_edge.get(ref.edge_id, set())
+
+    updated_specs: list[EdgePhysicalSpec] = []
+    for spec in profile.edge_specs:
+        removals = _removals(spec)
         if not removals:
             updated_specs.append(spec)
             continue
@@ -506,11 +522,7 @@ def apply_edge_property_removal_to_db_profile(
         return
     new_edges: list[EdgePropertyDefaults] = []
     for edge in dpv.edges:
-        removals = (
-            removals_by_relation.get(edge.relation, set())
-            if edge.relation is not None
-            else set()
-        )
+        removals = _removals(edge)
         if not removals:
             new_edges.append(edge)
             continue

@@ -98,6 +98,48 @@ def _create_schema_rule(db: Any, query: str) -> None:
         raise
 
 
+def _union_upsert(
+    docs: list[dict[str, Any]],
+    class_name: str,
+    match_keys: Sequence[str],
+    union_fields: Sequence[str],
+) -> tuple[str, list[dict[str, Any]]]:
+    """A node upsert that unions *union_fields* with what the node holds.
+
+    Each row carries the replaced properties under ``p`` and the union ones
+    under ``u``, so ``n += row.p`` can never overwrite a stored list. Members
+    keep first-seen order, stored ones first; null members are dropped,
+    since ``null IN acc`` is never true and they would pile up.
+    """
+    index_str = ", ".join(f"{k}: row.p.{k}" for k in match_keys)
+    unions = ", ".join(
+        f"n.{_cypher_name(f)} = reduce(acc = [], x IN [y IN "
+        f"coalesce(n.{_cypher_name(f)}, []) + coalesce(row.u.{_cypher_name(f)}, []) "
+        "WHERE y IS NOT NULL] | CASE WHEN x IN acc THEN acc ELSE acc + x END)"
+        for f in union_fields
+    )
+    query = f"""
+            WITH $batch AS batch
+            UNWIND batch as row
+            MERGE (n:{class_name} {{ {index_str} }})
+            SET n += row.p
+            SET {unions}
+        """
+    batch = [
+        {
+            "p": {k: v for k, v in doc.items() if k not in union_fields},
+            "u": {k: doc[k] for k in union_fields if k in doc},
+        }
+        for doc in docs
+    ]
+    return query, batch
+
+
+def _cypher_name(name: str) -> str:
+    """A property name as a backtick-quoted Cypher identifier."""
+    return "`" + name.replace("`", "``") + "`"
+
+
 class Neo4jConnection(Connection):
     """Neo4j-specific implementation of the Connection interface.
 
@@ -117,6 +159,8 @@ class Neo4jConnection(Connection):
     # (graflo/migrate/executor.py); the other six have none.
     supports_schema_ddl = True
     supports_schema_introspection = True
+    supports_read_guard = True
+    supports_union_merge = True
 
     def __init__(self, config: Neo4jConfig):
         """Initialize Neo4j connection.
@@ -556,21 +600,28 @@ class Neo4jConnection(Connection):
             match_keys: Keys to match for upsert operation
             **kwargs: Additional options:
                 - dry: If True, don't execute the query
+                - union_fields: List properties written as the union of the
+                  stored and the given members rather than replaced.
         """
         dry = kwargs.pop("dry", False)
+        union_fields: tuple[str, ...] = tuple(kwargs.pop("union_fields", ()) or ())
 
-        index_str = ", ".join([f"{k}: row.{k}" for k in match_keys])
-        q = f"""
+        if union_fields:
+            q, batch = _union_upsert(docs, class_name, match_keys, union_fields)
+        else:
+            index_str = ", ".join([f"{k}: row.{k}" for k in match_keys])
+            q = f"""
             WITH $batch AS batch
             UNWIND batch as row
             MERGE (n:{class_name} {{ {index_str} }})
             ON MATCH set n += row
             ON CREATE set n += row
         """
+            batch = docs
         if not dry:
             # Consumed so the write has committed, and raised any error, before
             # the call returns; ``run`` alone returns before the commit.
-            self.execute(q, batch=docs).consume()
+            self.execute(q, batch=batch).consume()
 
     def insert_edges_batch(
         self,
@@ -994,6 +1045,7 @@ class Neo4jConnection(Connection):
         filters: Any | None = None,
         limit: int | None = None,
         schema: Schema | None = None,
+        guard: FilterExpression | None = None,
     ) -> GraphContainer:
         """Bounded neighbourhood via a single variable-length Cypher pattern.
 
@@ -1012,6 +1064,8 @@ class Neo4jConnection(Connection):
             limit=limit,
             schema=schema,
             run=lambda query, params: self.execute(query, **params).data(),
+            filters=filters,
+            guard=guard,
         )
 
     def fetch_all_docs(

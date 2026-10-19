@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4, uuid5
 
 from graflo.architecture.graph_types.transform import VertexRep
 from graflo.architecture.schema.vertex import (
@@ -20,6 +20,20 @@ UUID_PATTERN = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
     re.IGNORECASE,
 )
+
+#: Namespace of keys minted for an entity a producer introduces without a key.
+#: Never change it: every key ever minted under it depends on it.
+MINT_NAMESPACE = UUID("6f1c3a52-6a51-4f8e-9e0e-2b8c1d7a4e10")
+
+
+def mint_uuid(schema_ref: str, source_id: str, vertex_type: str, ref: str) -> str:
+    """The key of a keyless entity introduced as *ref* in source *source_id*.
+
+    Deterministic, so the same source cast against the same schema gives the
+    same key; a different *ref* or *source_id* gives a new one.
+    """
+    name = f"{schema_ref}\x1f{source_id}\x1f{vertex_type}\x1f{ref}"
+    return str(uuid5(MINT_NAMESPACE, name))
 
 
 def _identity_value_is_empty(value: Any) -> bool:

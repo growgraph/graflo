@@ -26,11 +26,6 @@ class GraFloOutput(ConfigBaseModel):
     )
 
     @property
-    def schema(self) -> Schema:
-        """Alias for :attr:`graph_schema` (avoids shadowing Pydantic's ``schema``)."""
-        return self.graph_schema
-
-    @property
     def core_schema(self) -> CoreSchema:
         """Logical graph model (vertices and edges) from :attr:`graph_schema`."""
         return self.graph_schema.core_schema

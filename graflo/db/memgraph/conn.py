@@ -1269,6 +1269,7 @@ class MemgraphConnection(Connection):
             limit=limit,
             schema=schema,
             run=run,
+            filters=filters,
         )
 
     def introspect_graph_schema(

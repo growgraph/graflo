@@ -11,14 +11,16 @@ do not copy it into your schema; you **lift** your manifest with it, and the
 lift writes the change as [ops](manifest_evolution.md) you review before
 anything is applied.
 
-Two aspects ship with GraFlo:
+Three aspects ship with GraFlo:
 
 | Aspect | Adds | Answers | Standard | Needs a spec |
 |---|---|---|---|---|
 | `provenance` | `SourceRecord`, `Agent`, `wasDerivedFrom`, `wasAttributedTo` | where a fact was read from, and who produced that record | PROV-O | no |
 | `state` | `<Type>State`, `<Type>Observation`, `specializationOf`, `hasFeatureOfInterest` | how a fact changed over time, and what was measured in which unit | PROV-O, SOSA, QUDT | yes |
+| `access` | a reserved `access_zones` label on the types you name | which readers may see each element | — | yes |
 
-They are independent: lift either one alone, or both (the default).
+They are independent. `provenance` and `state` are lifted by default; `access`
+only when you name it.
 
 ## Lifting a manifest
 
@@ -142,12 +144,53 @@ fallback.
 By default the moved properties are removed from their type (`retire: move`);
 `retire: keep` leaves them in place as the current value beside the history.
 
+## The access aspect
+
+The lift adds one field, `access_zones: LIST<INT>`, to each vertex type in the
+spec's `access_for` and each edge relation in `access_edges`. Each vertex type
+names how an upsert combines its zones: `replace` (the element takes the zones of
+its latest write) or `union` (it keeps every zone it was written with). Edges
+always replace.
+
+The field is **reserved**: no document supplies it, and a type sheet, element
+text or instance schema never shows it. The writer sets it from a stamp, and
+refuses to write a lifted type without one:
+
+```python
+await writer.write(container, conn_conf, "messages", stamp={"access_zones": [zone_id]})
+```
+
+A traversal refuses a filter or anchor key that names `access_zones`. For
+every other query, a service calls `query.refuse_reserved(schema.reserved_fields())`
+before reading, and leaves the field out of what it returns. To read only what a
+reader may see, pass a guard that matches the zones that reader opens; every
+vertex and edge of a traversal must pass it, so a path through a hidden element
+reaches nothing:
+
+```python
+from graflo.filter.onto import ComparisonOperator, FilterExpression
+
+guard = FilterExpression(
+    kind="leaf",
+    field="access_zones",
+    cmp_operator=ComparisonOperator.ANY_IN,
+    value=[sorted(reader_zones)],
+)
+found = conn.graph_neighbors("Ticket", "SUP-42", hops=2, schema=schema, guard=guard)
+```
+
+What a zone is and which zones a reader opens are not part of the graph; your
+service decides both. Combine several conditions with `conjoin()`. Guards and
+`union` labels are supported on Neo4j; other backends refuse them. The guard
+names the field as stored, so do not rename `access_zones` in `db_profile`. A
+reserved field cannot be part of an identity.
+
 ## The lift spec
 
 A lift can see structure, not meaning: nothing in a schema says that `temp_c`
 is in degrees Celsius or that `status` changes while `serial_number` does not.
-The spec declares that. Only the `state` aspect requires one; `provenance`
-reads `provenance_for` and `provenance` from it when one is given.
+The spec declares that. The `state` and `access` aspects require one;
+`provenance` reads `provenance_for` and `provenance` from it when one is given.
 
 | Key | Aspect | Declares |
 |---|---|---|
@@ -160,6 +203,8 @@ reads `provenance_for` and `provenance` from it when one is given.
 | `retire` | state | `move` (default) or `keep` the properties named in `stateful` |
 | `provenance_for` | provenance | the types that gain `wasDerivedFrom` |
 | `provenance` | provenance | `false` leaves the aspect out, like not naming it |
+| `access_for` | access | per vertex type, the merge mode of its zones: `{Ticket: replace, Product: union}` |
+| `access_edges` | access | the edge relations that gain `access_zones` |
 
 ## When a lift refuses
 
@@ -173,7 +218,9 @@ when:
 - the spec names a type or property the manifest does not have;
 - a `stateful` or `observed` type has no key to point back to, or a `stateful`
   property is part of the key;
-- a type relies on the identity fallback and the spec gives it no `identity`.
+- a type relies on the identity fallback and the spec gives it no `identity`;
+- `access` is named with nothing to label, a type already declares
+  `access_zones`, or an edge is given `shared`.
 
 ## See also
 

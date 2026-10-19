@@ -76,6 +76,19 @@ class Schema(ConfigBaseModel):
         """
         return resolve_namespace(self, db_flavor, override)
 
+    def reserved_fields(self) -> frozenset[str]:
+        """Names of every reserved field, on any vertex or edge type."""
+        core = self.core_schema
+        return frozenset(
+            field.name
+            for fields in (
+                *(vertex.properties for vertex in core.vertex_config.vertices),
+                *(edge.properties for edge in core.edge_config.values()),
+            )
+            for field in fields
+            if field.reserved
+        )
+
     def remove_disconnected_vertices(self) -> set[str]:
         return self.core_schema.remove_disconnected_vertices()
 

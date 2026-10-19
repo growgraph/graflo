@@ -124,7 +124,7 @@ def test_a_name_the_aspect_would_mint_and_that_already_exists_is_refused() -> No
 
 def test_an_unknown_aspect_is_refused_by_name() -> None:
     with pytest.raises(LiftError, match="no aspect named"):
-        plan_lift(_manifest(), aspects=["access"])
+        plan_lift(_manifest(), aspects=["no-such-aspect"])
 
 
 def test_the_provenance_lift_inverts_back_to_the_original() -> None:

@@ -17,6 +17,7 @@ this codebase already rejected for TigerGraph edge direction.
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from typing import Any, Self
 
 from pydantic import Field as PydanticField
@@ -24,8 +25,23 @@ from pydantic import Field as PydanticField
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.graph_types import EdgeDirection
 from graflo.architecture.query.caps import HARD_CAPS, CapExceededError, QueryCaps
+from graflo.architecture.refusal import Refusal
 from graflo.filter.onto import FilterExpression
 from graflo.onto import AggregationType
+
+
+class ReservedFieldError(Refusal):
+    """A query names a field only the writer may set.
+
+    The message names no field, so a refusal tells a caller nothing about which
+    reserved field exists.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            "the query names a property that cannot be read",
+            check="reserved field",
+        )
 
 
 class GraphQuery(ConfigBaseModel):
@@ -78,6 +94,19 @@ class GraphQuery(ConfigBaseModel):
     def _validate_specific(self, caps: QueryCaps) -> None:
         """Per-query-kind checks. Overridden by subclasses."""
 
+    def named_fields(self) -> set[str]:
+        """Every property the query names: projection, filters, grouping."""
+        return set(self.projection or ())
+
+    def refuse_reserved(self, reserved: Collection[str]) -> None:
+        """Refuse a query that names any of *reserved*.
+
+        Raises:
+            ReservedFieldError: Naming none of them.
+        """
+        if self.named_fields() & set(reserved):
+            raise ReservedFieldError()
+
     def narrowed(self, caps: QueryCaps) -> Self:
         """Return a copy fitted to *caps*, raising on anything explicitly asked for.
 
@@ -110,12 +139,14 @@ class GraphQuery(ConfigBaseModel):
             raise CapExceededError("timeout_s", self.timeout_s, effective.timeout_s)
         narrowed.timeout_s = min(self.timeout_s, effective.timeout_s)
 
-        if (
-            narrowed.projection is not None
-            and effective.projection_allow_list is not None
-        ):
+        if effective.projection_allow_list is not None:
+            # A caller who names no projection gets the allow-list, not every
+            # stored property.
             permitted = set(effective.projection_allow_list)
-            narrowed.projection = [n for n in narrowed.projection if n in permitted]
+            if narrowed.projection is None:
+                narrowed.projection = list(effective.projection_allow_list)
+            else:
+                narrowed.projection = [n for n in narrowed.projection if n in permitted]
 
         narrowed._narrow_specific(effective, explicit)
         return narrowed
@@ -137,6 +168,9 @@ class NodeQuery(GraphQuery):
     filters: FilterExpression | None = PydanticField(
         default=None, description="Predicate applied before limiting."
     )
+
+    def named_fields(self) -> set[str]:
+        return super().named_fields() | _filter_fields(self.filters)
 
 
 class NeighborQuery(GraphQuery):
@@ -166,6 +200,9 @@ class NeighborQuery(GraphQuery):
         default=None, description="Restrict to these relations. None means all."
     )
     filters: FilterExpression | None = PydanticField(default=None)
+
+    def named_fields(self) -> set[str]:
+        return super().named_fields() | _filter_fields(self.filters)
 
     @property
     def edge_direction(self) -> EdgeDirection:
@@ -212,6 +249,9 @@ class TraverseQuery(GraphQuery):
     direction: EdgeDirection = PydanticField(default=EdgeDirection.ANY)
     edge_relations: list[str] | None = PydanticField(default=None)
     filters: FilterExpression | None = PydanticField(default=None)
+
+    def named_fields(self) -> set[str]:
+        return super().named_fields() | _filter_fields(self.filters)
 
     @property
     def edge_direction(self) -> EdgeDirection:
@@ -265,6 +305,10 @@ class AggregateQuery(GraphQuery):
     )
     filters: FilterExpression | None = PydanticField(default=None)
 
+    def named_fields(self) -> set[str]:
+        grouped = {name for name in (self.group_by, self.aggregated_field) if name}
+        return super().named_fields() | _filter_fields(self.filters) | grouped
+
     @property
     def aggregation(self) -> AggregationType:
         """`function` as an enum. See `NeighborQuery.edge_direction`."""
@@ -280,3 +324,7 @@ class AggregateQuery(GraphQuery):
             raise ValueError(
                 f"group_by is only supported for COUNT, not {self.function}"
             )
+
+
+def _filter_fields(filters: FilterExpression | None) -> set[str]:
+    return filters.fields() if filters is not None else set()

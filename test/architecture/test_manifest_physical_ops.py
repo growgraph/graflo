@@ -184,7 +184,9 @@ class TestChangeFieldTypes:
             )
 
     def test_at_least_one_target_is_required(self):
-        with pytest.raises(ValueError, match="at least one of vertices or edges"):
+        with pytest.raises(
+            ValueError, match="at least one of vertices, edges or per_edge"
+        ):
             ChangeFieldTypesOp()
 
 

@@ -25,7 +25,11 @@ class VertexExtractionOptionsConfig(ConfigBaseModel):
     from_doc: dict[str, str] | None = PydanticField(
         default=None,
         alias="from",
-        description="Projection: {vertex_field: doc_field}.",
+        description=(
+            "Projection: {vertex_field: doc_field}. A doc_field that is not a key "
+            "of the document is read as a dot path (fields.status.name); a "
+            "missing segment yields None."
+        ),
     )
     keep_fields: list[str] | None = PydanticField(
         default=None, description="Optional list of fields to keep"
@@ -502,7 +506,10 @@ class EdgeLinkConfig(EdgeEndpointMatchOptionsConfig):
     )
     relation_field: str | None = PydanticField(
         default=None,
-        description="Document field name for per-document relationship type.",
+        description=(
+            "Document field holding the per-document relationship type; a dot "
+            "path (type.outward) when it is not a key of the document."
+        ),
     )
     match_source: str | None = PydanticField(
         default=None,
@@ -703,7 +710,10 @@ class EdgeActorConfig(EdgeEndpointMatchOptionsConfig):
     )
     relation_field: str | None = PydanticField(
         default=None,
-        description="Ingestion: document field name for per-document relationship type.",
+        description=(
+            "Ingestion: document field holding the per-document relationship "
+            "type; a dot path (type.outward) when it is not a key of the document."
+        ),
     )
     match_source: str | None = PydanticField(
         default=None,
@@ -838,6 +848,8 @@ class EdgeActorConfig(EdgeEndpointMatchOptionsConfig):
             match=self.match,
             relation_field=self.relation_field,
             relation_from_key=self.relation_from_key,
+            relation_map=self.relation_map,
+            relation_map_only=self.relation_map_only,
             source_match=self.source_match,
             target_match=self.target_match,
             on_ambiguous=self.on_ambiguous,

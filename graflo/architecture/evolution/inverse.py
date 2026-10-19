@@ -23,7 +23,7 @@ import logging
 from typing import Any
 
 from graflo.architecture.contract.manifest import GraphManifest
-from graflo.architecture.graph_types import Index
+from graflo.architecture.graph_types import EdgeId, Index
 from graflo.architecture.schema.edge import inverse_map
 
 from .ops import (
@@ -42,6 +42,9 @@ from .ops import (
     EdgeFieldSemanticsTarget,
     EdgeIdentitiesEntry,
     EdgeIndexEntry,
+    EdgePropertyAdditions,
+    EdgePropertyRemovals,
+    EdgePropertyRenames,
     EdgeRetargetEntry,
     EdgeSelector,
     FieldSemanticsTarget,
@@ -305,59 +308,102 @@ def _invert_remove_vertex_properties(
     return AddVertexPropertiesOp(additions=additions) if additions else None
 
 
-def _invert_add_edge_properties(
-    op: AddEdgePropertiesOp, manifest: GraphManifest
-) -> ManifestOp | None:
-    """Remove only what the op added, across every edge carrying the relation.
+def _by_relation_or_edge(
+    manifest: GraphManifest, per_edge: dict[EdgeId, list[Any]]
+) -> tuple[dict[str, list[Any]], dict[EdgeId, list[Any]]]:
+    """*per_edge* collapsed to one entry per relation where every edge agrees.
 
-    The forward op is per edge (a name already on one edge is skipped there)
-    while both ops are addressed by relation, so a field present on some sibling
-    edges and absent on others has no relation-wide inverse; ``None`` says so
-    rather than removing it from the edges that had it before.
+    A relation whose edges all carry the same non-empty entry is addressed as
+    the relation; the rest stay per edge, so siblings that disagree are each
+    restored exactly.
     """
     by_relation: dict[str, list[Any]] = {}
     for edge in _edges(manifest):
         if edge.relation is not None:
-            by_relation.setdefault(edge.relation, []).append(edge)
-    removals: dict[str, list[str]] = {}
-    for relation in op.additions:
-        edges = by_relation.get(relation)
-        if not edges:
-            return None
-        added: list[str] = []
-        for field in op.field_names(relation):
-            presence = {any(f.name == field for f in edge.properties) for edge in edges}
-            if presence == {False}:
-                added.append(field)
-            elif presence != {True}:
-                return None
-        if added:
-            removals[relation] = added
-    return RemoveEdgePropertiesOp(removals=removals) if removals else None
+            by_relation.setdefault(edge.relation, []).append(edge.edge_id)
+    relation_wide: dict[str, list[Any]] = {}
+    rest = dict(per_edge)
+    for relation, edge_ids in by_relation.items():
+        entries = [per_edge.get(edge_id, []) for edge_id in edge_ids]
+        first = entries[0]
+        if first and all(_same_entries(entry, first) for entry in entries[1:]):
+            relation_wide[relation] = first
+            for edge_id in edge_ids:
+                rest.pop(edge_id, None)
+    return relation_wide, {edge_id: entry for edge_id, entry in rest.items() if entry}
+
+
+def _same_entries(a: list[Any], b: list[Any]) -> bool:
+    def _key(entry: Any) -> Any:
+        return entry if isinstance(entry, str) else entry.to_dict(skip_defaults=False)
+
+    return [_key(x) for x in a] == [_key(x) for x in b]
+
+
+def _selector(edge_id: EdgeId) -> dict[str, Any]:
+    return {"source": edge_id[0], "target": edge_id[1], "relation": edge_id[2]}
+
+
+def _invert_add_edge_properties(
+    op: AddEdgePropertiesOp, manifest: GraphManifest
+) -> ManifestOp | None:
+    """Remove only what the op added, from each edge it added it to.
+
+    The forward op skips a name an edge already has, so what it added is read
+    per edge off the pre-state; a relation whose edges all gained the same
+    names is removed relation-wide, the rest per edge.
+    """
+    edges = {edge.edge_id: edge for edge in _edges(manifest)}
+    relations = {edge_id[2] for edge_id in edges if edge_id[2] is not None}
+    if set(op.additions) - relations or any(
+        entry.edge_id() not in edges for entry in op.per_edge
+    ):
+        return None
+    added: dict[EdgeId, list[Any]] = {}
+    for edge_id, edge in edges.items():
+        present = {field.name for field in edge.properties}
+        names: list[str] = []
+        for entry in op.additions_for(edge_id):
+            name = entry if isinstance(entry, str) else entry.name
+            if name not in present and name not in names:
+                names.append(name)
+        added[edge_id] = names
+    removals, per_edge = _by_relation_or_edge(manifest, added)
+    if not removals and not per_edge:
+        return None
+    return RemoveEdgePropertiesOp(
+        removals=removals,
+        per_edge=[
+            EdgePropertyRemovals(**_selector(edge_id), fields=names)
+            for edge_id, names in per_edge.items()
+        ],
+    )
 
 
 def _invert_remove_edge_properties(
     op: RemoveEdgePropertiesOp, manifest: GraphManifest
 ) -> ManifestOp | None:
-    """Re-declare what was removed, as the fields the relation's edges carried.
+    """Re-declare what was removed, on each edge, as that edge declared it.
 
-    Both ops are addressed by relation and applied per edge, so sibling edges
-    that disagreed -- one carried the field, another did not, or they declared
-    it differently -- have no relation-wide inverse: adding it back would put it
-    on every edge of the relation. The first declaration is restored and
-    ``invert_op`` withholds the result when that does not reproduce them all.
+    A relation whose edges all declared the same fields gets them back
+    relation-wide, the rest per edge. ``invert_op`` withholds the result when
+    re-adding does not reproduce the pre-state (property order, profile
+    entries the removal pruned).
     """
-    additions: dict[str, list[Any]] = {}
-    for relation, fields in op.removals.items():
-        declared: dict[str, Any] = {}
-        for edge in _edges(manifest):
-            if edge.relation == relation:
-                for field in edge.properties:
-                    declared.setdefault(field.name, field)
-        restored = [declared[field] for field in fields if field in declared]
-        if restored:
-            additions[relation] = restored
-    return AddEdgePropertiesOp(additions=additions) if additions else None
+    restored: dict[EdgeId, list[Any]] = {}
+    for edge in _edges(manifest):
+        removed = op.removals_for(edge.edge_id)
+        restored[edge.edge_id] = [f for f in edge.properties if f.name in removed]
+    additions, per_edge = _by_relation_or_edge(manifest, restored)
+    if not additions and not per_edge:
+        return None
+    return AddEdgePropertiesOp(
+        additions=additions,
+        per_edge=[
+            EdgePropertyAdditions(**_selector(edge_id), properties=fields)
+            for edge_id, fields in per_edge.items()
+        ],
+    )
 
 
 def _invert_rename_vertices(
@@ -390,7 +436,13 @@ def _invert_rename_edge_properties(
     op: RenameEdgePropertiesOp, _manifest: GraphManifest
 ) -> ManifestOp:
     return RenameEdgePropertiesOp(
-        renames={name: _flip(mapping) for name, mapping in op.renames.items()}
+        renames={name: _flip(mapping) for name, mapping in op.renames.items()},
+        per_edge=[
+            EdgePropertyRenames(
+                **_selector(entry.edge_id()), renames=_flip(entry.renames)
+            )
+            for entry in op.per_edge
+        ],
     )
 
 

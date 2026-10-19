@@ -90,6 +90,8 @@ class ComparisonOperator(BaseEnum):
         GT: Greater than (>)
         LT: Less than (<)
         IN: Membership test (IN)
+        ANY_IN: A list field shares at least one member with the value list.
+            Rendered for Cypher and evaluated in Python; other flavors refuse it.
         IS_NULL: Null check (IS NULL)
         IS_NOT_NULL: Non-null check (IS NOT NULL)
     """
@@ -101,8 +103,15 @@ class ComparisonOperator(BaseEnum):
     GT = ">"
     LT = "<"
     IN = "IN"
+    ANY_IN = "ANY_IN"
     IS_NULL = "IS_NULL"
     IS_NOT_NULL = "IS_NOT_NULL"
+
+
+#: Flavors that render :attr:`ComparisonOperator.ANY_IN`.
+_ANY_IN_FLAVORS: frozenset[ExpressionFlavor] = frozenset(
+    {ExpressionFlavor.CYPHER, ExpressionFlavor.PYTHON}
+)
 
 
 DUNDER_TO_CMP: MappingProxyType[str, ComparisonOperator] = MappingProxyType(
@@ -134,6 +143,9 @@ CMP_TO_DUNDER: MappingProxyType[ComparisonOperator, str] = MappingProxyType(
     {cmp: dunder for dunder, cmp in DUNDER_TO_CMP.items()}
 )
 
+
+#: A field name every query language reads as a bare property name.
+_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 #: Characters a string literal writes as an escape, in every graph query language.
 _LITERAL_ESCAPES = {"\\": "\\\\", '"': '\\"', "\n": "\\n", "\r": "\\r", "\t": "\\t"}
@@ -369,6 +381,12 @@ class FilterExpression(ConfigBaseModel):
             update={"deps": [dep.rename_fields(renames) for dep in self.deps]}
         )
 
+    def fields(self) -> set[str]:
+        """Every field a leaf of this expression names."""
+        if self.kind == "leaf":
+            return {self.field} if self.field is not None else set()
+        return set().union(*(dep.fields() for dep in self.deps))
+
     def matches(self, doc: Mapping[str, Any]) -> bool:
         """Whether *doc* satisfies the expression, evaluated in Python.
 
@@ -413,6 +431,12 @@ class FilterExpression(ConfigBaseModel):
             raise ValueError(
                 "leaf expression requires cmp_operator for non-PYTHON flavor"
             )
+        if (
+            self.cmp_operator == ComparisonOperator.ANY_IN
+            and kind not in _ANY_IN_FLAVORS
+        ):
+            # Rendered as a scalar comparison it would test something else.
+            raise ValueError(f"ANY_IN on {self.field!r} is not supported for {kind}")
         params = _params_for(kind, kwargs)
         if kind == ExpressionFlavor.AQL:
             return self._cast_arango(doc_name, params)
@@ -508,7 +532,7 @@ class FilterExpression(ConfigBaseModel):
 
     def _cast_value(self, params: BoundParams | None = None) -> str:
         """The compared value: a placeholder of *params*, or a literal without it."""
-        if self.cmp_operator == ComparisonOperator.IN:
+        if self.cmp_operator in (ComparisonOperator.IN, ComparisonOperator.ANY_IN):
             # Always a list, whatever its length: `x IN "a"` is not membership.
             if params is not None:
                 return params.bind(self._in_members())
@@ -529,25 +553,47 @@ class FilterExpression(ConfigBaseModel):
             return None
         return self.unary_op
 
+    def _dotted(self, doc_name: str, flavor: str) -> str:
+        """``doc.field`` for the dot-access languages, the field never as query text.
+
+        An identifier is written as is; any other name is backtick-quoted
+        (Cypher, nGQL) or refused (GSQL, which has no quoting), so a field name
+        can never close the property access and add a condition of its own.
+        """
+        field = self.field or ""
+        if _IDENTIFIER.fullmatch(field):
+            return f"{doc_name}.{field}"
+        if flavor == "gsql":
+            raise ValueError(f"field {field!r} cannot be written in GSQL")
+        return f"{doc_name}.`{field.replace('`', '``')}`"
+
     def _cast_arango(self, doc_name: str, params: BoundParams | None = None) -> str:
         if self.cmp_operator == ComparisonOperator.IS_NULL:
-            return f'{doc_name}["{self.field}"] == null'
+            return f"{doc_name}[{self._graph_literal(self.field)}] == null"
         if self.cmp_operator == ComparisonOperator.IS_NOT_NULL:
-            return f'{doc_name}["{self.field}"] != null'
+            return f"{doc_name}[{self._graph_literal(self.field)}] != null"
         const = self._cast_value(params)
         lemma = f"{self.cmp_operator} {const}"
         if self._query_unary_op() is not None:
             lemma = f"{self._query_unary_op()} {lemma}"
         if self.field is not None:
-            lemma = f'{doc_name}["{self.field}"] {lemma}'
+            lemma = f"{doc_name}[{self._graph_literal(self.field)}] {lemma}"
         return lemma
 
     def _cast_cypher(self, doc_name: str, params: BoundParams | None = None) -> str:
         if self.cmp_operator == ComparisonOperator.IS_NULL:
-            return f"{doc_name}.{self.field} IS NULL"
+            return f"{self._dotted(doc_name, 'cypher')} IS NULL"
         if self.cmp_operator == ComparisonOperator.IS_NOT_NULL:
-            return f"{doc_name}.{self.field} IS NOT NULL"
+            return f"{self._dotted(doc_name, 'cypher')} IS NOT NULL"
         const = self._cast_value(params)
+        if self.cmp_operator == ComparisonOperator.ANY_IN:
+            if self.field is None:
+                raise ValueError("ANY_IN needs a field")
+            # A missing list holds no member, so it never matches.
+            return (
+                f"any(_any_in IN coalesce({self._dotted(doc_name, 'cypher')}, []) "
+                f"WHERE _any_in IN {const})"
+            )
         cmp_op = (
             "=" if self.cmp_operator == ComparisonOperator.EQ else self.cmp_operator
         )
@@ -555,7 +601,7 @@ class FilterExpression(ConfigBaseModel):
         if self._query_unary_op() is not None:
             lemma = f"{self._query_unary_op()} {lemma}"
         if self.field is not None:
-            lemma = f"{doc_name}.{self.field} {lemma}"
+            lemma = f"{self._dotted(doc_name, 'cypher')} {lemma}"
         return lemma
 
     def _cast_ngql(self, doc_name: str) -> str:
@@ -566,22 +612,22 @@ class FilterExpression(ConfigBaseModel):
         ``v.TagName.field``.
         """
         if self.cmp_operator == ComparisonOperator.IS_NULL:
-            return f"{doc_name}.{self.field} IS EMPTY"
+            return f"{self._dotted(doc_name, 'ngql')} IS EMPTY"
         if self.cmp_operator == ComparisonOperator.IS_NOT_NULL:
-            return f"{doc_name}.{self.field} IS NOT EMPTY"
+            return f"{self._dotted(doc_name, 'ngql')} IS NOT EMPTY"
         const = self._cast_value()
         lemma = f"{self.cmp_operator} {const}"
         if self._query_unary_op() is not None:
             lemma = f"{self._query_unary_op()} {lemma}"
         if self.field is not None:
-            lemma = f"{doc_name}.{self.field} {lemma}"
+            lemma = f"{self._dotted(doc_name, 'ngql')} {lemma}"
         return lemma
 
     def _cast_tigergraph(self, doc_name: str) -> str:
         if self.cmp_operator == ComparisonOperator.IS_NULL:
-            return f"{doc_name}.{self.field} IS NULL"
+            return f"{self._dotted(doc_name, 'gsql')} IS NULL"
         if self.cmp_operator == ComparisonOperator.IS_NOT_NULL:
-            return f"{doc_name}.{self.field} IS NOT NULL"
+            return f"{self._dotted(doc_name, 'gsql')} IS NOT NULL"
         const = self._cast_value()
         cmp_op = (
             "==" if self.cmp_operator == ComparisonOperator.EQ else self.cmp_operator
@@ -590,7 +636,7 @@ class FilterExpression(ConfigBaseModel):
         if self._query_unary_op() is not None:
             lemma = f"{self._query_unary_op()} {lemma}"
         if self.field is not None:
-            lemma = f"{doc_name}.{self.field} {lemma}"
+            lemma = f"{self._dotted(doc_name, 'gsql')} {lemma}"
         return lemma
 
     @staticmethod
@@ -714,6 +760,11 @@ class FilterExpression(ConfigBaseModel):
             return False
         if self.cmp_operator == ComparisonOperator.IN:
             return field_val in self._in_members()
+        if self.cmp_operator == ComparisonOperator.ANY_IN:
+            if not isinstance(field_val, (list, tuple, set, frozenset)):
+                return False
+            members = self._in_members()
+            return any(item in members for item in field_val)
         # List-form expressions (["==", value, field]) carry no unary_op; fall
         # back to the dunder implied by cmp_operator so they evaluate the same
         # way they render.
@@ -840,6 +891,24 @@ def render_conjunct(
     if expr.kind == "composite" and expr.operator == LogicalOperator.OR:
         return f"({rendered})"
     return rendered
+
+
+def conjoin(*filters: Any) -> FilterExpression | None:
+    """The ``AND`` of every filter given, skipping ``None``.
+
+    Each operand may be a :class:`FilterExpression` or any form
+    :func:`parse_filter_expression` reads. Use it to add a trusted read guard to
+    a caller's filter before a vertex read.
+
+    Returns:
+        None when every operand is None, the single operand when there is one.
+    """
+    parsed = [parse_filter_expression(f) for f in filters if f is not None]
+    if not parsed:
+        return None
+    if len(parsed) == 1:
+        return parsed[0]
+    return FilterExpression(kind="composite", operator=LogicalOperator.AND, deps=parsed)
 
 
 def parse_filter_expression(raw: Any) -> FilterExpression:

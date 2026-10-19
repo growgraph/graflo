@@ -1951,42 +1951,128 @@ def _rewrite_edge_properties_payload(
     payload["properties"] = rewritten
 
 
+_DYNAMIC_ENDPOINT_KEYS = (
+    "source_type_field",
+    "target_type_field",
+    "source_role",
+    "target_role",
+)
+_DYNAMIC_RELATION_KEYS = ("relation_field", "relation_map", "relation_from_key")
+#: Step-level keys a ``links`` item inherits from its step.
+_INHERITED_LINK_KEYS = ("emit_inverse", "relation_map", "relation_from_key")
+
+
+def _payload_writes(
+    payload: dict[str, Any], edge_id: tuple[str, str, str | None]
+) -> bool | None:
+    """Whether an edge payload writes *edge_id*: only it, never, or maybe.
+
+    ``True`` when its endpoints and relation are static and name *edge_id*;
+    ``False`` when nothing static about it can name *edge_id*; ``None`` when
+    a role, a type field, a per-document relation or ``emit_inverse`` (which
+    writes the inverse with the same properties) leaves it open.
+    """
+    source = _endpoint_vertex(payload, "source", "from")
+    target = _endpoint_vertex(payload, "target", "to")
+    relation = payload.get("relation")
+    relation = relation if isinstance(relation, str) else None
+    endpoints_static = (
+        source is not None
+        and target is not None
+        and not any(payload.get(key) for key in _DYNAMIC_ENDPOINT_KEYS)
+    )
+    relation_static = not any(payload.get(key) for key in _DYNAMIC_RELATION_KEYS)
+    inverse = bool(payload.get("emit_inverse"))
+
+    def _ends(first: str | None, second: str | None) -> bool:
+        return first in (None, edge_id[0]) and second in (None, edge_id[1])
+
+    forward = _ends(source, target) and (not relation_static or relation == edge_id[2])
+    if not forward and not (inverse and _ends(target, source)):
+        return False
+    if endpoints_static and relation_static and not inverse:
+        return True
+    return None
+
+
+def _declared_edge_property_names(payload: dict[str, Any]) -> set[str]:
+    properties = payload.get("properties")
+    if not isinstance(properties, list):
+        return set()
+    return {
+        prop if isinstance(prop, str) else prop["name"]
+        for prop in properties
+        if isinstance(prop, str)
+        or (isinstance(prop, dict) and isinstance(prop.get("name"), str))
+    }
+
+
+def _per_edge_reach(
+    payload: dict[str, Any],
+    by_edge: Mapping[tuple[str, str, str | None], Collection[str]],
+) -> list[tuple[str, str, str | None]]:
+    """The per-edge entries that apply to *payload*; refuses one it may write.
+
+    A step that may write the edge and others too cannot be edited for one of
+    them, so a per-edge change to a property it declares is refused rather
+    than applied to, or withheld from, every edge it writes.
+    """
+    reached: list[tuple[str, str, str | None]] = []
+    declared = _declared_edge_property_names(payload)
+    for edge_id, names in by_edge.items():
+        writes = _payload_writes(payload, edge_id)
+        if writes:
+            reached.append(edge_id)
+        elif writes is None and (named := sorted(declared & set(names))):
+            raise ValueError(
+                f"edge step {_payload_edge_id(payload) or payload.get('relation')!r} "
+                f"may write edge {edge_id} and others, and declares {named}: a "
+                "per-edge change cannot edit it; give the step static endpoints "
+                "and relation, or make the change for the whole relation"
+            )
+    return reached
+
+
 def rewrite_edge_properties_in_pipeline(
     pipeline: list[dict[str, Any]],
     *,
     renames_by_relation: dict[str, dict[str, str]] | None = None,
     removals_by_relation: dict[str, set[str]] | None = None,
+    renames_by_edge: Mapping[tuple[str, str, str | None], dict[str, str]] | None = None,
+    removals_by_edge: Mapping[tuple[str, str, str | None], set[str]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Rewrite edge actor `properties` declarations by relation."""
+    """Rewrite edge actor `properties` declarations by relation or by triple."""
     renames_ctx = renames_by_relation or {}
     removals_ctx = removals_by_relation or {}
-    if not renames_ctx and not removals_ctx:
+    renames_edge_ctx = renames_by_edge or {}
+    removals_edge_ctx = removals_by_edge or {}
+    if not (renames_ctx or removals_ctx or renames_edge_ctx or removals_edge_ctx):
         return deepcopy(pipeline)
 
-    def _rewrite_edge_payload(payload: dict[str, Any]) -> None:
-        relation = payload.get("relation")
+    def _rewrite_one(target: dict[str, Any], view: dict[str, Any]) -> None:
+        relation = view.get("relation")
         if isinstance(relation, str):
-            renames = renames_ctx.get(relation, {})
-            removals = removals_ctx.get(relation, set())
+            renames = dict(renames_ctx.get(relation, {}))
+            removals = set(removals_ctx.get(relation, set()))
         else:
             renames = {}
             removals = set()
-        _rewrite_edge_properties_payload(payload, renames=renames, removals=removals)
+        for edge_id in _per_edge_reach(view, renames_edge_ctx):
+            renames |= renames_edge_ctx[edge_id]
+        for edge_id in _per_edge_reach(view, removals_edge_ctx):
+            removals |= removals_edge_ctx[edge_id]
+        _rewrite_edge_properties_payload(target, renames=renames, removals=removals)
+
+    def _rewrite_edge_payload(payload: dict[str, Any]) -> None:
+        _rewrite_one(payload, payload)
         links = payload.get("links")
         if isinstance(links, list):
+            inherited = {
+                key: payload[key] for key in _INHERITED_LINK_KEYS if key in payload
+            }
             for link in links:
-                if not isinstance(link, dict):
-                    continue
-                link_relation = link.get("relation")
-                _rewrite_edge_properties_payload(
-                    link,
-                    renames=renames_ctx.get(link_relation, {})
-                    if isinstance(link_relation, str)
-                    else {},
-                    removals=removals_ctx.get(link_relation, set())
-                    if isinstance(link_relation, str)
-                    else set(),
-                )
+                if isinstance(link, dict):
+                    _rewrite_one(link, {**inherited, **link})
 
     def _rewrite_step(step: dict[str, Any]) -> dict[str, Any]:
         out = deepcopy(step)

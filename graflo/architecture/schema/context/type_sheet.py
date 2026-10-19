@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 from graflo.architecture.schema.context.element_text import (
     edge_pattern,
+    extractable_edge_properties,
     extractable_properties,
     field_unit,
     identity_label,
@@ -33,7 +34,7 @@ Every type available to you, one per line, each followed by its properties.
     `id: assigned` and `id: none` mean no key is taken from the text.
     `alt id:` is another property set that also identifies the vertex.
   Edge: `(Source)-[RELATION]->(Target)`; `-[R]-` is undirected, `-[]->` has no relation name.
-  Property: `name TYPE [unit]`; a value with a unit is written with that unit."""
+  Property: `name TYPE [unit] "description"  ~ other names`; a value with a unit is written with that unit."""
 
 _FOOTER = (
     "Use these types, relations and properties only. "
@@ -100,7 +101,7 @@ def _edge_lines(edge: Edge) -> list[str]:
     head = _join(
         [edge_pattern(edge), _quoted(edge.description), _synonyms(edge.semantics)]
     )
-    return [head, *_properties_line(edge.properties)]
+    return [head, *_properties_line(extractable_edge_properties(edge))]
 
 
 def render_type_sheet(schema: Schema) -> str:

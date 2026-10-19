@@ -12,6 +12,8 @@ from graflo.architecture.schema.vertex import (
     FieldType,
 )
 
+from .edges import EdgeSelector, validate_per_edge
+
 
 class FieldTypeSpec(ConfigBaseModel):
     """Target logical type for one property."""
@@ -34,6 +36,14 @@ class FieldTypeSpec(ConfigBaseModel):
         return self
 
 
+class EdgeFieldTypes(EdgeSelector):
+    """Retypes on one edge triple."""
+
+    fields: dict[str, FieldTypeSpec] = PydanticField(
+        ..., description="``{field_name: {type, item_type}}``.", min_length=1
+    )
+
+
 class ChangeFieldTypesOp(ConfigBaseModel):
     """Set the logical type of existing vertex or edge properties.
 
@@ -51,14 +61,35 @@ class ChangeFieldTypesOp(ConfigBaseModel):
         default_factory=dict,
         description="``{relation_name: {field_name: {type, item_type}}}``.",
     )
+    per_edge: list[EdgeFieldTypes] = PydanticField(
+        default_factory=list,
+        description="Retypes on single edge triples, including an edge with no relation.",
+    )
 
     @model_validator(mode="after")
     def _require_a_target(self) -> ChangeFieldTypesOp:
-        if not self.vertices and not self.edges:
+        if not self.vertices and not self.edges and not self.per_edge:
             raise ValueError(
-                "change_field_types requires at least one of vertices or edges"
+                "change_field_types requires at least one of vertices, edges or per_edge"
+            )
+        if self.per_edge:
+            validate_per_edge(
+                self.edges,
+                self.per_edge,
+                lambda entry: entry.fields,
+                kind="change_field_types",
             )
         return self
+
+    def edge_changes_for(
+        self, edge_id: tuple[str, str, str | None]
+    ) -> dict[str, FieldTypeSpec]:
+        """The retypes that reach the edge *edge_id*, from either form."""
+        out = dict(self.edges.get(edge_id[2], {})) if edge_id[2] is not None else {}
+        for entry in self.per_edge:
+            if entry.edge_id() == edge_id:
+                out |= entry.fields
+        return out
 
 
 class MergeFieldTypes(ConfigBaseModel):

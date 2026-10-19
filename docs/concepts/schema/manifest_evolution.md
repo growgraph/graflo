@@ -58,10 +58,25 @@ does, and whether it can be [undone](#undoing-ops).
 | `add_vertex_properties` | Adds properties to vertex types, as bare names or with `type` and grounding. | yes |
 | `remove_vertex_properties` | Removes properties and the indexes, `from` mappings and `keep_fields` entries that name them. Refuses a property the type does not declare. | yes; the property comes back with its type and grounding |
 | `rename_vertex_properties` | Renames properties per type. Resources keep reading the old column name, through a `from` mapping. Refuses a new name the type already declares, unless the map sends both names there on purpose (`{a: c, b: c}`). | yes, unless it folded two properties into one |
-| `add_edge_properties` | Adds properties to every edge of a relation. | yes |
-| `remove_edge_properties` | Removes properties from every edge of a relation. | yes, when the relation's edges agreed on the property |
-| `rename_edge_properties` | Renames properties of a relation, in the schema, profile and edge steps. | yes |
-| `change_field_types` | Sets the type of vertex or edge properties. An edge entry retypes every edge of the relation that declares the property. Checked against the target database, and refuses to make a key property a `LIST`. | no |
+| `add_edge_properties` | Adds properties to every edge of a relation, or to one edge (`per_edge`). | yes |
+| `remove_edge_properties` | Removes properties from every edge of a relation, or from one edge (`per_edge`). | yes |
+| `rename_edge_properties` | Renames properties of a relation or of one edge (`per_edge`), in the schema, profile and edge steps. | yes |
+| `change_field_types` | Sets the type of vertex or edge properties. An `edges` entry retypes every edge of the relation that declares the property; a `per_edge` entry retypes one edge. Checked against the target database, and refuses to make a key property a `LIST`. | no |
+
+The four edge property ops take a `per_edge` list beside their relation-keyed
+map. Each entry names one edge by `source`, `target` and `relation` (`null` for
+an edge with no relation) and leaves its sibling edges alone:
+
+```yaml
+- op: remove_edge_properties
+  per_edge:
+    - {source: person, target: city, relation: works_at, fields: [weight]}
+```
+
+An op may name a property for a relation or for one of its edges, not both. A
+per-edge removal or rename edits an edge step only when the step's endpoints and
+relation are fixed; it is refused when a step that may write other edges too
+(roles, `relation_field`, `relation_map`, `emit_inverse`) declares the property.
 
 ### Edges and relations
 
@@ -256,16 +271,18 @@ wrong turns a change that keeps data into one that drops it. Without the hint
 above, the diff removes `Asset` and adds `Machine`. `RenameHints` takes
 `vertices`, `relations`, `resources`, `vertex_properties` and `edge_properties`.
 
-`warnings` lists what the ops could not express, such as one of a relation's
-edges gaining a property its siblings lack; when that happens, replaying the ops
-does not reproduce the target, and the last warning says so. A change set with
+`warnings` lists what the ops could not express, such as a removed ingestion
+block; when that happens, replaying the ops does not reproduce the target, and
+the last warning says so. A property change shared by every edge of a relation
+is written for the relation, one that differs between sibling edges per edge. A change set with
 warnings is incomplete, and `graflo commit` refuses to record it. An edited
 pipeline is written as `replace_resources`, unless the only edit is transform
 steps appended at the end (`add_resource_transforms`) or the trimming that a
 removal already does.
 
 The ops come in an order in which each one's preconditions hold: renames first,
-then additions, then changes, then removals.
+then additions, then changes, then removals. Edge property changes come before
+new edges, so a change made for a relation does not reach an edge the diff adds.
 
 ## Inverse relations in detail
 

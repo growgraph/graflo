@@ -1815,16 +1815,21 @@ def apply_merge_edges(manifest: GraphManifest, op: MergeEdgesOp) -> None:
 
 
 def _refuse_unknown_edge_properties(
-    op_name: str, schema: Schema, named: dict[str, set[str]]
+    op_name: str,
+    schema: Schema,
+    named: dict[str, set[str]],
+    per_edge: dict[EdgeId, set[str]] | None = None,
 ) -> None:
-    """Refuse a relation no edge carries, and a property none of its edges has.
+    """Refuse a relation or triple no edge carries, and a property it lacks.
 
-    Both ops are addressed by relation and applied per edge, so a property on
-    only some sibling edges is ordinary. One on *none* of them is a mistake in
-    the change set, and skipping it would record a change that changed nothing.
+    A relation-addressed change applies per edge, so a property on only some
+    sibling edges is ordinary; one on *none* of them, or a per-edge change to
+    a property that edge lacks, is a mistake in the change set, and skipping it
+    would record a change that changed nothing.
     """
+    edges = schema.core_schema.edge_config.edges
     declared: dict[str, set[str]] = {}
-    for edge in schema.core_schema.edge_config.edges:
+    for edge in edges:
         if edge.relation is not None:
             declared.setdefault(edge.relation, set()).update(
                 field.name for field in edge.properties
@@ -1832,11 +1837,19 @@ def _refuse_unknown_edge_properties(
     unknown_relations = sorted(set(named) - set(declared))
     if unknown_relations:
         raise ValueError(f"{op_name}: unknown relations: {unknown_relations}")
-    unknown = {
+    unknown: dict[Any, list[str]] = {
         relation: missing
         for relation, fields in sorted(named.items())
         if (missing := sorted(fields - declared[relation]))
     }
+    on_edge = {
+        edge.edge_id: {field.name for field in edge.properties} for edge in edges
+    }
+    for edge_id, fields in (per_edge or {}).items():
+        if edge_id not in on_edge:
+            raise ValueError(f"{op_name}: unknown edge: {edge_id}")
+        if missing := sorted(fields - on_edge[edge_id]):
+            unknown[edge_id] = missing
     if unknown:
         raise ValueError(f"{op_name}: unknown properties: {unknown}")
 
@@ -1844,7 +1857,7 @@ def _refuse_unknown_edge_properties(
 def apply_rename_edge_properties(
     manifest: GraphManifest, op: RenameEdgePropertiesOp
 ) -> None:
-    """Rename edge properties by relation and propagate references."""
+    """Rename edge properties by relation or by triple and propagate references."""
     schema = manifest.graph_schema
     if schema is None:
         raise ValueError("rename_edge_properties requires graph_schema")
@@ -1852,25 +1865,24 @@ def apply_rename_edge_properties(
         "rename_edge_properties",
         schema,
         {relation: set(renames) for relation, renames in op.renames.items()},
+        {entry.edge_id(): set(entry.renames) for entry in op.per_edge},
     )
     for edge in schema.core_schema.edge_config.edges:
-        if edge.relation is not None and edge.relation in op.renames:
+        if renames := op.renames_for(edge.edge_id):
             _refuse_folding_renames(
                 "rename_edge_properties",
                 f"edge {edge.edge_id}",
                 [field.name for field in edge.properties],
-                op.renames[edge.relation],
+                renames,
             )
     for edge in schema.core_schema.edge_config.edges:
-        per_relation = (
-            op.renames.get(edge.relation, {}) if edge.relation is not None else {}
-        )
-        if not per_relation:
+        renames = op.renames_for(edge.edge_id)
+        if not renames:
             continue
         seen: set[str] = set()
         new_properties: list[Field] = []
         for field in edge.properties:
-            new_name = per_relation.get(field.name, field.name)
+            new_name = renames.get(field.name, field.name)
             if new_name in seen:
                 continue
             seen.add(new_name)
@@ -1878,21 +1890,24 @@ def apply_rename_edge_properties(
         edge.properties = new_properties
         edge.identities = [
             [
-                per_relation.get(token, token)
+                renames.get(token, token)
                 if token not in {"source", "target", "relation"}
                 else token
                 for token in identity
             ]
             for identity in edge.identities
         ]
-    apply_edge_property_rename_to_db_profile(schema.db_profile, op.renames)
+    renames_by_edge = {entry.edge_id(): dict(entry.renames) for entry in op.per_edge}
+    apply_edge_property_rename_to_db_profile(
+        schema.db_profile, op.renames, renames_by_edge=renames_by_edge
+    )
     schema.db_profile = _revalidate_db_profile(schema.db_profile)
     schema.finish_init()
 
     _rebuild_ingestion_with_pipeline_rewrite(
         manifest,
         lambda pipeline: rewrite_edge_properties_in_pipeline(
-            pipeline, renames_by_relation=op.renames
+            pipeline, renames_by_relation=op.renames, renames_by_edge=renames_by_edge
         ),
     )
 
@@ -1900,16 +1915,17 @@ def apply_rename_edge_properties(
 def apply_remove_edge_properties(
     manifest: GraphManifest, op: RemoveEdgePropertiesOp
 ) -> None:
-    """Remove edge properties by relation and clean references."""
+    """Remove edge properties by relation or by triple and clean references."""
     schema = manifest.graph_schema
     if schema is None:
         raise ValueError("remove_edge_properties requires graph_schema")
     removals = {relation: set(fields) for relation, fields in op.removals.items()}
-    _refuse_unknown_edge_properties("remove_edge_properties", schema, removals)
+    removals_by_edge = {entry.edge_id(): set(entry.fields) for entry in op.per_edge}
+    _refuse_unknown_edge_properties(
+        "remove_edge_properties", schema, removals, removals_by_edge
+    )
     for edge in schema.core_schema.edge_config.edges:
-        remove_fields = (
-            removals.get(edge.relation, set()) if edge.relation is not None else set()
-        )
+        remove_fields = op.removals_for(edge.edge_id)
         if not remove_fields:
             continue
         blocked_tokens = set().union(
@@ -1922,18 +1938,20 @@ def apply_remove_edge_properties(
         if overlap:
             raise ValueError(
                 "remove_edge_properties cannot remove identity fields "
-                f"for relation {edge.relation}: {overlap}"
+                f"for edge {edge.edge_id}: {overlap}"
             )
         edge.properties = [
             field for field in edge.properties if field.name not in remove_fields
         ]
-    apply_edge_property_removal_to_db_profile(schema.db_profile, removals)
+    apply_edge_property_removal_to_db_profile(
+        schema.db_profile, removals, removals_by_edge=removals_by_edge
+    )
     schema.db_profile = _revalidate_db_profile(schema.db_profile)
     schema.finish_init()
     _rebuild_ingestion_with_pipeline_rewrite(
         manifest,
         lambda pipeline: rewrite_edge_properties_in_pipeline(
-            pipeline, removals_by_relation=removals
+            pipeline, removals_by_relation=removals, removals_by_edge=removals_by_edge
         ),
     )
 
@@ -2003,7 +2021,7 @@ def apply_add_vertex_properties(
 
 
 def apply_add_edge_properties(manifest: GraphManifest, op: AddEdgePropertiesOp) -> None:
-    """Append new edge properties to existing relations."""
+    """Append new edge properties to existing relations or edge triples."""
     schema = manifest.graph_schema
     if schema is None:
         raise ValueError("add_edge_properties requires graph_schema")
@@ -2012,10 +2030,12 @@ def apply_add_edge_properties(manifest: GraphManifest, op: AddEdgePropertiesOp) 
     unknown = sorted(set(op.additions) - known)
     if unknown:
         raise ValueError(f"add_edge_properties: unknown relations: {unknown}")
+    edge_ids = {edge.edge_id for edge in edges}
+    unknown_edges = [e.edge_id() for e in op.per_edge if e.edge_id() not in edge_ids]
+    if unknown_edges:
+        raise ValueError(f"add_edge_properties: unknown edges: {unknown_edges}")
     for edge in edges:
-        additions = (
-            op.additions.get(edge.relation, []) if edge.relation is not None else []
-        )
+        additions = op.additions_for(edge.edge_id)
         if not additions:
             continue
         existing = {field.name: field for field in edge.properties}

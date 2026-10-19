@@ -11,7 +11,11 @@ the reached nodes directly is the only way the question is answerable at all.
 
 The anchor value always travels as the query parameter ``$anchor_id``, never in
 the query text: it comes from a request, and interpolating it would let a caller
-rewrite the query.
+rewrite the query. Filter and guard values travel as bound parameters too.
+
+An edge filter holds for every relationship of a path, and a guard for every
+node and relationship of it, the anchor included: a path through a hidden
+element reaches nothing.
 """
 
 from __future__ import annotations
@@ -22,6 +26,8 @@ from typing import TYPE_CHECKING, Any
 
 from graflo.architecture.graph_types import EdgeDirection, GraphContainer
 from graflo.db.cypher.direction import cypher_rel_pattern
+from graflo.filter.onto import BoundParams, FilterExpression, parse_filter_expression
+from graflo.onto import ExpressionFlavor
 
 if TYPE_CHECKING:
     from graflo.architecture.schema import Schema
@@ -52,6 +58,7 @@ def cypher_neighbors_query(
     direction: EdgeDirection,
     hops: int,
     limit: int | None,
+    conditions: Sequence[str] = (),
 ) -> str:
     """Render a bounded neighbourhood query.
 
@@ -73,9 +80,12 @@ def cypher_neighbors_query(
         direction: Orientation followed from the anchor.
         hops: Maximum hop distance.
         limit: Maximum reached nodes.
+        conditions: Further predicates over ``path``, ``anchor`` and ``far``,
+            ANDed into the ``WHERE`` clause.
     """
     if hops < 1:
         raise ValueError(f"hops must be >= 1, got {hops}")
+    where = " AND ".join(["far <> anchor", *conditions])
     pattern = cypher_rel_pattern(edge_type, direction, min_hops=1, max_hops=hops)
     far = f"(far:{far_label})" if far_label else "(far)"
     limit_clause = f"\nLIMIT {int(limit)}" if limit is not None else ""
@@ -83,11 +93,41 @@ def cypher_neighbors_query(
     return (
         f"MATCH path = (anchor:{anchor_label} {{{key}: ${ANCHOR_PARAM}}})"
         f"{pattern}{far}\n"
-        f"WHERE far <> anchor\n"
+        f"WHERE {where}\n"
         f"RETURN DISTINCT properties(far) AS far, length(path) AS distance, "
         f"labels(far) AS labels"
         f"{limit_clause}"
     )
+
+
+def path_conditions(
+    params: BoundParams,
+    *,
+    filters: Any | None = None,
+    guard: FilterExpression | None = None,
+) -> list[str]:
+    """The ``WHERE`` predicates an edge filter and a guard put on ``path``.
+
+    Values are bound into *params*.
+    """
+    kind = ExpressionFlavor.CYPHER
+    conditions: list[str] = []
+    if filters is not None:
+        edge_filter = parse_filter_expression(filters)
+        conditions.append(
+            "all(_gr IN relationships(path) WHERE "
+            f"{edge_filter(doc_name='_gr', kind=kind, params=params)})"
+        )
+    if guard is not None:
+        conditions.append(
+            "all(_gn IN nodes(path) WHERE "
+            f"{guard(doc_name='_gn', kind=kind, params=params)})"
+        )
+        conditions.append(
+            "all(_gr IN relationships(path) WHERE "
+            f"{guard(doc_name='_gr', kind=kind, params=params)})"
+        )
+    return conditions
 
 
 def _anchor_key(
@@ -124,6 +164,8 @@ def cypher_graph_neighbors(
     limit: int | None,
     schema: Schema | None,
     run: Callable[[str, dict[str, Any]], list[dict[str, Any]]],
+    filters: Any | None = None,
+    guard: FilterExpression | None = None,
 ) -> GraphContainer:
     """Run a bounded neighbourhood query and shape it as a ``GraphContainer``.
 
@@ -157,6 +199,10 @@ def cypher_graph_neighbors(
         schema: Required for logical -> storage naming.
         run: Executes a query string with its parameters and returns rows as
             dicts carrying ``far`` (the node's properties) and ``labels``.
+        filters: Edge filter, in stored names, that every relationship of a
+            path must satisfy.
+        guard: Trusted predicate, in stored names, that every node and
+            relationship of a path must satisfy.
 
     Returns:
         GraphContainer: reached vertices, keyed by logical type.
@@ -216,6 +262,9 @@ def cypher_graph_neighbors(
         """Run *queries* from one anchor; reached docs with their logical type."""
         out: list[tuple[str, dict[str, Any]]] = []
         for storage, far_label, far_type, effective in queries:
+            # Rendered outside the try: a filter or guard that cannot be
+            # written must fail the read, not narrow it silently.
+            params = BoundParams(ExpressionFlavor.CYPHER)
             query = cypher_neighbors_query(
                 anchor_label=db_aware.vertex_config.vertex_dbname(anchor_type),
                 anchor_key_field=field,
@@ -224,10 +273,14 @@ def cypher_graph_neighbors(
                 direction=effective,
                 hops=max_hops,
                 limit=limit,
+                conditions=path_conditions(params, filters=filters, guard=guard),
             )
             try:
-                rows = run(query, {ANCHOR_PARAM: value})
+                rows = run(query, {ANCHOR_PARAM: value, **params.values})
             except Exception:
+                if filters is not None or guard is not None:
+                    # A constrained read that failed is not an empty answer.
+                    raise
                 logger.exception(
                     "cypher graph_neighbors failed for edge type %s", storage
                 )

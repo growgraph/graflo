@@ -93,6 +93,14 @@ class EdgeDerivation(ConfigBaseModel):
         default=False,
         description="If True, derive the per-document relation label from the location key during assembly.",
     )
+    relation_map: dict[str, str] | None = Field(
+        default=None,
+        description="Raw ``relation_field`` values -> relation names.",
+    )
+    relation_map_only: bool = Field(
+        default=False,
+        description="If True, a ``relation_field`` value absent from ``relation_map`` writes no edge.",
+    )
     source_match: EndpointSelector | None = Field(
         default=None,
         description=(
@@ -124,6 +132,20 @@ class EdgeDerivation(ConfigBaseModel):
     def uses_secondary_identity(self) -> bool:
         """True when either endpoint is matched on something other than the primary identity."""
         return not (_is_primary(self.source_match) and _is_primary(self.target_match))
+
+    def map_relation(self, raw: Any) -> tuple[bool, Any]:
+        """Apply ``relation_map`` to a value read from ``relation_field``.
+
+        Returns:
+            ``(keep, relation)``; ``keep`` is False when ``relation_map_only``
+            drops the value.
+        """
+        relation_map = self.relation_map or {}
+        if isinstance(raw, str) and raw in relation_map:
+            return True, relation_map[raw]
+        if self.relation_map_only:
+            return False, None
+        return True, raw
 
     def is_empty(self) -> bool:
         if self.relation_from_key or self.emit_inverse:

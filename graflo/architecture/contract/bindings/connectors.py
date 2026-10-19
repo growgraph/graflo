@@ -6,6 +6,7 @@ import abc
 import pathlib
 import re
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal, Self
 
 import suthing
@@ -739,17 +740,96 @@ class WatermarkConfig(ConfigBaseModel):
         param: Query parameter that carries the value on the next run.
         template: Parameter text with a ``{value}`` placeholder; ``None`` sends
             the bare value.
+        format: strftime pattern the value is rendered with, in UTC, before
+            the template, for an API whose query language takes another time
+            form than its records carry (``"%Y-%m-%d %H:%M"``). The stored
+            value is read as ISO 8601 (``Z``, ``+00:00`` or ``+0000`` offsets,
+            fractional seconds; no offset means UTC), or as epoch seconds when
+            it is a number or a string of one.
+            ``None`` renders it unchanged.
     """
 
     field: str = Field(..., min_length=1)
     param: str = Field(..., min_length=1)
     template: str | None = None
+    format: str | None = None
+
+    @field_validator("format")
+    @classmethod
+    def _check_format(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        directives = _STRFTIME_DIRECTIVE.findall(value)
+        unknown = sorted({d for d in directives if d[1:] not in _STRFTIME_CODES})
+        if unknown:
+            raise ValueError(f"watermark format has unknown directives: {unknown}")
+        if not [d for d in directives if d != "%%"]:
+            raise ValueError(
+                f"watermark format {value!r} has no strftime directive, such as %Y"
+            )
+        return value
+
+    def format_value(self, value: Any) -> Any:
+        """*value* as the API takes it: rendered by ``format``, else unchanged.
+
+        Raises:
+            ValueError: With ``format`` set, when *value* is neither ISO 8601
+                nor epoch seconds.
+        """
+        if self.format is None:
+            return value
+        return _as_utc(value).strftime(self.format)
 
     def render(self, value: Any) -> dict[str, Any]:
         """Return the query parameters that resume from *value*."""
+        value = self.format_value(value)
         if self.template is None:
             return {self.param: value}
         return {self.param: self.template.replace("{value}", str(value))}
+
+
+#: A ``%`` directive in a strftime pattern: ``%`` and the next character.
+_STRFTIME_DIRECTIVE = re.compile(r"%.?", re.DOTALL)
+#: The directives Python's strftime documents on every platform.
+_STRFTIME_CODES = frozenset("aAwdbBmyYHIpMSfzZjUWcxXGuV%")
+
+
+def _from_epoch(seconds: float, value: Any) -> datetime:
+    try:
+        return datetime.fromtimestamp(seconds, UTC)
+    except (OverflowError, OSError, ValueError):
+        raise ValueError(
+            f"watermark value {value!r} is out of range as epoch seconds"
+        ) from None
+
+
+def _as_utc(value: Any) -> datetime:
+    """A stored watermark as an aware UTC time."""
+    if isinstance(value, datetime):
+        moment = value
+    elif isinstance(value, bool):
+        raise ValueError(f"watermark value {value!r} is not a time")
+    elif isinstance(value, int | float):
+        return _from_epoch(value, value)
+    elif isinstance(value, str):
+        text = value.strip()
+        try:
+            seconds = float(text)
+        except ValueError:
+            seconds = None
+        if seconds is not None:
+            return _from_epoch(seconds, value)
+        try:
+            moment = datetime.fromisoformat(text)
+        except ValueError:
+            raise ValueError(
+                f"watermark value {value!r} is neither ISO 8601 nor epoch seconds"
+            ) from None
+    else:
+        raise ValueError(f"watermark value {value!r} is not a time")
+    if moment.tzinfo is None:
+        return moment.replace(tzinfo=UTC)
+    return moment.astimezone(UTC)
 
 
 #: ``{name}`` placeholders in a dependent connector's ``path`` and ``params``.
@@ -915,7 +995,8 @@ class PushConnector(ResourceConnector):
     """
 
     kind: Literal["push"]
-    name: str = Field(..., min_length=1)
+    # Narrowed from the base's optional name; validate_assignment refuses None.
+    name: str = Field(..., min_length=1)  # ty: ignore[invalid-mutable-override]
     records_path: str | None = None
 
     def matches(self, resource_identifier: str) -> bool:

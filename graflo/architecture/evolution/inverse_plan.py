@@ -137,7 +137,10 @@ def _summary(op: ManifestOp) -> str:
     if isinstance(op, (SetEdgeDirectedOp, RemoveEdgesOp)):
         return ", ".join(str(selector.edge_id()) for selector in op.edges)
     if isinstance(op, AddEdgePropertiesOp):
-        return ", ".join(f"{r}: {op.field_names(r)}" for r in op.additions)
+        return ", ".join(
+            [f"{r}: {op.field_names(r)}" for r in op.additions]
+            + [f"{e.edge_id()}: {e.field_names()}" for e in op.per_edge]
+        )
     return ""
 
 

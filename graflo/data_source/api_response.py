@@ -6,6 +6,7 @@ import logging
 from typing import Any, cast
 
 from graflo.architecture.contract.bindings import ApiResponseStructure
+from graflo.util.paths import get_at_path
 
 logger = logging.getLogger(__name__)
 
@@ -77,28 +78,6 @@ def check_body(body: object, resolved: ApiResponseStructure) -> None:
             raise APIBodyError(code, f"{resolved.ok_path}={flag!r}")
     if code is not None:
         raise APIBodyError(code, f"{resolved.error_path}={error!r}")
-
-
-def get_at_path(obj: object, path: str | None) -> object | None:
-    """Resolve a dot-separated path against a JSON-like object."""
-    if path is None:
-        return None
-
-    data: object = obj
-    for part in path.split("."):
-        if isinstance(data, dict):
-            mapping = cast(dict[str, Any], data)
-            data = mapping.get(part)
-        elif isinstance(data, list):
-            try:
-                data = data[int(part)]
-            except (ValueError, IndexError):
-                return None
-        else:
-            return None
-        if data is None:
-            return None
-    return data
 
 
 def detect_response_shape(body: dict[str, Any]) -> dict[str, str]:

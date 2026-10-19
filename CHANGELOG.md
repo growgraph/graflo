@@ -5,6 +5,83 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.20.0]
+
+### Added
+
+- **Reserved fields:** `Field.reserved` marks a field only the writer sets, never part of an
+  identity. It is left out of type sheets, element text and instance schemas; traversals refuse a
+  filter or anchor key naming it, and `GraphQuery.refuse_reserved(Schema.reserved_fields())`
+  refuses any other query (`ReservedFieldError`).
+- **Union-merged lists:** `Field.merge: union` keeps every member of a stored and a written list
+  on vertex upserts, and in-batch fusion unions too (`fuse_doc_basis(..., union_fields)`). Neo4j
+  writes it; a write to another backend, or with a union field on an edge, is refused before
+  anything is written.
+- **Writer stamp:** `DBWriter.write(..., stamp={...})` sets every reserved field of what it writes
+  (blank-resolved edges and extra weights included) and refuses, before writing, a type with a
+  reserved field and no stamp value of the right shape (`check_stamp`, `apply_stamp`).
+- **`ANY_IN`** filter operator: a list field shares a member with the given values. Rendered for
+  Cypher and evaluated in Python; other flavors refuse it. `conjoin()` ANDs filters.
+- **Read guard:** a trusted `guard` filter on `graph_neighbors`, `traverse`, `resolve_vertices` and
+  `lookup_candidates`, applied to every node and relationship of a path. Neo4j applies it
+  (`supports_read_guard`); other backends refuse it.
+- **`access` aspect:** `graflo lift --aspect access` adds a reserved `access_zones` label to the
+  vertex types in `LiftSpec.access_for` (each `replace` or `union`) and the relations in
+  `access_edges`. Not lifted by default.
+- `gf:` ontology 1.9.0: `gf:fieldReserved`, `gf:fieldMergeMode`.
+- **Watermark format:** `watermark.format` renders the stored mark with a strftime pattern in UTC
+  before the template (ISO 8601 with any offset, or epoch seconds, in).
+- **Dot paths** in a vertex step's `from` (`{status: fields.status.name}`) and in `relation_field`
+  (`type.outward`); a key of the record, dots and all, still reads as that key.
+  `graflo.util.paths` holds the one reader (`get_at_path`, `lookup_field`).
+- **Mention resolution:** a `MentionGraph` (`graflo.architecture.graph_types.mention`) holds what
+  a text names before its entities are known. `resolve_mentions` identifies mentions by keys only
+  (a complete primary key, or one secondary-identity match in the batch, then the graph) and stages
+  the rest with a reason; `promote` builds the container and `write_mention_graphs` does both
+  against a target. Partial keys never identify; connector-owned types are linked, never written.
+- **Key contract:** `key_contract(vertex)` states how a type is identified (`stated`, `derived`,
+  `minted`; key sets; alternates) and `key_status` which key a set of values completes.
+- `connector_owned_types(manifest)`: vertex types a connector-fed resource writes.
+- `mint_uuid`: the deterministic key of a keyless entity a source introduces.
+- SQL inference maps UNIQUE constraints (single- and multi-column) to `secondary_identities`;
+  RDF inference maps `owl:hasKey` and inverse-functional datatype properties to them.
+  `SqlMetadataProvider` gains `get_unique_constraints`.
+- `container_write.define_schema` is public.
+- **Per-edge property ops:** `add_edge_properties`, `remove_edge_properties`,
+  `rename_edge_properties` and `change_field_types` take `per_edge` entries naming one edge
+  triple (`EdgePropertyAdditions`, `EdgePropertyRemovals`, `EdgePropertyRenames`,
+  `EdgeFieldTypes`). The diff uses them where sibling edges differ or the edge has no relation,
+  and the inverses fall back to them, so both are exact where they refused or warned before.
+
+### Changed
+
+- **Projection allow-list:** a query that names no projection is narrowed to the allow-list
+  instead of returning every property.
+- The type sheet's legend documents a property's description and other names
+  (`name TYPE [unit] "description"  ~ other names`), as property lines already render them.
+
+### Removed
+
+- `GraFloOutput.schema`, an alias of `graph_schema` that shadowed pydantic's `BaseModel.schema()`;
+  read `graph_schema`.
+
+### Fixed
+
+- Neo4j, Memgraph and FalkorDB traversals apply edge filters (they were accepted and dropped);
+  a traversal with a filter or guard raises a database error instead of answering less.
+- A filter field name that is not an identifier is quoted (Cypher, nGQL, AQL) or refused (GSQL),
+  so it can no longer add a condition of its own.
+- An edge step with fixed endpoints applies `relation_map` and `relation_map_only` (they applied
+  only to role endpoints), and strict references check such a step's mapped relations instead of
+  refusing it as an undeclared relation-less edge.
+- `GraphEngine.ingest` and `define_and_ingest` check references before `clear_data` or
+  `define_schema` touch the target, so a refused manifest leaves the database as it was
+  (`Caster.validate_run`).
+- `diff_manifests` no longer gives a relation-wide property change to an edge the same diff adds
+  to that relation, nor retypes a sibling edge that keeps its type.
+- Three-way merge treats an op addressed by relation, or by edge, as depending on the edges it
+  addresses: removing the last edge of a relation no longer merges cleanly with an edit to it.
+
 ## [1.19.0]
 
 ### Added

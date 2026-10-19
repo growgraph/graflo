@@ -11,7 +11,7 @@ Every type available to you, one per line, each followed by its properties.
     `id: assigned` and `id: none` mean no key is taken from the text.
     `alt id:` is another property set that also identifies the vertex.
   Edge: `(Source)-[RELATION]->(Target)`; `-[R]-` is undirected, `-[]->` has no relation name.
-  Property: `name TYPE [unit]`; a value with a unit is written with that unit.
+  Property: `name TYPE [unit] "description"  ~ other names`; a value with a unit is written with that unit.
 
 ## Vertices
 Company  id: tax_id

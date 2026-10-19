@@ -348,8 +348,10 @@ class TestAdditiveInversesUndoOnlyWhatWasAdded:
         )
         assert inverse.removals == {"places": ["channel"]}
 
-    def test_add_edge_properties_refuses_when_sibling_edges_disagree(self) -> None:
-        """A relation-wide removal cannot undo an addition to only some edges."""
+    def test_add_edge_properties_undoes_per_edge_when_sibling_edges_disagree(
+        self,
+    ) -> None:
+        """An addition that reached only some edges is removed from those alone."""
         manifest = _manifest(
             extra_edges=[
                 {
@@ -360,10 +362,63 @@ class TestAdditiveInversesUndoOnlyWhatWasAdded:
                 }
             ]
         )
-        op = op_from_dict(
-            {"op": "add_edge_properties", "additions": {"places": ["channel"]}}
+        inverse = _assert_round_trips(
+            {"op": "add_edge_properties", "additions": {"places": ["channel"]}},
+            manifest=manifest,
         )
-        assert invert_op(op, manifest=manifest) is None
+        assert inverse.removals == {}
+        assert [(e.edge_id(), e.fields) for e in inverse.per_edge] == [
+            (("party", "order", "places"), ["channel"])
+        ]
+
+    def test_remove_edge_properties_restores_per_edge_when_siblings_disagree(
+        self,
+    ) -> None:
+        manifest = _manifest(
+            extra_edges=[
+                {
+                    "source": "order",
+                    "target": "invoice",
+                    "relation": "places",
+                    "properties": ["channel"],
+                }
+            ]
+        )
+        inverse = _assert_round_trips(
+            {"op": "remove_edge_properties", "removals": {"places": ["channel"]}},
+            manifest=manifest,
+        )
+        assert inverse.additions == {}
+        assert [e.edge_id() for e in inverse.per_edge] == [
+            ("order", "invoice", "places")
+        ]
+
+    def test_a_per_edge_rename_inverts_per_edge(self) -> None:
+        manifest = _manifest(
+            extra_edges=[
+                {
+                    "source": "order",
+                    "target": "invoice",
+                    "relation": "places",
+                    "properties": ["channel"],
+                }
+            ]
+        )
+        inverse = _assert_round_trips(
+            {
+                "op": "rename_edge_properties",
+                "per_edge": [
+                    {
+                        "source": "order",
+                        "target": "invoice",
+                        "relation": "places",
+                        "renames": {"channel": "via"},
+                    }
+                ],
+            },
+            manifest=manifest,
+        )
+        assert inverse.per_edge[0].renames == {"via": "channel"}
 
     def test_add_vertex_indexes_keeps_a_pre_existing_index(self) -> None:
         manifest = _manifest(
@@ -455,14 +510,16 @@ class TestAnInverseIsExactOrAbsent:
     def test_a_vertex_removal_that_cascaded_nothing_round_trips(self) -> None:
         _assert_round_trips({"op": "remove_vertices", "names": ["invoice"]})
 
-    def test_remove_edge_properties_refuses_when_sibling_edges_disagree(self) -> None:
+    def test_remove_edge_properties_restores_only_the_edge_that_had_it(self) -> None:
         """Adding the field back by relation would put it on the edge without it."""
         bare = {"source": "party", "target": "invoice", "relation": "places"}
-        op = op_from_dict(
-            {"op": "remove_edge_properties", "removals": {"places": ["when"]}}
+        inverse = _assert_round_trips(
+            {"op": "remove_edge_properties", "removals": {"places": ["when"]}},
+            manifest=_manifest(extra_edges=[bare]),
         )
 
-        assert invert_op(op, manifest=_manifest(extra_edges=[bare])) is None
+        assert inverse.additions == {}
+        assert [e.edge_id() for e in inverse.per_edge] == [("party", "order", "places")]
 
     def test_a_rename_onto_a_name_already_taken_has_no_inverse(self) -> None:
         """Two fields became one; renaming back cannot make them two again."""

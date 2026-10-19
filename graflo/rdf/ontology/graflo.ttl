@@ -7,8 +7,8 @@
 @prefix prov: <http://www.w3.org/ns/prov#> .
 
 <https://ontology.growgraph.dev/graflo> a owl:Ontology ;
-    owl:versionIRI <https://ontology.growgraph.dev/graflo/1.8.0> ;
-    owl:versionInfo "1.8.0" ;
+    owl:versionIRI <https://ontology.growgraph.dev/graflo/1.9.0> ;
+    owl:versionInfo "1.9.0" ;
     rdfs:label "GraFlo Ontology"@en ;
     skos:prefLabel "GraFlo Ontology"@en ;
     rdfs:comment "OWL vocabulary describing GraFlo GraphManifest contracts: schema, ingestion, bindings, transforms, and pipeline actors."@en .
@@ -558,6 +558,16 @@ gf:itemType a owl:ObjectProperty ;
     rdfs:domain gf:Field ;
     rdfs:range gf:FieldType ;
     rdfs:comment "Element type of a LIST field; a scalar FieldType."@en .
+
+gf:fieldReserved a owl:DatatypeProperty ;
+    rdfs:domain gf:Field ;
+    rdfs:range xsd:boolean ;
+    rdfs:comment "Whether only the writer sets the field, from the caller's stamp; a reserved field is never shown to a model or named by a query. Absent means false."@en .
+
+gf:fieldMergeMode a owl:DatatypeProperty ;
+    rdfs:domain gf:Field ;
+    rdfs:range xsd:string ;
+    rdfs:comment "How an upsert combines a value with the stored one: `replace` or `union` (LIST fields). Absent means `replace`."@en .
 
 gf:dbFlavor a owl:ObjectProperty ;
     rdfs:domain gf:DatabaseProfile ;

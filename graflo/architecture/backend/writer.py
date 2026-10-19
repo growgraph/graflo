@@ -7,7 +7,7 @@ import json
 import os
 import shutil
 import sys
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -31,7 +31,7 @@ def _graflo_package_version() -> str:
 
 
 @contextmanager
-def directory_lock(root: Path) -> Iterator[None]:
+def directory_lock(root: Path) -> Generator[None, None, None]:
     """Hold an exclusive lock on the backend directory *root*, across processes.
 
     Writers take it only to publish their chunks into ``INDEX.json``; chunk

@@ -264,6 +264,8 @@ class ManifestRdfDeserializer:
         item_type_uri = self._object(graph, field_uri, ns.itemType)
         description = self._literal(graph, field_uri, ns.description)
         semantics = self._read_semantics(graph, field_uri)
+        reserved = self._literal(graph, field_uri, ns.fieldReserved)
+        merge_mode = self._literal(graph, field_uri, ns.fieldMergeMode)
         # A field with nothing but a name round-trips as a bare string, which is
         # how most schemas author it. Semantics has to join that condition or a
         # grounded field would collapse back to a string and lose its block.
@@ -272,6 +274,8 @@ class ManifestRdfDeserializer:
             and item_type_uri is None
             and description is None
             and semantics is None
+            and reserved is None
+            and merge_mode is None
         ):
             return name
         field: dict[str, Any] = {"name": name}
@@ -287,6 +291,10 @@ class ManifestRdfDeserializer:
             field["description"] = description
         if semantics is not None:
             field["semantics"] = semantics
+        if reserved is not None:
+            field["reserved"] = reserved.lower() == "true"
+        if merge_mode is not None:
+            field["merge"] = merge_mode
         return field
 
     def _read_naming(

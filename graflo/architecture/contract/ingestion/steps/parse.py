@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Never, cast
+from typing import Any, Never
 
 from pydantic import ValidationError
 
@@ -135,10 +135,7 @@ def parse_root_config(
     if kwargs and ("apply" in kwargs or "pipeline" in kwargs):
         raw = kwargs.get("pipeline") or kwargs.get("apply")
         if raw is not None:
-            pipeline = cast(
-                list[dict[str, Any]],
-                list(raw) if isinstance(raw, list) else [raw],
-            )
+            pipeline = list(raw) if isinstance(raw, list) else [raw]
     elif args:
         if len(args) == 1 and isinstance(args[0], list):
             list_arg = args[0]

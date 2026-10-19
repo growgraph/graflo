@@ -2,13 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>GraFlo Ontology (v1.8.0)</title>
+  <title>GraFlo Ontology (v1.9.0)</title>
   <link rel="stylesheet" href="graph-view.css" />
 </head>
 <body>
   <div class="layout">
     <aside class="sidebar">
-      <h1>GraFlo Ontology (v1.8.0)</h1>
+      <h1>GraFlo Ontology (v1.9.0)</h1>
       <p>Class graph from <code>graflo.ttl</code>, grouped into the blocks the manifest composes. Within a block, depth runs left to right: each class sits right of whatever contains or generalises it. Taxonomy is shown by default; select a class to reveal its properties.</p>
       <div class="control">
         <label for="search">Search classes</label>
@@ -1104,7 +1104,16 @@
         },
         {
             "comment": "Manifest-facing field item used in vertex.properties and edge.properties.",
-            "datatypeProperties": [],
+            "datatypeProperties": [
+                {
+                    "label": "fieldMergeMode",
+                    "range": "string"
+                },
+                {
+                    "label": "fieldReserved",
+                    "range": "boolean"
+                }
+            ],
             "group": "schema",
             "id": "https://ontology.growgraph.dev/graflo/Field",
             "kind": "gf",
@@ -1674,7 +1683,7 @@
         }
     ],
     "universalRoot": "https://ontology.growgraph.dev/graflo/GrafloArtifact",
-    "version": "1.8.0"
+    "version": "1.9.0"
 };</script>
   <script src="graph-view.js"></script>
 </body>
