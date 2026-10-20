@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.20.1]
+
+### Fixed
+
+- **Stamped container writes:** `write_container(..., stamp=)` and
+  `write_mention_graphs(..., stamp=)` pass the writer stamp, so a container or a cast can be
+  written into a schema with reserved fields.
+- **Guarded mentions:** `resolve_mentions(..., guard=)` limits its graph lookups to what the guard
+  shows, and `write_mention_graphs(..., guard=)` passes that guard through. A stated key naming an
+  entity the guard hides stages the mention as `hidden` (`StageReason`) instead of writing onto
+  it; `writable=` leaves an entity the guard shows but the write may not change as an edge
+  endpoint only (`Resolved.link_only`). The guard applies only to types that declare the fields
+  it names.
+
+### Security
+
+- **Cypher names are one token.** Neo4j, Memgraph and FalkorDB write every label, relationship
+  type and property key through `cypher_name` (backtick-quoted, backticks doubled, unless an
+  identifier that is not a reserved word) and `cypher_map_key` (backticks doubled, not dropped),
+  so a schema name can no longer inject query text into reads, writes, DDL, deletes or traversals.
+
 ## [1.20.0]
 
 ### Added
@@ -16,8 +37,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Writer stamp:** `DBWriter.write(..., stamp={...})` sets every reserved field of what it writes
   (blank-resolved edges and extra weights included) and refuses, before writing, a type with a
   reserved field and no stamp value of the right shape (`check_stamp`, `apply_stamp`).
-  `write_container(..., stamp=)` and `write_mention_graphs(..., stamp=)` pass the same stamp, so a
-  container or a cast can be written into a schema with reserved fields.
 - **Union-merged lists:** `Field.merge: union` keeps every member of a stored and a written list
   on vertex upserts, and in-batch fusion unions too (`fuse_doc_basis(..., union_fields)`). Neo4j
   writes it; a write to another backend, or with a union field on an edge, is refused before
@@ -36,12 +55,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (a complete primary key, or one secondary-identity match in the batch, then the graph) and stages
   the rest with a reason; `promote` builds the container and `write_mention_graphs` does both
   against a target. Partial keys never identify; connector-owned types are linked, never written.
-- **Guarded mentions:** `resolve_mentions(..., guard=)` limits its graph lookups to what the guard
-  shows, and `write_mention_graphs(..., guard=)` passes that guard through. A stated key naming an
-  entity the guard hides stages the mention as `hidden` (`StageReason`) instead of writing onto
-  it; `writable=` leaves an entity the guard shows but the write may not change as an edge
-  endpoint only (`Resolved.link_only`). The guard applies only to types that declare the fields
-  it names.
 - **Key contract:** `key_contract(vertex)` states how a type is identified (`stated`, `derived`,
   `minted`; key sets; alternates) and `key_status` which key a set of values completes.
 - **`connector_owned_types(manifest)`**: the vertex types a connector-fed resource writes.
@@ -93,13 +106,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A merge op depends on the edges it addresses.** Three-way merge treats an op addressed by
   relation, or by edge, as depending on those edges: removing the last edge of a relation no
   longer merges cleanly with an edit to it.
-
-### Security
-
-- **Cypher names are one token.** Neo4j, Memgraph and FalkorDB write every label, relationship
-  type and property key through `cypher_name` (backtick-quoted, backticks doubled, unless an
-  identifier that is not a reserved word) and `cypher_map_key` (backticks doubled, not dropped),
-  so a schema name can no longer inject query text into reads, writes, DDL, deletes or traversals.
 
 ## [1.19.0]
 
