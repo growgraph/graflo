@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from pydantic import Field
@@ -153,6 +153,7 @@ async def write_container(
     pending: Sequence[PendingEdge] = (),
     recreate_schema: bool = False,
     ambiguity: EndpointAmbiguityPolicy = "skip",
+    stamp: Mapping[str, Any] | None = None,
 ) -> ContainerWriteReport:
     """Define *schema* on the target and upsert *container* by identity.
 
@@ -166,6 +167,9 @@ async def write_container(
         recreate_schema: Drop and redefine the schema instead of reusing it.
         ambiguity: What a secondary identity matching several vertices does.
             ``skip`` (the default) drops the edge rather than guess.
+        stamp: Values of the schema's reserved fields, set on everything
+            written, pending edges included (``DBWriter.write``). Required when
+            the container holds a type with a reserved field.
 
     Returns:
         ContainerWriteReport: counts of what was sent and what was looked up.
@@ -186,7 +190,9 @@ async def write_container(
     resolved_count = unresolved_count = 0
     writer = DBWriter(schema=schema, ingestion_model=ingestion_model)
     try:
-        await writer.write(gc=to_write, conn_conf=conn_conf, resource_name=None)
+        await writer.write(
+            gc=to_write, conn_conf=conn_conf, resource_name=None, stamp=stamp
+        )
         if pending:
             resolved, resolved_count, unresolved_count = await asyncio.to_thread(
                 _resolve_pending, schema, conn_conf, pending, ambiguity
@@ -196,6 +202,7 @@ async def write_container(
                     gc=GraphContainer(edges=dict(resolved)),
                     conn_conf=conn_conf,
                     resource_name=None,
+                    stamp=stamp,
                 )
     finally:
         writer.close()

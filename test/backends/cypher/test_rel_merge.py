@@ -18,9 +18,9 @@ def test_cypher_string_literal_escapes() -> None:
     assert cypher_string_literal(r"a\b") == r"'a\\b'"
 
 
-def test_cypher_map_key_strips_backticks() -> None:
+def test_cypher_map_key_keeps_backticks_as_one_token() -> None:
     assert cypher_map_key("date") == "`date`"
-    assert cypher_map_key("weird`x") == "`weirdx`"
+    assert cypher_map_key("weird`x") == "`weird``x`"
 
 
 def test_cypher_map_key_empty_raises() -> None:

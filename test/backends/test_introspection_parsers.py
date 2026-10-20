@@ -17,7 +17,6 @@ from graflo.db.cypher.introspection import (
     _edge_property_query,
     _vertex_property_query,
     collect_cypher_introspection,
-    escape_label,
 )
 from graflo.db.nebula.util import field_type_from_nebula
 from graflo.db.postgres.target_write import field_type_from_postgres
@@ -187,9 +186,9 @@ def test_edge_property_query_omits_the_type_clause_when_unnamed() -> None:
     assert "-[r:`knows`]->" in _edge_property_query("a", "b", "knows", 10)
 
 
-def test_escape_label_strips_backticks() -> None:
+def test_a_label_carrying_a_backtick_stays_one_quoted_token() -> None:
     """A label carrying a backtick must not break out of its quoting."""
-    assert "`" not in escape_label("we`ird")
+    assert "MATCH (n:`we``ird`)" in _vertex_property_query("we`ird", 10)
 
 
 # ---------------------------------------------------------------------------

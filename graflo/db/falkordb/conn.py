@@ -45,6 +45,7 @@ from graflo.db.conn import (
     consume_insert_edges_kwargs,
 )
 from graflo.db.cypher import (
+    cypher_name,
     cypher_rel_pattern,
     partition_by_absent_merge_props,
     rel_absent_upsert_clause,
@@ -407,14 +408,16 @@ class FalkordbConnection(Connection):
             index: Index configuration to create
             is_vertex_index: If True, create index on nodes, otherwise on relationships
         """
+        label = cypher_name(obj_name)
         for field in index.fields:
+            prop = cypher_name(field)
             try:
                 if is_vertex_index:
                     # FalkorDB node index syntax
-                    q = f"CREATE INDEX FOR (n:{obj_name}) ON (n.{field})"
+                    q = f"CREATE INDEX FOR (n:{label}) ON (n.{prop})"
                 else:
                     # FalkorDB relationship index syntax
-                    q = f"CREATE INDEX FOR ()-[r:{obj_name}]-() ON (r.{field})"
+                    q = f"CREATE INDEX FOR ()-[r:{label}]-() ON (r.{prop})"
 
                 self.execute(q)
                 logger.debug(f"Created index on {obj_name}.{field}")
@@ -474,7 +477,7 @@ class FalkordbConnection(Connection):
             # Delete nodes with specific labels
             for label in vertex_types:
                 try:
-                    self.execute(f"MATCH (n:{label}) DETACH DELETE n")
+                    self.execute(f"MATCH (n:{cypher_name(label)}) DETACH DELETE n")
                     logger.debug(f"Deleted all nodes with label '{label}'")
                 except Exception as e:
                     logger.warning(f"Failed to delete nodes with label '{label}': {e}")
@@ -620,13 +623,13 @@ class FalkordbConnection(Connection):
             return
 
         # Build the MERGE clause with match keys
-        index_str = ", ".join([f"{k}: row.{k}" for k in match_keys])
+        index_str = ", ".join([f"{k}: row.{k}" for k in map(cypher_name, match_keys)])
         # Use 'data' instead of 'batch' as parameter name (batch might be reserved)
         # Try direct UNWIND - FalkorDB may not support WITH $param AS alias
         # Datetime objects are converted to ISO-8601 strings during sanitization
         q = f"""
             UNWIND $data AS row
-            MERGE (n:{class_name} {{ {index_str} }})
+            MERGE (n:{cypher_name(class_name)} {{ {index_str} }})
             ON MATCH SET n += row
             ON CREATE SET n += row
         """
@@ -707,8 +710,13 @@ class FalkordbConnection(Connection):
             return
 
         # Build match conditions for source and target nodes
-        source_match_str = [f"source.{key} = row[0].{key}" for key in match_keys_source]
-        target_match_str = [f"target.{key} = row[1].{key}" for key in match_keys_target]
+        source_match_str = [
+            f"source.{k} = row[0].{k}" for k in map(cypher_name, match_keys_source)
+        ]
+        target_match_str = [
+            f"target.{k} = row[1].{k}" for k in map(cypher_name, match_keys_target)
+        ]
+        rel = cypher_name(relation_name)
 
         match_clause = "WHERE " + " AND ".join(source_match_str + target_match_str)
 
@@ -731,18 +739,16 @@ class FalkordbConnection(Connection):
             elif merge_props:
                 map_clause = rel_merge_props_map_from_row_index(merge_props)
                 upsert = (
-                    f"MERGE (source)-[r:{relation_name} {{{map_clause}}}]->(target)\n"
+                    f"MERGE (source)-[r:{rel} {{{map_clause}}}]->(target)\n"
                     "SET r += row[2]"
                 )
             else:
-                upsert = (
-                    f"MERGE (source)-[r:{relation_name}]->(target)\nSET r += row[2]"
-                )
+                upsert = f"MERGE (source)-[r:{rel}]->(target)\nSET r += row[2]"
             # Datetime objects are converted to ISO-8601 strings during sanitization
             q = f"""
             UNWIND $data AS row
-            MATCH (source:{source_class}),
-                  (target:{target_class}) {match_clause}
+            MATCH (source:{cypher_name(source_class)}),
+                  (target:{cypher_name(target_class)}) {match_clause}
             {upsert}
             """
             if not dry:
@@ -794,7 +800,9 @@ class FalkordbConnection(Connection):
         # Build return clause
         if return_keys is not None:
             # Project specific keys
-            keep_clause_ = ", ".join([f"n.{item} AS {item}" for item in return_keys])
+            keep_clause_ = ", ".join(
+                [f"n.{k} AS {k}" for k in map(cypher_name, return_keys)]
+            )
             return_clause = f"RETURN {keep_clause_}"
         else:
             return_clause = "RETURN n"
@@ -805,8 +813,9 @@ class FalkordbConnection(Connection):
         else:
             limit_clause = ""
 
+        label = cypher_name(class_name)
         q = f"""
-            MATCH (n:{class_name})
+            MATCH (n:{label})
             {filter_clause}
             {return_clause}
             {limit_clause}
@@ -877,12 +886,12 @@ class FalkordbConnection(Connection):
         # Build anchor node match
         # Ids come from callers and travel as parameters, never as query text.
         params: dict[str, Any] = {"from_id": from_id}
-        source_match = f"(source:{from_type} {{id: $from_id}})"
+        source_match = f"(source:{cypher_name(from_type)} {{id: $from_id}})"
         rel_pattern = cypher_rel_pattern(edge_type, direction)
 
         # Build target node match
         if to_type:
-            target_match = f"(target:{to_type})"
+            target_match = f"(target:{cypher_name(to_type)})"
         else:
             target_match = "(target)"
 
@@ -905,7 +914,9 @@ class FalkordbConnection(Connection):
 
         # Build return clause
         if return_keys is not None:
-            return_parts = ", ".join([f"r.{key} AS {key}" for key in return_keys])
+            return_parts = ", ".join(
+                [f"r.{k} AS {k}" for k in map(cypher_name, return_keys)]
+            )
             return_clause = f"RETURN {return_parts}"
         else:
             return_clause = "RETURN r"
@@ -1105,20 +1116,21 @@ class FalkordbConnection(Connection):
             filter_clause = f"WHERE {ff(doc_name='n', kind=params.kind, params=params)}"
         else:
             filter_clause = ""
+        label = cypher_name(class_name)
 
         # Build aggregation query based on function type
         if aggregation_function == AggregationType.COUNT:
             if discriminant:
                 q = f"""
-                    MATCH (n:{class_name})
+                    MATCH (n:{label})
                     {filter_clause}
-                    RETURN n.{discriminant} AS key, count(*) AS count
+                    RETURN n.{cypher_name(discriminant)} AS key, count(*) AS count
                 """
                 result = self.execute(q, **params.values)
                 return {row[0]: row[1] for row in result.result_set}
             else:
                 q = f"""
-                    MATCH (n:{class_name})
+                    MATCH (n:{label})
                     {filter_clause}
                     RETURN count(*) AS count
                 """
@@ -1129,9 +1141,9 @@ class FalkordbConnection(Connection):
             if not aggregated_field:
                 raise ValueError("aggregated_field is required for MAX aggregation")
             q = f"""
-                MATCH (n:{class_name})
+                MATCH (n:{label})
                 {filter_clause}
-                RETURN max(n.{aggregated_field}) AS max_value
+                RETURN max(n.{cypher_name(aggregated_field)}) AS max_value
             """
             result = self.execute(q, **params.values)
             return result.result_set[0][0] if result.result_set else None
@@ -1140,9 +1152,9 @@ class FalkordbConnection(Connection):
             if not aggregated_field:
                 raise ValueError("aggregated_field is required for MIN aggregation")
             q = f"""
-                MATCH (n:{class_name})
+                MATCH (n:{label})
                 {filter_clause}
-                RETURN min(n.{aggregated_field}) AS min_value
+                RETURN min(n.{cypher_name(aggregated_field)}) AS min_value
             """
             result = self.execute(q, **params.values)
             return result.result_set[0][0] if result.result_set else None
@@ -1151,9 +1163,9 @@ class FalkordbConnection(Connection):
             if not aggregated_field:
                 raise ValueError("aggregated_field is required for AVERAGE aggregation")
             q = f"""
-                MATCH (n:{class_name})
+                MATCH (n:{label})
                 {filter_clause}
-                RETURN avg(n.{aggregated_field}) AS avg_value
+                RETURN avg(n.{cypher_name(aggregated_field)}) AS avg_value
             """
             result = self.execute(q, **params.values)
             return result.result_set[0][0] if result.result_set else None
@@ -1164,9 +1176,9 @@ class FalkordbConnection(Connection):
                     "aggregated_field is required for SORTED_UNIQUE aggregation"
                 )
             q = f"""
-                MATCH (n:{class_name})
+                MATCH (n:{label})
                 {filter_clause}
-                RETURN DISTINCT n.{aggregated_field} AS value
+                RETURN DISTINCT n.{cypher_name(aggregated_field)} AS value
                 ORDER BY value
             """
             result = self.execute(q, **params.values)

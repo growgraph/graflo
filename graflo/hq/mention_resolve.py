@@ -24,7 +24,7 @@ vertices later, so a guess would stay a duplicate.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 from graflo.architecture.graph_types.container import GraphContainer
@@ -51,6 +51,7 @@ from graflo.architecture.schema.key_contract import (
 
 if TYPE_CHECKING:
     from graflo.connections.onto import DBConfig
+    from graflo.filter.onto import FilterExpression
     from graflo.hq.container_write import ContainerWriteReport
 
 _Key = tuple[str, str]  # (source_id, ref)
@@ -153,6 +154,8 @@ def resolve_mentions(
     *,
     db: Any | None = None,
     owned: frozenset[str] = frozenset(),
+    guard: FilterExpression | None = None,
+    writable: FilterExpression | None = None,
 ) -> Resolution:
     """Identify the mentions of *graphs* by their keys, against *db* when given.
 
@@ -163,19 +166,51 @@ def resolve_mentions(
         db: An open connection to look secondary identities and connector-owned
             keys up in. Without one, only the batch is searched.
         owned: Connector-owned vertex types: linked, never created or written.
+        guard: A trusted read guard every lookup in *db* must pass, so a mention
+            is never resolved to an entity the guard hides; refused by a backend
+            without read guards. A stated key of a type that is not
+            connector-owned is then checked against the graph as well: an entity
+            that exists but the guard hides stages the mention as ``hidden``
+            (an existence check only; nothing from it is returned). The guard
+            applies only to vertex types that declare every field it names;
+            other types are looked up unguarded.
+        writable: With a guard, the entities a write may change: an entity
+            found in the graph that the guard shows but *writable* does not is
+            resolved ``link_only`` -- an edge endpoint whose properties the
+            write leaves alone, like a connector-owned one.
 
     Raises:
         ValueError: A mention names an unknown vertex type.
     """
     batch = _Batch(schema, graphs, owned)
     reader = None
+    trusted = None
+    changeable = None
+    guarded_fields = guard.fields() if guard is not None else set()
     if db is not None:
+        from graflo.filter.onto import conjoin
         from graflo.hq.lookup import _Reader
 
-        reader = _Reader(db, schema)
+        reader = _Reader(db, schema, guard=guard)
+        if guard is not None:
+            # Existence only: a stated key that names a hidden entity stages.
+            trusted = _Reader(db, schema)
+            if writable is not None:
+                changeable = _Reader(db, schema, guard=conjoin(guard, writable))
+
+    def covered(vertex_type: str) -> bool:
+        """Whether the guard applies to *vertex_type* (it declares its fields)."""
+        if guard is None:
+            return False
+        names = {f.name for f in batch.vertex_config[vertex_type].properties}
+        return guarded_fields <= names
+
+    def reader_for(vertex_type: str) -> Any:
+        return reader if guard is None or covered(vertex_type) else trusted
 
     statuses: dict[_Key, KeyStatus] = {}
     owned_keyed: list[tuple[_Key, dict[str, Any]]] = []
+    guarded_keyed: list[tuple[_Key, dict[str, Any]]] = []
     for key in batch.order:
         mention = batch.mentions[key]
         contract = batch.contract(mention.type)
@@ -190,6 +225,8 @@ def resolve_mentions(
                 batch.staged[key] = ("partial_key", 0)
             elif mention.type in owned:
                 owned_keyed.append((key, identity))
+            elif trusted is not None and covered(mention.type):
+                guarded_keyed.append((key, identity))
             else:
                 batch.resolve(key, identity, by="key")
         elif status.alternates:
@@ -214,7 +251,11 @@ def resolve_mentions(
             fields = list(batch.contract(vertex_type).identity_fields)
             found = (
                 _graph_lookup(
-                    reader, vertex_type, fields, [i for _, i in items], fields
+                    reader_for(vertex_type),
+                    vertex_type,
+                    fields,
+                    [i for _, i in items],
+                    fields,
                 )
                 if reader is not None
                 else {}
@@ -224,6 +265,25 @@ def resolve_mentions(
                     batch.resolve(key, identity, by="key", found_in="graph")
                 else:
                     batch.staged[key] = ("owned_unmatched", 0)
+
+    # Under a guard, a stated key may name an entity the guard hides: that
+    # mention stages rather than writing onto, or linking to, what it cannot see.
+    if guarded_keyed and reader is not None and trusted is not None:
+        by_type = {}
+        for key, identity in guarded_keyed:
+            by_type.setdefault(batch.mentions[key].type, []).append((key, identity))
+        for vertex_type, items in by_type.items():
+            fields = list(batch.contract(vertex_type).identity_fields)
+            docs = [i for _, i in items]
+            seen = _graph_lookup(reader, vertex_type, fields, docs, fields)
+            exists = _graph_lookup(trusted, vertex_type, fields, docs, fields)
+            for position, (key, identity) in enumerate(items):
+                if seen.get(position):
+                    batch.resolve(key, identity, by="key", found_in="graph")
+                elif exists.get(position):
+                    batch.staged[key] = ("hidden", 0)
+                else:
+                    batch.resolve(key, identity, by="key")
 
     # Secondary identities: the batch first, to a fixpoint, then the graph.
     waiting = [
@@ -273,7 +333,7 @@ def resolve_mentions(
                 for k in keys
             ]
             found = _graph_lookup(
-                reader,
+                reader_for(vertex_type),
                 vertex_type,
                 list(alternate.fields),
                 docs,
@@ -316,6 +376,8 @@ def resolve_mentions(
     resolution.resolved = [
         batch.resolved[k] for k in batch.order if k in batch.resolved
     ]
+    if changeable is not None:
+        _mark_link_only(resolution.resolved, changeable, covered, batch)
     resolution.staged.mentions = [
         StagedMention(
             source_id=k[0],
@@ -344,12 +406,39 @@ def resolve_mentions(
     return resolution
 
 
+def _mark_link_only(
+    resolved: list[Resolved], changeable: Any, covered: Any, batch: _Batch
+) -> None:
+    """Mark entities found in the graph that the write may not change.
+
+    Every mention of such an entity becomes link-only, including mentions the
+    batch resolved to it, so no other mention's properties are written onto it.
+    """
+    candidates: dict[str, list[dict[str, Any]]] = {}
+    for item in resolved:
+        if item.found_in == "graph" and not item.owned and covered(item.type):
+            candidates.setdefault(item.type, []).append(item.identity)
+    frozen: set[tuple[str, tuple]] = set()
+    for vertex_type, identities in candidates.items():
+        fields = list(batch.contract(vertex_type).identity_fields)
+        found = _graph_lookup(changeable, vertex_type, fields, identities, fields)
+        for position, identity in enumerate(identities):
+            if not found.get(position):
+                frozen.add((vertex_type, _frozen(identity)))
+    if not frozen:
+        return
+    for position, item in enumerate(resolved):
+        if (item.type, _frozen(item.identity)) in frozen:
+            resolved[position] = item.model_copy(update={"link_only": True})
+
+
 def promote(schema: Schema, resolution: Resolution) -> GraphContainer:
     """The vertices and edges *resolution* identified, ready to write.
 
     A resolved mention becomes its stated properties plus its identity, fused
     with other mentions of the same entity in order, later values winning. A
-    connector-owned entity is only an edge endpoint: text never writes onto it.
+    connector-owned or link-only entity is only an edge endpoint: text never
+    writes onto it.
     """
     mentions = {
         (graph.source_id, m.ref): m
@@ -362,7 +451,7 @@ def promote(schema: Schema, resolution: Resolution) -> GraphContainer:
     for item in resolution.resolved:
         key = (item.source_id, item.ref)
         identities[key] = item.identity
-        if item.owned:
+        if item.owned or item.link_only:
             continue
         doc = {**mentions[key].values(), **item.identity}
         docs = vertices.setdefault(item.type, [])
@@ -391,11 +480,17 @@ async def write_mention_graphs(
     *,
     owned: frozenset[str] = frozenset(),
     recreate_schema: bool = False,
+    stamp: Mapping[str, Any] | None = None,
+    guard: FilterExpression | None = None,
+    writable: FilterExpression | None = None,
 ) -> tuple[Resolution, ContainerWriteReport]:
     """Resolve *graphs* against the target, then write what resolved.
 
     The schema is defined first, so lookups never meet a missing collection.
-    Staged mentions and held relations are returned, not written.
+    Staged mentions and held relations are returned, not written. *stamp* sets
+    the schema's reserved fields on what is written (``write_container``);
+    *guard* limits the lookups and *writable* what they may write onto
+    (``resolve_mentions``).
     """
     from graflo.db.manager import ConnectionManager
     from graflo.hq.container_write import define_schema, write_container
@@ -405,8 +500,12 @@ async def write_mention_graphs(
 
     def _resolve() -> Resolution:
         with ConnectionManager(connection_config=conn_conf) as db:
-            return resolve_mentions(schema, graphs, db=db, owned=owned)
+            return resolve_mentions(
+                schema, graphs, db=db, owned=owned, guard=guard, writable=writable
+            )
 
     resolution = await asyncio.to_thread(_resolve)
-    report = await write_container(schema, promote(schema, resolution), conn_conf)
+    report = await write_container(
+        schema, promote(schema, resolution), conn_conf, stamp=stamp
+    )
     return resolution, report.model_copy(update={"schema_defined": defined})

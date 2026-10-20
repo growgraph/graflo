@@ -118,6 +118,7 @@ StageReason = Literal[
     "ambiguous",
     "owned_unmatched",
     "keyless_reference",
+    "hidden",
 ]
 
 
@@ -146,6 +147,13 @@ class Resolved(ConfigBaseModel):
         default=False,
         description="The type is ingested by a connector: the mention links, never writes.",
     )
+    link_only: bool = Field(
+        default=False,
+        description=(
+            "Found in the graph outside what the write may change (the "
+            "resolution's ``writable`` filter): the mention links, never writes."
+        ),
+    )
 
 
 class StagedMention(ConfigBaseModel):
@@ -160,7 +168,8 @@ class StagedMention(ConfigBaseModel):
             "nothing. ``ambiguous``: it found several entities. "
             "``owned_unmatched``: a connector-owned entity the graph does not "
             "hold yet. ``keyless_reference``: a keyless type the text refers to "
-            "without introducing it."
+            "without introducing it. ``hidden``: its key names an entity the "
+            "resolution's guard hides, so it is neither written nor linked."
         )
     )
     matches: int = Field(default=0, description="Entities a lookup found.")

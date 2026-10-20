@@ -6,7 +6,7 @@ import json
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
-from graflo.db.cypher.escape import cypher_map_key, cypher_string_literal
+from graflo.db.cypher.escape import cypher_map_key, cypher_name, cypher_string_literal
 
 
 def _normalized_prop_names(prop_names: Sequence[str]) -> list[str]:
@@ -118,6 +118,7 @@ def rel_absent_upsert_clause(
     unset, and updates it; creates one when none matches. Follows a ``MATCH``
     binding *source*, *target* and ``row``.
     """
+    rel = cypher_name(relation_name)
     conditions = []
     for key in _normalized_prop_names(prop_names):
         bk = cypher_map_key(key)
@@ -128,10 +129,10 @@ def rel_absent_upsert_clause(
                 f"existing.{bk} = {props_expr}[{cypher_string_literal(key)}]"
             )
     return (
-        f"OPTIONAL MATCH ({source})-[existing:{relation_name}]->({target})\n"
+        f"OPTIONAL MATCH ({source})-[existing:{rel}]->({target})\n"
         f"WHERE {' AND '.join(conditions)}\n"
         "FOREACH (_ IN CASE WHEN existing IS NULL THEN [1] ELSE [] END |\n"
-        f"    CREATE ({source})-[r:{relation_name}]->({target}) SET r += {props_expr})\n"
+        f"    CREATE ({source})-[r:{rel}]->({target}) SET r += {props_expr})\n"
         "FOREACH (_ IN CASE WHEN existing IS NULL THEN [] ELSE [1] END |\n"
         f"    SET existing += {props_expr})"
     )

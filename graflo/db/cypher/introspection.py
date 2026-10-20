@@ -23,6 +23,7 @@ import logging
 from collections.abc import Callable, Sequence
 from typing import Any
 
+from graflo.db.cypher.escape import cypher_name
 from graflo.db.graph_introspection import (
     GraphEdgeIntrospection,
     GraphIntrospectionResult,
@@ -44,14 +45,9 @@ LABELS_PROCEDURE = "CALL db.labels() YIELD label RETURN label"
 LABELS_FALLBACK = "MATCH (n) UNWIND labels(n) AS label RETURN DISTINCT label"
 
 
-def escape_label(name: str) -> str:
-    """Strip backticks so a label cannot break out of its quoting."""
-    return name.replace("`", "")
-
-
 def _vertex_property_query(label: str, sample_limit: int) -> str:
     return (
-        f"MATCH (n:`{escape_label(label)}`)\n"
+        f"MATCH (n:{cypher_name(label, quoted=True)})\n"
         f"WITH n LIMIT {int(sample_limit)}\n"
         "UNWIND keys(n) AS key\n"
         "RETURN DISTINCT key"
@@ -70,10 +66,10 @@ def _edge_pattern_query() -> str:
 def _edge_property_query(
     source: str, target: str, relation: str | None, sample_limit: int
 ) -> str:
-    rel_clause = f":`{escape_label(relation)}`" if relation else ""
+    rel_clause = f":{cypher_name(relation, quoted=True)}" if relation else ""
     return (
-        f"MATCH (a:`{escape_label(source)}`)-[r{rel_clause}]->"
-        f"(b:`{escape_label(target)}`)\n"
+        f"MATCH (a:{cypher_name(source, quoted=True)})-[r{rel_clause}]->"
+        f"(b:{cypher_name(target, quoted=True)})\n"
         f"WITH r LIMIT {int(sample_limit)}\n"
         "UNWIND keys(r) AS key\n"
         "RETURN DISTINCT key"

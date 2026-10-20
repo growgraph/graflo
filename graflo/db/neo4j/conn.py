@@ -43,6 +43,7 @@ from graflo.db.conn import (
     consume_insert_edges_kwargs,
 )
 from graflo.db.cypher import (
+    cypher_name,
     cypher_rel_pattern,
     partition_by_absent_merge_props,
     rel_absent_upsert_clause,
@@ -77,10 +78,6 @@ _BENIGN_DUPLICATE_SCHEMA_CODES = frozenset(
 )
 
 
-def _cypher_escape_identifier(name: str) -> str:
-    return name.replace("`", "``")
-
-
 #: Neo4j's built-in user, taken when a password comes without a username.
 DEFAULT_NEO4J_USERNAME = "neo4j"
 
@@ -111,17 +108,19 @@ def _union_upsert(
     keep first-seen order, stored ones first; null members are dropped,
     since ``null IN acc`` is never true and they would pile up.
     """
-    index_str = ", ".join(f"{k}: row.p.{k}" for k in match_keys)
+    index_str = ", ".join(
+        f"{cypher_name(k)}: row.p.{cypher_name(k)}" for k in match_keys
+    )
     unions = ", ".join(
-        f"n.{_cypher_name(f)} = reduce(acc = [], x IN [y IN "
-        f"coalesce(n.{_cypher_name(f)}, []) + coalesce(row.u.{_cypher_name(f)}, []) "
+        f"n.{q} = reduce(acc = [], x IN [y IN "
+        f"coalesce(n.{q}, []) + coalesce(row.u.{q}, []) "
         "WHERE y IS NOT NULL] | CASE WHEN x IN acc THEN acc ELSE acc + x END)"
-        for f in union_fields
+        for q in (cypher_name(f, quoted=True) for f in union_fields)
     )
     query = f"""
             WITH $batch AS batch
             UNWIND batch as row
-            MERGE (n:{class_name} {{ {index_str} }})
+            MERGE (n:{cypher_name(class_name)} {{ {index_str} }})
             SET n += row.p
             SET {unions}
         """
@@ -133,11 +132,6 @@ def _union_upsert(
         for doc in docs
     ]
     return query, batch
-
-
-def _cypher_name(name: str) -> str:
-    """A property name as a backtick-quoted Cypher identifier."""
-    return "`" + name.replace("`", "``") + "`"
 
 
 class Neo4jConnection(Connection):
@@ -222,7 +216,7 @@ class Neo4jConnection(Connection):
             Exception: If database creation fails and it's not a Community Edition limitation
         """
         try:
-            self.execute(f"CREATE DATABASE `{name}`")
+            self.execute(f"CREATE DATABASE {cypher_name(name, quoted=True)}")
             logger.info(f"Successfully created Neo4j database '{name}'")
         except Exception as e:
             # Check if this is a Neo4j Community Edition limitation
@@ -337,9 +331,10 @@ class Neo4jConnection(Connection):
             index: Index configuration to create
             is_vertex_index: If True, create index on nodes, otherwise on relationships
         """
-        fields_str = ", ".join([f"x.{f}" for f in index.fields])
-        index_name = f"{obj_name}_{'_'.join(index.fields)}"
-        formula = f"(x:{obj_name})" if is_vertex_index else f"()-[x:{obj_name}]-()"
+        fields_str = ", ".join([f"x.{cypher_name(f)}" for f in index.fields])
+        index_name = cypher_name(f"{obj_name}_{'_'.join(index.fields)}")
+        label = cypher_name(obj_name)
+        formula = f"(x:{label})" if is_vertex_index else f"()-[x:{label}]-()"
         plain = (
             f"CREATE INDEX {index_name} IF NOT EXISTS FOR {formula} ON ({fields_str});"
         )
@@ -382,9 +377,9 @@ class Neo4jConnection(Connection):
             name = row.get("name")
             if not name:
                 continue
-            esc = _cypher_escape_identifier(str(name))
+            esc = cypher_name(str(name), quoted=True)
             try:
-                self.execute(f"DROP CONSTRAINT `{esc}` IF EXISTS")
+                self.execute(f"DROP CONSTRAINT {esc} IF EXISTS")
             except ClientError as drop_exc:
                 logger.debug("DROP CONSTRAINT %s: %s", name, drop_exc)
 
@@ -401,9 +396,9 @@ class Neo4jConnection(Connection):
             idx_type = row.get("type") or row.get("indexType") or ""
             if str(idx_type).upper() == "LOOKUP":
                 continue
-            esc = _cypher_escape_identifier(str(name))
+            esc = cypher_name(str(name), quoted=True)
             try:
-                self.execute(f"DROP INDEX `{esc}` IF EXISTS")
+                self.execute(f"DROP INDEX {esc} IF EXISTS")
             except ClientError as drop_exc:
                 logger.debug("DROP INDEX %s: %s", name, drop_exc)
 
@@ -457,7 +452,7 @@ class Neo4jConnection(Connection):
         cnames = vertex_types
         if cnames:
             for c in cnames:
-                q = f"MATCH (n:{c}) DETACH DELETE n"
+                q = f"MATCH (n:{cypher_name(c)}) DETACH DELETE n"
                 self.execute(q)
             return
 
@@ -609,11 +604,13 @@ class Neo4jConnection(Connection):
         if union_fields:
             q, batch = _union_upsert(docs, class_name, match_keys, union_fields)
         else:
-            index_str = ", ".join([f"{k}: row.{k}" for k in match_keys])
+            index_str = ", ".join(
+                [f"{cypher_name(k)}: row.{cypher_name(k)}" for k in match_keys]
+            )
             q = f"""
             WITH $batch AS batch
             UNWIND batch as row
-            MERGE (n:{class_name} {{ {index_str} }})
+            MERGE (n:{cypher_name(class_name)} {{ {index_str} }})
             ON MATCH set n += row
             ON CREATE set n += row
         """
@@ -668,8 +665,13 @@ class Neo4jConnection(Connection):
 
         # Note: filter_uniques is unused because Neo4j's MERGE handles uniqueness automatically
 
-        source_match_str = [f"source.{key} = row[0].{key}" for key in match_keys_source]
-        target_match_str = [f"target.{key} = row[1].{key}" for key in match_keys_target]
+        source_match_str = [
+            f"source.{k} = row[0].{k}" for k in map(cypher_name, match_keys_source)
+        ]
+        target_match_str = [
+            f"target.{k} = row[1].{k}" for k in map(cypher_name, match_keys_target)
+        ]
+        rel = cypher_name(relation_name)
 
         match_clause = "WHERE " + " AND ".join(source_match_str + target_match_str)
 
@@ -693,18 +695,16 @@ class Neo4jConnection(Connection):
             elif merge_props:
                 map_clause = rel_merge_props_map_from_row_index(merge_props)
                 upsert = (
-                    f"MERGE (source)-[r:{relation_name} {{{map_clause}}}]->(target)\n"
+                    f"MERGE (source)-[r:{rel} {{{map_clause}}}]->(target)\n"
                     "SET r += row[2]"
                 )
             else:
-                upsert = (
-                    f"MERGE (source)-[r:{relation_name}]->(target)\nSET r += row[2]"
-                )
+                upsert = f"MERGE (source)-[r:{rel}]->(target)\nSET r += row[2]"
             q = f"""
             WITH $batch AS batch
             UNWIND batch as row
-            MATCH (source:{source_class}),
-                  (target:{target_class}) {match_clause}
+            MATCH (source:{cypher_name(source_class)}),
+                  (target:{cypher_name(target_class)}) {match_clause}
             {upsert}
             """
             if not dry:
@@ -760,7 +760,7 @@ class Neo4jConnection(Connection):
             filter_clause = ""
 
         if return_keys is not None:
-            keep_clause_ = ", ".join([f".{item}" for item in return_keys])
+            keep_clause_ = ", ".join([f".{cypher_name(item)}" for item in return_keys])
             keep_clause = f"{{ {keep_clause_} }}"
         else:
             keep_clause = ""
@@ -771,7 +771,7 @@ class Neo4jConnection(Connection):
             limit_clause = ""
 
         q = (
-            f"MATCH (n:{class_name})"
+            f"MATCH (n:{cypher_name(class_name)})"
             f"  {filter_clause}"
             f"  RETURN n {keep_clause}"
             f"  {limit_clause}"
@@ -820,12 +820,12 @@ class Neo4jConnection(Connection):
         # Match source node first
         # Ids come from callers and travel as parameters, never as query text.
         params: dict[str, Any] = {"from_id": from_id}
-        source_match = f"(source:{from_type} {{id: $from_id}})"
+        source_match = f"(source:{cypher_name(from_type)} {{id: $from_id}})"
         rel_pattern = cypher_rel_pattern(edge_type, direction)
 
         # Build target node match
         if to_type:
-            target_match = f"(target:{to_type})"
+            target_match = f"(target:{cypher_name(to_type)})"
         else:
             target_match = "(target)"
 
@@ -848,7 +848,9 @@ class Neo4jConnection(Connection):
 
         # Build return clause
         if return_keys is not None:
-            return_clause = ", ".join([f"r.{key} as {key}" for key in return_keys])
+            return_clause = ", ".join(
+                [f"r.{k} as {k}" for k in map(cypher_name, return_keys)]
+            )
             return_clause = f"RETURN {return_clause}"
         else:
             return_clause = "RETURN r"
@@ -966,13 +968,13 @@ class Neo4jConnection(Connection):
                 f" WHERE {expression(doc_name='n', kind=params.kind, params=params)}"
             )
 
-        label = _cypher_escape_identifier(str(class_name))
-        query = f"MATCH (n:`{label}`){filter_clause}"
+        label = cypher_name(str(class_name), quoted=True)
+        query = f"MATCH (n:{label}){filter_clause}"
 
         if aggregation_function == AggregationType.COUNT:
             if discriminant:
-                field = _cypher_escape_identifier(discriminant)
-                query += f" RETURN n.`{field}` AS key, count(*) AS value"
+                field = cypher_name(discriminant, quoted=True)
+                query += f" RETURN n.{field} AS key, count(*) AS value"
                 rows = self.execute(query, **params.values).data()
                 return {row["key"]: row["value"] for row in rows}
             query += " RETURN count(n) AS value"
@@ -981,15 +983,15 @@ class Neo4jConnection(Connection):
                 raise ValueError(
                     f"aggregated_field is required for {aggregation_function}"
                 )
-            field = _cypher_escape_identifier(aggregated_field)
+            field = cypher_name(aggregated_field, quoted=True)
             if aggregation_function == AggregationType.MAX:
-                query += f" RETURN max(n.`{field}`) AS value"
+                query += f" RETURN max(n.{field}) AS value"
             elif aggregation_function == AggregationType.MIN:
-                query += f" RETURN min(n.`{field}`) AS value"
+                query += f" RETURN min(n.{field}) AS value"
             elif aggregation_function == AggregationType.AVERAGE:
-                query += f" RETURN avg(n.`{field}`) AS value"
+                query += f" RETURN avg(n.{field}) AS value"
             elif aggregation_function == AggregationType.SORTED_UNIQUE:
-                query += f" RETURN DISTINCT n.`{field}` AS value ORDER BY n.`{field}`"
+                query += f" RETURN DISTINCT n.{field} AS value ORDER BY n.{field}"
             else:
                 raise ValueError(
                     f"Unsupported aggregation type: {aggregation_function}"
@@ -1075,10 +1077,10 @@ class Neo4jConnection(Connection):
         limit: int | None = None,
     ) -> list[dict[str, Any]]:
         """Fetch all nodes for a label."""
-        escaped = _cypher_escape_identifier(class_name)
+        escaped = cypher_name(class_name, quoted=True)
         limit_clause = f"LIMIT {limit}" if limit is not None else ""
         query = f"""
-            MATCH (n:`{escaped}`)
+            MATCH (n:{escaped})
             RETURN properties(n) AS props
             {limit_clause}
         """
@@ -1099,15 +1101,14 @@ class Neo4jConnection(Connection):
         collection_name: str | None = None,
     ) -> list[list[dict[str, Any]]]:
         """Fetch all relationships between two labels."""
-        src_esc = _cypher_escape_identifier(source_class)
-        tgt_esc = _cypher_escape_identifier(target_class)
+        src_esc = cypher_name(source_class, quoted=True)
+        tgt_esc = cypher_name(target_class, quoted=True)
         rel_clause = ""
         if relation_name:
-            rel_esc = _cypher_escape_identifier(relation_name)
-            rel_clause = f":`{rel_esc}`"
+            rel_clause = f":{cypher_name(relation_name, quoted=True)}"
         limit_clause = f"LIMIT {limit}" if limit is not None else ""
         query = f"""
-            MATCH (source:`{src_esc}`)-[r{rel_clause}]->(target:`{tgt_esc}`)
+            MATCH (source:{src_esc})-[r{rel_clause}]->(target:{tgt_esc})
             RETURN properties(source) AS source_props,
                    properties(target) AS target_props,
                    properties(r) AS edge_props

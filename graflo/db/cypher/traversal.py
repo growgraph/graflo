@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any
 
 from graflo.architecture.graph_types import EdgeDirection, GraphContainer
 from graflo.db.cypher.direction import cypher_rel_pattern
+from graflo.db.cypher.escape import cypher_name
 from graflo.filter.onto import BoundParams, FilterExpression, parse_filter_expression
 from graflo.onto import ExpressionFlavor
 
@@ -41,19 +42,14 @@ ANCHOR_PARAM = "anchor_id"
 #: One rendered pattern: relationship type(s), far storage label, far logical
 #: type, and the direction followed. A far type of None means "read it from the
 #: reached node's labels".
-_NeighborQuery = tuple[str, str | None, str | None, EdgeDirection]
-
-
-def _quote_identifier(name: str) -> str:
-    """Backtick-quote a Cypher identifier, doubling any embedded backtick."""
-    return "`" + name.replace("`", "``") + "`"
+_NeighborQuery = tuple[str | tuple[str, ...], str | None, str | None, EdgeDirection]
 
 
 def cypher_neighbors_query(
     *,
     anchor_label: str,
     anchor_key_field: str = "id",
-    edge_type: str | None,
+    edge_type: str | Sequence[str] | None,
     far_label: str | None,
     direction: EdgeDirection,
     hops: int,
@@ -74,8 +70,8 @@ def cypher_neighbors_query(
     Args:
         anchor_label: Storage label of the anchor node.
         anchor_key_field: Property the anchor is matched on.
-        edge_type: Relationship type to follow, several joined with ``|``, or
-            None for any type.
+        edge_type: Relationship type to follow, several to follow any of
+            them, or None for any type.
         far_label: Storage label the reached node must carry, or None for any.
         direction: Orientation followed from the anchor.
         hops: Maximum hop distance.
@@ -87,11 +83,12 @@ def cypher_neighbors_query(
         raise ValueError(f"hops must be >= 1, got {hops}")
     where = " AND ".join(["far <> anchor", *conditions])
     pattern = cypher_rel_pattern(edge_type, direction, min_hops=1, max_hops=hops)
-    far = f"(far:{far_label})" if far_label else "(far)"
+    far = f"(far:{cypher_name(far_label)})" if far_label else "(far)"
     limit_clause = f"\nLIMIT {int(limit)}" if limit is not None else ""
-    key = _quote_identifier(anchor_key_field)
+    key = cypher_name(anchor_key_field, quoted=True)
+    anchor = cypher_name(anchor_label)
     return (
-        f"MATCH path = (anchor:{anchor_label} {{{key}: ${ANCHOR_PARAM}}})"
+        f"MATCH path = (anchor:{anchor} {{{key}: ${ANCHOR_PARAM}}})"
         f"{pattern}{far}\n"
         f"WHERE {where}\n"
         f"RETURN DISTINCT properties(far) AS far, length(path) AS distance, "
@@ -348,7 +345,7 @@ def cypher_graph_neighbors(
                     vertex_type,
                     key_field,
                     anchor_value,
-                    [("|".join(storages), None, None, effective)],
+                    [(tuple(storages), None, None, effective)],
                     hops,
                 )
             )

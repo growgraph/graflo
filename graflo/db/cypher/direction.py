@@ -8,7 +8,10 @@ question here — which is why all three share this one helper.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from graflo.architecture.graph_types import EdgeDirection
+from graflo.db.cypher.escape import cypher_names
 
 _ARROWS: dict[EdgeDirection, tuple[str, str]] = {
     EdgeDirection.OUT: ("-", "->"),
@@ -18,7 +21,7 @@ _ARROWS: dict[EdgeDirection, tuple[str, str]] = {
 
 
 def cypher_rel_pattern(
-    edge_type: str | None,
+    edge_type: str | Sequence[str] | None,
     direction: EdgeDirection = EdgeDirection.OUT,
     *,
     variable: str = "r",
@@ -28,7 +31,8 @@ def cypher_rel_pattern(
     """Render the relationship pattern between two node patterns.
 
     Args:
-        edge_type: Relationship type to filter on, or None for any type.
+        edge_type: Relationship type to filter on, several to match any of
+            them, or None for any type. Each is written as one token.
         direction: Orientation followed from the left-hand (anchor) node.
         variable: Relationship variable name bound in the pattern.
         min_hops: Lower bound for a variable-length pattern. Defaults to 1 when
@@ -47,7 +51,7 @@ def cypher_rel_pattern(
     left, right = _ARROWS[direction]
     quantifier = _hop_quantifier(min_hops, max_hops)
     body = (
-        f"[{variable}:{edge_type}{quantifier}]"
+        f"[{variable}:{cypher_names(edge_type)}{quantifier}]"
         if edge_type
         else f"[{variable}{quantifier}]"
     )

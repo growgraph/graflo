@@ -1,6 +1,8 @@
 """Resolving mentions by their keys, then writing what resolved."""
 
 import asyncio
+import copy
+from typing import Any
 
 import pytest
 
@@ -16,6 +18,7 @@ from graflo.architecture.schema.document import Schema
 from graflo.architecture.schema.identity_uuid import mint_uuid
 from graflo.connections.graflo_backend import GraFloBackendConfig
 from graflo.db.manager import ConnectionManager
+from graflo.filter.onto import ComparisonOperator, FilterExpression
 from graflo.hq.container_write import write_container
 from graflo.hq.mention_resolve import promote, resolve_mentions, write_mention_graphs
 
@@ -270,3 +273,180 @@ def test_write_mention_graphs_resolves_then_writes(schema, tmp_path):
     assert resolution.staged.mentions == []
     with ConnectionManager(connection_config=conf) as db:
         assert len(db.fetch_all_edges("Customer", "Ticket", "RAISED")) == 1
+
+
+def _zoned_schema() -> Schema:
+    lifted: dict[str, Any] = copy.deepcopy(SCHEMA)
+    ticket = lifted["core_schema"]["vertex_config"]["vertices"][1]
+    ticket["properties"] = [
+        *ticket["properties"],
+        {"name": "access_zones", "type": "LIST", "item_type": "INT", "reserved": True},
+    ]
+    return Schema.model_validate(lifted)
+
+
+def test_a_write_into_a_reserved_field_needs_a_stamp(tmp_path):
+    conf = GraFloBackendConfig(output_dir=tmp_path)
+    graph = _g("chat-1", [_m("t", "Ticket", number="HD-7")])
+
+    with pytest.raises(ValueError, match="access_zones"):
+        asyncio.run(write_mention_graphs(_zoned_schema(), [graph], conf))
+
+
+def test_the_stamp_reaches_what_a_mention_graph_writes(tmp_path):
+    conf = GraFloBackendConfig(output_dir=tmp_path)
+    graph = _g("chat-1", [_m("t", "Ticket", number="HD-7")])
+
+    asyncio.run(
+        write_mention_graphs(
+            _zoned_schema(), [graph], conf, stamp={"access_zones": [7]}
+        )
+    )
+
+    with ConnectionManager(connection_config=conf) as db:
+        (ticket,) = db.fetch_docs("Ticket")
+    assert ticket["access_zones"] == [7]
+
+
+def test_the_guard_reaches_every_lookup(schema, tmp_path, monkeypatch):
+    from graflo.hq import lookup
+
+    seen: list[object] = []
+    real = lookup._Reader
+
+    class _Recording(real):
+        def __init__(self, db, schema, guard=None):
+            seen.append(guard)
+            super().__init__(db, schema)
+
+    monkeypatch.setattr(lookup, "_Reader", _Recording)
+    conf = GraFloBackendConfig(output_dir=tmp_path)
+    _seed(conf, schema)
+    guard = FilterExpression.from_dict(["==", "x", "number"])
+    graph = _g("chat-1", [_m("c", "Customer", email="jo@x.com")])
+
+    asyncio.run(write_mention_graphs(schema, [graph], conf, guard=guard))
+
+    # The guarded reader, then the trusted one for the existence check.
+    assert seen == [guard, None]
+
+
+def _zoned_ticket(conf, number, zones):
+    asyncio.run(
+        write_container(
+            _zoned_schema(),
+            GraphContainer(vertices={"Ticket": [{"number": number}]}),
+            conf,
+            stamp={"access_zones": zones},
+        )
+    )
+
+
+def _opens(*zones: int) -> FilterExpression:
+    return FilterExpression(
+        kind="leaf",
+        field="access_zones",
+        cmp_operator=ComparisonOperator.ANY_IN,
+        value=[list(zones)],
+    )
+
+
+@pytest.fixture
+def guarded_backend(monkeypatch):
+    from graflo.db.graflo_backend.connection import GraFloBackendConnection
+
+    # The file backend evaluates a guard in memory; declare it for these tests.
+    monkeypatch.setattr(GraFloBackendConnection, "supports_read_guard", True)
+
+
+def test_a_stated_key_of_a_hidden_entity_stages_as_hidden(tmp_path, guarded_backend):
+    conf = GraFloBackendConfig(output_dir=tmp_path)
+    _zoned_ticket(conf, "HD-9", [2])
+    graph = _g(
+        "chat-1",
+        [
+            _m("t", "Ticket", number="HD-9", severity=1),
+            _m("c", "Customer", account="A"),
+        ],
+        [_r(RAISED, "c", "t")],
+    )
+
+    with ConnectionManager(connection_config=conf) as db:
+        resolution = resolve_mentions(_zoned_schema(), [graph], db=db, guard=_opens(1))
+
+    assert _reasons(resolution) == {("chat-1", "t"): "hidden"}
+    assert [r.waiting_on for r in resolution.staged.relations] == [["t"]]
+    assert "Ticket" not in promote(_zoned_schema(), resolution).vertices
+
+
+def test_a_stated_key_the_guard_shows_or_nobody_holds_resolves(
+    tmp_path, guarded_backend
+):
+    conf = GraFloBackendConfig(output_dir=tmp_path)
+    _zoned_ticket(conf, "HD-1", [1])
+    graph = _g(
+        "chat-1",
+        [_m("seen", "Ticket", number="HD-1"), _m("new", "Ticket", number="HD-2")],
+    )
+
+    with ConnectionManager(connection_config=conf) as db:
+        resolution = resolve_mentions(_zoned_schema(), [graph], db=db, guard=_opens(1))
+
+    resolved = {r.ref: r for r in resolution.resolved}
+    assert resolved["seen"].found_in == "graph"
+    assert resolved["new"].found_in is None
+    assert resolution.staged.mentions == []
+
+
+def _only(zone: int) -> FilterExpression:
+    return FilterExpression(
+        kind="leaf",
+        field="access_zones",
+        cmp_operator=ComparisonOperator.EQ,
+        value=[[zone]],
+    )
+
+
+def test_an_entity_the_write_may_not_change_is_linked_not_written(
+    tmp_path, guarded_backend
+):
+    conf = GraFloBackendConfig(output_dir=tmp_path)
+    _zoned_ticket(conf, "HD-2", [2])
+    _zoned_ticket(conf, "HD-1", [1])
+    graph = _g(
+        "chat-1",
+        [
+            _m("wide", "Ticket", number="HD-2", severity=99),
+            _m("again", "Ticket", number="HD-2", wait=3),
+            _m("own", "Ticket", number="HD-1", severity=5),
+            _m("c", "Customer", account="A"),
+        ],
+        [_r(RAISED, "c", "wide"), _r(RAISED, "c", "own")],
+    )
+
+    with ConnectionManager(connection_config=conf) as db:
+        resolution = resolve_mentions(
+            _zoned_schema(), [graph], db=db, guard=_opens(1, 2), writable=_only(1)
+        )
+
+    link_only = {r.ref for r in resolution.resolved if r.link_only}
+    assert link_only == {"wide", "again"}
+    container = promote(_zoned_schema(), resolution)
+    assert container.vertices["Ticket"] == [{"number": "HD-1", "severity": 5}]
+    assert len(container.edges[RAISED]) == 2
+
+
+def test_a_type_without_the_guarded_field_is_looked_up_unguarded(
+    tmp_path, guarded_backend
+):
+    conf = GraFloBackendConfig(output_dir=tmp_path)
+    _seed(conf, schema=Schema.model_validate(SCHEMA))
+    graph = _g("chat-1", [_m("c", "Customer", email="jo@x.com")])
+
+    with ConnectionManager(connection_config=conf) as db:
+        resolution = resolve_mentions(_zoned_schema(), [graph], db=db, guard=_opens(1))
+
+    assert resolution.staged.mentions == []
+    assert {r.ref: r.identity for r in resolution.resolved} == {
+        "c": {"account": "ACC-1"}
+    }

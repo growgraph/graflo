@@ -10,11 +10,11 @@ from collections.abc import Callable, Sequence
 from typing import Any
 
 from graflo.db.conn import deletable_docs, deletable_endpoints
-from graflo.db.cypher.escape import cypher_map_key
+from graflo.db.cypher.escape import cypher_map_key, cypher_name
 
 
 def _label(name: str) -> str:
-    return "`" + name.replace("`", "``") + "`"
+    return cypher_name(name, quoted=True)
 
 
 def delete_nodes_query(label: str, match_keys: Sequence[str]) -> str:

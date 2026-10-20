@@ -96,6 +96,7 @@ from graflo.db.conn import (
     consume_insert_edges_kwargs,
 )
 from graflo.db.cypher import (
+    cypher_name,
     cypher_rel_pattern,
     partition_by_absent_merge_props,
     rel_absent_upsert_clause,
@@ -184,13 +185,13 @@ def edge_property_index_query(relation: str, field: str) -> str:
     ``CREATE INDEX ON :X(f)`` is a *label* index: for a relationship type it
     indexes nothing. Edge types take ``CREATE EDGE INDEX``.
     """
-    return f"CREATE EDGE INDEX ON :{relation}({field})"
+    return f"CREATE EDGE INDEX ON :{cypher_name(relation)}({cypher_name(field)})"
 
 
 def _create_unique_constraint(conn: Any, label: str, fields: list[str]) -> None:
     """Constrain *fields* of *label* unique together; an existing one is kept."""
-    props = ", ".join(f"n.{f}" for f in fields)
-    query = f"CREATE CONSTRAINT ON (n:{label}) ASSERT {props} IS UNIQUE"
+    props = ", ".join(f"n.{cypher_name(f)}" for f in fields)
+    query = f"CREATE CONSTRAINT ON (n:{cypher_name(label)}) ASSERT {props} IS UNIQUE"
     try:
         cursor = conn.cursor()
         cursor.execute(query)
@@ -547,7 +548,10 @@ class MemgraphConnection(Connection):
             for index_obj in index_list:
                 for field in index_obj.fields:
                     try:
-                        query = f"CREATE INDEX ON :{storage_label}({field})"
+                        query = (
+                            f"CREATE INDEX ON :{cypher_name(storage_label)}"
+                            f"({cypher_name(field)})"
+                        )
                         cursor = self.conn.cursor()
                         cursor.execute(query)
                         cursor.close()
@@ -594,11 +598,12 @@ class MemgraphConnection(Connection):
             properties = row.get("properties") or []
             if isinstance(properties, str):
                 properties = [properties]
-            props = ", ".join(f"n.{p}" for p in properties)
+            props = ", ".join(f"n.{cypher_name(p)}" for p in properties)
             try:
                 cursor = self.conn.cursor()
                 cursor.execute(
-                    f"DROP CONSTRAINT ON (n:{label}) ASSERT {props} IS UNIQUE"
+                    f"DROP CONSTRAINT ON (n:{cypher_name(label)}) "
+                    f"ASSERT {props} IS UNIQUE"
                 )
                 cursor.close()
             except Exception as e:
@@ -680,7 +685,7 @@ class MemgraphConnection(Connection):
             for label in vertex_types_list:
                 try:
                     cursor = self.conn.cursor()
-                    cursor.execute(f"MATCH (n:{label}) DETACH DELETE n")
+                    cursor.execute(f"MATCH (n:{cypher_name(label)}) DETACH DELETE n")
                     cursor.close()
                     logger.debug(f"Deleted all nodes with label '{label}'")
                 except Exception as e:
@@ -842,7 +847,9 @@ class MemgraphConnection(Connection):
             cursor = self.conn.cursor()
             for key in missing:
                 try:
-                    cursor.execute(f"CREATE INDEX ON :{class_name}({key})")
+                    cursor.execute(
+                        f"CREATE INDEX ON :{cypher_name(class_name)}({cypher_name(key)})"
+                    )
                     logger.debug(f"Created index on {class_name}.{key}")
                 except Exception as e:
                     if "already exists" not in str(e).lower():
@@ -851,10 +858,12 @@ class MemgraphConnection(Connection):
             cursor.close()
 
         # Build the MERGE clause with match keys
-        index_str = ", ".join([f"{k}: row.{k}" for k in match_keys_list])
+        index_str = ", ".join(
+            [f"{k}: row.{k}" for k in map(cypher_name, match_keys_list)]
+        )
         q = f"""
             UNWIND $batch AS row
-            MERGE (n:{class_name} {{ {index_str} }})
+            MERGE (n:{cypher_name(class_name)} {{ {index_str} }})
             ON MATCH SET n += row
             ON CREATE SET n += row
         """
@@ -973,8 +982,13 @@ class MemgraphConnection(Connection):
             return
 
         # Build match patterns
-        source_match = ", ".join([f"{k}: row.source.{k}" for k in match_keys_source])
-        target_match = ", ".join([f"{k}: row.target.{k}" for k in match_keys_target])
+        source_match = ", ".join(
+            [f"{k}: row.source.{k}" for k in map(cypher_name, match_keys_source)]
+        )
+        target_match = ", ".join(
+            [f"{k}: row.target.{k}" for k in map(cypher_name, match_keys_target)]
+        )
+        rel = cypher_name(relation_name)
 
         merge_props: tuple[str, ...] = tuple(relationship_merge_properties_raw or ())
         groups = (
@@ -1000,9 +1014,9 @@ class MemgraphConnection(Connection):
             else:
                 if merge_props:
                     map_clause = rel_merge_props_map_from_row_props(merge_props)
-                    merge_line = f"MERGE (s)-[r:{relation_name} {{{map_clause}}}]->(t)"
+                    merge_line = f"MERGE (s)-[r:{rel} {{{map_clause}}}]->(t)"
                 else:
-                    merge_line = f"MERGE (s)-[r:{relation_name}]->(t)"
+                    merge_line = f"MERGE (s)-[r:{rel}]->(t)"
                 upsert = (
                     f"{merge_line}\n"
                     "ON CREATE SET r = row.props\n"
@@ -1010,8 +1024,8 @@ class MemgraphConnection(Connection):
                 )
             q = f"""
             UNWIND $batch AS row
-            MATCH (s:{source_class} {{ {source_match} }})
-            MATCH (t:{target_class} {{ {target_match} }})
+            MATCH (s:{cypher_name(source_class)} {{ {source_match} }})
+            MATCH (t:{cypher_name(target_class)} {{ {target_match} }})
             {upsert}
             """
             if not dry:
@@ -1081,7 +1095,7 @@ class MemgraphConnection(Connection):
         if self.conn is None:
             raise RuntimeError("Connection is closed")
 
-        q = f"MATCH (n:{class_name})"
+        q = f"MATCH (n:{cypher_name(class_name)})"
 
         params = BoundParams(self.expression_flavor())
         if filters is not None:
@@ -1091,7 +1105,9 @@ class MemgraphConnection(Connection):
 
         # Handle projection
         if return_keys:
-            return_clause = ", ".join([f"n.{k} AS {k}" for k in return_keys])
+            return_clause = ", ".join(
+                [f"n.{k} AS {k}" for k in map(cypher_name, return_keys)]
+            )
             q += f" RETURN {return_clause}"
         else:
             q += " RETURN n"
@@ -1162,12 +1178,12 @@ class MemgraphConnection(Connection):
 
         # Build Cypher query starting from the anchor node
         # Use id property (common in Memgraph) or _key if needed
-        q = f"MATCH (s:{from_type} {{id: $from_id}})"
+        q = f"MATCH (s:{cypher_name(from_type)} {{id: $from_id}})"
         rel_pattern = cypher_rel_pattern(edge_type, direction)
 
         # Build target node match
         if to_type:
-            target_match = f"(t:{to_type})"
+            target_match = f"(t:{cypher_name(to_type)})"
         else:
             target_match = "(t)"
 
@@ -1195,16 +1211,15 @@ class MemgraphConnection(Connection):
             # If return_keys specified, try to return those fields
             return_fields = []
             for key in return_keys:
+                alias = cypher_name(key)
                 if key.startswith(("from_", "source_")):
-                    return_fields.append(
-                        f"s.{key.replace('from_', '').replace('source_', '')} AS {key}"
-                    )
+                    field = cypher_name(key.replace("from_", "").replace("source_", ""))
+                    return_fields.append(f"s.{field} AS {alias}")
                 elif key.startswith(("to_", "target_")):
-                    return_fields.append(
-                        f"t.{key.replace('to_', '').replace('target_', '')} AS {key}"
-                    )
+                    field = cypher_name(key.replace("to_", "").replace("target_", ""))
+                    return_fields.append(f"t.{field} AS {alias}")
                 else:
-                    return_fields.append(f"r.{key} AS {key}")
+                    return_fields.append(f"r.{alias} AS {alias}")
             q += f" RETURN {', '.join(return_fields)}"
         else:
             # Default: return relationship properties and node IDs
@@ -1397,11 +1412,14 @@ class MemgraphConnection(Connection):
             filter_str = ff(doc_name="n", kind=params.kind, params=params)
             filter_clause = f" WHERE {filter_str}"
 
-        q = f"MATCH (n:{class_name}){filter_clause}"
+        q = f"MATCH (n:{cypher_name(class_name)}){filter_clause}"
+        if aggregation_function != AggregationType.COUNT and not aggregated_field:
+            raise ValueError(f"aggregated_field is required for {aggregation_function}")
+        field = cypher_name(aggregated_field) if aggregated_field else ""
 
         if aggregation_function == AggregationType.COUNT:
             if discriminant:
-                q += f" RETURN n.{discriminant} AS key, count(*) AS count"
+                q += f" RETURN n.{cypher_name(discriminant)} AS key, count(*) AS count"
                 cursor = self.conn.cursor()
                 cursor.execute(q, params.values)
                 rows = cursor.fetchall()
@@ -1410,13 +1428,13 @@ class MemgraphConnection(Connection):
             else:
                 q += " RETURN count(n)"
         elif aggregation_function == AggregationType.MAX:
-            q += f" RETURN max(n.{aggregated_field})"
+            q += f" RETURN max(n.{field})"
         elif aggregation_function == AggregationType.MIN:
-            q += f" RETURN min(n.{aggregated_field})"
+            q += f" RETURN min(n.{field})"
         elif aggregation_function == AggregationType.AVERAGE:
-            q += f" RETURN avg(n.{aggregated_field})"
+            q += f" RETURN avg(n.{field})"
         elif aggregation_function == AggregationType.SORTED_UNIQUE:
-            q += f" RETURN DISTINCT n.{aggregated_field} ORDER BY n.{aggregated_field}"
+            q += f" RETURN DISTINCT n.{field} ORDER BY n.{field}"
         else:
             raise ValueError(f"Unsupported aggregation type: {aggregation_function}")
 
