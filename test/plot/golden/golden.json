@@ -2,7 +2,7 @@
     "dpi": 96,
     "versions": {
         "wasi-graphviz": "0.1.4",
-        "svglib": "2.2.0",
+        "svglib": "2.3.0",
         "reportlab": "5.0.1",
         "pypdfium2": "5.14.0"
     },

@@ -55,6 +55,7 @@ from .canonical import (
     DeclaredMaps,
     MergeCanonicalConflictError,
     MergeIncompleteError,
+    PropertyLayer,
     SideMaps,
     SideNames,
     canonical_near_collisions,
@@ -459,6 +460,11 @@ class _Naming:
     demoted_keys: dict[tuple[Side, str], tuple[str, ...]] = field(default_factory=dict)
     key_spaces: dict[tuple[Side, str], str] = field(default_factory=dict)
     key_tags: dict[tuple[Side, str], tuple[str, ...]] = field(default_factory=dict)
+    #: See :class:`ClusterResolution`.
+    property_layers: dict[tuple[Side, str, str], list[tuple[PropertyLayer, str]]] = (
+        field(default_factory=dict)
+    )
+    auto_key_sources: dict[str, set[tuple[str, str]]] = field(default_factory=dict)
 
     # ── findings ────────────────────────────────────────────────────────────
 
@@ -560,6 +566,13 @@ class _Naming:
                 demoted_keys=dict(self.demoted_keys),
                 key_spaces=dict(self.key_spaces),
                 key_tags=dict(self.key_tags),
+                property_layers={
+                    key: tuple(writes) for key, writes in self.property_layers.items()
+                },
+                auto_key_sources={
+                    name: frozenset(pairs)
+                    for name, pairs in self.auto_key_sources.items()
+                },
             ),
             graph=graph,
             findings=findings,
@@ -1834,6 +1847,9 @@ class _Naming:
                         additions.setdefault(union_name, {})[member] = LocalKeySource(
                             field=vertex.identity[0], tag=tag
                         )
+                        self.auto_key_sources.setdefault(component.name, set()).add(
+                            (union_name, member)
+                        )
                         self.note(
                             "auto_local_key",
                             f"{side}:{member} joins {component.name!r} without a key "
@@ -2066,6 +2082,8 @@ class _Naming:
         for cluster in index.vertices:
             for member, attr_map in cluster.property_maps(side).items():
                 properties.setdefault(member, {}).update(attr_map)
+                for old, new in attr_map.items():
+                    self._layer(side, member, old, "equivalence", new)
         cm = self.declared[side]
         for cls, attrs in cm.properties.items():
             if cls not in self.names[side].vertices:
@@ -2085,6 +2103,7 @@ class _Naming:
                     )
                     continue
                 bucket[old] = new
+                self._layer(side, cls, old, "vocabulary", new)
         members = {m for cluster in index.vertices for m in cluster.members(side)}
         for cls, attrs in self.op.renames[side].properties.items():
             if cls not in self.names[side].vertices or cls in members:
@@ -2100,6 +2119,7 @@ class _Naming:
                         subjects=(subject(side, cls, old),),
                     )
                 bucket[old] = new
+                self._layer(side, cls, old, "rename", new)
         self._origin_renames(side, index, properties)
         return {cls: attrs for cls, attrs in properties.items() if attrs}
 
@@ -2203,6 +2223,13 @@ class _Naming:
                         )
                         continue
                     properties.setdefault(member, {})[own] = f"{origin}__{own}"
+                    self._layer(side, member, own, "demotion", f"{origin}__{own}")
+
+    def _layer(
+        self, side: Side, cls: str, old: str, layer: PropertyLayer, new: str
+    ) -> None:
+        """Record that *layer* renames ``side:cls.old`` to *new*."""
+        self.property_layers.setdefault((side, cls, old), []).append((layer, new))
 
     def _untagged_local_keys(self, index: ClusterIndex) -> None:
         """Record the class of each ``local_key`` source whose tag defaults to its origin."""

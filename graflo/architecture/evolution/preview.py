@@ -112,6 +112,13 @@ from .ops import (
     VertexEquivalence,
     identity_branches_funnel,
 )
+from .preview_identity import (
+    BranchSource,
+    PreviewBranch,
+    PreviewDemotion,
+    PreviewIdentity,
+    identity_block,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -119,12 +126,49 @@ _SIDES: tuple[Side, ...] = ("left", "right")
 
 #: What a preview node stands for. ``ghost`` is a name a declaration mentions
 #: that the manifest on that side does not declare -- drawn, because the
-#: absence is the point.
-NodeKind = Literal["class", "relation", "attribute", "merged", "canonical", "ghost"]
+#: absence is the point. A ``resource`` is a union resource an identity
+#: branch reads from, and its ``field`` rows the raw input fields it reads.
+NodeKind = Literal[
+    "class",
+    "relation",
+    "attribute",
+    "merged",
+    "canonical",
+    "ghost",
+    "resource",
+    "field",
+]
 
 #: What one declaration says about a pair of names. ``suggested`` comes from a
-#: refusal's completion: the declaration that would settle it.
-EdgeKind = Literal["member", "map", "property_map", "property_equivalence", "suggested"]
+#: refusal's completion: the declaration that would settle it. The rest say
+#: where a merged attribute comes from: ``fusion`` is a member attribute that
+#: keeps its name, ``demotion`` a member key renamed to ``<space>__<field>``,
+#: ``property_rename`` a ``renames`` entry on a class no group holds, and
+#: ``derivation`` / ``local_key`` a raw field an identity branch reads.
+EdgeKind = Literal[
+    "member",
+    "map",
+    "property_map",
+    "property_equivalence",
+    "suggested",
+    "fusion",
+    "demotion",
+    "property_rename",
+    "derivation",
+    "local_key",
+]
+
+#: Which declaration put a member attribute where it lands on the merged
+#: class; ``fusion`` when none did and it kept its name.
+AttributeLayer = Literal["equivalence", "vocabulary", "rename", "demotion", "fusion"]
+
+_LAYER_OF_KIND: dict[str, AttributeLayer] = {
+    "property_equivalence": "equivalence",
+    "property_map": "vocabulary",
+    "property_rename": "rename",
+    "demotion": "demotion",
+    "fusion": "fusion",
+}
 
 #: ``refusal`` is what merge raised; ``possible`` what this module found on
 #: its own; ``note`` an acknowledged heuristic that changes nothing.
@@ -307,6 +351,14 @@ class PreviewEdge(ConfigBaseModel):
         default="",
         description="Where it was declared: a map scope, or a cluster's merged name.",
     )
+    layer: AttributeLayer | None = PydanticField(
+        default=None,
+        description="For an attribute edge, which declaration it comes from.",
+    )
+    effective: bool = PydanticField(
+        default=True,
+        description="False when a later declaration sent the attribute elsewhere.",
+    )
 
 
 class PreviewCluster(ConfigBaseModel):
@@ -333,6 +385,10 @@ class PreviewCluster(ConfigBaseModel):
     derived_identity: bool = PydanticField(
         default=False,
         description="Whether its `identity` has a derived or `local_key` branch.",
+    )
+    identity: PreviewIdentity | None = PydanticField(
+        default=None,
+        description="How the merged class is keyed; None for a relation group.",
     )
 
 
@@ -746,8 +802,13 @@ class _Builder:
         *,
         label: str = "",
         declared_by: str = "",
+        layer: AttributeLayer | None = None,
+        qualifier: str = "",
     ) -> str:
+        """Record an edge once; *qualifier* tells apart edges with the same ends."""
         edge_id = f"{kind}:{source}->{target}"
+        if qualifier:
+            edge_id += f"#{qualifier}"
         self.edges.setdefault(
             edge_id,
             PreviewEdge(
@@ -757,6 +818,7 @@ class _Builder:
                 kind=kind,
                 label=label,
                 declared_by=declared_by,
+                layer=layer if layer is not None else _LAYER_OF_KIND.get(kind),
             ),
         )
         return edge_id
@@ -1106,6 +1168,166 @@ class _Builder:
                         )
             for name in derived:
                 self.attribute("merged", cluster.into, name, identity=True)
+
+    def attribute_flow(self) -> None:
+        """Where each member attribute lands on its merged class, and which declaration sent it.
+
+        Read off the composite relabel -- what merge applies -- and labelled
+        by the declarations the naming pass recorded writing it. A member
+        attribute nothing renames keeps its name and fuses with every other
+        member's of that name; one a later declaration overrode keeps its
+        edge, marked not effective.
+        """
+        assert self.resolution is not None
+        layers = self.resolution.property_layers
+        for cluster in self.index.vertices:
+            if not cluster.into:
+                continue
+            for side in _SIDES:
+                schema = self.manifests[side].graph_schema
+                if schema is None:
+                    continue
+                vertex_config = schema.core_schema.vertex_config
+                renames = self._renames(side)
+                for member in cluster.members(side):
+                    if member not in vertex_config.vertex_set:
+                        continue
+                    rename = renames.get(member, {})
+                    for prop in vertex_config[member].properties:
+                        source = subject(side, member, prop.name)
+                        composed = rename.get(prop.name, prop.name)
+                        writes = layers.get((side, member, prop.name), ())
+                        target = self.attribute("merged", cluster.into, composed)
+                        if writes and writes[-1][0] == "demotion":
+                            space = self.resolution.key_spaces.get((side, member), "")
+                            self.add_edge(
+                                source,
+                                target,
+                                "demotion",
+                                label=f"lookup · {space}" if space else "lookup",
+                                declared_by=space,
+                            )
+                        elif not writes and composed == prop.name:
+                            self.add_edge(
+                                source, target, "fusion", declared_by=cluster.into
+                            )
+        for side in _SIDES:
+            members = {m for c in self.index.vertices for m in c.members(side)}
+            for cls, attrs in self.op.renames[side].properties.items():
+                if cls not in self.names[side].vertices or cls in members:
+                    continue
+                canonical_class = self.composite[side].vertices.get(cls, cls)
+                for old, new in attrs.items():
+                    self.add_edge(
+                        subject(side, cls, old),
+                        self.attribute("canonical", canonical_class, new),
+                        "property_rename",
+                        label=new,
+                        declared_by=side,
+                    )
+        self._mark_effective()
+
+    def _renames(self, side: Side) -> Mapping[str, Mapping[str, str]]:
+        return self.composite[side].properties if side in self.composite else {}
+
+    def _mark_effective(self) -> None:
+        """Mark each attribute edge whose target is not where the attribute lands."""
+        for edge_id, edge in list(self.edges.items()):
+            if edge.kind not in (
+                "property_equivalence",
+                "property_map",
+                "property_rename",
+            ):
+                continue
+            source = self.nodes.get(edge.source)
+            target = self.nodes.get(edge.target)
+            if source is None or target is None or source.side is None:
+                continue
+            owner = self.nodes.get(source.owner or "")
+            if owner is None:
+                continue
+            lands = (
+                self._renames(source.side)
+                .get(owner.name, {})
+                .get(source.name, source.name)
+            )
+            if lands != target.name:
+                self.edges[edge_id] = edge.model_copy(update={"effective": False})
+
+    def identity_blocks(self) -> None:
+        """Each vertex group's identity, and an edge from every raw field a branch reads.
+
+        A derivation or local key reads raw fields of a resource's documents,
+        not a member's attributes, so its sources are drawn as the resource
+        and the fields it reads, each pointing at the branch attribute.
+        """
+        assert self.resolution is not None
+        sides = self._sides_with_union_resource_names()
+        position = {c.id: i for i, c in enumerate(self.clusters)}
+        for index, cluster in enumerate(self.index.vertices):
+            if not cluster.into or not isinstance(
+                cluster.declaration, VertexEquivalence
+            ):
+                continue
+            cluster_id = f"vertex-cluster-{index}"
+            block = identity_block(cluster, self.resolution, sides, self.composite)
+            for branch in (*block.derive, *block.branches):
+                if branch.kind == "raw":
+                    continue
+                target = self.attribute(
+                    "merged", cluster.into, branch.id, identity=True
+                )
+                for source in branch.sources:
+                    self._branch_source(source, branch, target, cluster_id)
+            if block.digest_field is not None:
+                self.attribute(
+                    "merged", cluster.into, block.digest_field, identity=True
+                )
+            at = position.get(cluster_id)
+            if at is not None:
+                self.clusters[at] = self.clusters[at].model_copy(
+                    update={"identity": block}
+                )
+
+    def _branch_source(
+        self, source: BranchSource, branch: PreviewBranch, target: str, cluster_id: str
+    ) -> None:
+        """The resource record, its field rows, and an edge from each to *target*."""
+        if source.resource is None:
+            return
+        resource_id = subject("resource", source.resource)
+        if resource_id not in self.nodes:
+            self.add_node(
+                PreviewNode(
+                    id=resource_id,
+                    kind="resource",
+                    name=source.resource,
+                    side=source.side,
+                    exists=source.exists,
+                )
+            )
+        fields = source.input if branch.kind == "derived" else [source.field or ""]
+        kind: EdgeKind = "derivation" if branch.kind == "derived" else "local_key"
+        for name in fields:
+            if not name:
+                continue
+            field_id = self.add_node(
+                PreviewNode(
+                    id=subject("resource", source.resource, name),
+                    kind="field",
+                    name=name,
+                    side=source.side,
+                    owner=resource_id,
+                )
+            )
+            self.add_edge(
+                field_id,
+                target,
+                kind,
+                label=source.label,
+                declared_by=cluster_id,
+                qualifier=source.member or "",
+            )
 
     def identity_checks(self) -> None:
         """Members of one cluster no single key serves, unresolved or uncovered.
@@ -1516,6 +1738,8 @@ class _Builder:
         self.schema_nodes()
         self.naming()
         self.composed_attributes()
+        self.attribute_flow()
+        self.identity_blocks()
         self.identity_checks()
         self.origin_checks()
         self.key_space_checks()
@@ -1738,39 +1962,6 @@ def preview_merge(
     ).build()
     if not attempt:
         return preview
-    outcome, subjects, notes, routing = _attempt(left, right, op, canonical_maps)
-    preview = preview.with_outcome(outcome, subjects=subjects)
-    known = {n.id for n in preview.nodes}
-    return preview.model_copy(
-        update={
-            "routing": routing,
-            "findings": [
-                *preview.findings,
-                *(
-                    note.model_copy(
-                        update={"nodes": [n for n in note.nodes if n in known]}
-                    )
-                    for note in notes
-                ),
-            ],
-        }
-    )
-
-
-def _attempt(
-    left: GraphManifest,
-    right: GraphManifest,
-    op: MergeManifestsOp,
-    canonical_maps: Sequence[tuple[Side, CanonicalMap]],
-) -> tuple[MergeOutcome, tuple[str, ...], list[MergeFinding], list[RoutingRow]]:
-    """Merge for real, and turn whichever way it went into an outcome.
-
-    A merge that went through may still have changed what a resource does,
-    each a ``note``: a member key demoted beside a funnel of several branches
-    no longer deduplicates the member's own records; a resource is attached to
-    a merged class; members of one side share a key space; a resource runs
-    before the one whose nodes it needs. It also has the routing rows.
-    """
     from .alignment import AlignmentConflictError
     from .merge import _merge_manifests
 
@@ -1785,14 +1976,52 @@ def _attempt(
         AlignmentConflictError,
         ValueError,
     ) as exc:
-        return (*outcome_from_exception(exc), [], [])
-    notes = [
+        outcome, subjects = outcome_from_exception(exc)
+        return preview.with_outcome(outcome, subjects=subjects)
+    return with_merge_result(preview, merged, report)
+
+
+def with_merge_result(
+    preview: MergePreview, merged: GraphManifest, report: MergeReport
+) -> MergePreview:
+    """*preview* with the outcome, routing and notes of a merge that went through.
+
+    For a caller that ran the merge itself -- the CLI does, once -- on a
+    preview built with ``attempt=False``; :func:`preview_merge` folds its own
+    attempt in the same way.
+    """
+    preview = preview.with_outcome(outcome_from_manifest(merged))
+    known = {n.id for n in preview.nodes}
+    return preview.model_copy(
+        update={
+            "routing": routing_rows(merged, report),
+            "findings": [
+                *preview.findings,
+                *(
+                    note.model_copy(
+                        update={"nodes": [n for n in note.nodes if n in known]}
+                    )
+                    for note in merge_notes(report)
+                ),
+            ],
+        }
+    )
+
+
+def merge_notes(report: MergeReport) -> list[MergeFinding]:
+    """What a merge that went through changed about what resources do, as notes.
+
+    A member key demoted beside a funnel of several branches no longer
+    deduplicates the member's own records; a resource is attached to a merged
+    class; members of one side share a key space; a resource runs before the
+    one whose nodes it needs.
+    """
+    return [
         *_demotion_notes(report.demoted),
         *_attached_notes(report.attached),
         *_shared_key_space_notes(report.shared_key_spaces),
         *_attach_order_notes(report.order_cycles),
     ]
-    return outcome_from_manifest(merged), (), notes, routing_rows(merged, report)
 
 
 def _demotion_notes(demoted: Sequence[DemotedKey]) -> list[MergeFinding]:
@@ -1984,6 +2213,8 @@ def routing_table(rows: Sequence[RoutingRow]) -> list[str]:
 
 
 __all__ = [
+    "AttributeLayer",
+    "BranchSource",
     "EdgeKind",
     "FindingKind",
     "Merge3Preview",
@@ -1991,8 +2222,11 @@ __all__ = [
     "MergeOutcome",
     "MergePreview",
     "NodeKind",
+    "PreviewBranch",
     "PreviewCluster",
+    "PreviewDemotion",
     "PreviewEdge",
+    "PreviewIdentity",
     "PreviewNode",
     "RoutingRole",
     "RoutingRow",
@@ -2001,9 +2235,11 @@ __all__ = [
     "build_merge3_preview",
     "expected_kinds",
     "kind_for_check",
+    "merge_notes",
     "outcome_from_exception",
     "outcome_from_manifest",
     "preview_merge",
     "routing_rows",
     "routing_table",
+    "with_merge_result",
 ]

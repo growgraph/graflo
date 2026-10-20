@@ -148,6 +148,8 @@ def test_the_composed_class_carries_the_union_of_its_members_attributes(
         "shop_id",
         "org_id",
         "branch_id",
+        # the funnel's digest, which keys the merged class
+        "id",
     }
 
 

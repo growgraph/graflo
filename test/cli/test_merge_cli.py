@@ -399,6 +399,47 @@ def test_a_composing_run_writes_a_preview_with_no_findings(tmp_path):
     assert not [f for f in document["findings"] if f["severity"] != "note"]
 
 
+def test_a_composing_run_reports_what_the_merge_changed(tmp_path):
+    """The written preview carries the merge's notes, as ``preview_merge`` does."""
+    from graflo.architecture.evolution.ops import MergeManifestsOp
+    from graflo.architecture.evolution.preview import preview_merge
+    from graflo.cli.io import load_manifest
+
+    example = (
+        pathlib.Path(__file__).resolve().parents[2] / "examples" / "20-manifest-union"
+    )
+    left = example / "manifest_maintenance.yaml"
+    right = example / "manifest_sensors.yaml"
+    op = example / "merge.yaml"
+    payload = tmp_path / "preview.json"
+
+    result = CliRunner().invoke(
+        graflo,
+        [
+            "merge",
+            str(left),
+            str(right),
+            "--op",
+            str(op),
+            "--preview-json",
+            str(payload),
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    document = json.loads(payload.read_text())
+    kinds = [f["kind"] for f in document["findings"]]
+    assert kinds.count("lookup_demotion") == 2
+    expected = preview_merge(
+        load_manifest(left),
+        load_manifest(right),
+        MergeManifestsOp.model_validate(yaml.safe_load(op.read_text())),
+    )
+    assert document["findings"] == expected.to_dict()["findings"]
+    assert document["routing"] == expected.to_dict()["routing"]
+
+
 def test_the_findings_table_leads_with_the_refusal_and_names_its_nodes():
     """What `--dry-run` and every plotted run print.
 

@@ -221,7 +221,11 @@ def _wrap(message: str, width: int = 88) -> str:
 
 
 def build_preview_graph(
-    preview: MergePreview, *, max_rows: int = 12, legend: bool = True
+    preview: MergePreview,
+    *,
+    max_rows: int = 12,
+    legend: bool = True,
+    fusion: bool = False,
 ) -> nx.MultiDiGraph:
     """The preview as a networkx graph, styled but not yet drawn.
 
@@ -233,6 +237,8 @@ def build_preview_graph(
         preview: What :func:`~graflo.architecture.evolution.preview.preview_merge` returned.
         max_rows: Attribute rows to draw per class before summarising the rest.
         legend: Whether to include the findings legend.
+        fusion: Whether to draw the edge from each attribute that keeps its
+            name; off by default, since on a whole merge it ties every row.
 
     Returns:
         A graph whose node and edge attributes are Graphviz attributes.
@@ -280,6 +286,8 @@ def build_preview_graph(
         )
 
     for edge in preview.edges:
+        if edge.kind == "fusion" and not fusion:
+            continue
         source = preview.node(edge.source)
         target = preview.node(edge.target)
         if source is None or target is None:

@@ -51,12 +51,11 @@ from graflo.architecture.evolution.ops import MergeManifestsOp
 from graflo.architecture.evolution.preview import (
     MergeOutcome,
     MergePreview,
-    RoutingRow,
     outcome_from_exception,
-    outcome_from_manifest,
     preview_merge,
     routing_rows,
     routing_table,
+    with_merge_result,
 )
 from graflo.architecture.profile import check_manifest
 from graflo.cli._store import append_entry, store_option
@@ -294,16 +293,11 @@ def merge(
         else None
     )
 
-    def emit(
-        outcome: MergeOutcome,
-        subjects: tuple[str, ...] = (),
-        routing: list[RoutingRow] | None = None,
-    ) -> None:
-        if preview is None:
-            return
-        attempted = preview.with_outcome(outcome, subjects=subjects)
-        if routing:
-            attempted = attempted.model_copy(update={"routing": routing})
+    def emit(outcome: MergeOutcome, subjects: tuple[str, ...] = ()) -> None:
+        if preview is not None:
+            write(preview.with_outcome(outcome, subjects=subjects))
+
+    def write(attempted: MergePreview) -> None:
         _write_preview(
             attempted,
             plot_path=plot_path,
@@ -348,7 +342,8 @@ def merge(
         raise SystemExit(EXIT_REFUSED)
 
     routing = routing_rows(merged, report)
-    emit(outcome_from_manifest(merged), routing=routing)
+    if preview is not None:
+        write(with_merge_result(preview, merged, report))
     for line in _summary(merged):
         click.echo(line)
 

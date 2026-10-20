@@ -100,6 +100,11 @@ logger = logging.getLogger(__name__)
 #: Where a declared map applies: one side's own names, or either side's.
 Scope = Literal["left", "right", "both"]
 
+#: Which declaration renamed an attribute: a group's property equivalence,
+#: the vocabulary, ``renames``, or the demotion of a member key to
+#: ``<space>__<field>``.
+PropertyLayer = Literal["equivalence", "vocabulary", "rename", "demotion"]
+
 _SIDES: tuple[Side, ...] = ("left", "right")
 
 
@@ -570,6 +575,17 @@ class ClusterResolution:
     key_spaces: Mapping[tuple[Side, str], str] = field(default_factory=dict)
     #: Each of those members the op tags, to every key space its tags name.
     key_tags: Mapping[tuple[Side, str], tuple[str, ...]] = field(default_factory=dict)
+    #: Each attribute ``side_maps`` renames, ``(side, class, field)``, to
+    #: every declaration that wrote it, in order, as ``(layer, target)``; the
+    #: last is the one applied.
+    property_layers: Mapping[
+        tuple[Side, str, str], tuple[tuple[PropertyLayer, str], ...]
+    ] = field(default_factory=dict)
+    #: Each merged class to the ``(resource, member)`` pairs whose
+    #: ``local_key`` source merge added because nothing declared one.
+    auto_key_sources: Mapping[str, frozenset[tuple[str, str]]] = field(
+        default_factory=dict
+    )
 
 
 def fold_declared_maps(

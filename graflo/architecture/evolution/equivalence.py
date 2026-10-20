@@ -30,8 +30,9 @@ Kind = Literal["vertex", "relation"]
 #: Where a name lives. The two sides' own vocabularies, plus the two the
 #: merge declarations establish: a **merged** name is what a cluster
 #: collapses onto, a **canonical** one what a declared map renames into
-#: without any cluster naming it.
-SubjectScope = Literal["left", "right", "merged", "canonical"]
+#: without any cluster naming it. A **resource** is a union resource by its
+#: union name, and its attribute a raw input field a declaration reads.
+SubjectScope = Literal["left", "right", "merged", "canonical", "resource"]
 
 DeclarationT = TypeVar("DeclarationT", VertexEquivalence, RelationEquivalence)
 
