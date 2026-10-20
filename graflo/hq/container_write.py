@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import Field
 
@@ -35,6 +35,9 @@ from graflo.hq.db_writer import DBWriter
 from graflo.hq.endpoint_resolve import resolve_edge_endpoints
 from graflo.hq.graph_engine import GraphEngine
 from graflo.onto import EndpointAmbiguityPolicy
+
+if TYPE_CHECKING:
+    from graflo.filter.onto import FilterExpression
 
 
 class ContainerWriteReport(ConfigBaseModel):
@@ -61,6 +64,11 @@ def edge_label(edge_id: EdgeId) -> str:
     return f"{edge_id[0]}-{edge_id[2] or ''}-{edge_id[1]}"
 
 
+def _copy_row(row: Any) -> Any:
+    """An edge row whose dicts are copies, so stamping it leaves *row* as it was."""
+    return tuple(dict(part) if isinstance(part, dict) else part for part in row)
+
+
 def define_schema(schema: Schema, conn_conf: DBConfig, recreate: bool) -> bool:
     """Define *schema* on the target, or reuse its definition; True when defined."""
     manifest = GraphManifest(
@@ -82,6 +90,7 @@ def _resolve_pending(
     conn_conf: DBConfig,
     pending: Sequence[PendingEdge],
     ambiguity: EndpointAmbiguityPolicy,
+    guard: FilterExpression | None = None,
 ) -> tuple[dict[EdgeId, list[Any]], int, int]:
     """Edges by id with looked-up endpoints, how many resolved, how many dropped."""
     flavor = conn_conf.connection_type
@@ -103,6 +112,8 @@ def _resolve_pending(
     resolved: dict[EdgeId, list[Any]] = defaultdict(list)
     written = dropped = 0
     with ConnectionManager(connection_config=conn_conf) as db:
+        if guard is not None:
+            db.require_read_guard()
         for (edge_id, source_match, target_match), edges in groups.items():
             source, target = edge_id[0], edge_id[1]
             source_identity = list(vertex_config.identity_fields(source))
@@ -131,6 +142,7 @@ def _resolve_pending(
                 resolve_source=bool(source_match),
                 resolve_target=bool(target_match),
                 policy=ambiguity,
+                guard=guard,
             )
             for triple in triples:
                 resolved[edge_id].append(
@@ -154,6 +166,7 @@ async def write_container(
     recreate_schema: bool = False,
     ambiguity: EndpointAmbiguityPolicy = "skip",
     stamp: Mapping[str, Any] | None = None,
+    guard: FilterExpression | None = None,
 ) -> ContainerWriteReport:
     """Define *schema* on the target and upsert *container* by identity.
 
@@ -170,6 +183,9 @@ async def write_container(
         stamp: Values of the schema's reserved fields, set on everything
             written, pending edges included (``DBWriter.write``). Required when
             the container holds a type with a reserved field.
+        guard: A trusted read guard every *pending* lookup must pass, so an
+            endpoint is never resolved to a vertex the guard hides; refused by
+            a backend without read guards.
 
     Returns:
         ContainerWriteReport: counts of what was sent and what was looked up.
@@ -181,7 +197,10 @@ async def write_container(
             name: [dict(doc) for doc in docs]
             for name, docs in container.vertices.items()
         },
-        edges={edge_id: list(triples) for edge_id, triples in container.edges.items()},
+        edges={
+            edge_id: [_copy_row(row) for row in triples]
+            for edge_id, triples in container.edges.items()
+        },
     )
 
     ingestion_model = IngestionModel(resources=[])
@@ -195,7 +214,7 @@ async def write_container(
         )
         if pending:
             resolved, resolved_count, unresolved_count = await asyncio.to_thread(
-                _resolve_pending, schema, conn_conf, pending, ambiguity
+                _resolve_pending, schema, conn_conf, pending, ambiguity, guard
             )
             if resolved:
                 await writer.write(

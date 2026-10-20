@@ -277,6 +277,7 @@ class DBWriter:
                 not set it.
         """
         check_stamp(gc, self.schema, stamp)
+        refuse_reserved_attributes(gc, self.schema)
         self._check_union(gc, conn_conf)
         if bulk_session_id:
             apply_stamp(gc, self.schema, stamp)
@@ -328,6 +329,7 @@ class DBWriter:
             await self._enrich_extra_weights(gc, conn_conf, resource)
         # Edges last: blank resolution and extra weights add rows and
         # attributes, and the stamp must win over both.
+        refuse_reserved_attributes(gc, self.schema)
         apply_stamp(gc, self.schema, stamp, vertices=False)
         await self._push_edges(gc, conn_conf, resource)
 
@@ -1373,6 +1375,49 @@ def apply_stamp(
                     row[2].update(copy.deepcopy(values))
                 else:
                     rows[i] = (row[0], row[1], copy.deepcopy(values))
+
+
+def refuse_reserved_attributes(gc: GraphContainer, schema: Schema) -> None:
+    """Refuse an edge attribute that copies a reserved field onto a readable one.
+
+    An extra weight can carry a vertex field onto an edge as ``f`` or ``V@f``.
+    When ``f`` is reserved, the copy would be readable, and a read guard would
+    take an unstamped ``f`` for a label. Only an edge that declares the
+    attribute reserved itself may carry it; the stamp then overwrites it.
+
+    Raises:
+        ValueError: An edge attribute named after a reserved field.
+    """
+    reserved = schema.reserved_fields()
+    if not reserved:
+        return
+    core = schema.core_schema
+    vc = core.vertex_config
+    for edge_id, rows in gc.edges.items():
+        edge = core.edge_config.declared(edge_id)
+        own = (
+            {f.name for f in edge.properties if f.reserved}
+            if edge is not None
+            else set()
+        )
+        for row in rows:
+            if len(row) <= 2 or not isinstance(row[2], dict):
+                continue
+            for key in row[2]:
+                if key in own:
+                    continue
+                vertex, at, name = key.partition("@")
+                if at:
+                    copied = vertex in vc.vertex_set and any(
+                        f.reserved and f.name == name for f in vc.properties(vertex)
+                    )
+                else:
+                    copied = key in reserved
+                if copied:
+                    raise ValueError(
+                        f"edge {edge_id} carries attribute {key!r}, a copy of a "
+                        "reserved field; only the writer's stamp may set it"
+                    )
 
 
 def _reserved_by_owner(

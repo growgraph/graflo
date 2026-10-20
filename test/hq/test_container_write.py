@@ -1,6 +1,10 @@
 """Writing a graph container by identity upsert, without an ingestion resource."""
 
 import asyncio
+import copy
+from typing import Any
+
+import pytest
 
 from graflo.architecture.graph_types.container import GraphContainer
 from graflo.architecture.graph_types.pending import EdgeEndpoint, PendingEdge
@@ -113,3 +117,44 @@ def test_a_pending_edge_finds_a_vertex_of_the_same_container(tmp_path):
     )
     assert (report.lookups_resolved, report.lookups_unresolved) == (1, 0)
     assert report.edges == {"Person-OPERATES-Machine": 2}
+
+
+def test_a_guard_on_a_backend_without_read_guards_is_refused(tmp_path):
+    from graflo.filter.onto import FilterExpression
+
+    conf = GraFloBackendConfig(output_dir=tmp_path)
+    pending = [
+        PendingEdge(
+            edge_id=OPERATES,
+            source=EdgeEndpoint(vertex="Person", match={"phone": "+1 555"}),
+            target=EdgeEndpoint(vertex="Machine", identity={"serial": "S-9"}),
+        )
+    ]
+    guard = FilterExpression.from_dict(["==", "x", "email"])
+
+    with pytest.raises(NotImplementedError):
+        asyncio.run(
+            write_container(_schema(), _container(), conf, pending=pending, guard=guard)
+        )
+
+
+def test_a_stamped_write_leaves_the_callers_edges_as_they_were(tmp_path):
+    raw: dict[str, Any] = copy.deepcopy(SCHEMA)
+    zones = {
+        "name": "access_zones",
+        "type": "LIST",
+        "item_type": "INT",
+        "reserved": True,
+    }
+    raw["core_schema"]["edge_config"]["edges"][0]["properties"] = [zones]
+    conf = GraFloBackendConfig(output_dir=tmp_path)
+    container = _container()
+    before = copy.deepcopy(container.edges)
+
+    asyncio.run(
+        write_container(
+            Schema.model_validate(raw), container, conf, stamp={"access_zones": [7]}
+        )
+    )
+
+    assert container.edges == before

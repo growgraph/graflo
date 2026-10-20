@@ -16,11 +16,14 @@ import logging
 import threading
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from graflo.architecture.graph_types.identifiers import EdgeId
 from graflo.db.resolve import key_tuple
 from graflo.onto import EndpointAmbiguityPolicy
+
+if TYPE_CHECKING:
+    from graflo.filter.onto import FilterExpression
 
 logger = logging.getLogger(__name__)
 
@@ -179,6 +182,7 @@ def resolve_edge_endpoints(
     resolve_source: bool,
     resolve_target: bool,
     policy: EndpointAmbiguityPolicy,
+    guard: FilterExpression | None = None,
 ) -> tuple[list[Any], EndpointResolutionStats]:
     """Rewrite endpoint projections from secondary keys to primary identities.
 
@@ -190,6 +194,9 @@ def resolve_edge_endpoints(
         resolve_source: True when the source endpoint uses a secondary identity
         resolve_target: Same, for the target endpoint
         policy: What to do when a key matches several vertices
+        guard: A trusted read guard every match must pass, so an endpoint is
+            never resolved to a vertex the guard hides; refused by a backend
+            without read guards.
 
     Returns:
         tuple: rewritten edge documents, and what happened while resolving.
@@ -203,6 +210,8 @@ def resolve_edge_endpoints(
     if resolve_target:
         stats.endpoints.append("target")
 
+    # Only passed when set, so a backend that predates guards is untouched.
+    guarded: dict[str, Any] = {"guard": guard} if guard is not None else {}
     source_matches: dict[int, list[dict[str, Any]]] = {}
     target_matches: dict[int, list[dict[str, Any]]] = {}
     if resolve_source:
@@ -211,6 +220,7 @@ def resolve_edge_endpoints(
             [doc[0] for doc in docs],
             tuple(source_match_fields),
             tuple(source_identity_fields),
+            **guarded,
         )
     if resolve_target:
         target_matches = db.resolve_vertices(
@@ -218,6 +228,7 @@ def resolve_edge_endpoints(
             [doc[1] for doc in docs],
             tuple(target_match_fields),
             tuple(target_identity_fields),
+            **guarded,
         )
 
     resolved: list[Any] = []

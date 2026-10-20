@@ -235,3 +235,37 @@ class TestWriteStats:
 
     def test_a_fresh_accumulator_is_empty(self) -> None:
         assert WriteStats().is_empty()
+
+
+class TestGuard:
+    def test_a_guard_reaches_every_lookup(self) -> None:
+        recorded: list[dict[str, Any]] = []
+
+        class Recording(FakeConnection):
+            def resolve_vertices(
+                self, class_name, key_docs, match_keys, return_keys, **kwargs
+            ):
+                recorded.append(kwargs)
+                return super().resolve_vertices(
+                    class_name, key_docs, match_keys, return_keys
+                )
+
+        guard = object()
+        docs = [({"isin": "US001"}, {"iid": "I1"}, {})]
+        _resolve(Recording(ONE_MATCH), docs, "all", resolve_target=True, guard=guard)
+
+        assert [kwargs.get("guard") for kwargs in recorded] == [guard, guard]
+
+    def test_no_guard_is_passed_when_none_is_given(self) -> None:
+        recorded: list[dict[str, Any]] = []
+
+        class Recording(FakeConnection):
+            def resolve_vertices(
+                self, class_name, key_docs, match_keys, return_keys, **kwargs
+            ):
+                recorded.append(kwargs)
+                return {}
+
+        _resolve(Recording({}), [({"isin": "US001"}, {"iid": "I1"}, {})], "all")
+
+        assert recorded == [{}]

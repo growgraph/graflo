@@ -50,6 +50,7 @@ class Schema(ConfigBaseModel):
         from .db_aware import compile_secondary_identity_indexes
 
         self.core_schema.finish_init()
+        self._check_reserved_names()
         compile_secondary_identity_indexes(
             self.core_schema.vertex_config, self.db_profile
         )
@@ -88,6 +89,40 @@ class Schema(ConfigBaseModel):
             for field in fields
             if field.reserved
         )
+
+    def _check_reserved_names(self) -> None:
+        """Refuse a field name that is reserved on one type and readable on another.
+
+        A read guard and the writer's stamp address a reserved field by name, so
+        a readable field of the same name elsewhere would be one any producer
+        could set and the guard would trust.
+
+        Raises:
+            ValueError: A name declared both reserved and readable.
+        """
+        core = self.core_schema
+        owners: dict[str, tuple[list[str], list[str]]] = {}
+        typed = [
+            *(
+                (f"vertex {vertex.name!r}", vertex.properties)
+                for vertex in core.vertex_config.vertices
+            ),
+            *(
+                (f"edge {edge_id}", edge.properties)
+                for edge_id, edge in core.edge_config.items()
+            ),
+        ]
+        for owner, fields in typed:
+            for field in fields:
+                reserved, readable = owners.setdefault(field.name, ([], []))
+                (reserved if field.reserved else readable).append(owner)
+        for name, (reserved, readable) in sorted(owners.items()):
+            if reserved and readable:
+                raise ValueError(
+                    f"field {name!r} is reserved on {', '.join(reserved)} but "
+                    f"readable on {', '.join(readable)}; declare it reserved "
+                    "everywhere or rename one of them"
+                )
 
     def remove_disconnected_vertices(self) -> set[str]:
         return self.core_schema.remove_disconnected_vertices()

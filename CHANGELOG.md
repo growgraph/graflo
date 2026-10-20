@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `write_container` no longer changes the caller's edge attribute dicts when it stamps them.
+
+### Security
+
+- `write_container(..., guard=)` and `resolve_edge_endpoints(..., guard=)` limit pending-edge
+  lookups to what the guard shows; refused by a backend without read guards.
+- A schema refuses a field name that is reserved on one type and readable on another.
+- `DBWriter.write` refuses an edge attribute that copies a reserved field (`f` or `V@f`) unless
+  the edge declares it reserved.
+
+### Fixed
+
 - **Stamped container writes:** `write_container(..., stamp=)` and
   `write_mention_graphs(..., stamp=)` pass the writer stamp, so a container or a cast can be
   written into a schema with reserved fields.

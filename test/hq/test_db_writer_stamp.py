@@ -17,7 +17,7 @@ from graflo.architecture.schema.vertex import Field, Vertex, VertexConfig
 from graflo.connections.onto import ArangoConfig, Neo4jConfig
 from graflo.db.manager import ConnectionManager
 from graflo.db.neo4j.conn import Neo4jConnection
-from graflo.hq.db_writer import DBWriter, apply_stamp
+from graflo.hq.db_writer import DBWriter, apply_stamp, refuse_reserved_attributes
 from graflo.onto import DBType
 
 ZONES = "access_zones"
@@ -298,3 +298,47 @@ def test_a_reserved_field_cannot_be_an_identity() -> None:
         Vertex(
             name="Bad", properties=[Field(name="tag", reserved=True)], identity=["tag"]
         )
+
+
+def test_a_name_reserved_on_one_type_and_readable_on_another_is_refused() -> None:
+    raw = _schema().to_dict()
+    note = next(
+        v
+        for v in raw["core_schema"]["vertex_config"]["vertices"]
+        if v["name"] == "Note"
+    )
+    note["properties"].append({"name": ZONES, "type": "LIST", "item_type": "INT"})
+
+    with pytest.raises(
+        ValueError, match="reserved on .* but readable on vertex 'Note'"
+    ):
+        Schema.model_validate(raw)
+
+
+@pytest.mark.parametrize("key", [ZONES, f"Ticket@{ZONES}"])
+def test_an_edge_attribute_copying_a_reserved_field_is_refused(key) -> None:
+    schema = _schema()
+    schema.core_schema.edge_config.edges.append(
+        Edge(source="Note", target="Product", relation="mentions")
+    )
+    schema.finish_init()
+    gc = GraphContainer(
+        edges={
+            ("Note", "Product", "mentions"): [({"id": "n"}, {"sku": "P"}, {key: [9]})]
+        }
+    )
+
+    with pytest.raises(ValueError, match="a copy of a reserved field"):
+        asyncio.run(_writer(schema).write(gc, NEO4J, None, stamp={ZONES: [1]}))
+
+
+def test_a_lifted_edge_may_carry_its_own_reserved_attribute() -> None:
+    gc = GraphContainer(
+        edges={
+            ("Ticket", "Product", "about"): [
+                ({"key": "SUP-1"}, {"sku": "P"}, {ZONES: [9]})
+            ]
+        }
+    )
+
+    refuse_reserved_attributes(gc, _schema())
