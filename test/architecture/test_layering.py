@@ -10,6 +10,7 @@ The package is layered (low to high):
         data_source, connections.provider
     L5  db, object_storage
     L6  hq, migrate, rdf, plot, cli
+    L7  link
 
 Rules enforced here (import-time = top-level, non-``TYPE_CHECKING`` imports):
 
@@ -19,6 +20,9 @@ Rules enforced here (import-time = top-level, non-``TYPE_CHECKING`` imports):
    sibling config modules sit at L3. The package façade is lazy for this reason.
 3. Runtime factories may cross layers **only** via deferred (function-level)
    imports — those are not import-time edges and are not flagged.
+4. ``graflo.link`` is provisional scaffolding over the key contract: it may
+   import anything below it, and no module outside it imports it at all —
+   not at import time, not deferred, not under ``TYPE_CHECKING``.
 
 If this test fails, either the new import goes the wrong way (fix the code) or
 a module genuinely changed layer (update the map here *deliberately*).
@@ -74,6 +78,8 @@ LAYERS: dict[str, int] = {
     "graflo.rdf": 6,
     "graflo.plot": 6,
     "graflo.cli": 6,
+    # Provisional scaffolding over the key contract; nothing else depends on it.
+    "graflo.link": 7,
 }
 
 
@@ -185,6 +191,60 @@ def test_contract_never_imports_runtime_at_import_time():
     assert not violations, "contract imports runtime at import time:\n" + "\n".join(
         violations
     )
+
+
+def _link_imports(module: str, is_package: bool, tree: ast.AST) -> list[str]:
+    """Every import of ``graflo.link`` in *tree*, wherever it sits."""
+    found: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            targets = [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            if node.level > 0:
+                targets = [_resolve_relative(module, is_package, node)]
+            else:
+                targets = [node.module or ""]
+            targets = [
+                f"{t}.{alias.name}" if t == "graflo" else t
+                for t in targets
+                for alias in node.names
+            ]
+        else:
+            continue
+        for target in targets:
+            if target == "graflo.link" or target.startswith("graflo.link."):
+                found.append(f"{module}:{node.lineno} imports {target}")
+    return found
+
+
+def test_nothing_outside_link_imports_link():
+    violations: list[str] = []
+    for py, module, is_package in iter_modules():
+        if module == "graflo.link" or module.startswith("graflo.link."):
+            continue
+        violations += _link_imports(module, is_package, ast.parse(py.read_text()))
+    assert not violations, "graflo.link imported from outside it:\n" + "\n".join(
+        violations
+    )
+
+
+def test_the_link_rule_sees_deferred_and_type_checking_imports():
+    source = (
+        "from typing import TYPE_CHECKING\n"
+        "from graflo import link\n"
+        "if TYPE_CHECKING:\n"
+        "    from graflo.link.records import RecordGraph\n"
+        "def f():\n"
+        "    import graflo.link.resolve\n"
+        "    from ..link import candidates\n"
+    )
+    found = _link_imports("graflo.hq.x", False, ast.parse(source))
+    assert [line.split(" imports ")[1] for line in found] == [
+        "graflo.link",
+        "graflo.link.records",
+        "graflo.link.resolve",
+        "graflo.link",
+    ]
 
 
 def test_facades_expose_public_api_lazily():

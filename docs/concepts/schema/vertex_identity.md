@@ -353,6 +353,35 @@ or `assigned` applies to a vertex. A funnel reports `hash`;
   edges to blank vertices. Load blank vertex types through the ordinary write
   path.
 
+## Checking what some values identify
+
+A producer that holds only some properties of an entity, such as an extractor
+or a partial feed, can ask the schema whether they identify it.
+`graflo.hq.identify.identify` applies the rules above and nothing else:
+
+```python
+from graflo.hq.identify import identify
+
+found = identify(schema, "machine", {"asset_tag": "AT-17"}, db=conn, guard=guard)
+found.outcome  # "identified", "ambiguous", "unmatched" or "incomplete"
+found.identity  # {"serial_number": "SN-0042"} when identified
+```
+
+- A complete primary key identifies the vertex without a read. A hash or funnel
+  key is computed only once every field of a branch holds a value; with `db`,
+  `found` says whether the graph holds the vertex.
+- Otherwise, with `db`, each complete secondary identity is looked up in
+  declaration order. The first that matches exactly one vertex identifies it;
+  failing that, several matches are `ambiguous` (`identities`) and none
+  `unmatched`.
+- Otherwise the values are `incomplete`; `missing` lists the fields the nearest
+  primary key still needs.
+
+`guard` limits every read, and applies to a type only when the type declares
+every field it names. `identify` never writes and never creates a key;
+`identify_many` answers many value sets of one type with one read per secondary
+identity.
+
 ## Inferring an identity
 
 When you do not know which fields identify a record, GraFlo can propose an

@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`identify`** (`graflo.hq.identify`): what a set of property values identifies under a type's
+  key contract — `identified`, `ambiguous`, `unmatched` or `incomplete` with the missing fields;
+  secondary identities are looked up under an optional guard. `identify_many` batches one type.
+- **Candidate gathering** (`graflo.link.candidates.gather_candidates`): the entities each staged
+  record may be, by lane (`alternate`, the `lookup_candidates` lanes, `relation`), capped per
+  record and guarded like `resolve_records`. Candidates never close a record.
+
+### Changed
+
+- **Mention resolution moved** to the provisional `graflo.link` package and renamed:
+  `graflo.link.records` (`Mention` → `PartialRecord`, `MentionGraph` → `RecordGraph`, `Relation`
+  → `RecordRelation`, `StagedMention` → `StagedRecord`, `introduces` → `may_create`, fields
+  `mentions`/`mention` → `records`/`record`) and
+  `graflo.link.resolve` (`resolve_mentions` → `resolve_records`, `write_mention_graphs` →
+  `write_record_graphs`). Every keyed decision goes through `identify`. No aliases remain.
+- **Text spans and quotes removed:** `TextSpan`, `UnmappedText` and every `quote`/`span` field are
+  gone; records, stated properties and relations carry an opaque `evidence` dict instead, and
+  `gather_candidates(..., lookup_text=)` supplies the words a staged record is looked up by.
+
 ## [1.20.1]
 
 ### Fixed
