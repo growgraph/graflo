@@ -236,7 +236,7 @@ def test_a_finding_colours_what_it_names_and_earns_a_badge():
     preview = _preview(
         findings=[
             MergeFinding(
-                kind="identity_disagreement",
+                kind="identity-disagreement",
                 severity="possible",
                 message="members disagree",
                 source="structure",
@@ -248,7 +248,7 @@ def test_a_finding_colours_what_it_names_and_earns_a_badge():
 
     assert graph.nodes["left_Firm"]["color"] == SEVERITY_COLOR["possible"]
     assert "[1]" in graph.nodes["left_Firm"]["label"]
-    assert "identity_disagreement" in graph.nodes["legend"]["label"]
+    assert "identity-disagreement" in graph.nodes["legend"]["label"]
 
 
 def test_a_refusal_outranks_a_possible_finding_on_the_same_node():
@@ -330,7 +330,7 @@ def test_trimming_never_drops_an_attribute_the_reader_came_for():
     preview = _wide(40)
     preview.findings.append(
         MergeFinding(
-            kind="type_conflict",
+            kind="field-type-conflict",
             severity="possible",
             message="types differ",
             source="structure",

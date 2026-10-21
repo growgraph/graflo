@@ -336,7 +336,7 @@ class TestVocabularyGroupWithPartialEquivalence:
         )
         with pytest.raises(MergeIdentityError, match="refs") as refused:
             merge_manifests(left, _devices_manifest(), _engineer_op())
-        assert refused.value.check == "ambiguous reference"
+        assert refused.value.check == "ambiguous-reference"
 
     def test_a_member_tagged_twice_differently_is_refused(self) -> None:
         op = _engineer_op(
@@ -371,7 +371,7 @@ class TestVocabularyGroupWithPartialEquivalence:
 
         with pytest.raises(MergeIdentityError, match="left:Press") as refused:
             merge_manifests(left, _devices_manifest(), op)
-        assert refused.value.check == "key space"
+        assert refused.value.check == "key-space"
         assert "one tag" in str(refused.value)
 
     def test_a_null_tag_names_the_key_by_the_origin(self) -> None:
@@ -414,7 +414,7 @@ class TestVocabularyGroupWithPartialEquivalence:
         )
         with pytest.raises(MergeIdentityError) as refused:
             merge_manifests(_register_manifest(), _devices_manifest(), op)
-        assert refused.value.check == "key space"
+        assert refused.value.check == "key-space"
 
     def test_a_vocabulary_only_member_keeps_its_own_key_and_never_matches(
         self,
@@ -541,7 +541,7 @@ class TestVocabularyGroupWithPartialEquivalence:
             )
 
         (finding,) = excinfo.value.findings
-        assert finding.kind == "identity_coverage"
+        assert finding.kind == "identity-coverage"
         assert "left:Bench" in finding.subjects
         assert finding.repairs and finding.repairs[0].kind == "add_key_source"
 
@@ -559,7 +559,7 @@ class TestVocabularyGroupWithPartialEquivalence:
             resolve_clusters(op, left=_register_manifest(), right=_devices_manifest())
 
         (finding,) = excinfo.value.findings
-        assert finding.kind == "unnamed_cluster"
+        assert finding.kind == "unnamed-cluster"
         assert {r.kind for r in finding.repairs} == {"set_into"}
         assert {r.vertex_equivalences[0]["into"] for r in finding.repairs} == {
             "Machine",
@@ -599,7 +599,7 @@ class TestVocabularyGroupWithPartialEquivalence:
             )
 
         (finding,) = excinfo.value.findings
-        assert finding.kind == "identity_disagreement"
+        assert finding.kind == "identity-disagreement"
 
 
 # --------------------------------------------------------------------------- #
@@ -732,7 +732,7 @@ class TestReusingNames:
             merge_manifests(_maintenance(), _sensors(), op)
 
         (finding,) = excinfo.value.findings
-        assert finding.kind == "occupied_into"
+        assert finding.kind == "occupied-into"
         assert set(finding.subjects) >= {
             "left:Asset",
             "right:Device",
@@ -754,7 +754,7 @@ class TestReusingNames:
             merge_manifests(_maintenance(), _sensors(), op)
 
         kinds = {f.kind for f in excinfo.value.findings}
-        assert "double_home" in kinds
+        assert "double-home" in kinds
 
     def test_every_fault_is_reported_at_once(self) -> None:
         op = MergeManifestsOp.model_validate(
@@ -772,10 +772,10 @@ class TestReusingNames:
 
         kinds = sorted(f.kind for f in excinfo.value.findings if f.severity != "note")
         assert kinds == [
-            "dangling",
-            "occupied_into",
-            "unknown_member",
-            "unknown_member",
+            "dangling-entry",
+            "occupied-into",
+            "unknown-member",
+            "unknown-member",
         ]
         for finding in excinfo.value.findings:
             assert finding.message in str(excinfo.value)
@@ -886,10 +886,10 @@ class TestThePreview:
 
         refusals = sorted(f.kind for f in preview.findings if f.severity == "refusal")
         assert refusals == [
-            "dangling",
-            "occupied_into",
-            "unknown_member",
-            "unknown_member",
+            "dangling-entry",
+            "occupied-into",
+            "unknown-member",
+            "unknown-member",
         ]
 
     def test_a_vocabulary_joined_member_is_drawn_as_a_map_edge(self) -> None:
@@ -1042,7 +1042,7 @@ class TestAnAcknowledgementIsPerGroup:
             )
 
         (finding,) = excinfo.value.findings
-        assert finding.kind == "self_relation"
+        assert finding.kind == "self-relation"
         assert "merged:Fitting" in finding.subjects
         (repair,) = finding.repairs
         assert repair.kind == "acknowledge"
@@ -1066,7 +1066,7 @@ class TestAnAcknowledgementIsPerGroup:
                 self._op([], [], allow_self_relations=True),
             )
 
-        assert {f.kind for f in excinfo.value.findings} == {"self_relation"}
+        assert {f.kind for f in excinfo.value.findings} == {"self-relation"}
         assert len(excinfo.value.findings) == 2
 
     def test_the_preview_reports_it_without_running_the_union(self) -> None:
@@ -1077,7 +1077,7 @@ class TestAnAcknowledgementIsPerGroup:
             attempt=False,
         )
 
-        assert [f.kind for f in preview.blocking] == ["self_relation"]
+        assert [f.kind for f in preview.blocking] == ["self-relation"]
 
 
 # --------------------------------------------------------------------------- #
@@ -1216,11 +1216,11 @@ class TestAnEdgeResourceReferencesAJoinedMember:
         """``Press`` ids are tagged ``press``, ``Bench`` ids are the origin's."""
         with pytest.raises(MergeIdentityError, match="links") as refused:
             merge_manifests(_links_manifest(), _devices_manifest(), _links_op())
-        assert refused.value.check == "ambiguous reference"
+        assert refused.value.check == "ambiguous-reference"
         alone = preview_merge(
             _links_manifest(), _devices_manifest(), _links_op(), attempt=False
         )
-        assert "ambiguity" in {
+        assert "ambiguous-reference" in {
             f.kind for f in alone.findings if f.severity == "possible"
         }
 
@@ -1256,7 +1256,7 @@ class TestAnEdgeResourceReferencesAJoinedMember:
         finding = next(
             f
             for f in result.blocking
-            if f.kind == "identity_coverage" and "left:Bench" in f.subjects
+            if f.kind == "identity-coverage" and "left:Bench" in f.subjects
         )
         (repair,) = finding.repairs
         assert repair.vertex_equivalences == (
@@ -1298,7 +1298,7 @@ class TestAPropertyKeyAndAVocabularyJoinedMember:
         )
 
         (finding,) = result.blocking
-        assert finding.kind == "identity_coverage"
+        assert finding.kind == "identity-coverage"
         assert "left:Bench" in finding.subjects
         (repair,) = finding.repairs
         assert repair.kind == "add_key_source"
@@ -1370,7 +1370,7 @@ class TestTwoClassesOfOneSideOnOneName:
         result = build_naming(self._op(), left=_maintenance(), right=_sensors())
 
         (finding,) = result.blocking
-        assert finding.kind == "occupied_into"
+        assert finding.kind == "occupied-into"
         keep, away = finding.repairs
         assert keep.renames == {"left": {"vertices": {"Asset": "Asset"}}}
         assert away.renames == {"left": {"vertices": {"WorkOrder": "WorkOrder_left"}}}

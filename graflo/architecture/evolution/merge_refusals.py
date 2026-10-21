@@ -162,7 +162,7 @@ def plan_demoted_key_names(
                 "find a node of another; tag the members' `local_key` alike "
                 "(one key space), or do not list the key as a property branch "
                 "of `identity`",
-                check="key space",
+                check="key-space",
                 subjects=(subject("merged", into),),
             )
         )
@@ -184,7 +184,7 @@ def plan_demoted_key_names(
                             f"{sorted(authored[name])}; rename that secondary, or "
                             f"set `origins.{side}` on the op, or tag the member's "
                             "`local_key` otherwise",
-                            check="key space",
+                            check="key-space",
                             subjects=(subject("merged", into),),
                         )
                     )
@@ -495,7 +495,7 @@ def key_space_refusals(
                 f"{', '.join(sorted(authors))} declare a secondary identity "
                 f"named {space!r}; give the member another tag, or rename that "
                 "secondary",
-                check="key space",
+                check="key-space",
                 subjects=(subject("merged", into or member), subject(side, member)),
             )
         )
@@ -510,7 +510,7 @@ def key_space_refusals(
                     f"merge_manifests: key space: {side}:{member} is tagged "
                     f"{list(tags)} by its resources' local_key entries, so its "
                     "ids would be in several key spaces; give the member one tag",
-                    check="key space",
+                    check="key-space",
                     subjects=nodes,
                 )
             )
@@ -520,7 +520,7 @@ def key_space_refusals(
                     f"merge_manifests: key space: {side}:{member} is tagged "
                     f"{tags[0]!r}, which names its demoted key but {problem}; "
                     "give the member another tag",
-                    check="key space",
+                    check="key-space",
                     subjects=nodes,
                 )
             )
@@ -542,7 +542,7 @@ def key_space_refusals(
                 f"merge_manifests: key space: {named_members} would share "
                 f"the key space {space!r}, though they come from different "
                 "sides; tag one side's members otherwise, or set `origins`",
-                check="key space",
+                check="key-space",
                 subjects=tuple(subject(side, member) for side, member in members),
             )
         )
@@ -647,7 +647,7 @@ def ambiguous_reference_refusals(
                         "cannot find the class by one of them. Tag the members' "
                         "`local_key` alike (one key space), or produce each "
                         "member from its own resource.",
-                        check="ambiguous reference",
+                        check="ambiguous-reference",
                         subjects=(
                             subject("merged", cluster.into),
                             *(subject(side, member) for member in members),

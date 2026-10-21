@@ -128,15 +128,15 @@ The checks are predicates on that graph:
 
 | Rule | Finding |
 |---|---|
-| every merged name is reached by one group or one ungrouped name | `occupied_into`, `shared_into`, or `incomplete` when the stray arrives by a vocabulary entry |
-| a group has one name | `unnamed_cluster`, `disagreement` |
-| a name is declared in one place | `cluster_overlap` (one type in two equivalences), `double_home` (a `renames` entry for a group member) |
-| every declared name exists | `unknown_member`, `dangling` |
-| a group has one identity | `identity_disagreement` |
-| a vocabulary-joined member can fill a property-only key | `identity_coverage`, repaired by a `local_key` branch that makes the key a funnel |
-| a group's merge is acknowledged | `self_relation`, `observation_fusion`; see below |
-| a name both sides carry, no group | `name_collision` under `error`, synthesized under `union_right`, prefixed later under `prefix_right` |
-| two spellings of one name | `near_collision` under `error` and `union_right`; kept apart under `prefix_right` |
+| every merged name is reached by one group or one ungrouped name | `occupied-into`, `shared-into`, or `incomplete` when the stray arrives by a vocabulary entry |
+| a group has one name | `unnamed-cluster`, `disagreement` |
+| a name is declared in one place | `cluster-overlap` (one type in two equivalences), `double-home` (a `renames` entry for a group member) |
+| every declared name exists | `unknown-member`, `dangling-entry` |
+| a group has one identity | `identity-disagreement` |
+| a vocabulary-joined member can fill a property-only key | `identity-coverage`, repaired by a `local_key` branch that makes the key a funnel |
+| a group's merge is acknowledged | `self-relation`, `observation-fusion`; see below |
+| a name both sides carry, no group | `name-collision` under `error`, synthesized under `union_right`, prefixed later under `prefix_right` |
+| two spellings of one name | `near-collision` under `error` and `union_right`; kept apart under `prefix_right` |
 
 Each finding carries the names it is about and its repairs, safest first:
 `rename_away`, `set_into`, `extend_cluster` (which fuses entities),
@@ -180,7 +180,7 @@ translated on read by `lift_recorded_merge_op` in `merge_commit.py`.
 |---|---|
 | no declaration | unchanged |
 | a vocabulary entry or a `renames` entry, target free | renamed |
-| either, target an unrelated name kept on that side | `occupied_into` |
+| either, target an unrelated name kept on that side | `occupied-into` |
 | a group member | onto the group's name |
 | a group member also in a vocabulary group | the whole vocabulary group joins the cluster |
 | a member spelled by a canonical name | every source the vocabulary sends there |
@@ -190,7 +190,7 @@ translated on read by `lift_recorded_merge_op` in `merge_commit.py`.
 | dangling | one finding per entry; dropped and logged with `allow_dangling_entries` |
 | `properties` keyed by a merged name | refused; the map is keyed by the source type |
 | `properties` renaming a field the member does not declare, or onto a field it keeps | refused; a property rename cannot merge two fields |
-| a property equivalence renaming a canonical attribute | `property_retarget` |
+| a property equivalence renaming a canonical attribute | `property-retarget` |
 | chain or swap inside one `CanonicalMap` | refused when the map is built; written with `renames` instead |
 
 Two declared maps chaining (`{Z: Q}` and `{X: Z}`) are refused by

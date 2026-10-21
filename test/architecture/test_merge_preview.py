@@ -236,7 +236,7 @@ def test_each_dangling_entry_is_its_own_finding(left, right):
     )
     preview = preview_merge(left, right, op, attempt=False)
 
-    dangling = [f for f in preview.findings if f.kind == "dangling"]
+    dangling = [f for f in preview.findings if f.kind == "dangling-entry"]
     assert len(dangling) == 3
     # A dangling source names nothing, so it is no node of the declaration
     # graph and the finding carries it in the message rather than in `nodes`.
@@ -265,9 +265,9 @@ def test_an_unnamed_cluster_is_found_and_refused(left, right):
     preview = preview_merge(left, right, op)
 
     assert preview.outcome.status == "refused"
-    assert preview.outcome.check == "unnamed vertex cluster"
+    assert preview.outcome.check == "unnamed-cluster"
     (finding,) = [f for f in preview.findings if f.severity == "refusal"]
-    assert finding.kind == "unnamed_cluster"
+    assert finding.kind == "unnamed-cluster"
     assert set(finding.nodes) == {
         "left:Firm",
         "left:Shop",
@@ -293,7 +293,7 @@ def test_into_overriding_the_map_is_a_note_not_a_refusal(left, right, canonical_
     assert "left:Firm" in override.nodes and "merged:Party" in override.nodes
     assert "disagreement" not in {f.kind for f in preview.findings}
     # What merge does stop on is the members' keys, a separate problem.
-    assert preview.outcome.check == "identity disagreement"
+    assert preview.outcome.check == "identity-disagreement"
 
 
 def test_a_member_the_map_merges_joins_the_group(left, right, canonical_map):
@@ -337,9 +337,9 @@ def test_overlapping_clusters_report_every_problem_not_only_the_first(
 
     assert preview.outcome.error_type == "MergeNamingError"
     kinds = [f.kind for f in preview.findings]
-    assert kinds.count("cluster_overlap") == 1, "the refusal folds into its finding"
-    assert "identity_disagreement" in kinds, "merge never reached it; the preview did"
-    overlap = next(f for f in preview.findings if f.kind == "cluster_overlap")
+    assert kinds.count("cluster-overlap") == 1, "the refusal folds into its finding"
+    assert "identity-disagreement" in kinds, "merge never reached it; the preview did"
+    overlap = next(f for f in preview.findings if f.kind == "cluster-overlap")
     assert overlap.severity == "refusal"
     assert "right:Org" in overlap.nodes
 
@@ -371,7 +371,7 @@ def test_a_shared_name_under_error_is_refused_with_its_equivalences(
     preview = preview_merge(left, right, op)
 
     refusal = next(f for f in preview.findings if f.severity == "refusal")
-    assert refusal.kind == "name_collision"
+    assert refusal.kind == "name-collision"
     assert refusal.completion is not None
     assert "merged:Outlet" in refusal.nodes
 
@@ -421,7 +421,7 @@ def test_an_unknown_member_becomes_a_ghost_with_a_spelling_hint(left, right):
     assert ghost is not None
     assert ghost.kind == "ghost"
     assert not ghost.exists
-    finding = next(f for f in preview.findings if f.kind == "unknown_member")
+    finding = next(f for f in preview.findings if f.kind == "unknown-member")
     assert "left:Frim" in finding.nodes
 
 
@@ -430,7 +430,7 @@ def test_an_unresolved_identity_is_found_before_compose_reaches_it(
 ):
     preview = preview_merge(left, right, _boundary(canonical_map), attempt=False)
 
-    finding = next(f for f in preview.findings if f.kind == "identity_disagreement")
+    finding = next(f for f in preview.findings if f.kind == "identity-disagreement")
     assert "merged:Company" in finding.nodes
     assert "left:Firm" in finding.nodes
 
@@ -454,7 +454,7 @@ def test_a_derived_branch_settles_it(left, right, canonical_map):
     )
     preview = preview_merge(left, right, op, attempt=False)
 
-    assert "identity_disagreement" not in {f.kind for f in preview.findings}
+    assert "identity-disagreement" not in {f.kind for f in preview.findings}
 
 
 def test_derived_attributes_are_identity_attributes_of_the_merged_class(
@@ -477,7 +477,7 @@ def test_derived_attributes_are_identity_attributes_of_the_merged_class(
     )
     preview = preview_merge(left, right, op, attempt=False)
 
-    assert "identity_disagreement" not in {f.kind for f in preview.findings}
+    assert "identity-disagreement" not in {f.kind for f in preview.findings}
     keyed = {n.name for n in preview.attributes_of("merged:Company") if n.identity}
     assert {"part_a", "part_b"} <= keyed
 
@@ -502,7 +502,7 @@ def test_a_property_every_member_carries_settles_it(left, right, canonical_map):
     )
     preview = preview_merge(left, right, op, attempt=False)
 
-    assert "identity_disagreement" not in {f.kind for f in preview.findings}
+    assert "identity-disagreement" not in {f.kind for f in preview.findings}
 
 
 # ── the invariant ───────────────────────────────────────────────────────────
@@ -1135,18 +1135,18 @@ def test_a_tag_that_cannot_name_a_key_space_is_refused_and_found():
     alone = preview_merge(case_left, case_right, op, attempt=False)
 
     assert attempted.outcome.status == "refused"
-    assert attempted.outcome.check == "key space"
-    assert "key_space" in {f.kind for f in alone.findings if f.severity == "possible"}
+    assert attempted.outcome.check == "key-space"
+    assert "key-space" in {f.kind for f in alone.findings if f.severity == "possible"}
 
 
 @pytest.mark.parametrize(
     ("case", "check", "kind"),
     [
-        ("key-space-named-like-a-secondary", "key space", "key_space"),
-        ("attached-across-key-spaces", "ambiguous reference", "ambiguity"),
-        ("key-spaces-share-a-branch-key", "key space", "key_space"),
-        ("key-spaces-share-an-authored-branch-key", "key space", "key_space"),
-        ("fallback-key-name-like-a-secondary", "key space", "key_space"),
+        ("key-space-named-like-a-secondary", "key-space", "key-space"),
+        ("attached-across-key-spaces", "ambiguous-reference", "ambiguous-reference"),
+        ("key-spaces-share-a-branch-key", "key-space", "key-space"),
+        ("key-spaces-share-an-authored-branch-key", "key-space", "key-space"),
+        ("fallback-key-name-like-a-secondary", "key-space", "key-space"),
     ],
 )
 def test_a_key_space_refusal_is_found_without_merging(case, check, kind):
@@ -1342,28 +1342,35 @@ def test_routing_rows_survive_a_round_trip_through_json():
 @pytest.mark.parametrize(
     ("check", "expected"),
     [
-        ("vertex near collision", "near_collision"),
-        ("vertex canonical split", "name_collision"),
-        ("ambiguous reference", "ambiguity"),
-        ("identity disagreement", "identity_disagreement"),
-        ("identity coverage", "identity_coverage"),
-        ("identity collision", "identity_collision"),
+        ("near-collision", "near-collision"),
+        ("canonical-split", "name-collision"),
+        ("ambiguous-reference", "ambiguous-reference"),
+        ("identity-disagreement", "identity-disagreement"),
+        ("identity-coverage", "identity-coverage"),
+        ("identity-collision", "identity-collision"),
         ("origin", "origin"),
-        ("key space", "key_space"),
-        # Not the `identity` phrases: a name too long for the target.
-        ("identifier", "key_space"),
+        ("key-space", "key-space"),
+        # A name too long for the target.
+        ("identifier", "key-space"),
         # What the schema union refuses.
-        ("field type conflict", "type_conflict"),
-        ("field units conflict", "unit_conflict"),
-        ("vertex identity mode conflict", "identity_mode_conflict"),
-        ("vertex identity funnel conflict", "identity_funnel_conflict"),
-        ("vertex secondary identity conflict", "secondary_identity_conflict"),
-        # Longest match again: this must not read as the bare `disagreement`.
-        ("edge type disagreement", "edge_conflict"),
+        ("field-type-conflict", "field-type-conflict"),
+        ("field-units-conflict", "field-units-conflict"),
+        ("field-type-declaration", "dangling-entry"),
+        ("identity-mode-conflict", "identity-mode-conflict"),
+        ("identity-funnel-conflict", "identity-funnel-conflict"),
+        ("secondary-identity-conflict", "secondary-identity-conflict"),
+        ("edge-type-disagreement", "edge-type-disagreement"),
     ],
 )
-def test_a_refusals_check_phrase_names_its_finding_kind(check, expected):
+def test_a_refusals_check_names_its_finding_kind(check, expected):
     assert kind_for_check(check) == expected
+
+
+def test_a_check_with_no_finding_kind_falls_back_to_the_type():
+    assert (
+        kind_for_check("dangling-entry", "MergeIdentityError") == "ambiguous-reference"
+    )
+    assert kind_for_check("not-a-kind") == "disagreement"
 
 
 def test_a_naming_refusal_carries_the_kind_of_every_problem():
@@ -1372,9 +1379,9 @@ def test_a_naming_refusal_carries_the_kind_of_every_problem():
         status="refused",
         error_type="MergeNamingError",
         message="2 problems with the declarations",
-        kinds=["unnamed_cluster", "dangling"],
+        kinds=["unnamed-cluster", "dangling-entry"],
     )
-    assert expected_kinds(outcome) == frozenset({"unnamed_cluster", "dangling"})
+    assert expected_kinds(outcome) == frozenset({"unnamed-cluster", "dangling-entry"})
 
 
 def test_an_unclassifiable_refusal_asserts_nothing():

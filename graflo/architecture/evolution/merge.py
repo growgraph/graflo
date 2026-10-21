@@ -291,7 +291,7 @@ def _resolve_schema_collisions(
                 "to combine them, set name_conflict='union_right' to adopt the "
                 "left spelling, or name_conflict='prefix_right' to keep them "
                 "apart.",
-                check=f"{kind} near collision",
+                check="near-collision",
                 subjects=tuple(
                     name
                     for left, right in near
@@ -350,7 +350,7 @@ def _assert_no_canonical_split(schema: Schema) -> None:
                 f"concept under different spellings: {split}. This is an "
                 "unhandled merge path, not an authoring error -- the result "
                 "would split data between them silently.",
-                check=f"{kind} canonical split",
+                check="canonical-split",
                 subjects=tuple(
                     subject("merged", name)
                     for group in split.values()
@@ -528,7 +528,7 @@ def _check_digest_field_free(
                     "whose values the digest would replace. Rename the property "
                     "with a PropertyEquivalence, or store the digest in another "
                     "field with `digest_field` on the VertexEquivalence.",
-                    check="identity collision",
+                    check="identity-collision",
                     subjects=(subject("merged", cluster.into), subject(side, member)),
                 )
 
@@ -564,7 +564,7 @@ def _check_identity_coverage(
                     f"{sorted(branch - declared_anywhere)}, so no record can "
                     "complete that branch. Name a property the members carry, "
                     "under its canonical name.",
-                    check="identity coverage",
+                    check="identity-coverage",
                     subjects=(subject("merged", cluster.into),),
                 )
     for side in ("left", "right"):
@@ -586,7 +586,7 @@ def _check_identity_coverage(
                 "dropped. Map the field onto the member with a "
                 "PropertyEquivalence, or key each member on what it carries "
                 "(one identity branch per member's own key).",
-                check="identity coverage",
+                check="identity-coverage",
                 subjects=(subject("merged", cluster.into), subject(side, member)),
             )
 
@@ -860,7 +860,7 @@ def _attach_uncovered_producers(
                     "`local_key` alike (one key space), produce each member from "
                     "its own resource, or add the resource to a derived "
                     "branch's sources.",
-                    check="ambiguous reference",
+                    check="ambiguous-reference",
                     subjects=(
                         subject("merged", plan.vertex),
                         *(subject(side, member) for member in members),
@@ -1107,7 +1107,7 @@ def _pin_member_references(
                     "cannot be pointed at one of them. Tag the members' "
                     "`local_key` alike (one key space), or reference each member "
                     "from its own resource.",
-                    check="ambiguous reference",
+                    check="ambiguous-reference",
                     subjects=(
                         subject("merged", cluster.into),
                         *(subject(side, member) for member in members),

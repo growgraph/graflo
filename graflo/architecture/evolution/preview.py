@@ -51,7 +51,7 @@ from pydantic import Field as PydanticField
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.contract.manifest import GraphManifest
-from graflo.architecture.refusal import Refusal
+from graflo.architecture.refusal import Refusal, RefusalKind, is_refusal_kind
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.identity_funnel import IdentityFunnel
 from graflo.architecture.schema.vertex import FieldMergeError, Vertex
@@ -175,71 +175,68 @@ _LAYER_OF_KIND: dict[str, AttributeLayer] = {
 Severity = Literal["refusal", "possible", "note"]
 
 FindingKind = Literal[
-    "cluster_overlap",
-    "shared_into",
-    "occupied_into",
-    "unknown_member",
+    "cluster-overlap",
+    "shared-into",
+    "occupied-into",
+    "unknown-member",
     "disagreement",
-    "ambiguity",
-    "unnamed_cluster",
+    "ambiguous-reference",
+    "unnamed-cluster",
     "incomplete",
-    "dangling",
+    "dangling-entry",
     "satisfied",
-    "name_collision",
-    "near_collision",
+    "name-collision",
+    "near-collision",
     "prefixed",
-    "property_disagreement",
-    "property_collision",
-    "property_retarget",
-    "unknown_property",
-    "identity_disagreement",
-    "identity_coverage",
-    "identity_collision",
+    "property-disagreement",
+    "property-rename-collision",
+    "property-retarget",
+    "unknown-property",
+    "identity-disagreement",
+    "identity-coverage",
+    "identity-collision",
     "origin",
-    "key_space",
-    "type_conflict",
-    "unit_conflict",
-    "identity_mode_conflict",
-    "identity_funnel_conflict",
-    "secondary_identity_conflict",
-    "edge_conflict",
+    "key-space",
+    "field-type-conflict",
+    "field-units-conflict",
+    "identity-mode-conflict",
+    "identity-funnel-conflict",
+    "secondary-identity-conflict",
+    "edge-type-disagreement",
     "lookup_demotion",
     "attached",
     "shared_key_space",
     "attach_order",
-    "double_home",
+    "double-home",
     "vocabulary_override",
     "auto_local_key",
     "reference_only",
-    "self_relation",
-    "observation_fusion",
+    "self-relation",
+    "observation-fusion",
 ]
 
-#: The ``check`` phrase of a refusal raised after naming, to the finding kind
-#: it is an instance of. A naming refusal carries its findings' kinds itself
-#: (:attr:`MergeOutcome.kinds`), so none of its phrases is listed. The keys are
-#: matched as substrings of ``check``, longest first, so the ``vertex`` /
-#: ``relation`` prefix the messages carry needs no entry of its own.
-_KIND_BY_CHECK: dict[str, FindingKind] = {
-    "near collision": "near_collision",
-    "canonical split": "name_collision",
-    "ambiguous reference": "ambiguity",
-    "identity disagreement": "identity_disagreement",
-    "identity coverage": "identity_coverage",
-    "identity collision": "identity_collision",
+#: The ``check`` of a refusal raised after naming, to the finding kind it is
+#: an instance of. A naming refusal carries its findings' kinds itself
+#: (:attr:`MergeOutcome.kinds`), so none of its kinds is listed.
+_KIND_BY_CHECK: dict[RefusalKind, FindingKind] = {
+    "near-collision": "near-collision",
+    "canonical-split": "name-collision",
+    "ambiguous-reference": "ambiguous-reference",
+    "identity-disagreement": "identity-disagreement",
+    "identity-coverage": "identity-coverage",
+    "identity-collision": "identity-collision",
     "origin": "origin",
-    "key space": "key_space",
+    "key-space": "key-space",
     # A key-space-named property too long for the target: renamed by its tag.
-    "identifier": "key_space",
-    # What the schema union refuses. A bare ``conflict`` key would swallow all
-    # six and must never be added.
-    "field type conflict": "type_conflict",
-    "field units conflict": "unit_conflict",
-    "field type declaration": "dangling",
-    "identity mode conflict": "identity_mode_conflict",
-    "identity funnel conflict": "identity_funnel_conflict",
-    "secondary identity conflict": "secondary_identity_conflict",
-    "edge type disagreement": "edge_conflict",
+    "identifier": "key-space",
+    # What the schema union refuses.
+    "field-type-conflict": "field-type-conflict",
+    "field-units-conflict": "field-units-conflict",
+    "field-type-declaration": "dangling-entry",
+    "identity-mode-conflict": "identity-mode-conflict",
+    "identity-funnel-conflict": "identity-funnel-conflict",
+    "secondary-identity-conflict": "secondary-identity-conflict",
+    "edge-type-disagreement": "edge-type-disagreement",
 }
 
 #: The caption a suggested edge carries, per repair kind: what applying it does.
@@ -257,51 +254,51 @@ _SUGGESTED_LABEL: dict[str, str] = {
 _KINDS_BY_TYPE: dict[type[BaseException], frozenset[FindingKind]] = {
     MergeNamingError: frozenset(
         {
-            "cluster_overlap",
-            "shared_into",
-            "occupied_into",
-            "unknown_member",
+            "cluster-overlap",
+            "shared-into",
+            "occupied-into",
+            "unknown-member",
             "disagreement",
-            "unnamed_cluster",
+            "unnamed-cluster",
             "incomplete",
-            "dangling",
-            "name_collision",
-            "near_collision",
-            "double_home",
-            "identity_disagreement",
-            "identity_coverage",
-            "property_disagreement",
-            "property_collision",
-            "property_retarget",
-            "unknown_property",
-            "self_relation",
-            "observation_fusion",
+            "dangling-entry",
+            "name-collision",
+            "near-collision",
+            "double-home",
+            "identity-disagreement",
+            "identity-coverage",
+            "property-disagreement",
+            "property-rename-collision",
+            "property-retarget",
+            "unknown-property",
+            "self-relation",
+            "observation-fusion",
         }
     ),
-    MergeIncompleteError: frozenset({"incomplete", "name_collision"}),
+    MergeIncompleteError: frozenset({"incomplete", "name-collision"}),
     MergeIdentityError: frozenset(
         {
-            "identity_disagreement",
-            "identity_coverage",
-            "identity_collision",
+            "identity-disagreement",
+            "identity-coverage",
+            "identity-collision",
             "origin",
-            "key_space",
-            "ambiguity",
+            "key-space",
+            "ambiguous-reference",
         }
     ),
-    MergeNameConflictError: frozenset({"near_collision", "name_collision"}),
+    MergeNameConflictError: frozenset({"near-collision", "name-collision"}),
     # Inert while the union's refusals set ``check`` -- which they all do. Kept
     # so a raise site added later without one still classifies rather than
     # silently becoming exempt.
-    FieldMergeError: frozenset({"type_conflict", "unit_conflict"}),
+    FieldMergeError: frozenset({"field-type-conflict", "field-units-conflict"}),
     VertexMergeError: frozenset(
         {
-            "identity_mode_conflict",
-            "identity_funnel_conflict",
-            "secondary_identity_conflict",
+            "identity-mode-conflict",
+            "identity-funnel-conflict",
+            "secondary-identity-conflict",
         }
     ),
-    EdgeMergeError: frozenset({"edge_conflict"}),
+    EdgeMergeError: frozenset({"edge-type-disagreement"}),
 }
 
 
@@ -631,16 +628,13 @@ _KINDS_BY_TYPE_NAME: dict[str, frozenset[FindingKind]] = {
 
 
 def kind_for_check(check: str | None, error_type: str | None = None) -> FindingKind:
-    """The finding kind a refusal's ``check`` phrase is an instance of.
+    """The finding kind a refusal's ``check`` is an instance of.
 
-    Longest match wins, so ``"property rename collision"`` is not read as the
-    plain ``"collision"`` of a name clash. Falls back to the exception type,
-    and finally to ``disagreement`` -- the most general of the four classes.
+    Falls back to the exception type, and finally to ``disagreement`` -- the
+    most general of the four classes.
     """
-    if check:
-        for phrase in sorted(_KIND_BY_CHECK, key=len, reverse=True):
-            if phrase in check:
-                return _KIND_BY_CHECK[phrase]
+    if check and is_refusal_kind(check) and check in _KIND_BY_CHECK:
+        return _KIND_BY_CHECK[check]
     if error_type:
         kinds = _KINDS_BY_TYPE_NAME.get(error_type)
         if kinds:
@@ -1366,7 +1360,7 @@ class _Builder:
                 continue
             detail = "; ".join(f"{s}:{m}={list(k)}" for s, m, k in keys)
             self.finding(
-                "identity_disagreement",
+                "identity-disagreement",
                 f"merged vertex {cluster.into!r} has members that disagree on "
                 f"identity ({detail}) and nothing resolves it",
                 nodes=[
@@ -1402,7 +1396,7 @@ class _Builder:
             *demoted_key_refusals(self.resolution, self.manifests),
             *identifier_refusals(self.resolution, self.manifests),
         ):
-            self.from_refusal(refusal, fallback="key_space")
+            self.from_refusal(refusal, fallback="key-space")
 
     def ambiguity_checks(self) -> None:
         """Resources that would find one merged class by two demoted keys.
@@ -1418,7 +1412,7 @@ class _Builder:
         for refusal in ambiguous_reference_refusals(
             self.resolution, self._sides_with_union_resource_names(), properties
         ):
-            self.from_refusal(refusal, fallback="ambiguity")
+            self.from_refusal(refusal, fallback="ambiguous-reference")
 
     def _sides_with_union_resource_names(self) -> Mapping[str, GraphManifest]:
         """Both sides with their resources renamed as the union names them.
@@ -1457,7 +1451,7 @@ class _Builder:
         ]
         if colliding:
             self.finding(
-                "identity_collision",
+                "identity-collision",
                 f"merged vertex {cluster.into!r} is keyed on a funnel whose "
                 f"digest is stored in `{digest_field}`, but "
                 f"{', '.join(f'{s}:{m}' for s, m in colliding)} declare a "
@@ -1522,7 +1516,7 @@ class _Builder:
             )
             if unreachable:
                 self.finding(
-                    "identity_coverage",
+                    "identity-coverage",
                     f"merged vertex {cluster.into!r} is keyed on a funnel with "
                     f"branches over {unreachable}, which no member declares",
                     nodes=[subject("merged", cluster.into)],
@@ -1534,7 +1528,7 @@ class _Builder:
         ]
         if uncovered:
             self.finding(
-                "identity_coverage",
+                "identity-coverage",
                 f"merged vertex {cluster.into!r} is keyed on a field-set "
                 f"{', '.join(f'{s}:{m}' for s, m in uncovered)} cannot complete, "
                 "so their records would be dropped",
@@ -1578,7 +1572,7 @@ class _Builder:
                 ),
             )
         except FieldTypeDeclarationError as exc:
-            self.from_refusal(exc, fallback="dangling")
+            self.from_refusal(exc, fallback="dangling-entry")
         declared_vertices = declared.vertices if declared is not None else {}
         for cluster in self.index.vertices:
             members: list[tuple[Side, str, Vertex]] = []
@@ -1603,7 +1597,7 @@ class _Builder:
                         # `check` it might have carried.
                         self.from_refusal(
                             exc,
-                            fallback="property_collision",
+                            fallback="property-rename-collision",
                             nodes=[subject(side, member)],
                         )
                         continue
@@ -1702,7 +1696,7 @@ class _Builder:
                 except ValueError as exc:  # never raise out of a preview
                     self.from_refusal(
                         exc,
-                        fallback="edge_conflict",
+                        fallback="edge-type-disagreement",
                         nodes=[
                             subject("merged", str(name))
                             for name in edge_id

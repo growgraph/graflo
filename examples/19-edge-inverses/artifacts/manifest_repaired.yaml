@@ -82,3 +82,5 @@ ingestion_model:
                 to: institution
                 relation: alumnus_of
         infer_edges: false
+metadata:
+    gstl: '1.0'

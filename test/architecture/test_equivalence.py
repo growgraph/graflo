@@ -103,7 +103,7 @@ def test_overlapping_declarations_raise() -> None:
         ],
     )
     kinds = _kinds(op, _side("l", ["Company", "Deal"]), _side("r", ["Org", "Branch"]))
-    assert "cluster_overlap" in kinds
+    assert "cluster-overlap" in kinds
 
 
 def test_shared_into_raises() -> None:
@@ -114,7 +114,7 @@ def test_shared_into_raises() -> None:
             VertexEquivalence(left="B", right="Y", into="Z"),
         ],
     )
-    assert _kinds(op, _side("l", ["A", "B"]), _side("r", ["X", "Y"])) == ["shared_into"]
+    assert _kinds(op, _side("l", ["A", "B"]), _side("r", ["X", "Y"])) == ["shared-into"]
 
 
 def test_occupied_into_raises() -> None:
@@ -123,7 +123,7 @@ def test_occupied_into_raises() -> None:
         vertex_equivalences=[VertexEquivalence(left="A", right="B", into="Person")]
     )
     assert _kinds(op, _side("l", ["A", "Person"]), _side("r", ["B"])) == [
-        "occupied_into"
+        "occupied-into"
     ]
 
 
@@ -178,7 +178,7 @@ def test_relation_overlapping_declarations_raise() -> None:
         ],
     )
     kinds = _kinds(op, _side("l", [], ["a", "b"]), _side("r", [], ["x", "y"]))
-    assert "cluster_overlap" in kinds
+    assert "cluster-overlap" in kinds
 
 
 def test_relation_occupied_into_raises() -> None:
@@ -186,7 +186,7 @@ def test_relation_occupied_into_raises() -> None:
         relation_equivalences=[RelationEquivalence(left="a", right="x", into="owns")]
     )
     assert _kinds(op, _side("l", [], ["a", "owns"]), _side("r", [], ["x"])) == [
-        "occupied_into"
+        "occupied-into"
     ]
 
 
@@ -238,7 +238,7 @@ def test_relation_shared_into_raises() -> None:
         ],
     )
     assert _kinds(op, _side("l", [], ["a", "b"]), _side("r", [], ["x", "y"])) == [
-        "shared_into"
+        "shared-into"
     ]
 
 

@@ -94,7 +94,7 @@ def _report_preview(left: GraphManifest, right: GraphManifest, cm, scope, as_jso
             click.echo(f"{finding.severity}: {finding.kind}: {finding.message}")
         if not preview.findings:
             click.echo("ok: every entry matches the manifests")
-    return [f for f in preview.findings if f.kind == "dangling"]
+    return [f for f in preview.findings if f.kind == "dangling-entry"]
 
 
 @click.command("canonical-check")

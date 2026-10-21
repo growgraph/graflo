@@ -612,7 +612,7 @@ class TestValidateAndCompleteCanonicalMap:
                 right=_right_b_manifest(),
                 canonical_maps=[("left", cm)],
             )
-        assert excinfo.value.check == "dangling entry"
+        assert excinfo.value.check == "dangling-entry"
 
     def test_dangling_entries_and_trim_agree_on_one_manifest(self) -> None:
         """The authoring-time check: one map, one manifest, no merge."""
@@ -806,7 +806,7 @@ class TestValidateAndCompleteCanonicalMap:
             MergeCanonicalConflictError, match="property re-target"
         ) as excinfo:
             resolve_clusters(op, left=left, right=right)
-        assert excinfo.value.check == "property re-target"
+        assert excinfo.value.check == "property-retarget"
         assert excinfo.value.subjects == ("left:Shop.company_id",)
 
     def _right_two_orgs(self) -> GraphManifest:
@@ -1037,7 +1037,7 @@ class TestTheTwoChecksDoNotOverlap:
                 MergeManifestsOp(),
             )
         (finding,) = excinfo.value.findings
-        assert finding.kind == "near_collision"
+        assert finding.kind == "near-collision"
 
     def test_a_mapped_name_keys_differently_so_only_the_validator_sees_it(
         self,

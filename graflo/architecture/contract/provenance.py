@@ -4,7 +4,7 @@
 beside the schema metadata that carries it. What lives here is the manifest's
 own metadata block -- ``Schema.metadata`` describes the *schema*, and a manifest
 is a larger object that may carry no schema at all, so it needs its own name,
-description and content address -- plus the stamping helper.
+description, language version and content address -- plus the stamping helpers.
 
 Stamping is a free function on purpose. It is something a **commit point** (the
 CLI, a server route) does to an artifact, not something the artifact does to
@@ -18,9 +18,16 @@ from __future__ import annotations
 from typing import Any
 
 from pydantic import Field as PydanticField
+from pydantic import field_validator
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.schema.provenance import Provenance
+
+#: The GSTL language version this graflo writes into ``metadata.gstl``.
+GSTL_VERSION = "1.0"
+
+#: The GSTL major versions this graflo reads; any minor of one is accepted.
+SUPPORTED_GSTL_MAJORS: frozenset[int] = frozenset({1})
 
 
 class ManifestMetadata(ConfigBaseModel):
@@ -48,6 +55,14 @@ class ManifestMetadata(ConfigBaseModel):
         default=None,
         description="Name of this manifest as a whole.",
     )
+    gstl: str | None = PydanticField(
+        default=None,
+        pattern=r"^\d+\.\d+$",
+        description=(
+            "GSTL language version this manifest is written in, as MAJOR.MINOR. "
+            "Absent means unstated."
+        ),
+    )
     description: str | None = PydanticField(
         default=None,
         description="Optional human-readable description of this manifest.",
@@ -56,6 +71,34 @@ class ManifestMetadata(ConfigBaseModel):
         default=None,
         description="Content address and lineage of this manifest.",
     )
+
+    @field_validator("gstl")
+    @classmethod
+    def _supported_major(cls, value: str | None) -> str | None:
+        """Refuse a major version this graflo cannot read."""
+        if value is None:
+            return value
+        major = int(value.split(".", 1)[0])
+        if major not in SUPPORTED_GSTL_MAJORS:
+            supported = ", ".join(str(m) for m in sorted(SUPPORTED_GSTL_MAJORS))
+            raise ValueError(
+                f"unsupported GSTL major version {major} (gstl={value!r}); "
+                f"this graflo reads major {supported}"
+            )
+        return value
+
+
+def stamp_gstl(target: Any) -> None:
+    """Write :data:`GSTL_VERSION` into *target*'s ``metadata.gstl``, in place.
+
+    *target* is a ``GraphManifest``; ``metadata`` is created if absent. Writers
+    call this on what they emit, so their output states the language it is in.
+    """
+    metadata = getattr(target, "metadata", None)
+    if metadata is None:
+        metadata = ManifestMetadata()
+        object.__setattr__(target, "metadata", metadata)
+    object.__setattr__(metadata, "gstl", GSTL_VERSION)
 
 
 def stamp_provenance(
@@ -71,6 +114,7 @@ def stamp_provenance(
 
     Accepts a ``GraphManifest`` (creating ``metadata`` if absent) or anything
     else carrying a metadata block that holds provenance, such as ``Schema``.
+    A manifest's metadata also gets ``gstl`` (:func:`stamp_gstl`).
 
     Args:
         target: The artifact to stamp.
@@ -105,6 +149,8 @@ def stamp_provenance(
         metadata = ManifestMetadata()
         object.__setattr__(target, "metadata", metadata)
     object.__setattr__(metadata, "provenance", provenance)
+    if isinstance(metadata, ManifestMetadata):
+        object.__setattr__(metadata, "gstl", GSTL_VERSION)
     return provenance
 
 
@@ -114,4 +160,12 @@ def read_provenance(target: Any) -> Provenance | None:
     return getattr(metadata, "provenance", None) if metadata is not None else None
 
 
-__all__ = ["ManifestMetadata", "Provenance", "read_provenance", "stamp_provenance"]
+__all__ = [
+    "GSTL_VERSION",
+    "SUPPORTED_GSTL_MAJORS",
+    "ManifestMetadata",
+    "Provenance",
+    "read_provenance",
+    "stamp_gstl",
+    "stamp_provenance",
+]

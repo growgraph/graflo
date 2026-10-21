@@ -40,7 +40,7 @@ class ReservedFieldError(Refusal):
     def __init__(self) -> None:
         super().__init__(
             "the query names a property that cannot be read",
-            check="reserved field",
+            check="reserved-field",
         )
 
 

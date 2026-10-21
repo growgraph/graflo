@@ -302,9 +302,9 @@ class TestPreview:
         refused = preview_merge(left, right, _op(), attempt=False)
         declared = preview_merge(left, right, _op(_INT))
 
-        assert "type_conflict" in {f.kind for f in refused.findings}
+        assert "field-type-conflict" in {f.kind for f in refused.findings}
         assert declared.outcome.status == "merged"
-        assert "type_conflict" not in {f.kind for f in declared.findings}
+        assert "field-type-conflict" not in {f.kind for f in declared.findings}
 
     def test_a_declared_edge_type_is_no_finding(self) -> None:
         left, right = _edge_sides("STRING", "FLOAT")

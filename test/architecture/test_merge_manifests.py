@@ -694,7 +694,7 @@ def test_disagreeing_into_on_shared_node_raises() -> None:
             ),
         )
     kinds = {f.kind for f in excinfo.value.findings}
-    assert "cluster_overlap" in kinds
+    assert "cluster-overlap" in kinds
     assert "disagreement" in kinds  # the linked group is named both X and Y
 
 
@@ -1147,7 +1147,7 @@ def test_a_property_branch_no_member_declares_is_refused() -> None:
     )
     with pytest.raises(MergeIdentityError, match="no member declares") as info:
         merge_manifests(left, right, op, bump_version=False)
-    assert info.value.check == "identity coverage"
+    assert info.value.check == "identity-coverage"
 
 
 def test_occupied_into_raises_through_compose() -> None:
@@ -1176,7 +1176,7 @@ def test_occupied_into_raises_through_compose() -> None:
     with pytest.raises(MergeNamingError, match="nothing links") as excinfo:
         merge_manifests(left, right, op, bump_version=False)
     (finding,) = excinfo.value.findings
-    assert finding.kind == "occupied_into"
+    assert finding.kind == "occupied-into"
     assert finding.repairs[0].renames == {
         "left": {"vertices": {"Person": "Person_left"}}
     }

@@ -667,6 +667,7 @@ def test_stamping_writes_the_content_address(workspace) -> None:
     provenance = stamped["metadata"]["provenance"]
     assert len(provenance["content_hash"]) == 64
     assert provenance["canon"].startswith("graflo/canon@")
+    assert stamped["metadata"]["gstl"] == "1.0"
 
 
 def test_the_stamped_hash_excludes_the_stamp_itself(workspace) -> None:

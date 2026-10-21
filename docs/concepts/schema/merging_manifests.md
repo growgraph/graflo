@@ -229,7 +229,7 @@ renames:
 
 Every source must exist on its side. A type an equivalence holds is named by
 its `into`, and its properties by the equivalence's `properties`: a `renames`
-entry for it is refused (`double_home`), so each name is declared in one place.
+entry for it is refused (`double-home`), so each name is declared in one place.
 Over the vocabulary, a `renames` entry wins, with a note.
 
 ### Checking a map before a union
@@ -362,16 +362,16 @@ The union attaches it to the merged type by the member's own key instead
 
 A plain property key, such as `identity: [serial_number]`, has no place for an
 own key. A member the map joins that does not carry the key is refused
-(`identity_coverage`), and the repair carries the `local_key` branch to append.
+(`identity-coverage`), and the repair carries the `local_key` branch to append.
 With it, the identity becomes a funnel, and the member keeps its own key.
 
 ### One type, one group
 
-A type is declared in one equivalence (`cluster_overlap`). Two equivalences
+A type is declared in one equivalence (`cluster-overlap`). Two equivalences
 the map links are one group: they may both list members, but only one may
 declare `identity`. Two groups nothing links may not arrive at one merged name
-(`shared_into`), and a group's name may not land on an unrelated type a side
-keeps (`occupied_into`): rename that type away with `renames`, pick another
+(`shared-into`), and a group's name may not land on an unrelated type a side
+keeps (`occupied-into`): rename that type away with `renames`, pick another
 `into`, or add it to the group.
 
 ### Names both sides carry
@@ -518,7 +518,7 @@ origins: {left: maintenance, right: sensors}
 - A key a member already declares as a secondary identity keeps that
   declaration and its name, for one key space.
 - A demoted key is named by its origin, so renaming it in `properties` or a
-  canonical map is refused (`double_home`).
+  canonical map is refused (`double-home`).
 - On a PostgreSQL target, a `<space>__f` name longer than 63 bytes is refused
   (`identifier`); set a shorter `origins` or `local_key` tag.
 
@@ -830,15 +830,15 @@ declarations that would settle it, safest first. The refusal also prints the
 
 | Finding | Cause | What to do |
 |---|---|---|
-| `unknown_member`, `dangling` | a declaration names a type, relation, property or resource the side does not declare | use the side's own spelling; the message names a near match |
-| `unnamed_cluster`, `disagreement` | a group with no name, or with two | add or align `into` |
-| `cluster_overlap`, `shared_into`, `occupied_into` | a type in two equivalences, two unlinked groups on one name, a group on an unrelated type's name | see [One type, one group](#one-type-one-group) |
-| `double_home` | a `renames` entry for a type a group names, or a rename of a key the union demotes | name the type on its equivalence; leave the key to its [origin](#keying-the-merged-type) |
-| `incomplete`, `name_collision` | a type a map sends onto a group's name, or a name both sides carry | add the declaration its completion prints; `MergeNamingIncompleteError` |
-| `near_collision` | two spellings of one name | declare an equivalence, or `prefix_right` |
-| `identity_disagreement`, `identity_coverage` | two equivalences of one group declaring `identity`, or a member no key can be derived for | keep one `identity`; add the key source the repair carries |
-| `self_relation`, `observation_fusion` | a group's merge turns an edge into a self-relation, or fuses two members one record produces | accept it with `allow` on the equivalence, or the flag on the map; see [Several types on one side](#several-types-on-one-side) |
-| `unknown_property`, `property_collision`, `property_disagreement`, `property_retarget` | a property rename naming a missing field, folding two, disagreeing with the map, or renaming an attribute the map established | fix the rename |
+| `unknown-member`, `dangling-entry` | a declaration names a type, relation, property or resource the side does not declare | use the side's own spelling; the message names a near match |
+| `unnamed-cluster`, `disagreement` | a group with no name, or with two | add or align `into` |
+| `cluster-overlap`, `shared-into`, `occupied-into` | a type in two equivalences, two unlinked groups on one name, a group on an unrelated type's name | see [One type, one group](#one-type-one-group) |
+| `double-home` | a `renames` entry for a type a group names, or a rename of a key the union demotes | name the type on its equivalence; leave the key to its [origin](#keying-the-merged-type) |
+| `incomplete`, `name-collision` | a type a map sends onto a group's name, or a name both sides carry | add the declaration its completion prints; `MergeNamingIncompleteError` |
+| `near-collision` | two spellings of one name | declare an equivalence, or `prefix_right` |
+| `identity-disagreement`, `identity-coverage` | two equivalences of one group declaring `identity`, or a member no key can be derived for | keep one `identity`; add the key source the repair carries |
+| `self-relation`, `observation-fusion` | a group's merge turns an edge into a self-relation, or fuses two members one record produces | accept it with `allow` on the equivalence, or the flag on the map; see [Several types on one side](#several-types-on-one-side) |
+| `unknown-property`, `property-rename-collision`, `property-disagreement`, `property-retarget` | a property rename naming a missing field, folding two, disagreeing with the map, or renaming an attribute the map established | fix the rename |
 
 A finding that an addition settles, such as a name both sides carry, is
 `incomplete`; when every finding is, the error is `MergeNamingIncompleteError`.
@@ -852,7 +852,7 @@ The schema union refuses on its own after the names are settled:
 | `MergeIdentityError` (`origin`) | an origin that is not a valid name, two sides with one origin, or an origin a member's secondary identity already uses | set `origins` on the op |
 | `MergeIdentityError` (`key space`) | a member tagged differently by two resources, a tag that is not a valid name or names a member's secondary identity, or one key space on both sides | give the member one tag, or another one |
 | `MergeIdentityError` (`identifier`) | on a PostgreSQL target, a demoted key's `<space>__f` name longer than 63 bytes | set a shorter `origins` or `local_key` tag |
-| `MergeIdentityError` (`ambiguous reference`, finding `ambiguity`) | a resource that would find one type by two demoted keys | tag the members alike, or produce each from its own resource |
+| `MergeIdentityError` (`ambiguous reference`, finding `ambiguous-reference`) | a resource that would find one type by two demoted keys | tag the members alike, or produce each from its own resource |
 | type or unit conflict | a property declared with two types or two units | retype or re-ground one side first |
 | `AlignmentConflictError` | a derived branch breaks [its rules](#rules-a-derived-branch-must-follow) | fix the derivation |
 

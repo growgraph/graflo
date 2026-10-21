@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`metadata.gstl`**: a manifest states the GSTL version it is written in (`MAJOR.MINOR`); an
+  unsupported major is refused. Every manifest the `graflo` CLI writes is stamped `1.0`, and
+  graflo ≤1.21 rejects a stamped manifest (unknown field). Outside the content hash.
+- **Refusal kinds** (`graflo.architecture.refusal.REFUSAL_KINDS`): a registry of stable refusal ids;
+  `Refusal.check` is typed by it.
+
+### Changed
+
+- `Refusal.check` holds a kebab-case registry id (`key-space`, `near-collision`, …) instead of a
+  phrase, and merge-preview finding kinds a refusal produces use the same ids (`near_collision` →
+  `near-collision`, `dangling` → `dangling-entry`, `type_conflict` → `field-type-conflict`, …).
+  Refusal messages are unchanged.
+
 ## [1.21.0]
 
 ### Added

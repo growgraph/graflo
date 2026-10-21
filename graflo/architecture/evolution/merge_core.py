@@ -7,7 +7,7 @@ import re
 from functools import reduce
 
 from graflo.architecture.graph_types import EdgeId
-from graflo.architecture.refusal import Refusal
+from graflo.architecture.refusal import Refusal, RefusalKind
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.identity_funnel import IdentityFunnel
 from graflo.architecture.schema.semantics import merge_semantics
@@ -40,7 +40,7 @@ class VertexMergeError(Refusal):
         self,
         message: str,
         *,
-        check: str,
+        check: RefusalKind,
         into_name: str,
         properties: tuple[str, ...] = (),
     ) -> None:
@@ -56,7 +56,7 @@ class EdgeMergeError(Refusal):
     logical edge, which is what makes the disagreement expressible at all.
     """
 
-    def __init__(self, message: str, *, check: str, edge_id: EdgeId) -> None:
+    def __init__(self, message: str, *, check: RefusalKind, edge_id: EdgeId) -> None:
         super().__init__(message, check=check)
         self.edge_id = edge_id
 
@@ -82,7 +82,7 @@ def _merge_identity_funnels(
             "identity funnels. Branch order and branch ids determine the key, so "
             "they cannot be unioned automatically — replace the identity "
             "explicitly with the funnel you want.",
-            check="vertex identity funnel conflict",
+            check="identity-funnel-conflict",
             into_name=into_name,
         )
     return first
@@ -129,7 +129,7 @@ def _union_secondary_identities(
                         f"Cannot merge into vertex '{into_name}': secondary identity "
                         f"name '{entry.name}' refers to {sorted(claimed)} and "
                         f"{sorted(entry.field_set)} on different sources",
-                        check="vertex secondary identity conflict",
+                        check="secondary-identity-conflict",
                         into_name=into_name,
                         properties=tuple(sorted(claimed | entry.field_set)),
                     )
@@ -149,7 +149,7 @@ def _union_secondary_identities(
                     f"{sorted(entry.field_set)} is named '{prior.name}' and "
                     f"'{entry.name}' on different sources; edge steps select by "
                     "name, so align the names before merging",
-                    check="vertex secondary identity conflict",
+                    check="secondary-identity-conflict",
                     into_name=into_name,
                     properties=tuple(sorted(entry.field_set)),
                 )
@@ -212,7 +212,7 @@ def merge_vertex_models(
         raise VertexMergeError(
             f"Cannot merge into vertex '{into_name}': sources mix blank and assigned "
             "identity modes, which are mutually exclusive",
-            check="vertex identity mode conflict",
+            check="identity-mode-conflict",
             into_name=into_name,
         )
 
@@ -227,7 +227,7 @@ def merge_vertex_models(
         raise VertexMergeError(
             f"Cannot merge into vertex '{into_name}': an assigned source cannot be "
             f"merged with hash-identity sources (hash properties: {hash_out})",
-            check="vertex identity mode conflict",
+            check="identity-mode-conflict",
             into_name=into_name,
             properties=tuple(hash_out),
         )
@@ -241,7 +241,7 @@ def merge_vertex_models(
             f"merged with hash-identity sources (hash properties: {hash_out}). A "
             "blank vertex keys on a generated id, so the digest would never be "
             "consulted.",
-            check="vertex identity mode conflict",
+            check="identity-mode-conflict",
             into_name=into_name,
             properties=tuple(hash_out),
         )
@@ -253,7 +253,7 @@ def merge_vertex_models(
                 f"Cannot merge into vertex '{into_name}': sources mix an identity "
                 f"funnel with flat hash properties {hash_out}. Express the flat key "
                 "as a funnel branch first, then merge.",
-                check="vertex identity funnel conflict",
+                check="identity-funnel-conflict",
                 into_name=into_name,
                 properties=tuple(hash_out),
             )
@@ -261,7 +261,7 @@ def merge_vertex_models(
             raise VertexMergeError(
                 f"Cannot merge into vertex '{into_name}': an identity funnel cannot "
                 "be merged with assigned or blank sources",
-                check="vertex identity funnel conflict",
+                check="identity-funnel-conflict",
                 into_name=into_name,
             )
 
@@ -271,7 +271,7 @@ def merge_vertex_models(
             f"Cannot merge into vertex '{into_name}': a blank source cannot be merged "
             "with sources declaring secondary_identities — a blank vertex has no "
             "source-visible key to match on",
-            check="vertex secondary identity conflict",
+            check="secondary-identity-conflict",
             into_name=into_name,
             properties=tuple(
                 sorted({f for entry in secondary_out for f in entry.fields})
@@ -307,7 +307,7 @@ def merge_edge_pair(a: Edge, b: Edge, *, retype_remedy: str | None = None) -> Ed
         raise EdgeMergeError(
             f"Cannot merge edge {a.edge_id!r}: sources disagree on type/by "
             f"({a.type!r}, {a.by!r}) vs ({b.type!r}, {b.by!r})",
-            check="edge type disagreement",
+            check="edge-type-disagreement",
             edge_id=a.edge_id,
         )
     props = union_field_lists(

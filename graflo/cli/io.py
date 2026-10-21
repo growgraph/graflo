@@ -16,6 +16,7 @@ import click
 from suthing import FileHandle
 
 from graflo.architecture.contract.manifest import GraphManifest
+from graflo.architecture.contract.provenance import stamp_gstl
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import Vertex
 
@@ -138,9 +139,13 @@ def manifest_to_dict(
 def dump_manifest(
     manifest: GraphManifest, path: Path | None, *, declare: Collection[str] = ()
 ) -> None:
-    """Write *manifest* to *path*, announcing it. ``None`` writes nothing."""
+    """Write *manifest* to *path*, announcing it. ``None`` writes nothing.
+
+    The written manifest states the GSTL version it is in (``metadata.gstl``).
+    """
     if path is None:
         return
+    stamp_gstl(manifest)
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     FileHandle.dump(manifest_to_dict(manifest, declare=declare), path)
     click.echo(f"written: {path}")

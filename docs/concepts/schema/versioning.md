@@ -72,6 +72,21 @@ A list field that is not classified raises `UnclassifiedListField` rather than
 being guessed. `CANON_VERSION` is part of the hashed bytes, so a change to these
 rules produces different hashes instead of reading old hashes under new rules.
 
+## Language version
+
+`metadata.gstl` states the GSTL version a manifest is written in, as
+`MAJOR.MINOR`:
+
+```yaml
+metadata:
+    gstl: "1.0"
+```
+
+A manifest that states a major version graflo does not read is refused; any
+minor of a supported major is accepted, and an absent `gstl` means unstated.
+Every manifest the `graflo` CLI writes is stamped with the version it writes.
+Like all of `metadata`, `gstl` is outside the content hash.
+
 ## Provenance
 
 The content address and lineage can travel with the manifest, so a shipped file

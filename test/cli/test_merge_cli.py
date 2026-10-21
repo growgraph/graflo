@@ -459,14 +459,14 @@ def test_the_findings_table_leads_with_the_refusal_and_names_its_nodes():
                 source="structure",
             ),
             MergeFinding(
-                kind="identity_disagreement",
+                kind="identity-disagreement",
                 severity="possible",
                 message="members disagree",
                 source="structure",
                 nodes=["merged:Company"],
             ),
             MergeFinding(
-                kind="cluster_overlap",
+                kind="cluster-overlap",
                 severity="refusal",
                 message="claimed twice",
                 source="merge",
@@ -478,7 +478,7 @@ def test_the_findings_table_leads_with_the_refusal_and_names_its_nodes():
     lines = _findings_table(preview)
 
     assert lines[0] == "findings: 2 blocking, 3 total"
-    assert "refusal" in lines[1] and "cluster_overlap" in lines[1]
+    assert "refusal" in lines[1] and "cluster-overlap" in lines[1]
     assert "right:Org" in lines[1]
     assert "possible" in lines[2]
     assert "note" in lines[3], "a note sorts last; it blocks nothing"

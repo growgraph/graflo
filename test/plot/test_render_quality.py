@@ -103,14 +103,14 @@ def _dot_sources(out: Path) -> dict[str, str]:
     findings = conflict._preview(
         findings=[
             MergeFinding(
-                kind="identity_disagreement",
+                kind="identity-disagreement",
                 severity="refusal",
                 message="the members disagree on what identifies a Firm",
                 source="merge",
                 nodes=["left:Firm"],
             ),
             MergeFinding(
-                kind="type_conflict",
+                kind="field-type-conflict",
                 severity="possible",
                 message="note is STRING on the left and INT on the right",
                 source="structure",

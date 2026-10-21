@@ -546,7 +546,7 @@ def _write_suggestion(
     result = build_naming(suggested, left=left, right=right)
     text = "# Suggested by `graflo merge --suggest`: review before use.\n"
     text += yaml.safe_dump(suggested.to_dict(skip_defaults=True), sort_keys=False)
-    near = [f for f in result.findings if f.kind == "near_collision"]
+    near = [f for f in result.findings if f.kind == "near-collision"]
     if near:
         text += (
             "# Two spellings of one concept each, never unioned without you; "
@@ -570,7 +570,7 @@ def _write_suggestion(
             click.echo(f"naming ({kind}):")
         for line in lines:
             click.echo(f"  {line}")
-    remaining = [f for f in result.blocking if f.kind != "near_collision"]
+    remaining = [f for f in result.blocking if f.kind != "near-collision"]
     if remaining:
         click.echo(f"left for you: {len(remaining)}")
         for finding in remaining:

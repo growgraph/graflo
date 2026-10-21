@@ -243,4 +243,5 @@ schema:
                 directed: true
 metadata:
     name: plant-plain
+    gstl: '1.0'
     description: An ungrounded starting point, before the lift.

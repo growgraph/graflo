@@ -11,8 +11,8 @@ and what a labeled property graph is.
 A manifest has three blocks. Each is optional, but at least one must be
 present: a file can carry only a `schema`, or only `bindings`, and the rest
 can be supplied in Python. An optional top-level `metadata` block names and
-describes the manifest as a whole; it is not part of the manifest's content
-hash. This is the manifest of the quick start:
+describes the manifest as a whole and states its GSTL version (`gstl`); it is
+not part of the manifest's content hash. This is the manifest of the quick start:
 
 ```yaml
 schema:

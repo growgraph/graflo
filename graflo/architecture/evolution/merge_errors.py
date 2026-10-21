@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from graflo.architecture.refusal import Refusal
+from typing import Literal
+
+from graflo.architecture.refusal import Refusal, RefusalKind
 
 
 class MergeNameConflictError(Refusal):
@@ -36,10 +38,14 @@ class MergeIdentityError(Refusal):
     """
 
     def __init__(
-        self, message: str, *, check: str = "", subjects: tuple[str, ...] = ()
+        self,
+        message: str,
+        *,
+        check: RefusalKind | Literal[""] = "",
+        subjects: tuple[str, ...] = (),
     ) -> None:
         # The only refusal carrying a default check: every raise site is the
         # same rule, and three of them pass no subjects either.
         super().__init__(
-            message, check=check or "identity disagreement", subjects=subjects
+            message, check=check or "identity-disagreement", subjects=subjects
         )

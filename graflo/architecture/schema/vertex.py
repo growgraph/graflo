@@ -35,7 +35,7 @@ from pydantic import (
 )
 
 from graflo.architecture.base import ConfigBaseModel
-from graflo.architecture.refusal import Refusal
+from graflo.architecture.refusal import Refusal, RefusalKind
 from graflo.architecture.schema.identity_funnel import IdentityFunnel
 from graflo.architecture.schema.semantics import (
     FieldSemantics,
@@ -466,11 +466,10 @@ def _conflict_heading(reasons: list[str], owner: str) -> str:
     return f"Conflicting field {_conflict_kind(reasons)} for {owner}"
 
 
-#: The rule name a field conflict of each kind refuses under. Substrings of
-#: these are what ``evolution.preview`` maps onto its finding kinds.
-_FIELD_CHECK: dict[str, str] = {
-    "types": "field type conflict",
-    "units": "field units conflict",
+#: The refusal kind a field conflict of each kind refuses under.
+_FIELD_CHECK: dict[str, RefusalKind] = {
+    "types": "field-type-conflict",
+    "units": "field-units-conflict",
 }
 
 

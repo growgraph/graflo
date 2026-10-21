@@ -186,7 +186,7 @@ class TestDeclaredIdentityCoverage:
         """``Y`` has no ``name``: every ``Y`` record would complete no key."""
         with pytest.raises(MergeIdentityError, match="right:Y") as excinfo:
             _merge(VertexEquivalence(left="X", right="Y", into="Z", identity=["name"]))
-        assert excinfo.value.check == "identity coverage"
+        assert excinfo.value.check == "identity-coverage"
 
     def test_natural_key_every_member_carries_is_accepted(self) -> None:
         """The one field-set every member carries replaces their disagreeing keys.
@@ -240,7 +240,7 @@ class TestDeclaredIdentityCoverage:
                     left="X", right="Y", into="Z", identity=["name", "x_id"]
                 )
             )
-        assert excinfo.value.check == "identity coverage"
+        assert excinfo.value.check == "identity-coverage"
 
     def test_funnel_every_member_completes_a_branch_of_is_accepted(self) -> None:
         merged = _merge(
@@ -259,7 +259,7 @@ class TestDeclaredIdentityCoverage:
                 ),
                 right=_side_b(properties=["y_id", "cname", "id"]),
             )
-        assert excinfo.value.check == "identity collision"
+        assert excinfo.value.check == "identity-collision"
 
 
 class TestDerivedIdentityDemotesMemberKeys:
@@ -380,7 +380,7 @@ class TestDigestField:
                     digest_field="cname",
                 )
             )
-        assert excinfo.value.check == "identity collision"
+        assert excinfo.value.check == "identity-collision"
 
     @pytest.mark.parametrize(
         "identity",
@@ -439,7 +439,7 @@ class TestDigestField:
             ),
         )
         kinds = {f.kind for f in preview.findings}
-        assert ("identity_collision" in kinds) is colliding
+        assert ("identity-collision" in kinds) is colliding
 
 
 def _owns_edge(pipeline: list) -> dict:
@@ -579,7 +579,7 @@ class TestResourcesOutsideTheDerivedBranches:
                 ),
                 bump_version=False,
             )
-        assert refused.value.check == "ambiguous reference"
+        assert refused.value.check == "ambiguous-reference"
         assert "find" in str(refused.value)
 
     def test_a_reference_is_pinned_to_the_demoted_member_key(self) -> None:
@@ -903,7 +903,7 @@ class TestOwnersAndAttachedResources:
                     "right_resource_A": LocalKeySource(field="rid"),
                 }
             )
-        assert refused.value.check == "key space"
+        assert refused.value.check == "key-space"
 
     def test_an_attached_record_is_cast_onto_its_origin_key(self) -> None:
         merged, _report = _asset_union()
@@ -1942,7 +1942,7 @@ class TestOriginNaming:
                 ),
                 bump_version=False,
             )
-        assert excinfo.value.check == "key space"
+        assert excinfo.value.check == "key-space"
 
     def test_two_key_spaces_of_one_side_on_one_branch_key_are_refused(
         self,
@@ -1979,7 +1979,7 @@ class TestOriginNaming:
                 ),
                 bump_version=False,
             )
-        assert excinfo.value.check == "key space"
+        assert excinfo.value.check == "key-space"
         assert "'two'" in str(excinfo.value)
 
     def test_a_demoted_key_answers_to_an_authored_secondary_over_its_fields(
@@ -2027,7 +2027,7 @@ class TestOriginNaming:
             {"left": "a", "right": "b"},
             {"legacy": ["lid"]},
         )
-        assert [refusal.check for refusal in plan.refusals] == ["key space"]
+        assert [refusal.check for refusal in plan.refusals] == ["key-space"]
         assert not plan.additions
 
     def test_a_key_a_property_branch_names_keeps_its_name(self) -> None:
@@ -2223,7 +2223,7 @@ class TestOriginNaming:
         assert attempted.outcome.check == "identifier"
         found = [f for f in alone.findings if f.check == "identifier"]
         assert len(found) == 1
-        assert found[0].kind == "key_space"
+        assert found[0].kind == "key-space"
         assert found[0].nodes == ["merged:Z"]
 
     def test_a_demoted_key_name_within_63_bytes_merges_on_postgres(self) -> None:
@@ -2254,7 +2254,7 @@ class TestOriginNaming:
                     ]
                 )
             )
-        assert "double_home" in {f.kind for f in excinfo.value.findings}
+        assert "double-home" in {f.kind for f in excinfo.value.findings}
 
     def test_an_equivalence_keeping_a_demoted_keys_spelling_is_refused(
         self,
@@ -2272,7 +2272,7 @@ class TestOriginNaming:
                 ),
                 right=_side_b(properties=["y_id", "cname", "ref"]),
             )
-        assert "double_home" in {f.kind for f in excinfo.value.findings}
+        assert "double-home" in {f.kind for f in excinfo.value.findings}
         assert "property branch" in str(excinfo.value)
 
     def test_a_vocabulary_self_entry_for_a_demoted_key_is_tolerated(self) -> None:
@@ -2310,7 +2310,7 @@ class TestOriginNaming:
 
         with pytest.raises(MergeNamingError) as excinfo:
             _merge(_rekey(), right=_side_b(properties=["y_id", "cname", "b__y_id"]))
-        assert "property_collision" in {f.kind for f in excinfo.value.findings}
+        assert "property-rename-collision" in {f.kind for f in excinfo.value.findings}
 
     def test_an_omitted_local_key_tag_is_the_origin(self) -> None:
         merged = _merge(

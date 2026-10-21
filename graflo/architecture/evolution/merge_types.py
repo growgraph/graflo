@@ -231,7 +231,7 @@ def field_type_ops(
         raise FieldTypeDeclarationError(
             "merge_manifests: field_types names nothing to retype: "
             + "; ".join(misses),
-            check="field type declaration",
+            check="field-type-declaration",
         )
     return out
 

@@ -8,6 +8,7 @@ import click
 import yaml
 
 from graflo.architecture.contract.manifest import GraphManifest
+from graflo.architecture.contract.provenance import stamp_gstl
 from graflo.rdf.deserializer import ManifestRdfDeserializer
 from graflo.rdf.serializer import ManifestRdfSerializer
 
@@ -19,6 +20,7 @@ def _load_manifest(path: pathlib.Path) -> GraphManifest:
 
 
 def _write_manifest(path: pathlib.Path, manifest: GraphManifest) -> None:
+    stamp_gstl(manifest)
     payload = manifest.to_minimal_canonical_dict()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(

@@ -50,7 +50,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from graflo.architecture.contract.manifest import GraphManifest
-from graflo.architecture.refusal import Refusal
+from graflo.architecture.refusal import Refusal, RefusalKind
 from graflo.architecture.schema.naming import canonical_slug
 
 from .equivalence import (
@@ -196,7 +196,7 @@ class MergeIncompleteError(MergeCanonicalConflictError):
         message: str,
         completion: Completion,
         *,
-        check: str = "",
+        check: RefusalKind | Literal[""] = "",
         subjects: tuple[str, ...] = (),
     ) -> None:
         super().__init__(message, check=check, subjects=subjects)
@@ -268,10 +268,16 @@ _DANGLING_LISTED = 10
 
 
 def _conflict(
-    check: str, detail: str, hint: str, *, subjects: tuple[str, ...] = ()
+    check: RefusalKind,
+    phrase: str,
+    detail: str,
+    hint: str,
+    *,
+    subjects: tuple[str, ...] = (),
 ) -> MergeCanonicalConflictError:
+    """A conflict of kind *check*, its message led by *phrase*."""
     return MergeCanonicalConflictError(
-        f"{check}: {detail}. {hint}",
+        f"{phrase}: {detail}. {hint}",
         check=check,
         subjects=subjects,
     )
@@ -297,6 +303,7 @@ def _compose_name_maps(
         existing = out.get(source)
         if existing is not None and existing != target:
             raise _conflict(
+                "canonical-clash",
                 f"canonical {noun} clash",
                 f"{source!r} maps to both {existing!r} and {target!r}",
                 "Reconcile the canonical maps.",
@@ -307,6 +314,7 @@ def _compose_name_maps(
     )
     if chained:
         raise _conflict(
+            "canonical-retarget",
             f"canonical {noun} re-target",
             f"{chained} are canonical targets of one map and moving sources of "
             "the other",
@@ -336,6 +344,7 @@ def compose_canonical_maps(base: CanonicalMap, extension: CanonicalMap) -> Canon
             existing = bucket.get(old)
             if existing is not None and existing != new:
                 raise _conflict(
+                    "canonical-clash",
                     "canonical property clash",
                     f"{source_class}.{old} maps to both {existing!r} and {new!r}",
                     "Reconcile the canonical maps.",
@@ -518,7 +527,9 @@ def dangling_refusal(
                 f"{entry.target!r} matches no {entry.kind} on that "
                 f"side{context}{entry.suggestion}"
             )
-        return _conflict("dangling entry", detail, hint, subjects=subjects)
+        return _conflict(
+            "dangling-entry", "dangling entry", detail, hint, subjects=subjects
+        )
     listed = "\n".join(
         f"  {entry.describe()}{entry.suggestion}"
         for entry in entries[:_DANGLING_LISTED]
@@ -531,7 +542,7 @@ def dangling_refusal(
     return MergeCanonicalConflictError(
         f"dangling entry: {len(entries)} {side} canonical map entries match nothing on that "
         f"side{context}. {hint}\n{listed}",
-        check="dangling entry",
+        check="dangling-entry",
         subjects=subjects,
     )
 
@@ -642,6 +653,7 @@ def check_property_fields_exist(
                 "AddVertexPropertiesOp"
             )
             raise _conflict(
+                "unknown-property",
                 "unknown property",
                 f"property equivalence into {pe.into!r} names "
                 f"{side}:{member}.{field_name!r}, which is not a declared property",
@@ -667,6 +679,7 @@ def check_attribute_fixed_points(
         for old, new in attr_map.items():
             if old in canonical and new != old:
                 raise _conflict(
+                    "property-retarget",
                     "property re-target",
                     f"the canonical map established {old!r} on {side}:{member}, "
                     f"but the equivalence renames it to {new!r}",
@@ -698,6 +711,7 @@ def check_property_maps_against_manifest(
                 continue
             if old not in existing:
                 raise _conflict(
+                    "unknown-property",
                     "unknown property",
                     f"the map renames {side}:{member}.{old!r}, which is not a "
                     "declared property",
@@ -707,6 +721,7 @@ def check_property_maps_against_manifest(
                 )
             if new in surviving:
                 raise _conflict(
+                    "property-rename-collision",
                     "property rename collision",
                     f"{side}:{member}.{old!r} -> {new!r} collides with an "
                     "existing property of that name",
