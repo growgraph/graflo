@@ -193,9 +193,12 @@ schema declares:
 - every vertex type it names;
 - every edge it writes: the declared edge, or, for a relation read from the
   data, a declared edge between the same endpoints with no `relation`;
-- every property a `from` mapping writes to.
+- every property a `from` mapping writes to;
+- every relation a `relation_map` names (and a fixed fallback `relation`) on a
+  step whose endpoints come from roles: some declared edge between the classes
+  those roles can hold carries it, or has no `relation`.
 
-A step that breaks one of these is refused when the manifest loads. A relation
+A step that breaks one of these is refused when the manifest loads. An edge
 found in the data that no edge declares is skipped, with a warning.
 
 ```python

@@ -128,6 +128,24 @@ When throughput matters, use `dynamic_edges` to discover edges, not to load:
     transactions that change the edges of one node. PostgreSQL, ArangoDB,
     TigerGraph and NebulaGraph accept fully concurrent writes.
 
+## A stamp and a guard per record
+
+`IngestionParams(stamp_for=..., guard_for=...)` take two callables, each
+called with the resource name and every record before it is cast:
+
+- `stamp_for` returns the stamp for what that record casts to: the values of
+  the schema's reserved fields, as `DBWriter.write(stamp=...)` takes them.
+- `guard_for` returns the read guard for that record's write-time lookups
+  (endpoints found by a secondary identity, attached records, extra weights).
+
+When either is set, a batch is written in one `DBWriter.write` per distinct
+stamp and guard, each holding only what the records with those values cast
+to, so one record's stamp never reaches another record's elements. Batches
+are read as usual. Every stamp is checked before the batch writes anything: a
+lifted type cast from a record without a stamp is refused. A guard is refused
+on a backend without read guards. The callables are never serialized. Without
+them a batch is written in one call.
+
 ## What to read next
 
 - [Document cast errors](doc_errors.md): the settings for records that fail

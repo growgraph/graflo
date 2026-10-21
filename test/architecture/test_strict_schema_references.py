@@ -3,8 +3,10 @@
 An edge is declared when the schema lists it, or lists a relation-less template
 between its endpoints for relations read from the data. A step that writes any
 other edge, or maps a property its vertex does not declare, is refused when the
-manifest loads; a relation found in the data that no edge declares is skipped
-with a warning. Loose manifests (``strict_references=False``) keep loading.
+manifest loads, and so is a ``relation_map`` value that no declared edge between
+the step's possible endpoint types carries. An undeclared edge only the data
+reveals is skipped with a warning. Loose manifests (``strict_references=False``)
+keep loading.
 """
 
 from __future__ import annotations
@@ -138,15 +140,39 @@ class TestDynamicEdges:
         },
     ]
 
-    def test_an_undeclared_pair_is_skipped_with_a_warning(self, caplog) -> None:
-        manifest = _load(self._with_pilots(), strict=True)
+    def test_a_mapped_relation_no_edge_carries_is_refused_at_load(self) -> None:
+        with pytest.raises(ValueError, match="pilots"):
+            _load(self._with_pilots(), strict=True)
+
+    def test_a_relation_less_template_declares_a_mapped_relation(self) -> None:
+        config = self._with_pilots()
+        config["schema"]["graph"]["edge_config"]["edges"].append(
+            {"source": "vehicle", "target": "person"}
+        )
+
+        _load(config, strict=True)
+
+    def test_a_pair_known_only_from_the_data_is_skipped_with_a_warning(
+        self, caplog
+    ) -> None:
+        manifest = _load(_config(), strict=True)
+        rows = [
+            self._ROWS[0],
+            {
+                "source_type": "Vehicle",
+                "source_id": "4",
+                "relation": "OWNS",
+                "target_type": "Person",
+                "target_id": "1",
+            },
+        ]
 
         with caplog.at_level(logging.WARNING):
-            edges = _cast(manifest, "relations", self._ROWS)
+            edges = _cast(manifest, "relations", rows)
 
         assert ("person", "vehicle", "owns") in edges
-        assert ("person", "vehicle", "pilots") not in edges
-        assert any("pilots" in r.getMessage() for r in caplog.records)
+        assert ("vehicle", "person", "owns") not in edges
+        assert any("skipped" in r.getMessage() for r in caplog.records)
 
     def test_a_loose_manifest_still_casts_it(self) -> None:
         manifest = _load(self._with_pilots(), strict=False)

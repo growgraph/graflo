@@ -263,6 +263,8 @@ class EdgeActor(Actor):
             self._check_inverse_emission(init_ctx, edge_id)
         else:
             # Dynamic mode: cache will be populated per-document.
+            if init_ctx.strict_references:
+                self._refuse_unmapped_relations(init_ctx)
             self._edge_cache.clear()
             self._register_endpoint_rule(
                 init_ctx, self._static_source, self._static_target
@@ -294,6 +296,49 @@ class EdgeActor(Actor):
             + (f"; declared between them: {declared}" if declared else "")
             + ". Declare it in edge_config, or name a declared relation"
         )
+
+    def _refuse_unmapped_relations(self, init_ctx: ActorInitContext) -> None:
+        """Refuse a routed step naming a relation no possible endpoint pair declares.
+
+        The relations named in the manifest (``relation_map`` values and the
+        fixed fallback ``relation``) must each be declared, or covered by a
+        relation-less template, between some pair of the classes the step's
+        endpoints can be. Which pair a document yields is known only from the
+        data, so an undeclared pair stays a skip at cast time.
+        """
+        if self.edge_config is None or self.vertex_config is None:
+            return
+        named = set(self._relation_map.values())
+        if self._static_relation is not None:
+            named.add(self._static_relation)
+        if not named:
+            return
+        everything = frozenset(self.vertex_config.vertex_set)
+
+        def possible(static: str | None, role: str | None) -> frozenset[str]:
+            if static is not None:
+                return frozenset({static})
+            held = _held(init_ctx.role_reach, role)
+            return everything if held is None else held
+
+        sources = possible(self._static_source, self._source_slot_key)
+        targets = possible(self._static_target, self._target_slot_key)
+        carried = {
+            edge.relation
+            for edge in self.edge_config.edges
+            if edge.source in sources and edge.target in targets
+        }
+        if None in carried:
+            return
+        undeclared = sorted(named - carried)
+        if undeclared:
+            raise ValueError(
+                f"edge step {self._source_slot_key or self._static_source} -> "
+                f"{self._target_slot_key or self._static_target} names relations "
+                f"{undeclared} that no edge the schema declares between "
+                f"{sorted(sources)} and {sorted(targets)} carries. Declare them in "
+                "edge_config, or drop them from relation_map"
+            )
 
     def _declared_relations(self, source: str, target: str) -> set[str | None]:
         """Relations the edge config declares from *source* to *target*."""

@@ -184,8 +184,8 @@ async def write_container(
             written, pending edges included (``DBWriter.write``). Required when
             the container holds a type with a reserved field.
         guard: A trusted read guard every *pending* lookup must pass, so an
-            endpoint is never resolved to a vertex the guard hides; refused by
-            a backend without read guards.
+            endpoint is never resolved to a vertex the guard hides; refused,
+            before anything is written, by a backend without read guards.
 
     Returns:
         ContainerWriteReport: counts of what was sent and what was looked up.
@@ -210,7 +210,11 @@ async def write_container(
     writer = DBWriter(schema=schema, ingestion_model=ingestion_model)
     try:
         await writer.write(
-            gc=to_write, conn_conf=conn_conf, resource_name=None, stamp=stamp
+            gc=to_write,
+            conn_conf=conn_conf,
+            resource_name=None,
+            stamp=stamp,
+            guard=guard,
         )
         if pending:
             resolved, resolved_count, unresolved_count = await asyncio.to_thread(
@@ -222,6 +226,7 @@ async def write_container(
                     conn_conf=conn_conf,
                     resource_name=None,
                     stamp=stamp,
+                    guard=guard,
                 )
     finally:
         writer.close()

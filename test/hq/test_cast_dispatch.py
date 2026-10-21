@@ -197,6 +197,53 @@ class TestPerDocumentErrorsStayPerDocument:
         assert process.failures[0].traceback
 
 
+class TestCastByKey:
+    """Each key's container holds exactly what its records cast to."""
+
+    @pytest.mark.parametrize(
+        "params",
+        [
+            {"cast_executor": "inline"},
+            {"cast_executor": "thread", "n_cores": 4},
+            {"cast_executor": "process", "n_cores": 2},
+            {"cast_executor": "inline", "dynamic_edges": True},
+        ],
+        ids=["inline", "thread", "process", "dynamic-edges"],
+    )
+    def test_records_are_split_by_key_and_failures_keep_their_index(
+        self, manifest, params
+    ) -> None:
+        docs = TestPerDocumentErrorsStayPerDocument._mixed()
+        keys = [i % 3 for i in range(len(docs))]
+        caster = DocumentCaster(manifest.require_ingestion_model())
+        try:
+            parts, failures = asyncio.run(
+                caster.cast_batch_by_key(
+                    docs, keys, "r", params=IngestionParams(**params)
+                )
+            )
+        finally:
+            caster.close()
+
+        assert [key for key, _ in parts] == [0, 1, 2]
+        for key, graph in parts:
+            assert [doc["pid"] for doc in graph.vertices["person"]] == [
+                f"p{i}" for i in range(len(docs)) if i % 3 == key and i != 57
+            ]
+        assert [f.doc_index for f in failures] == [57]
+
+    def test_one_key_is_one_plain_batch(self, manifest) -> None:
+        caster = DocumentCaster(manifest.require_ingestion_model())
+        parts, failures = asyncio.run(
+            caster.cast_batch_by_key(
+                _docs(10), ["k"] * 10, "r", params=IngestionParams()
+            )
+        )
+        ((key, graph),) = parts
+        assert key == "k" and len(graph.vertices["person"]) == 10
+        assert failures == []
+
+
 class TestProcessPathFallsBackRatherThanFailing:
     def test_dynamic_edges_stay_in_process(self, manifest) -> None:
         """Dynamic edges register on shared config mid-cast, which a worker cannot do.

@@ -179,6 +179,28 @@ guard = FilterExpression(
 found = conn.graph_neighbors("Ticket", "SUP-42", hops=2, schema=schema, guard=guard)
 ```
 
+A write's own lookups (an edge endpoint found by a secondary identity, an
+attached record, an extra weight) take the same guard, so a write never links
+to, attaches onto or copies from a vertex the guard hides:
+
+```python
+await writer.write(container, conn_conf, "messages", stamp=stamp, guard=guard)
+```
+
+An ingest stamps and guards per record: the caller passes
+`IngestionParams(stamp_for=..., guard_for=...)`, each called with the
+resource name and a record, and what a record casts to is written with that
+record's stamp and guard only (see
+[Parallelism](../ingestion/parallelism.md#a-stamp-and-a-guard-per-record)):
+
+```python
+params = IngestionParams(
+    stamp_for=lambda resource, record: {"access_zones": [zone_for(record)]},
+    guard_for=lambda resource, record: guard_for_zone(zone_for(record)),
+)
+engine.ingest(manifest=manifest, target_db_config=conn_conf, ingestion_params=params)
+```
+
 What a zone is and which zones a reader opens are not part of the graph; your
 service decides both. Combine several conditions with `conjoin()`. Guards and
 `union` labels are supported on Neo4j; other backends refuse them. The guard

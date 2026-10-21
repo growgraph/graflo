@@ -7,9 +7,10 @@ Pure document casting is delegated to :class:`~graflo.hq.document_caster.Documen
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import sys
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Mapping
 from pathlib import Path
 from typing import Any, Self, cast
 
@@ -26,13 +27,14 @@ from graflo.data_source.base import AbstractDataSource
 from graflo.data_source.chunker import ChunkerType
 from graflo.data_source.factory import DataSourceFactory
 from graflo.data_source.registry import DataSourceRegistry
+from graflo.filter.onto import FilterExpression
 from graflo.hq.bulk_session import BulkSessionCoordinator
 from graflo.hq.concurrency_gate import (
     SerialReason,
     bulk_load_enabled,
     effective_in_flight,
 )
-from graflo.hq.db_writer import DBWriter
+from graflo.hq.db_writer import DBWriter, check_stamp, require_read_guard
 from graflo.hq.doc_error_sink import failure_sinks_from_ingestion_params
 from graflo.hq.document_caster import DocumentCaster
 from graflo.hq.ingestion_parameters import (
@@ -45,6 +47,20 @@ from graflo.hq.registry_builder import RegistryBuilder
 from graflo.util.data_normalize import normalize_rows
 
 logger = logging.getLogger(__name__)
+
+
+def _hook_key(
+    stamp: Mapping[str, Any] | None, guard: FilterExpression | None
+) -> tuple[str, str]:
+    """A hashable key equal for equal stamp and guard values: their canonical JSON."""
+    return (
+        json.dumps(
+            None if stamp is None else dict(stamp), sort_keys=True, default=repr
+        ),
+        json.dumps(
+            None if guard is None else guard.model_dump(), sort_keys=True, default=repr
+        ),
+    )
 
 
 class Caster:
@@ -158,15 +174,12 @@ class Caster:
         resource_name: str | None,
         conn_conf: None | DBConfig = None,
     ):
+        params = self.ingestion_params
+        if params.stamp_for is not None or params.guard_for is not None:
+            await self._process_batch_per_record(batch, resource_name, conn_conf)
+            return
         result = await self.cast_normal_resource(batch, resource_name=resource_name)
-        if result.failures:
-            logger.warning(
-                "Resource %r batch had %d document cast failure(s); first: %s: %s",
-                result.failures[0].resource_name,
-                len(result.failures),
-                result.failures[0].exception_type,
-                result.failures[0].message,
-            )
+        self._warn_failures(result.failures)
         gc = result.graph
 
         if conn_conf is not None:
@@ -177,6 +190,74 @@ class Caster:
                 conn_conf=conn_conf,
                 resource_name=resource_name,
                 bulk_session_id=bulk_sid,
+            )
+
+    async def _process_batch_per_record(
+        self,
+        batch: list[Any],
+        resource_name: str | None,
+        conn_conf: DBConfig | None,
+    ) -> None:
+        """Cast *batch* and write each record's output under its own stamp and guard.
+
+        ``stamp_for`` and ``guard_for`` are called on every record before it is
+        cast. Records with equal stamps and guards are written together, one
+        :meth:`DBWriter.write` per distinct pair, in the order the pair first
+        appears; nothing one record casts to is written with another's stamp.
+        Every stamp, and the backend's support for any guard, is checked before
+        the first write, so a batch that would be refused writes nothing.
+        """
+        params = self.ingestion_params
+        records = list(batch)
+        name = self.ingestion_model.fetch_resource(resource_name).name
+        hooks: dict[
+            tuple[str, str], tuple[Mapping[str, Any] | None, FilterExpression | None]
+        ] = {}
+        keys: list[tuple[str, str]] = []
+        for record in records:
+            stamp = params.stamp_for(name, record) if params.stamp_for else None
+            guard = params.guard_for(name, record) if params.guard_for else None
+            key = _hook_key(stamp, guard)
+            hooks.setdefault(key, (stamp, guard))
+            keys.append(key)
+
+        parts, failures = await self._document_caster.cast_batch_by_key(
+            records,
+            keys,
+            resource_name,
+            params=params,
+            allowed_vertex_names=self._allowed_vertex_names,
+        )
+        await self._persist_doc_failures(failures)
+        self._warn_failures(failures)
+        if conn_conf is None:
+            return
+        for key, gc in parts:
+            check_stamp(gc, self.schema, hooks[cast(tuple[str, str], key)][0])
+        if any(guard is not None for _, guard in hooks.values()):
+            require_read_guard(conn_conf)
+        writer = self._get_db_writer(conn_conf)
+        bulk_sid = await self._ensure_bulk_session(conn_conf)
+        for key, gc in parts:
+            stamp, guard = hooks[cast(tuple[str, str], key)]
+            await writer.write(
+                gc=gc,
+                conn_conf=conn_conf,
+                resource_name=resource_name,
+                bulk_session_id=bulk_sid,
+                stamp=stamp,
+                guard=guard,
+            )
+
+    @staticmethod
+    def _warn_failures(failures: list[DocCastFailure]) -> None:
+        if failures:
+            logger.warning(
+                "Resource %r batch had %d document cast failure(s); first: %s: %s",
+                failures[0].resource_name,
+                len(failures),
+                failures[0].exception_type,
+                failures[0].message,
             )
 
     async def process_data_source(

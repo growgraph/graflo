@@ -354,7 +354,10 @@ The relation, one of:
   `relation_map` translates raw values to relation names, and with
   `relation_map_only: true` a value that is not in the map writes no edge
   instead of being used as the relation name. Under strict references such a
-  step is checked per relation in its map: each must be declared.
+  step is checked per relation in its map: each must be declared. On a step
+  whose endpoints come from roles, each mapped relation must be declared
+  between some pair of classes the roles can hold; which pair a record yields
+  is known only from the data, so an undeclared pair is skipped then.
 - `relation_from_key: true`: the JSON key under which the record was reached
   (see the [relation from key example](../../examples/json-relation-from-key/index.md)
   (4)).

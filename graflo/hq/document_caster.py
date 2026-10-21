@@ -9,7 +9,7 @@ import multiprocessing
 import threading
 import traceback
 from collections import OrderedDict
-from collections.abc import Iterable
+from collections.abc import Hashable, Iterable, Sequence
 from concurrent.futures import ProcessPoolExecutor
 from typing import Any, Literal
 
@@ -448,6 +448,117 @@ class DocumentCaster:
         )
 
         done = [r for r in cast_results if isinstance(r, ResourceCastResult)]
+        graph = self._assemble(
+            runtime, done, vertex_filter=vertex_filter, params=params
+        )
+        return CastBatchResult(graph=graph, failures=failures)
+
+    async def cast_batch_by_key(
+        self,
+        data: Sequence[Any],
+        keys: Sequence[Hashable],
+        resource_name: str | None,
+        *,
+        params: IngestionParams,
+        allowed_vertex_names: set[str] | None = None,
+    ) -> tuple[list[tuple[Hashable, GraphContainer]], list[DocCastFailure]]:
+        """Cast *data* into one container per distinct key of its records.
+
+        ``keys[i]`` is the key of ``data[i]``. Each container holds only what
+        records of its key cast to; containers come in the order their key is
+        first seen. Failures carry their record's index in *data*.
+        """
+        positions: dict[Hashable, list[int]] = {}
+        for index, key in enumerate(keys):
+            positions.setdefault(key, []).append(index)
+        if len(positions) <= 1:
+            result = await self.cast_batch(
+                data,
+                resource_name,
+                params=params,
+                allowed_vertex_names=allowed_vertex_names,
+            )
+            return [(key, result.graph) for key in positions], result.failures
+
+        runtime = self.ingestion_model.fetch_resource(resource_name)
+        docs = [_coerce_doc(doc) for doc in data]
+        mode = self._resolve_cast_mode(params, n_docs=len(docs))
+        if mode == "process" and self._cast_spec(runtime, params=params) is None:
+            mode = "thread"
+        if mode == "process":
+            # A worker-cast resource has no order-dependent steps, so each key's
+            # records cast as a batch of their own.
+            parts: list[tuple[Hashable, GraphContainer]] = []
+            failures: list[DocCastFailure] = []
+            for key, indices in positions.items():
+                result = await self.cast_batch(
+                    [docs[i] for i in indices],
+                    resource_name,
+                    params=params,
+                    allowed_vertex_names=allowed_vertex_names,
+                )
+                parts.append((key, result.graph))
+                failures.extend(
+                    f.model_copy(update={"doc_index": indices[f.doc_index]})
+                    for f in result.failures
+                )
+            return parts, failures
+
+        # In process, records cast once in source order (dynamic edges depend
+        # on it), and the results are split by key afterwards.
+        if mode == "thread" and params.dynamic_edges:
+            mode = "inline"
+        workers = max(1, params.n_cores)
+        raw = await self._cast_documents(
+            runtime, docs, n_cores=workers if mode == "thread" else 1
+        )
+        cast_results, failures = self._collect_cast_results(
+            raw,
+            docs,
+            on_doc_error=params.on_doc_error,
+            resolved_name=runtime.name,
+            params=params,
+        )
+        cast_at = dict(
+            zip(
+                (
+                    i
+                    for i, item in enumerate(raw)
+                    if not isinstance(item, BaseException)
+                ),
+                cast_results,
+            )
+        )
+        vertex_filter = resolve_effective_vertex_names(
+            runtime.collect_vertex_names(),
+            allowed_vertex_names=allowed_vertex_names,
+        )
+        parts = []
+        for key, indices in positions.items():
+            done = [
+                result
+                for i in indices
+                if isinstance(result := cast_at.get(i), ResourceCastResult)
+            ]
+            parts.append(
+                (
+                    key,
+                    self._assemble(
+                        runtime, done, vertex_filter=vertex_filter, params=params
+                    ),
+                )
+            )
+        return parts, failures
+
+    @staticmethod
+    def _assemble(
+        runtime: ResourceRuntime,
+        done: list[ResourceCastResult],
+        *,
+        vertex_filter: set[str] | None,
+        params: IngestionParams,
+    ) -> GraphContainer:
+        """Fold cast records into one container, filtered as the params ask."""
         graph = GraphContainer.from_docs_list(
             [r.entities for r in done],
             attached=[r.attached for r in done],
@@ -462,7 +573,7 @@ class DocumentCaster:
                 vertex_config=runtime.vertex_config,
                 edge_derivation=runtime.edge_derivation,
             )
-        return CastBatchResult(graph=graph, failures=failures)
+        return graph
 
     def _resolve_cast_mode(
         self, params: IngestionParams, *, n_docs: int

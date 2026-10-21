@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.21.0]
 
 ### Added
 
@@ -15,6 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Candidate gathering** (`graflo.link.candidates.gather_candidates`): the entities each staged
   record may be, by lane (`alternate`, the `lookup_candidates` lanes, `relation`), capped per
   record and guarded like `resolve_records`. Candidates never close a record.
+- **Per-record stamp and guard on ingest:** `IngestionParams(stamp_for=, guard_for=)` take
+  callables of `(resource name, record)`; each record's output is written with its own stamp and
+  guard, one `DBWriter.write` per distinct pair. Never serialized.
+- **Writer guard:** `DBWriter.write(..., guard=)` limits the write's own lookups (secondary-identity
+  edge endpoints, attached records, extra weights) to what the guard shows; refused, before
+  anything is written, by a backend without read guards. `write_container` passes its guard too.
 
 ### Changed
 
@@ -27,6 +33,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Text spans and quotes removed:** `TextSpan`, `UnmappedText` and every `quote`/`span` field are
   gone; records, stated properties and relations carry an opaque `evidence` dict instead, and
   `gather_candidates(..., lookup_text=)` supplies the words a staged record is looked up by.
+
+### Fixed
+
+- Under `strict_references`, an edge step with role endpoints is refused at load when a
+  `relation_map` value (or its fixed fallback `relation`) is declared between none of the classes
+  its roles can hold; it was only skipped at cast time.
 
 ## [1.20.1]
 

@@ -1464,3 +1464,229 @@ def test_a_cypher_edge_is_written_under_the_profile_relation_name(monkeypatch):
     asyncio.run(writer._push_edges(_edges("x", "y"), _NEO4J))
 
     assert sorted(written) == ["X_REL", "y"]
+
+
+# -- a write-time guard: lookups never see a vertex the guard hides ---------------
+
+
+def _zone_guard(*zones: int):
+    from graflo.filter.onto import ComparisonOperator, FilterExpression
+
+    return FilterExpression(
+        kind="leaf",
+        field="access_zones",
+        cmp_operator=ComparisonOperator.ANY_IN,
+        value=[list(zones)],
+    )
+
+
+class _GuardedDB:
+    """Stored vertices by class; a lookup sees only those its guard passes."""
+
+    def __init__(self, stored: dict[str, list[dict]]) -> None:
+        self.stored = stored
+        self.guards: list[Any] = []
+        self.upserts: list[tuple[str, list[dict]]] = []
+        self.edge_inserts: list[dict] = []
+
+    def upsert_docs_batch(self, docs, class_name, match_keys, **kwargs):
+        self.upserts.append((class_name, list(docs)))
+
+    def insert_edges_batch(self, **kwargs):
+        self.edge_inserts.append(kwargs)
+
+    def resolve_vertices(
+        self, class_name, key_docs, match_keys, return_keys, guard=None
+    ):
+        self.guards.append(guard)
+        visible = [
+            node
+            for node in self.stored.get(class_name, [])
+            if guard is None or guard.matches(node)
+        ]
+        found: dict[int, list[dict]] = {}
+        for position, doc in enumerate(key_docs):
+            key = tuple(doc.get(f) for f in match_keys)
+            hits = [
+                {f: node.get(f) for f in return_keys}
+                for node in visible
+                if None not in key and tuple(node.get(f) for f in match_keys) == key
+            ]
+            if hits:
+                found[position] = hits
+        return found
+
+
+def _guarded_manager(db: _GuardedDB) -> type:
+    from graflo.db.manager import ConnectionManager
+
+    class _Manager:
+        require = ConnectionManager.require
+
+        def __init__(self, connection_config):
+            pass
+
+        def __enter__(self) -> _GuardedDB:
+            return db
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    return _Manager
+
+
+def _guarded_write(
+    monkeypatch,
+    writer: DBWriter,
+    gc: GraphContainer,
+    db: _GuardedDB,
+    resource_name: str,
+    guard=None,
+    conn_conf=None,
+) -> None:
+    monkeypatch.setattr("graflo.hq.db_writer.ConnectionManager", _guarded_manager(db))
+    conn_conf = conn_conf or Neo4jConfig(
+        uri="bolt://localhost:7687", username="u", password="p"
+    )
+    asyncio.run(
+        writer.write(
+            gc=gc, conn_conf=conn_conf, resource_name=resource_name, guard=guard
+        )
+    )
+
+
+def _located_writer() -> DBWriter:
+    schema = _located_schema()
+    model = IngestionModel.model_validate(
+        {
+            "resources": [
+                {
+                    "name": "located",
+                    "pipeline": [
+                        {"vertex": "ci"},
+                        {"vertex": "site"},
+                        {
+                            "edge": {
+                                "from": "ci",
+                                "to": "site",
+                                "relation": "at",
+                                "source_match": "by_serial",
+                            }
+                        },
+                    ],
+                }
+            ]
+        }
+    )
+    model.finish_init(schema.core_schema)
+    return DBWriter(schema=schema, ingestion_model=model)
+
+
+class TestWriteGuard:
+    STORED_CI = [
+        {"id": "c1", "serial": "S1", "access_zones": [1]},
+        {"id": "c2", "serial": "S2", "access_zones": [2]},
+    ]
+
+    def test_an_edge_endpoint_hidden_by_the_guard_is_not_resolved(self, monkeypatch):
+        db = _GuardedDB({"ci": self.STORED_CI})
+        gc = GraphContainer(
+            edges={
+                ("ci", "site", "at"): [
+                    ({"serial": "S1"}, {"id": "x"}, {}),
+                    ({"serial": "S2"}, {"id": "x"}, {}),
+                ]
+            }
+        )
+
+        _guarded_write(
+            monkeypatch, _located_writer(), gc, db, "located", guard=_zone_guard(1)
+        )
+
+        (call,) = db.edge_inserts
+        assert [source["id"] for source, _, _ in call["docs_edges"]] == ["c1"]
+        assert db.guards == [_zone_guard(1)]
+
+    def test_an_attached_record_never_lands_on_a_hidden_vertex(self, monkeypatch):
+        schema = _cmdb_schema()
+        writer = DBWriter(schema=schema, ingestion_model=_cmdb_model(schema))
+        db = _GuardedDB({"ci": self.STORED_CI})
+        gc = _attached(
+            [{"serial": "S1", "owner": "ann"}, {"serial": "S2", "owner": "bob"}]
+        )
+
+        _guarded_write(monkeypatch, writer, gc, db, "attach", guard=_zone_guard(1))
+
+        ((class_name, docs),) = db.upserts
+        assert class_name == "ci"
+        assert docs == [{"serial": "S1", "owner": "ann", "id": "c1"}]
+        assert writer.stats.attached["ci"].unmatched == 1
+
+    def test_an_extra_weight_is_never_copied_from_a_hidden_vertex(self, monkeypatch):
+        schema = _employment_schema()
+        model = _employment_model(schema)
+        runtime = model.fetch_resource("employments")
+        db = _GuardedDB(
+            {
+                "contract": [
+                    {"id": "c1", "grade": "A", "access_zones": [1]},
+                    {"id": "c2", "grade": "B", "access_zones": [2]},
+                ]
+            }
+        )
+        gc = GraphContainer.from_docs_list(
+            [
+                runtime({"person": "p1", "org": "o1", "contract": "c2"}),
+                runtime({"person": "p4", "org": "o2", "contract": "c1"}),
+            ]
+        )
+
+        _guarded_write(
+            monkeypatch,
+            DBWriter(schema=schema, ingestion_model=model),
+            gc,
+            db,
+            "employments",
+            guard=_zone_guard(1),
+        )
+
+        grades = {
+            source["id"]: weight.get("contract@grade")
+            for source, _, weight in gc.edges[("person", "org", "works_at")]
+        }
+        assert grades == {"p1": None, "p4": "A"}
+
+    def test_without_a_guard_every_lookup_runs_unguarded(self, monkeypatch):
+        db = _GuardedDB({"ci": self.STORED_CI})
+        gc = GraphContainer(
+            edges={("ci", "site", "at"): [({"serial": "S2"}, {"id": "x"}, {})]}
+        )
+
+        _guarded_write(monkeypatch, _located_writer(), gc, db, "located")
+
+        (call,) = db.edge_inserts
+        assert [source["id"] for source, _, _ in call["docs_edges"]] == ["c2"]
+        assert db.guards == [None]
+
+    def test_a_guard_on_a_backend_without_read_guards_is_refused_up_front(
+        self, monkeypatch
+    ):
+        db = _GuardedDB({"ci": self.STORED_CI})
+        gc = GraphContainer(
+            vertices={"site": [{"id": "x"}]},
+            edges={("ci", "site", "at"): [({"serial": "S1"}, {"id": "x"}, {})]},
+        )
+
+        with pytest.raises(NotImplementedError, match="read guard"):
+            _guarded_write(
+                monkeypatch,
+                _located_writer(),
+                gc,
+                db,
+                "located",
+                guard=_zone_guard(1),
+                conn_conf=ArangoConfig(
+                    uri="http://localhost:8529", username="root", password="x"
+                ),
+            )
+        assert db.upserts == [] and db.edge_inserts == [] and db.guards == []

@@ -6,12 +6,21 @@ keeping ingestion-policy types stable and importable.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+from pydantic.json_schema import SkipJsonSchema
 
 from graflo.architecture.graph_types import GraphContainer
+from graflo.filter.onto import FilterExpression
+
+StampFor = Callable[[str, dict[str, Any]], Mapping[str, Any] | None]
+"""``(resource name, record) -> stamp``: reserved-field values for what *record* casts to."""
+
+GuardFor = Callable[[str, dict[str, Any]], FilterExpression | None]
+"""``(resource name, record) -> guard``: the read guard of *record*'s write-time lookups."""
 
 
 class DocErrorBudgetExceeded(RuntimeError):
@@ -80,6 +89,12 @@ class IngestionParams(BaseModel):
     RDF subjects, …) are read per resource run. It maps to
     ``AbstractDataSource.iter_batches(..., limit=...)``. ``batch_size`` is only
     the maximum number of items per yielded batch, not a cap on total volume.
+
+    ``stamp_for`` and ``guard_for`` are caller callables, never serialized.
+    When either is set, every record of a batch is cast on its own and its
+    output is written with the stamp and guard computed from that record, in
+    one ``DBWriter.write`` per distinct pair; a record's stamp never reaches
+    another record's elements.
     """
 
     clear_data: bool = False
@@ -211,5 +226,25 @@ class IngestionParams(BaseModel):
         description=(
             "After casting, remove vertex docs and edge tuples where all schema "
             "identity fields for that vertex type are missing, null, or empty string."
+        ),
+    )
+    stamp_for: SkipJsonSchema[StampFor | None] = Field(
+        default=None,
+        exclude=True,
+        description=(
+            "Called with the resource name and each source record; returns the "
+            "stamp (reserved-field values, as for DBWriter.write) for what the "
+            "record casts to. A lifted type cast from a record without a stamp "
+            "is refused."
+        ),
+    )
+    guard_for: SkipJsonSchema[GuardFor | None] = Field(
+        default=None,
+        exclude=True,
+        description=(
+            "Called with the resource name and each source record; returns the "
+            "trusted read guard for that record's write-time lookups (secondary-"
+            "identity endpoints, attached records, extra weights). Refused by a "
+            "backend without read guards."
         ),
     )
