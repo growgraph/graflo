@@ -223,3 +223,26 @@ class TestSecondaryIdentityDiff:
         }
 
         assert OperationType.CHANGE_SECONDARY_IDENTITY not in _op_types(NATURAL, new)
+
+
+class TestDigestInputOrder:
+    def test_reordering_hash_identity_properties_is_an_empty_diff(self):
+        """The digest hashes a JSON object with sorted keys, so no key changes."""
+        old = {
+            "name": "party",
+            "properties": ["email", "phone"],
+            "hash_identity_properties": ["email", "phone"],
+        }
+        new = {**old, "hash_identity_properties": ["phone", "email"]}
+
+        assert _op_types(old, new) == []
+
+    def test_reordering_a_branch_s_fields_is_an_empty_diff(self):
+        def funnel(fields: list[str]) -> dict:
+            return {
+                "name": "party",
+                "properties": ["email", "phone"],
+                "identity_funnel": {"branches": [{"id": "c", "fields": fields}]},
+            }
+
+        assert _op_types(funnel(["email", "phone"]), funnel(["phone", "email"])) == []

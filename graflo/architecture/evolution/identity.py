@@ -19,6 +19,7 @@ from graflo.architecture.schema.vertex import (
 )
 from graflo.onto import SECONDARY_IDENTITY_SUGAR
 
+from .canonicalize import canonical_payload
 from .ops import (
     AddSecondaryIdentitiesOp,
     IdentityReplacement,
@@ -73,13 +74,18 @@ def _is_noop(
 ) -> bool:
     # ``funnel`` and ``hash`` targets both resolve to identity mode ``hash``, so
     # the funnel itself has to be compared to tell a no-op from a real change.
+    # Digest inputs are compared as sets: their order does not reach the key.
     resolved_mode = "hash" if mode == "funnel" else mode
     return (
         vertex.identity_mode == resolved_mode
-        and vertex.identity_funnel == funnel
+        and _funnel_payload(vertex.identity_funnel) == _funnel_payload(funnel)
         and list(vertex.identity) == identity
-        and list(vertex.hash_identity_properties) == hash_properties
+        and sorted(vertex.hash_identity_properties) == sorted(hash_properties)
     )
+
+
+def _funnel_payload(funnel: IdentityFunnel | None) -> Any:
+    return None if funnel is None else canonical_payload(funnel)
 
 
 def _require_properties_exist(vertex: Vertex, required: list[str]) -> None:

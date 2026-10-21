@@ -1526,10 +1526,10 @@ def _identity_key(vertex: Vertex) -> tuple:
     return (
         vertex.identity_mode,
         tuple(vertex.identity),
-        tuple(vertex.hash_identity_properties),
+        tuple(sorted(vertex.hash_identity_properties)),
         None
         if vertex.identity_funnel is None
-        else str(vertex.identity_funnel.to_minimal_canonical_dict()),
+        else str(canonical_payload(vertex.identity_funnel)),
     )
 
 

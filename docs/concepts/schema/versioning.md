@@ -60,7 +60,8 @@ preserved, and every sorted field states why its order does not matter.
 | resource and transform registries, bindings entries | `Vertex.identity`: a database addresses an endpoint through the first key field |
 | index sets, edge specs | the columns of a compound index |
 | semantic `exact_match` / `synonyms` | identity funnel branches (the first branch that fires wins) |
-| selector and membership sets | transform arguments, join and projection order, filter operands |
+| selector and membership sets, weight `fields` | transform arguments, join and projection order, filter operands |
+| identity digest inputs: `hash_identity_properties`, a branch's `fields` and `when_all_present` (the digest hashes a JSON object with sorted keys) | |
 
 Sorting uses each element's canonical JSON rendering rather than a key per
 field, so it works for mixed element types, needs no tie-break rule, and cannot
@@ -80,7 +81,7 @@ describes itself:
 metadata:
     provenance:
         content_hash: "…64 hex…"
-        canon: graflo/canon@4
+        canon: graflo/canon@5
         parents: [a3f9c21e4b70, 9e11d02c55aa]
         commit: c4d1e9a2b3f0
         merge_recipe: "…"
@@ -300,12 +301,11 @@ the order in which the two sides were walked disappears before anything is
 hashed. Metadata is not hashed at all, so the combined name (`a+b`), the joined
 description and the version do not change the content address either.
 
-Six fields do depend on the order, all set when the two definitions of one type
+Five fields do depend on the order, all set when the two definitions of one type
 are combined. They are the fields the canonical form preserves, because their
 order carries meaning:
 
 - `Vertex.identity`: the column order of a composite key;
-- `Vertex.hash_identity_properties`: the input to the identity digest;
 - `Vertex.filters`;
 - `IdentityFunnel.branches`: branch order is the key's fallback order;
 - secondary identities named automatically (`secondary_0`, `secondary_1`), by
@@ -407,7 +407,7 @@ know what to compare against.
 - Pottinger, Bernstein: *Merging Models Based on Given Correspondences*, VLDB
   2003, and *Associativity and Commutativity in Generic Merge*, LNCS 5600, 2009.
   Their Merge is the operator this page calls a union, and those papers study
-  its commutativity. GraFlo's union is commutative except in the six preserved
+  its commutativity. GraFlo's union is commutative except in the five preserved
   fields above. The three-way merge is symmetric in its two sides (the same
   conflicts, or the same content hash), and a clean result is each side's
   change applied on top of the other; both properties are checked over

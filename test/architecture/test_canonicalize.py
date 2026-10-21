@@ -277,6 +277,90 @@ def test_reordering_identity_fields_does_change_the_hash() -> None:
     assert manifest_hash(reordered) != before
 
 
+def _digest_manifest(vertex: dict) -> GraphManifest:
+    return GraphManifest.from_dict(
+        {
+            "schema": {
+                "metadata": {"name": "digest", "version": "1.0.0"},
+                "graph": {
+                    "vertex_config": {"vertices": [vertex]},
+                    "edge_config": {"edges": []},
+                },
+            }
+        }
+    )
+
+
+_FLAT: dict[str, typing.Any] = {
+    "name": "party",
+    "properties": ["email", "phone", "name"],
+    "hash_identity_properties": ["email", "phone"],
+}
+_FUNNEL: dict[str, typing.Any] = {
+    "name": "party",
+    "properties": ["email", "phone", "name"],
+    "identity_funnel": {
+        "branches": [
+            {"id": "contact", "fields": ["email", "phone"]},
+            {
+                "id": "named",
+                "fields": ["name", "phone"],
+                "when_all_present": ["phone", "name"],
+            },
+        ]
+    },
+}
+
+
+def _reversed_digest_inputs(vertex: dict) -> dict:
+    vertex = copy.deepcopy(vertex)
+    if "hash_identity_properties" in vertex:
+        vertex["hash_identity_properties"].reverse()
+    for branch in vertex.get("identity_funnel", {}).get("branches", []):
+        branch["fields"].reverse()
+        if "when_all_present" in branch:
+            branch["when_all_present"].reverse()
+    return vertex
+
+
+@pytest.mark.parametrize("vertex", [_FLAT, _FUNNEL], ids=["flat", "funnel"])
+def test_reordering_digest_inputs_changes_neither_the_hash_nor_the_key(
+    vertex: dict,
+) -> None:
+    """Digest inputs are a set: the digest hashes a JSON object with sorted keys."""
+    from graflo.architecture.schema.identity_digest import compute_vertex_identity
+
+    reordered = _reversed_digest_inputs(vertex)
+    before, after = _digest_manifest(vertex), _digest_manifest(reordered)
+    doc = {"email": "a@x", "phone": "1", "name": "A"}
+
+    assert manifest_hash(after) == manifest_hash(before)
+    assert compute_vertex_identity(
+        doc, _core(after).vertex_config.vertices[0]
+    ) == compute_vertex_identity(doc, _core(before).vertex_config.vertices[0])
+
+
+@pytest.mark.parametrize("vertex", [_FLAT, _FUNNEL], ids=["flat", "funnel"])
+def test_reordering_digest_inputs_diffs_to_no_op(vertex: dict) -> None:
+    from graflo.architecture.evolution.autogenerate import diff_manifests
+
+    ops, _ = diff_manifests(
+        _digest_manifest(vertex), _digest_manifest(_reversed_digest_inputs(vertex))
+    )
+
+    assert ops == []
+
+
+def test_reordering_funnel_branches_does_change_the_hash() -> None:
+    """Branch order is precedence: the first branch that completes keys the record."""
+    reordered = copy.deepcopy(_FUNNEL)
+    reordered["identity_funnel"]["branches"].reverse()
+
+    assert manifest_hash(_digest_manifest(reordered)) != manifest_hash(
+        _digest_manifest(_FUNNEL)
+    )
+
+
 def test_metadata_is_not_part_of_the_content_hash() -> None:
     """Content identity is content-based: a label change is not a new model.
 

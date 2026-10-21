@@ -1,5 +1,5 @@
 {
-    "canon": "graflo/canon@4",
+    "canon": "graflo/canon@5",
     "defaults": {
         "APIConnector.hash": "",
         "APIConnector.headers": {},

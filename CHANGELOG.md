@@ -30,6 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `mentions`/`mention` → `records`/`record`) and
   `graflo.link.resolve` (`resolve_mentions` → `resolve_records`, `write_mention_graphs` →
   `write_record_graphs`). Every keyed decision goes through `identify`. No aliases remain.
+- **Content hashes** (`CANON_VERSION` `graflo/canon@5`): identity digest inputs
+  (`hash_identity_properties`, a funnel branch's `fields` and `when_all_present`) and weight
+  `fields` hash as sets, and reordering them diffs to no op and needs no rekey. Re-run
+  **`graflo rehash --base`** on histories recorded before this release.
 - **Text spans and quotes removed:** `TextSpan`, `UnmappedText` and every `quote`/`span` field are
   gone; records, stated properties and relations carry an opaque `evidence` dict instead, and
   `gather_candidates(..., lookup_text=)` supplies the words a staged record is looked up by.

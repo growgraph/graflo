@@ -51,7 +51,7 @@ from typing import Any
 #: explicit and collision-free rather than a silent reinterpretation of old
 #: hashes. Bump it whenever :data:`LIST_ORDER` or the sort rule changes, or a
 #: contract field's default does: the hashed payload leaves defaults out.
-CANON_VERSION: str = "graflo/canon@4"
+CANON_VERSION: str = "graflo/canon@5"
 
 
 class ListOrder(str, Enum):
@@ -89,21 +89,18 @@ LIST_ORDER: dict[tuple[str, str], ListOrder] = {
     # and read by iterating all of them -- no precedence. Each inner key keeps
     # its own order, which the sort does not touch.
     ("Edge", "identities"): SORTED,
-    # ── Identity: preserved, deliberately ───────────────────────────────────
+    # ── Identity ────────────────────────────────────────────────────────────
     # `Vertex.identity` order is load-bearing: a backend's `vertex_address`
     # resolves an endpoint through the *first* identity field present, a
     # NebulaGraph VID joins the values in order, and composite primary-key and
     # edge-table endpoint columns follow it.
     ("Vertex", "identity"): PRESERVED,
-    # `identity_digest._digest` dumps its payload with `sort_keys=True`, so
-    # reordering these two does *not* change the digest they feed -- they could
-    # be SORTED. They are preserved anyway: the evidence is one implementation
-    # detail of a function whose docstring says "do not add keys to this
-    # payload", and a false positive on identity is the worst outcome this
-    # table can produce. Moving them costs a CANON_VERSION bump, nothing more.
-    ("Vertex", "hash_identity_properties"): PRESERVED,
-    ("IdentityBranch", "fields"): PRESERVED,
-    ("IdentityBranch", "when_all_present"): PRESERVED,
+    # The identity digest is order-free by contract: its payload is a JSON
+    # object `{field: value}` hashed with sorted keys, so these name a set of
+    # digest inputs. `when_all_present` is a presence test over a set.
+    ("Vertex", "hash_identity_properties"): SORTED,
+    ("IdentityBranch", "fields"): SORTED,
+    ("IdentityBranch", "when_all_present"): SORTED,
     # First branch whose fields are all present wins: this is a precedence
     # chain, and the ontology records it with an explicit `gf:artifactIndex`.
     ("IdentityFunnel", "branches"): PRESERVED,
@@ -139,9 +136,8 @@ LIST_ORDER: dict[tuple[str, str], ListOrder] = {
     ("ResourceConfig", "infer_edge_except"): SORTED,
     ("ResourceConfig", "extra_weights"): SORTED,
     ("ResourceExtraWeightEntry", "vertex_weights"): SORTED,
-    # A field tuple feeding a weight lookup; preserved for the same reason as
-    # every other field tuple here.
-    ("Weight", "fields"): PRESERVED,
+    # Vertex fields copied onto an edge under their own names: a set.
+    ("Weight", "fields"): SORTED,
     # A transform's argument binding: these name the doc fields fed to a
     # function's positional parameters and the fields its results are written
     # back to. Order *is* the binding. Declared as `tuple[str, ...]` rather than

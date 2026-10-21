@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from graflo.architecture.evolution.canonicalize import canonical_payload
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import Field, Vertex, field_type_value
@@ -204,12 +205,13 @@ class SchemaDiff:
         return {
             "mode": vertex.identity_mode,
             "identity": list(vertex.identity),
-            "hash_identity_properties": list(vertex.hash_identity_properties),
+            # Digest inputs are a set: reordering them keeps every key.
+            "hash_identity_properties": sorted(vertex.hash_identity_properties),
             # A funnel resolves to mode ``hash`` with no flat properties, so the
             # branches themselves are the only thing that distinguishes two
             # funnel policies — or a funnel from a flat hash.
             "identity_funnel": (
-                vertex.identity_funnel.to_minimal_canonical_dict()
+                canonical_payload(vertex.identity_funnel)
                 if vertex.identity_funnel is not None
                 else None
             ),
