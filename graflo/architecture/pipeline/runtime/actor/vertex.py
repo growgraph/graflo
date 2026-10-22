@@ -113,6 +113,7 @@ class VertexActor(VertexProducingActor):
         self.role: str | None = config.role
         self.lookup_only: bool = config.lookup_only
         self.find: str | None = config.find
+        self.identity_optional: bool = config.identity_optional
         self.vertex_config: VertexConfig
         self.allowed_vertex_names: set[VertexName] | None = None
         self._key_fields: list[str] | None = None
@@ -131,6 +132,7 @@ class VertexActor(VertexProducingActor):
                 "role",
                 "lookup_only",
                 "find",
+                "identity_optional",
             )
         )
 
@@ -151,6 +153,19 @@ class VertexActor(VertexProducingActor):
                     step=f"vertex step {self.name!r}",
                 )
             )
+            if (
+                self.identity_optional
+                and self.find is None
+                and (
+                    self.vertex_config.is_hash_identity(self.name)
+                    or self.vertex_config.is_blank(self.name)
+                    or self.vertex_config.is_assigned(self.name)
+                )
+            ):
+                raise ValueError(
+                    f"vertex step {self.name!r}: identity_optional needs a key the "
+                    "record carries; this vertex's identity is minted"
+                )
 
     def _resolve_key_fields(self) -> list[str]:
         """The fields this step's documents are keyed by.
@@ -342,6 +357,11 @@ class VertexActor(VertexProducingActor):
                     vertex_doc.pop(field, None)
 
         merged = fuse_doc_basis(agg, index_keys=tuple(key_fields))
+        if self.identity_optional and key_fields:
+            # Same emptiness rule as the caster's identity filter: None or "".
+            merged = [
+                m for m in merged if any(m.get(f) not in (None, "") for f in key_fields)
+            ]
 
         for m in merged:
             vertex_rep = VertexRep(

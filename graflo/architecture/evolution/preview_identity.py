@@ -110,6 +110,10 @@ class PreviewBranch(ConfigBaseModel):
         default_factory=list, description="Merged attributes the branch reads."
     )
     sources: list[BranchSource] = PydanticField(default_factory=list)
+    sep: str | None = PydanticField(
+        default=None,
+        description="What joins a local key's tag and value; None for other kinds.",
+    )
 
 
 class PreviewDemotion(ConfigBaseModel):
@@ -244,6 +248,7 @@ def identity_block(
             kind="local_key",
             fields=[branch.name],
             sources=sources,
+            sep=branch.sep,
         )
 
     branches: list[PreviewBranch] = []

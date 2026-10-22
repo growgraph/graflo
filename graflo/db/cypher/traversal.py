@@ -9,9 +9,9 @@ family returns ``RETURN r``, and a driver renders a bare relationship without it
 endpoints, so the generic breadth-first default has nothing to walk to. Returning
 the reached nodes directly is the only way the question is answerable at all.
 
-The anchor value always travels as the query parameter ``$anchor_id``, never in
-the query text: it comes from a request, and interpolating it would let a caller
-rewrite the query. Filter and guard values travel as bound parameters too.
+Anchor values always travel as query parameters (``$anchor_id``, then
+``$anchor_id_1`` … for a composite key), never in the query text: they come from
+a request, and interpolating them would let a caller rewrite the query. Filter and guard values travel as bound parameters too.
 
 An edge filter holds for every relationship of a path, and a guard for every
 node and relationship of it, the anchor included: a path through a hidden
@@ -45,10 +45,15 @@ ANCHOR_PARAM = "anchor_id"
 _NeighborQuery = tuple[str | tuple[str, ...], str | None, str | None, EdgeDirection]
 
 
+def anchor_param(position: int) -> str:
+    """Name of the query parameter binding the anchor's *position*-th key field."""
+    return ANCHOR_PARAM if position == 0 else f"{ANCHOR_PARAM}_{position}"
+
+
 def cypher_neighbors_query(
     *,
     anchor_label: str,
-    anchor_key_field: str = "id",
+    anchor_key_field: str | Sequence[str] = "id",
     edge_type: str | Sequence[str] | None,
     far_label: str | None,
     direction: EdgeDirection,
@@ -58,8 +63,9 @@ def cypher_neighbors_query(
 ) -> str:
     """Render a bounded neighbourhood query.
 
-    The anchor value is not part of the text: bind it as the ``$anchor_id``
-    parameter when running the query.
+    The anchor values are not part of the text: bind the first as
+    ``$anchor_id`` and each further one as ``$anchor_id_<n>``
+    (:func:`anchor_param`) when running the query.
 
     Returns the reached nodes, their distance and their labels, deduplicated.
     ``DISTINCT`` is load-bearing: a graph with a cycle reaches the same node by
@@ -69,7 +75,7 @@ def cypher_neighbors_query(
 
     Args:
         anchor_label: Storage label of the anchor node.
-        anchor_key_field: Property the anchor is matched on.
+        anchor_key_field: Property, or properties, the anchor is matched on.
         edge_type: Relationship type to follow, several to follow any of
             them, or None for any type.
         far_label: Storage label the reached node must carry, or None for any.
@@ -85,10 +91,16 @@ def cypher_neighbors_query(
     pattern = cypher_rel_pattern(edge_type, direction, min_hops=1, max_hops=hops)
     far = f"(far:{cypher_name(far_label)})" if far_label else "(far)"
     limit_clause = f"\nLIMIT {int(limit)}" if limit is not None else ""
-    key = cypher_name(anchor_key_field, quoted=True)
+    fields = (
+        [anchor_key_field] if isinstance(anchor_key_field, str) else anchor_key_field
+    )
+    key = ", ".join(
+        f"{cypher_name(field, quoted=True)}: ${anchor_param(i)}"
+        for i, field in enumerate(fields)
+    )
     anchor = cypher_name(anchor_label)
     return (
-        f"MATCH path = (anchor:{anchor} {{{key}: ${ANCHOR_PARAM}}})"
+        f"MATCH path = (anchor:{anchor} {{{key}}})"
         f"{pattern}{far}\n"
         f"WHERE {where}\n"
         f"RETURN DISTINCT properties(far) AS far, length(path) AS distance, "
@@ -127,27 +139,38 @@ def path_conditions(
     return conditions
 
 
+#: An anchor as the properties it is matched on, with the value bound to each.
+_Anchor = list[tuple[str, Any]]
+
+
 def _anchor_key(
     schema: Schema, db_aware: Any, vertex_type: str, key: str | dict[str, Any]
-) -> tuple[str, Any]:
-    """The property to match the anchor on, and the value to bind.
+) -> _Anchor:
+    """The properties to match the anchor on, and the values to bind.
 
-    A mapping key names its own property, which must be one the schema declares
-    for *vertex_type*: the name is written into the query, so an arbitrary one
-    from a request would be an injection point.
+    A mapping key names its own properties, which must be ones the schema
+    declares for *vertex_type*: the names are written into the query, so
+    arbitrary ones from a request would be an injection point. Which field sets
+    form a key is decided above the backend, by ``Connection.graph_neighbors``.
     """
     identity_fields = db_aware.vertex_config.identity_fields(vertex_type)
     if not isinstance(key, dict):
-        return (identity_fields[0] if identity_fields else "id"), key
-    if len(key) != 1:
-        raise ValueError(
-            f"Cypher graph_neighbors resolves a single-field anchor key; got {sorted(key)}"
-        )
+        return [(identity_fields[0] if identity_fields else "id", key)]
     from graflo.db.traversal import check_anchor_fields
 
-    field, value = next(iter(key.items()))
-    check_anchor_fields(schema, db_aware, vertex_type, [field])
-    return field, value
+    check_anchor_fields(schema, db_aware, vertex_type, list(key))
+    return list(key.items())
+
+
+def _frozen(anchor: _Anchor) -> tuple[tuple[str, Any], ...]:
+    return tuple(sorted(anchor, key=lambda pair: pair[0]))
+
+
+def _doc_anchor(fields: Sequence[str], doc: dict[str, Any], address: str) -> _Anchor:
+    """A reached node as the next hop's anchor: its full identity when stored."""
+    if fields and all(doc.get(field) is not None for field in fields):
+        return [(field, doc[field]) for field in fields]
+    return [(fields[0] if fields else "id", address)]
 
 
 def cypher_graph_neighbors(
@@ -185,8 +208,8 @@ def cypher_graph_neighbors(
     Args:
         conn: The live connection, for flavor-aware name resolution.
         vertex_type: Logical anchor type.
-        key: Anchor identity value, or a single-field mapping naming a declared
-            property.
+        key: Anchor identity value, or a mapping of declared properties to
+            match, every one bound (a composite identity names them all).
         hops: Maximum hop distance.
         direction: Orientation followed from the anchor.
         edge_types: Logical relation names to restrict to; None means every
@@ -227,7 +250,7 @@ def cypher_graph_neighbors(
         )
 
     db_aware = schema.resolve_db_aware(conn.flavor)
-    key_field, anchor_value = _anchor_key(schema, db_aware, vertex_type, key)
+    anchor = _anchor_key(schema, db_aware, vertex_type, key)
 
     # Direction is decided per edge, as in the generic default: an undirected
     # edge is followed both ways whatever the caller asked for, and a relation
@@ -251,8 +274,7 @@ def cypher_graph_neighbors(
 
     def reached(
         anchor_type: str,
-        field: str,
-        value: Any,
+        at: _Anchor,
         queries: list[_NeighborQuery],
         max_hops: int,
     ) -> list[tuple[str, dict[str, Any]]]:
@@ -264,7 +286,7 @@ def cypher_graph_neighbors(
             params = BoundParams(ExpressionFlavor.CYPHER)
             query = cypher_neighbors_query(
                 anchor_label=db_aware.vertex_config.vertex_dbname(anchor_type),
-                anchor_key_field=field,
+                anchor_key_field=[field for field, _value in at],
                 edge_type=storage,
                 far_label=far_label,
                 direction=effective,
@@ -273,7 +295,8 @@ def cypher_graph_neighbors(
                 conditions=path_conditions(params, filters=filters, guard=guard),
             )
             try:
-                rows = run(query, {ANCHOR_PARAM: value, **params.values})
+                bound = {anchor_param(i): value for i, (_f, value) in enumerate(at)}
+                rows = run(query, {**bound, **params.values})
             except Exception:
                 if filters is not None or guard is not None:
                     # A constrained read that failed is not an empty answer.
@@ -313,27 +336,31 @@ def cypher_graph_neighbors(
         ]
 
     container = GraphContainer()
-    seen: set[tuple[str, str]] = set()
+    # Keyed by the full identity: two vertices of a composite identity can share
+    # its first field, and an address built from that alone would merge them.
+    seen: set[tuple[str, tuple[tuple[str, Any], ...]]] = set()
 
-    def admit(found: list[tuple[str, dict[str, Any]]]) -> list[tuple[str, str]]:
-        """Add unseen docs to the container; their (type, identity) for the next hop."""
-        fresh: list[tuple[str, str]] = []
+    def admit(
+        found: list[tuple[str, dict[str, Any]]],
+    ) -> list[tuple[str, _Anchor]]:
+        """Add unseen docs to the container; their (type, anchor) for the next hop."""
+        fresh: list[tuple[str, _Anchor]] = []
         for row_type, doc in found:
-            identity = _vertex_identity_value(conn, schema, row_type, doc)
-            if identity is None or (row_type, identity) in seen:
+            address = _vertex_identity_value(conn, schema, row_type, doc)
+            if address is None:
                 continue
-            seen.add((row_type, identity))
+            fields = db_aware.vertex_config.identity_fields(row_type)
+            at = _doc_anchor(fields, doc, address)
+            if (row_type, _frozen(at)) in seen:
+                continue
+            seen.add((row_type, _frozen(at)))
             container.vertices.setdefault(row_type, []).append(doc)
-            fresh.append((row_type, identity))
+            fresh.append((row_type, at))
         return fresh
 
     directions = {effective for _edge, effective, _storage in edges}
     if hops == 1:
-        admit(
-            reached(
-                vertex_type, key_field, anchor_value, one_hop_queries(vertex_type), 1
-            )
-        )
+        admit(reached(vertex_type, anchor, one_hop_queries(vertex_type), 1))
     elif len(directions) <= 1:
         # One variable-length pattern over every allowed relation at once. A
         # far type of None means "read it from the reached node's labels".
@@ -343,8 +370,7 @@ def cypher_graph_neighbors(
             admit(
                 reached(
                     vertex_type,
-                    key_field,
-                    anchor_value,
+                    anchor,
                     [(tuple(storages), None, None, effective)],
                     hops,
                 )
@@ -355,24 +381,13 @@ def cypher_graph_neighbors(
         # are walked hop by hop, each relation in its own direction.
         # Each one-hop pattern excludes only its own anchor, so a later hop
         # could walk back to the start; the single-pattern path never returns it.
-        seen.add((vertex_type, str(anchor_value)))
-        frontier = admit(
-            reached(
-                vertex_type, key_field, anchor_value, one_hop_queries(vertex_type), 1
-            )
-        )
+        seen.add((vertex_type, _frozen(anchor)))
+        frontier = admit(reached(vertex_type, anchor, one_hop_queries(vertex_type), 1))
         for _hop in range(hops - 1):
-            next_frontier: list[tuple[str, str]] = []
-            for far_type, identity in frontier:
-                fields = db_aware.vertex_config.identity_fields(far_type)
+            next_frontier: list[tuple[str, _Anchor]] = []
+            for far_type, far_anchor in frontier:
                 next_frontier += admit(
-                    reached(
-                        far_type,
-                        fields[0] if fields else "id",
-                        identity,
-                        one_hop_queries(far_type),
-                        1,
-                    )
+                    reached(far_type, far_anchor, one_hop_queries(far_type), 1)
                 )
             frontier = next_frontier
     container.pick_unique()

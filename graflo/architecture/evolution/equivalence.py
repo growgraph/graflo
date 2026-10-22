@@ -63,6 +63,8 @@ class Cluster(Generic[DeclarationT]):
     equivalences name, and every class a vocabulary merges with one of them.
     ``declared_left`` / ``declared_right`` are the ones the equivalences
     name. ``declaration`` is one equivalence over the closed sets.
+    ``declarations`` are the positions, in the op's equivalence list, of the
+    equivalences folded into it; empty when merge synthesized it.
     """
 
     left: tuple[str, ...]
@@ -74,6 +76,7 @@ class Cluster(Generic[DeclarationT]):
     synthesized: bool = False
     declared_left: tuple[str, ...] = ()
     declared_right: tuple[str, ...] = ()
+    declarations: tuple[int, ...] = ()
 
     def declared_members(self, side: Side) -> tuple[str, ...]:
         """The members the equivalences name on *side*, without the vocabulary-joined ones."""

@@ -962,7 +962,13 @@ class Connection(abc.ABC):
 
         Args:
             vertex_type: Logical type of the anchor vertex.
-            key: Anchor's identity — a raw id, or a field mapping to resolve.
+            key: A complete key of the anchor
+                (:mod:`~graflo.architecture.schema.anchor`): the value of a
+                one-field primary identity, or a mapping naming exactly the
+                primary identity, a derived key's source fields, or one secondary
+                identity. A primary key is not looked up: a vertex that does not
+                exist has no neighbours. Without *schema*, a bare value is the
+                stored id.
             hops: Maximum hop distance. Must be >= 1.
             direction: Orientations followed from the anchor. Edges declared
                 ``directed=False`` are followed both ways regardless.
@@ -982,11 +988,21 @@ class Connection(abc.ABC):
             UnsupportedEdgeDirectionError: if the backend cannot follow an edge
                 in the requested direction (TigerGraph without a reverse type).
             ReservedFieldError: if *filters* name a reserved field.
+            AnchorKeyError: if *key* is not a complete key, or a secondary
+                identity names several vertices or none.
             NotImplementedError: if a *guard* is given and the backend does not
                 declare ``supports_read_guard``.
         """
         guarded = self._guard_kwargs(guard)
         if schema is None:
+            if isinstance(key, dict):
+                from graflo.architecture.schema.anchor import AnchorNotAKeyError
+
+                raise AnchorNotAKeyError(
+                    f"an anchor mapping for {vertex_type!r} needs the schema that "
+                    "says which fields are keys",
+                    vertex_type=vertex_type,
+                )
             return self._graph_neighbors(
                 vertex_type,
                 key,
@@ -1000,9 +1016,10 @@ class Connection(abc.ABC):
             )
         stored, keys = self._stored_view(schema)
         _refuse_reserved(_reserved_names(schema, stored), filters=filters, key=key)
+        anchor = self._anchor_identity(schema, vertex_type, key, guard)
         reached = self._graph_neighbors(
             vertex_type,
-            keys.anchor_key(vertex_type, key),
+            keys.anchor_key(vertex_type, anchor),
             hops=hops,
             direction=direction,
             edge_types=edge_types,
@@ -1024,6 +1041,23 @@ class Connection(abc.ABC):
                 f"{type(self).__name__} cannot apply a read guard; a guarded read "
                 "is refused rather than answered unguarded"
             )
+
+    def _anchor_identity(
+        self,
+        schema: Schema,
+        vertex_type: str,
+        key: str | dict[str, Any],
+        guard: FilterExpression | None,
+    ) -> str | dict[str, Any]:
+        """The primary identity *key* names, in logical names; a bare value as-is.
+
+        Backends then match a complete key only, so no backend can anchor on an
+        arbitrary vertex among several that share a non-key value.
+        """
+        # Deferred: hq sits above db; a secondary identity is looked up through it.
+        from graflo.hq.anchor import anchor_identity
+
+        return anchor_identity(schema, vertex_type, key, db=self, guard=guard)
 
     def _guard_kwargs(self, guard: FilterExpression | None) -> dict[str, Any]:
         """``{"guard": guard}`` for :meth:`_graph_neighbors`, or nothing.
@@ -1116,6 +1150,8 @@ class Connection(abc.ABC):
 
         Raises:
             ReservedFieldError: if the query names a reserved field.
+            AnchorKeyError: if a seed's key is not a complete key, or names
+                several vertices or none; ``seed`` is its position.
             NotImplementedError: if a *guard* is given and the backend does not
                 declare ``supports_read_guard``.
         """
@@ -1128,11 +1164,25 @@ class Connection(abc.ABC):
         filters = keys.edge_filter(
             query.filters, _walked_edge_ids(schema, query.edge_relations)
         )
+        from graflo.architecture.schema.anchor import AnchorKeyError
+
+        # Every seed is resolved before any is walked: one that names no vertex
+        # fails the request rather than shrinking its answer.
+        anchors: list[tuple[str, str | dict[str, Any]]] = []
+        for position, seed in enumerate(query.seeds):
+            try:
+                anchor = self._anchor_identity(
+                    schema, seed["vertex_type"], seed["key"], guard
+                )
+            except AnchorKeyError as error:
+                error.seed = position
+                raise
+            anchors.append((seed["vertex_type"], anchor))
         container = GraphContainer()
-        for seed in query.seeds:
+        for vertex_type, anchor in anchors:
             reached = self._graph_neighbors(
-                seed["vertex_type"],
-                keys.anchor_key(seed["vertex_type"], seed["key"]),
+                vertex_type,
+                keys.anchor_key(vertex_type, anchor),
                 hops=query.max_hops,
                 direction=query.edge_direction,
                 edge_types=query.edge_relations,

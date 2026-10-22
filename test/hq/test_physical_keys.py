@@ -218,6 +218,7 @@ class _RecordingReader:
     traverse = Connection.traverse
     _stored_view = Connection._stored_view
     _guard_kwargs = Connection._guard_kwargs
+    _anchor_identity = Connection._anchor_identity
     require_read_guard = Connection.require_read_guard
     supports_read_guard = False
 

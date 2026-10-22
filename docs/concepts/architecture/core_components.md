@@ -554,6 +554,14 @@ declared inverse name. `fetch_docs`, `fetch_edges`, `fetch_all_docs` and
 `fetch_all_edges` take a stored name and return stored names as they are: they
 show the database's view, not the schema's.
 
+A traversal starts at an anchor, and an anchor is a complete key
+(`graflo.architecture.schema.anchor`): the value of a one-field primary
+identity, or a mapping naming exactly the primary identity, a derived key's
+source fields, or one secondary identity. A secondary identity is looked up and
+must find exactly one vertex; a primary key is not looked up, so one that names
+no vertex reaches nothing. A mapping on any other fields, a whole row included,
+is a lookup, not an anchor, and is refused with an `AnchorKeyError`.
+
 Beyond names, `db_profile` holds the target flavor (`db_flavor`, default
 `arango`), an optional `target_namespace`, secondary indexes (`vertex_indexes`,
 `edge_specs[].indexes`; see [backend indexes](../schema/backend_indexes.md)),

@@ -284,6 +284,34 @@ The ops come in an order in which each one's preconditions hold: renames first,
 then additions, then changes, then removals. Edge property changes come before
 new edges, so a change made for a relation does not reach an edge the diff adds.
 
+## Comparing two versions side by side
+
+`compare_schemas` lines up the schemas of two versions as rows (one per vertex
+type, edge and field), with each side's values. Given the common ancestor and
+each side's renames from it, a renamed element stays on one row, and every
+row says which side changed it:
+
+```python
+from graflo.architecture.evolution import RenameHints, compare_schemas
+
+comparison = compare_schemas(
+    left,
+    right,
+    base=base,
+    left_hints=RenameHints.from_ops(left_ops, base=base),
+    right_hints=RenameHints.from_ops(right_ops, base=base),
+)
+for row in comparison.vertices:
+    print(row.id, row.status, row.changed_on, [f.id for f in row.fields])
+```
+
+A row's `status` reads left to right: `added` (right only), `removed` (left
+only), `renamed`, `changed` (its `aspects` say what) or `unchanged`. Without a
+`base`, rows pair by name, and a rename shows as one removed and one added row
+unless `hints` (left to right) name it. Each row carries the merge slots it
+covers, so `comparison.locate(conflict.slot)` finds the row a
+`merge_three_way` conflict is about. Only the schema is compared.
+
 ## Inverse relations in detail
 
 A relation can often be read from both ends: `WorkOrder targets Machine` and

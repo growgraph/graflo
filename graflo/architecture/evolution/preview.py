@@ -376,6 +376,24 @@ class PreviewCluster(ConfigBaseModel):
     synthesized: bool = PydanticField(
         default=False, description="Declared by merge itself under `union_right`."
     )
+    declarations: list[int] = PydanticField(
+        default_factory=list,
+        description=(
+            "Positions, in the op's vertex or relation equivalences, of the "
+            "declarations folded into this group; empty when merge synthesized it."
+        ),
+    )
+    declared_left: list[str] = PydanticField(
+        default_factory=list,
+        description="Left members the declarations name; the rest a vocabulary joined.",
+    )
+    declared_right: list[str] = PydanticField(
+        default_factory=list,
+        description="Right members the declarations name; the rest a vocabulary joined.",
+    )
+    allow: list[str] = PydanticField(
+        default_factory=list, description="The declaration's `allow` entries."
+    )
     declared_identity: bool = PydanticField(
         default=False, description="Whether the declaration states an `identity`."
     )
@@ -522,6 +540,26 @@ class MergePreview(ConfigBaseModel):
     def edges_between(self, source: str, target: str) -> list[PreviewEdge]:
         """Every edge from node *source* to node *target*."""
         return [e for e in self.edges if e.source == source and e.target == target]
+
+    def focus(self, target: str) -> MergePreview:
+        """The part of this preview one cluster, merged attribute or ``rest`` is about.
+
+        See :func:`~graflo.architecture.evolution.preview_focus.focus`.
+        """
+        from .preview_focus import focus
+
+        return focus(self, target)
+
+    def focus_targets(
+        self, attributes: Literal["nontrivial", "all"] = "nontrivial"
+    ) -> list[str]:
+        """Every target :meth:`focus` takes, in reading order.
+
+        See :func:`~graflo.architecture.evolution.preview_focus.focus_targets`.
+        """
+        from .preview_focus import focus_targets
+
+        return focus_targets(self, attributes)
 
     def with_outcome(
         self, outcome: MergeOutcome, *, subjects: Sequence[str] = ()
@@ -980,6 +1018,12 @@ class _Builder:
                         left=list(cluster.left),
                         right=list(cluster.right),
                         synthesized=cluster.synthesized,
+                        declarations=list(cluster.declarations),
+                        declared_left=list(cluster.declared_members("left")),
+                        declared_right=list(cluster.declared_members("right")),
+                        allow=list(declaration.allow)
+                        if isinstance(declaration, VertexEquivalence)
+                        else [],
                         declared_identity=isinstance(declaration, VertexEquivalence)
                         and declaration.identity is not None,
                         derived_identity=isinstance(declaration, VertexEquivalence)

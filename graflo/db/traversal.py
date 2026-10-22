@@ -353,10 +353,18 @@ def _resolve_anchor_id(
     anchor_type: str,
     anchor_key: str | dict[str, Any],
 ) -> str | None:
-    """Resolve *anchor_key* to the id string the backend indexes on."""
-    if isinstance(anchor_key, str):
-        return anchor_key
+    """Resolve *anchor_key* to the id string the backend indexes on.
+
+    A complete primary identity is addressed directly, with no read; any other
+    mapping of declared properties is matched and the first hit addressed.
+    ``Connection.graph_neighbors`` only ever passes the former.
+    """
+    if not isinstance(anchor_key, dict):
+        return str(anchor_key)
     check_anchor_fields(schema, db_aware, anchor_type, anchor_key)
+    identity_fields = list(schema.core_schema.vertex_config[anchor_type].identity)
+    if identity_fields and set(anchor_key) == set(identity_fields):
+        return conn.vertex_address(anchor_key, identity_fields)
     storage = db_aware.vertex_config.vertex_dbname(anchor_type)
     leaves = [
         {"field": field, "cmp_operator": "==", "value": value}

@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.22.0]
 
 ### Added
 
@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   graflo ≤1.21 rejects a stamped manifest (unknown field). Outside the content hash.
 - **Refusal kinds** (`graflo.architecture.refusal.REFUSAL_KINDS`): a registry of stable refusal ids;
   `Refusal.check` is typed by it.
+- **`compare_schemas`** (`graflo.architecture.evolution`): two versions' schemas side by side —
+  vertex, edge and field rows aligned through renames against their common ancestor, before/after
+  values, which side changed what, and `locate(slot)` for a merge conflict's row.
+- **`identity_optional`** on a vertex step: a record with no value for the step's key emits no
+  vertex and no edge to it, and is not reported as a keyless document.
 
 ### Changed
 
@@ -21,6 +26,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   phrase, and merge-preview finding kinds a refusal produces use the same ids (`near_collision` →
   `near-collision`, `dangling` → `dangling-entry`, `type_conflict` → `field-type-conflict`, …).
   Refusal messages are unchanged.
+- **Traversal anchors are complete keys** (`graph_neighbors`, `traverse` seeds): the value of a
+  one-field primary identity, or a mapping naming exactly the primary identity, a derived key's
+  source fields, or one secondary identity (looked up, under the guard). Any other mapping, a whole
+  row included, is refused with `AnchorKeyError` (`code`: `anchor_not_a_key`, `anchor_incomplete`,
+  `anchor_ambiguous`, `anchor_unmatched`; `seed` names a failed traversal seed). Every backend
+  applies the same rule; the Cypher backends now anchor and walk composite identities in full.
 
 ## [1.21.0]
 

@@ -1415,6 +1415,11 @@ class _Naming:
                 "synthesized": all(d.synthesized for d in component.declarations),
                 "declared_left": declared["left"],
                 "declared_right": declared["right"],
+                "declarations": tuple(
+                    sorted(
+                        d.position for d in component.declarations if not d.synthesized
+                    )
+                ),
             }
             if isinstance(effective, VertexEquivalence):
                 out.append(Cluster[VertexEquivalence](declaration=effective, **fields))

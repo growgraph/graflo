@@ -195,9 +195,9 @@ def test_a_mapping_key_on_a_declared_property_anchors_the_walk(ingested):
 
 
 def test_a_mapping_key_on_an_undeclared_property_is_refused(ingested):
-    """The field name reaches the query text, so it must come from the schema."""
+    """The field name reaches the query text, so it must name a declared key."""
     db, manifest = ingested
-    with pytest.raises(ValueError, match="not a declared property"):
+    with pytest.raises(ValueError, match="not a key"):
         db.graph_neighbors(
             "work_order",
             {"key` == 1 RETURN 1 //": "W1"},

@@ -341,6 +341,20 @@ _MERGE3_EXPORTS = frozenset(
     }
 )
 
+_COMPARE_EXPORTS = frozenset(
+    {
+        "CompareFocus",
+        "FieldRow",
+        "FieldSide",
+        "RelationRow",
+        "RelationSide",
+        "SchemaComparison",
+        "VertexRow",
+        "VertexSide",
+        "compare_schemas",
+    }
+)
+
 __all__ = [
     "CANON_VERSION",
     "COMMIT_KINDS",
@@ -368,6 +382,7 @@ __all__ = [
     "ClusterIndex",
     "Commit",
     "CommitError",
+    "CompareFocus",
     "Completion",
     "ConflictResolution",
     "DanglingEntry",
@@ -388,7 +403,9 @@ __all__ = [
     "EdgeSelector",
     "EnsureExtractedFields",
     "EnsureExtractedFieldsOp",
+    "FieldRow",
     "FieldSemanticsTarget",
+    "FieldSide",
     "FieldTypeSpec",
     "FileCommitStore",
     # Revision layer
@@ -432,6 +449,8 @@ __all__ = [
     "PropertyEquivalence",
     "RelationCluster",
     "RelationEquivalence",
+    "RelationRow",
+    "RelationSide",
     "RemoveEdgeIndexesOp",
     "RemoveEdgePropertiesOp",
     "RemoveEdgesOp",
@@ -453,6 +472,7 @@ __all__ = [
     "RetractEdgeInversesOp",
     "RevisionOp",
     "SanitizeOp",
+    "SchemaComparison",
     "SetEdgeDescriptionsOp",
     "SetEdgeDirectedOp",
     "SetEdgeSemanticsOp",
@@ -466,6 +486,8 @@ __all__ = [
     "SideRenames",
     "UnclassifiedListField",
     "VertexEquivalence",
+    "VertexRow",
+    "VertexSide",
     "apply_add_edge_indexes",
     "apply_add_edge_properties",
     "apply_add_edges",
@@ -525,6 +547,7 @@ __all__ = [
     "canonicalize_ops",
     "checkout",
     "checkout_parent",
+    "compare_schemas",
     "compose_canonical_maps",
     "compute_commit_id",
     "compute_root_commit_id",
@@ -663,6 +686,10 @@ def __getattr__(name: str) -> Any:
         from . import merge3 as merge3_mod
 
         return getattr(merge3_mod, name)
+    if name in _COMPARE_EXPORTS:
+        from . import compare as compare_mod
+
+        return getattr(compare_mod, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 

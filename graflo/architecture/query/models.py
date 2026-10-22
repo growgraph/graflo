@@ -183,7 +183,13 @@ class NeighborQuery(GraphQuery):
 
     vertex_type: str = PydanticField(..., description="Logical type of the anchor.")
     key: str | dict[str, Any] = PydanticField(
-        ..., description="Anchor identity value, or a single-field mapping."
+        ...,
+        description=(
+            "A complete key of the anchor: the value of a one-field primary "
+            "identity, or a mapping naming exactly the primary identity, a "
+            "derived key's source fields, or one secondary identity. Any other "
+            "mapping is refused: matching other fields is a lookup."
+        ),
     )
     hops: int = PydanticField(
         default=1, ge=1, description="Hop distance, within `max_hops`."
@@ -241,7 +247,8 @@ class TraverseQuery(GraphQuery):
         ...,
         min_length=1,
         description=(
-            "Anchors, each `{vertex_type, key}`. Bounded by `max_seeds`: a "
+            "Anchors, each `{vertex_type, key}`, `key` a complete key as for "
+            "`NeighborQuery.key`. Bounded by `max_seeds`: a "
             "traversal fans out per seed, so seed count multiplies cost."
         ),
     )

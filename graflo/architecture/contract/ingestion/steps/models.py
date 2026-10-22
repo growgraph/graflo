@@ -81,6 +81,18 @@ class VertexActorConfig(VertexExtractionOptionsConfig):
             "step is a reference by that identity instead and writes nothing."
         ),
     )
+    identity_optional: bool = PydanticField(
+        default=False,
+        description=(
+            "When true a record with no value for the fields this step is keyed "
+            "by (the identity, or the find fields) has no such vertex: the step "
+            "emits nothing for it, so neither the vertex nor its edges are "
+            "written, and no keyless document is reported. For a source that "
+            "omits the key by contract, such as an account whose email is "
+            "hidden. Not allowed on a digest, blank or assigned identity, whose "
+            "key the record never carries."
+        ),
+    )
 
     @model_validator(mode="before")
     @classmethod

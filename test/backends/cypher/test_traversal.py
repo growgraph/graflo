@@ -273,3 +273,72 @@ def test_relations_that_agree_still_share_one_pattern(mixed_schema: Schema) -> N
 
     (query,) = [query for query, _ in run.calls]
     assert "-[r:knows|owns*1..3]-" in query
+
+
+# The mixed shape again, keyed by a composite identity that shares its first field.
+_COMPOSITE: dict[str, Any] = {
+    "metadata": {"name": "composite", "version": "1.0.0"},
+    "graph": {
+        "vertex_config": {
+            "vertices": [
+                {
+                    "name": name,
+                    "properties": [
+                        {"name": "region", "type": "STRING"},
+                        {"name": "key", "type": "STRING"},
+                    ],
+                    "identity": ["region", "key"],
+                }
+                for name in ("peer", "item")
+            ]
+        },
+        "edge_config": _MIXED["graph"]["edge_config"],
+    },
+}
+
+
+@pytest.fixture
+def composite_schema() -> Schema:
+    manifest = GraphManifest.model_validate({"schema": _COMPOSITE})
+    manifest.finish_init()
+    return manifest.require_schema()
+
+
+def test_a_composite_anchor_binds_every_field(composite_schema: Schema) -> None:
+    run = _Recorder()
+    _neighbors(
+        composite_schema,
+        run,
+        vertex_type="peer",
+        key={"region": "eu", "key": "p1"},
+        hops=1,
+    )
+
+    for query, params in run.calls:
+        assert "{`region`: $anchor_id, `key`: $anchor_id_1}" in query
+        assert params == {ANCHOR_PARAM: "eu", f"{ANCHOR_PARAM}_1": "p1"}
+
+
+def test_a_hop_by_hop_walk_anchors_each_hop_on_the_full_identity(
+    composite_schema: Schema,
+) -> None:
+    """Two peers share a region: neither may stand in for the other."""
+    run = _Recorder(
+        rows=[
+            {"far": {"region": "eu", "key": "p2"}, "labels": ["peer"]},
+            {"far": {"region": "eu", "key": "p3"}, "labels": ["peer"]},
+        ]
+    )
+    container = _neighbors(
+        composite_schema,
+        run,
+        vertex_type="peer",
+        key={"region": "eu", "key": "p1"},
+        hops=2,
+        direction=EdgeDirection.OUT,
+    )
+
+    sent = [params for _, params in run.calls]
+    for key in ("p2", "p3"):
+        assert {ANCHOR_PARAM: "eu", f"{ANCHOR_PARAM}_1": key} in sent
+    assert sorted(doc["key"] for doc in container.vertices["peer"]) == ["p2", "p3"]
