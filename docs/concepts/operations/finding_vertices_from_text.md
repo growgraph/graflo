@@ -80,5 +80,6 @@ for entry in entries:
 
 - A candidate never closes a record; only keys do. A pick, a rule or a person chooses.
 - A candidate whose stored key or secondary-identity values contradict what the record states is left out.
+- A relation between two records states two entities: a record is never offered the entity a related record of the same source resolved to, and a relation whose two records resolve to one entity is not written. `promote` skips it and `resolution.dropped` lists it (`DroppedRelation`, reason `same_entity`); after fixing records by hand, `dropped_relations(resolution)` recomputes the list.
 - Best lane first, at most `max_candidates` per record (default 10); `truncated` says when more were found.
 - `guard` limits every read, as in `resolve_records`.

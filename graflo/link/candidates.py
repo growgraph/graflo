@@ -16,7 +16,9 @@ entities it may be, by three kinds of evidence:
 Candidates never close a record: only keys do. A pick, a declared rule, an
 agent or a person chooses among them. A candidate whose stored key or
 secondary-identity values contradict what the record states is left out: a
-record that states ``email`` is not an entity holding another email.
+record that states ``email`` is not an entity holding another email. Nor is
+the entity a record of the same source, related to this one by a stated
+relation, resolved to: the relation states two entities.
 """
 
 from __future__ import annotations
@@ -98,6 +100,7 @@ class _Gatherer:
         self.resolved: dict[tuple[str, str], Resolved] = {
             (r.source_id, r.ref): r for r in resolution.resolved
         }
+        self.graphs = resolution.graphs
         self.held = resolution.staged.relations
         self.guarded_fields = guard.fields() if guard is not None else set()
         self.reader: _Reader | None = None
@@ -244,11 +247,8 @@ class _Gatherer:
                 schema=self.schema,
                 guard=self.guard_for(record.type),
             )
-            anchor_key = _frozen({f: anchor.identity.get(f) for f in identity})
             for doc in reached.vertices.get(record.type, []):
                 key = {f: doc.get(f) for f in identity}
-                if anchor.type == record.type and _frozen(key) == anchor_key:
-                    continue
                 found.append(
                     EntityCandidate(
                         vertex_type=record.type,
@@ -262,6 +262,34 @@ class _Gatherer:
         return found
 
     # -- checks --------------------------------------------------------------
+
+    def related(self, staged: StagedRecord) -> set[tuple[str, tuple]]:
+        """The entities the record is stated to be distinct from.
+
+        A relation between two records states two entities, so the entity a
+        record related to this one resolved to is never this one's candidate.
+        """
+        ref = staged.record.ref
+        out: set[tuple[str, tuple]] = set()
+        for graph in self.graphs:
+            if graph.source_id != staged.source_id:
+                continue
+            for relation in graph.relations:
+                if relation.source == relation.target:
+                    continue
+                if relation.source == ref:
+                    other = relation.target
+                elif relation.target == ref:
+                    other = relation.source
+                else:
+                    continue
+                anchor = self.resolved.get((staged.source_id, other))
+                if anchor is None:
+                    continue
+                identity = self.contract(anchor.type).identity_fields
+                key = {f: anchor.identity.get(f) for f in identity}
+                out.add((anchor.type, _frozen(key)))
+        return out
 
     def compatible(
         self, staged: StagedRecord, candidates: list[EntityCandidate]
@@ -363,7 +391,13 @@ def gather_candidates(
             *gatherer.lookup(staged, max_candidates + 1),
             *gatherer.relation(staged),
         ]
-        found = [c for c in found if not any(_empty(v) for v in c.key.values())]
+        distinct = gatherer.related(staged)
+        found = [
+            c
+            for c in found
+            if not any(_empty(v) for v in c.key.values())
+            and (c.vertex_type, _frozen(c.key)) not in distinct
+        ]
         found.sort(key=lambda c: LANE_ORDER[c.lane])
         best: dict[tuple[tuple[str, str], ...], EntityCandidate] = {}
         for candidate in found:

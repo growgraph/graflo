@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.23.0]
+
+### Fixed
+
+- **A relation between two records is never a self-loop** (`graflo.link`): `gather_candidates` no
+  longer offers a record the entity a related record of the same source resolved to, and a relation
+  whose two records resolve to one entity is not written but listed in `Resolution.dropped`
+  (`DroppedRelation`, reason `same_entity`; `dropped_relations()` recomputes it).
+
 ## [1.22.0]
 
 ### Added

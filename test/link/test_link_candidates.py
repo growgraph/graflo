@@ -16,7 +16,7 @@ from graflo.connections.graflo_backend import GraFloBackendConfig
 from graflo.db.manager import ConnectionManager
 from graflo.filter.onto import ComparisonOperator, FilterExpression
 from graflo.hq.container_write import write_container
-from graflo.hq.lookup import AliasHop, LookupSpec
+from graflo.hq.lookup import AliasHop, KeyPattern, LookupSpec
 from graflo.link.candidates import gather_candidates
 from graflo.link.records import (
     PartialRecord,
@@ -43,7 +43,12 @@ SCHEMA: dict[str, Any] = {
                     "identity": ["account"],
                     "secondary_identities": [{"name": "by_email", "fields": ["email"]}],
                 },
-                {"name": "Ticket", "properties": ["number"], "identity": ["number"]},
+                {
+                    "name": "Ticket",
+                    "properties": ["number", {"name": "title", "semantics": NAME}],
+                    "identity": ["number"],
+                    "secondary_identities": [{"name": "by_title", "fields": ["title"]}],
+                },
                 {
                     "name": "Product",
                     "properties": ["sku", {"name": "name", "semantics": NAME}],
@@ -60,11 +65,15 @@ SCHEMA: dict[str, Any] = {
             "edges": [
                 {"source": "Customer", "target": "Ticket", "relation": "RAISED"},
                 {"source": "Alias", "target": "Product", "relation": "ALIAS_OF"},
+                {"source": "Ticket", "target": "Ticket", "relation": "DUPLICATES"},
+                {"source": "Product", "target": "Product", "relation": "REPLACES"},
             ]
         },
     },
 }
 RAISED = ("Customer", "Ticket", "RAISED")
+DUPLICATES = ("Ticket", "Ticket", "DUPLICATES")
+REPLACES = ("Product", "Product", "REPLACES")
 CUSTOMERS = [
     {"account": "ACC-1", "email": "jo@x.com", "name": "Jo Park"},
     {"account": "ACC-2", "name": "Ann Lee"},
@@ -124,7 +133,10 @@ def _seed(conf: GraFloBackendConfig) -> None:
             GraphContainer(
                 vertices={
                     "Customer": CUSTOMERS,
-                    "Ticket": [{"number": "HD-4411"}],
+                    "Ticket": [
+                        {"number": "HD-4411", "title": "Pump leak"},
+                        {"number": "HD-9"},
+                    ],
                     "Product": [{"sku": "P-200", "name": "Pump X1"}],
                     "Alias": [{"label": "Berlin pump"}],
                 },
@@ -133,6 +145,7 @@ def _seed(conf: GraFloBackendConfig) -> None:
                     ("Alias", "Product", "ALIAS_OF"): [
                         ({"label": "Berlin pump"}, {"sku": "P-200"}, {})
                     ],
+                    DUPLICATES: [({"number": "HD-9"}, {"number": "HD-4411"}, {})],
                 },
             ),
             conf,
@@ -150,9 +163,10 @@ def db(tmp_path: Path) -> Iterator[Any]:
 
 def _gather(db: Any, graphs: list[RecordGraph], **kwargs: Any):
     schema = kwargs.pop("schema", _schema())
+    spec = kwargs.pop("spec", SPEC)
     resolution = resolve_records(schema, graphs, db=db)
     return gather_candidates(
-        schema, resolution, db, spec=SPEC, lookup_text=_quote, **kwargs
+        schema, resolution, db, spec=spec, lookup_text=_quote, **kwargs
     )
 
 
@@ -280,6 +294,88 @@ def test_a_candidate_set_round_trips_as_json(db):
 def test_the_cap_must_be_positive(db):
     with pytest.raises(ValueError, match="max_candidates"):
         _gather(db, [], max_candidates=0)
+
+
+# -- a relation states two entities ------------------------------------------
+
+KEYS = SPEC.model_copy(
+    update={
+        "key_patterns": [
+            KeyPattern(vertex_type="Ticket", field="number", pattern=r"HD-\d+")
+        ]
+    }
+)
+
+
+def _comment(quote: str, relations=()) -> RecordGraph:
+    # The comment's own ticket, keyless, and the ticket it names by key.
+    return _g(
+        "c1",
+        [_m("v1", "Ticket", quote), _m("v2", "Ticket", number="HD-4411")],
+        relations,
+    )
+
+
+def test_the_key_lane_offers_a_ticket_another_record_names(db):
+    (entry,) = _gather(db, [_comment("a duplicate of HD-4411")], spec=KEYS)
+    assert entry.record.ref == "v1"
+    assert _found(entry) == [("HD-4411", "key")]
+
+
+def test_the_key_lane_never_offers_the_entity_of_a_related_record(db):
+    graph = _comment("a duplicate of HD-4411", [(DUPLICATES, "v1", "v2")])
+    (entry,) = _gather(db, [graph], spec=KEYS)
+    assert entry.record.ref == "v1"
+    # What duplicates HD-4411 is still offered; HD-4411 itself is not.
+    assert _found(entry) == [("HD-9", "relation")]
+
+
+def test_the_label_lane_never_offers_the_entity_of_a_related_record(db):
+    (offered,) = _gather(db, [_comment("Pump leak")])
+    assert _found(offered) == [("HD-4411", "exact")]
+    (entry,) = _gather(db, [_comment("Pump leak", [(DUPLICATES, "v2", "v1")])])
+    assert entry.candidates == []
+
+
+def test_the_alias_lane_never_offers_the_entity_of_a_related_record(db):
+    records = [_m("p", "Product", "the Berlin pump"), _m("q", "Product", sku="P-200")]
+    (offered,) = _gather(db, [_g("m1", records)])
+    assert _found(offered) == [("P-200", "alias")]
+    (entry,) = _gather(db, [_g("m1", records, [(REPLACES, "p", "q")])])
+    assert entry.candidates == []
+
+
+def test_the_alternate_lane_never_offers_the_entity_of_a_related_record():
+    records = [
+        _m("v1", "Ticket", title="Pump leak"),
+        _m("v2", "Ticket", number="HD-1", title="Pump leak"),
+        _m("v3", "Ticket", number="HD-2", title="Pump leak"),
+    ]
+    schema = _schema()
+    for relations, expected in (
+        ((), [("HD-1", "alternate"), ("HD-2", "alternate")]),
+        ([(DUPLICATES, "v1", "v2")], [("HD-2", "alternate")]),
+    ):
+        resolution = resolve_records(schema, [_g("c1", records, relations)])
+        (entry,) = gather_candidates(schema, resolution)
+        assert entry.reason == "ambiguous"
+        assert sorted(_found(entry)) == expected
+
+
+def test_the_relation_lane_never_offers_the_entity_of_a_related_record(db):
+    # HD-9 duplicates HD-4411 in the graph; the text relates the comment's
+    # ticket to both, so neither is a candidate through the other.
+    graph = _g(
+        "c1",
+        [
+            _m("v1", "Ticket", "that ticket"),
+            _m("v2", "Ticket", number="HD-4411"),
+            _m("v3", "Ticket", number="HD-9"),
+        ],
+        [(DUPLICATES, "v1", "v2"), (DUPLICATES, "v3", "v1")],
+    )
+    (entry,) = _gather(db, [graph])
+    assert entry.candidates == []
 
 
 # -- under a read guard ------------------------------------------------------

@@ -17,9 +17,17 @@ from graflo.link.records import (
     PartialRecord,
     RecordGraph,
     RecordRelation,
+    Resolution,
+    Resolved,
+    Staged,
     StatedProp,
 )
-from graflo.link.resolve import promote, resolve_records, write_record_graphs
+from graflo.link.resolve import (
+    dropped_relations,
+    promote,
+    resolve_records,
+    write_record_graphs,
+)
 
 SCHEMA = {
     "metadata": {"name": "support", "version": "1.0.0"},
@@ -52,12 +60,16 @@ SCHEMA = {
             "edges": [
                 {"source": "Customer", "target": "Ticket", "relation": "RAISED"},
                 {"source": "Comment", "target": "Ticket", "relation": "ON"},
+                {"source": "Ticket", "target": "Ticket", "relation": "DUPLICATES"},
+                {"source": "Customer", "target": "Customer", "relation": "REFERRED"},
             ]
         },
     },
 }
 RAISED = ("Customer", "Ticket", "RAISED")
 ON = ("Comment", "Ticket", "ON")
+DUPLICATES = ("Ticket", "Ticket", "DUPLICATES")
+REFERRED = ("Customer", "Customer", "REFERRED")
 
 
 @pytest.fixture
@@ -461,3 +473,148 @@ def test_a_type_without_the_guarded_field_is_looked_up_unguarded(
     assert {r.ref: r.identity for r in resolution.resolved} == {
         "c": {"account": "ACC-1"}
     }
+
+
+# -- a relation states two entities ------------------------------------------
+
+
+def test_a_relation_between_records_of_one_entity_is_dropped(schema):
+    graph = _g(
+        "c1",
+        [
+            _m("v1", "Ticket", may_create=False, number="HD-1"),
+            _m("v2", "Ticket", may_create=False, number="HD-1"),
+        ],
+        [_r(DUPLICATES, "v1", "v2")],
+    )
+    resolution = resolve_records(schema, [graph])
+    assert _by(resolution) == {("c1", "v1"): "key", ("c1", "v2"): "key"}
+    assert resolution.staged.relations == []
+    (dropped,) = resolution.dropped
+    assert (dropped.source_id, dropped.reason) == ("c1", "same_entity")
+    assert dropped.relation == graph.relations[0]
+    container = promote(schema, resolution)
+    assert container.vertices["Ticket"] == [{"number": "HD-1"}]
+    assert DUPLICATES not in container.edges
+
+
+def test_a_record_found_by_its_related_records_alternate_is_dropped(schema):
+    graph = _g(
+        "mail-1",
+        [
+            _m("a", "Customer", account="ACC-1", email="jo@x.com"),
+            _m("b", "Customer", email="jo@x.com"),
+        ],
+        [_r(REFERRED, "a", "b")],
+    )
+    resolution = resolve_records(schema, [graph])
+    assert _by(resolution) == {("mail-1", "a"): "key", ("mail-1", "b"): "alternate"}
+    assert [d.reason for d in resolution.dropped] == ["same_entity"]
+    assert REFERRED not in promote(schema, resolution).edges
+
+
+def test_a_record_fixed_by_hand_to_its_related_records_entity_is_dropped(schema):
+    graph = _g(
+        "c1",
+        [
+            _m("v1", "Ticket", may_create=False),
+            _m("v2", "Ticket", may_create=False, number="HD-42"),
+        ],
+        [_r(DUPLICATES, "v1", "v2")],
+    )
+    resolution = resolve_records(schema, [graph])
+    assert _reasons(resolution) == {("c1", "v1"): "no_key"}
+    assert resolution.dropped == []
+    forced = resolution.model_copy(
+        update={
+            "resolved": [
+                *resolution.resolved,
+                Resolved(
+                    source_id="c1",
+                    ref="v1",
+                    type="Ticket",
+                    identity={"number": "HD-42"},
+                    by="alternate",
+                    found_in="graph",
+                ),
+            ],
+            "staged": Staged(),
+        }
+    )
+    assert DUPLICATES not in promote(schema, forced).edges
+    (dropped,) = dropped_relations(forced)
+    assert (dropped.relation.source, dropped.relation.target) == ("v1", "v2")
+    assert dropped.reason == "same_entity"
+
+
+def test_a_picked_key_naming_the_related_records_entity_is_dropped(schema, tmp_path):
+    conf = GraFloBackendConfig(output_dir=tmp_path)
+    asyncio.run(
+        write_container(
+            schema, GraphContainer(vertices={"Ticket": [{"number": "HD-42"}]}), conf
+        )
+    )
+    # A pick restates the record with its candidate's key.
+    graph = _g(
+        "c1",
+        [
+            _m("v1", "Ticket", may_create=False, number="HD-42"),
+            _m("v2", "Ticket", may_create=False, number="HD-42"),
+        ],
+        [_r(DUPLICATES, "v1", "v2")],
+    )
+    resolution, _ = asyncio.run(write_record_graphs(schema, [graph], conf))
+    assert [d.reason for d in resolution.dropped] == ["same_entity"]
+    with ConnectionManager(connection_config=conf) as db:
+        assert db.fetch_all_edges("Ticket", "Ticket", "DUPLICATES") == []
+
+
+def test_two_unrelated_records_of_one_entity_both_resolve(schema):
+    graph = _g(
+        "c1",
+        [
+            _m("a", "Ticket", may_create=False, number="HD-1"),
+            _m("b", "Ticket", may_create=False, number="HD-1"),
+            _m("c", "Customer", account="ACC-1"),
+        ],
+        [_r(RAISED, "c", "a"), _r(RAISED, "c", "b")],
+    )
+    resolution = resolve_records(schema, [graph])
+    assert _by(resolution) == {
+        ("c1", "a"): "key",
+        ("c1", "b"): "key",
+        ("c1", "c"): "key",
+    }
+    assert resolution.dropped == []
+    container = promote(schema, resolution)
+    assert container.vertices["Ticket"] == [{"number": "HD-1"}]
+    assert len(container.edges[RAISED]) == 2
+
+
+def test_a_relation_from_a_record_to_itself_is_kept(schema):
+    graph = _g(
+        "c1",
+        [_m("v1", "Ticket", may_create=False, number="HD-1")],
+        [_r(DUPLICATES, "v1", "v1")],
+    )
+    resolution = resolve_records(schema, [graph])
+    assert resolution.dropped == []
+    assert promote(schema, resolution).edges[DUPLICATES] == [
+        ({"number": "HD-1"}, {"number": "HD-1"}, {})
+    ]
+
+
+def test_dropped_relations_round_trip_and_default_to_none(schema):
+    graph = _g(
+        "c1",
+        [
+            _m("v1", "Ticket", may_create=False, number="HD-1"),
+            _m("v2", "Ticket", may_create=False, number="HD-1"),
+        ],
+        [_r(DUPLICATES, "v1", "v2")],
+    )
+    resolution = resolve_records(schema, [graph])
+    assert Resolution.model_validate_json(resolution.model_dump_json()) == resolution
+    earlier = resolution.model_dump(mode="json")
+    del earlier["dropped"]
+    assert Resolution.model_validate(earlier).dropped == []

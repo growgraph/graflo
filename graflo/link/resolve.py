@@ -16,7 +16,9 @@ batch around it:
 
 Every other record is staged with its reason, and a relation waits for its
 staged endpoints. A partial key never identifies anything: nothing merges two
-vertices later, so a guess would stay a duplicate.
+vertices later, so a guess would stay a duplicate. A relation between two
+records whose identities turn out to be one entity is dropped, never written as
+a self-loop (:func:`dropped_relations`).
 
 :func:`promote` turns the resolution into a :class:`GraphContainer`, and
 :func:`write_record_graphs` resolves against the target and writes it.
@@ -36,9 +38,11 @@ from graflo.architecture.schema.key_contract import KeyContract, KeySet, key_con
 from graflo.filter.onto import FilterExpression, conjoin
 from graflo.hq.identify import Identity, identify_many
 from graflo.link.records import (
+    DroppedRelation,
     HeldRelation,
     PartialRecord,
     RecordGraph,
+    RecordRelation,
     Resolution,
     Resolved,
     StagedRecord,
@@ -54,6 +58,43 @@ _Key = tuple[str, str]  # (source_id, ref)
 
 def _frozen(identity: dict[str, Any]) -> tuple[tuple[str, Any], ...]:
     return tuple(sorted(identity.items()))
+
+
+_Entity = tuple[str, tuple[tuple[str, Any], ...]]  # (type, frozen identity)
+
+
+def _entities(resolved: Sequence[Resolved]) -> dict[_Key, _Entity]:
+    return {(r.source_id, r.ref): (r.type, _frozen(r.identity)) for r in resolved}
+
+
+def _same_entity(
+    entities: Mapping[_Key, _Entity], source_id: str, relation: RecordRelation
+) -> bool:
+    """Whether *relation* joins two records resolved to one entity."""
+    if relation.source == relation.target:
+        return False
+    source = entities.get((source_id, relation.source))
+    return source is not None and source == entities.get((source_id, relation.target))
+
+
+def dropped_relations(resolution: Resolution) -> list[DroppedRelation]:
+    """The relations of *resolution* that are never written, in graph order.
+
+    A relation between two records states two entities; one whose records
+    resolved to the same entity (type and identity) is dropped as
+    ``same_entity``. A relation from a record to itself is kept. Call it again
+    after changing ``resolution.resolved`` (a pick fixed by hand):
+    :func:`promote` drops such relations whatever ``resolution.dropped`` says.
+    """
+    entities = _entities(resolution.resolved)
+    return [
+        DroppedRelation(
+            source_id=graph.source_id, relation=relation, reason="same_entity"
+        )
+        for graph in resolution.graphs
+        for relation in graph.relations
+        if _same_entity(entities, graph.source_id, relation)
+    ]
 
 
 class _Batch:
@@ -351,6 +392,7 @@ def resolve_records(
                         waiting_on=list(dict.fromkeys(waiting_on)),
                     )
                 )
+    resolution.dropped = dropped_relations(resolution)
     return resolution
 
 
@@ -407,7 +449,8 @@ def promote(schema: Schema, resolution: Resolution) -> GraphContainer:
     A resolved record becomes its stated properties plus its identity, fused
     with other records of the same entity in order, later values winning. A
     connector-owned or link-only entity is only an edge endpoint: a record
-    never writes onto it.
+    never writes onto it. A relation between two records resolved to one
+    entity is not emitted (:func:`dropped_relations`).
     """
     records = {
         (graph.source_id, r.ref): r
@@ -430,9 +473,12 @@ def promote(schema: Schema, resolution: Resolution) -> GraphContainer:
             docs.append(doc)
         else:
             docs[at].update(doc)
+    entities = _entities(resolution.resolved)
     edges: dict[EdgeId, list[Any]] = {}
     for graph in resolution.graphs:
         for relation in graph.relations:
+            if _same_entity(entities, graph.source_id, relation):
+                continue
             source = identities.get((graph.source_id, relation.source))
             target = identities.get((graph.source_id, relation.target))
             if source is not None and target is not None:
@@ -456,7 +502,7 @@ async def write_record_graphs(
     """Resolve *graphs* against the target, then write what resolved.
 
     The schema is defined first, so lookups never meet a missing collection.
-    Staged records and held relations are returned, not written. *stamp* sets
+    Staged records, held and dropped relations are returned, not written. *stamp* sets
     the schema's reserved fields on what is written (``write_container``);
     *guard* limits the lookups and *writable* what they may write onto
     (:func:`resolve_records`).

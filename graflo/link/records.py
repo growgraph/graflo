@@ -12,7 +12,9 @@ interprets it.
 Resolution (:mod:`graflo.link.resolve`) maps records to entities: it gives each
 record it can identify an identity (:class:`Resolved`) and *stages* the rest
 with the reason (:class:`StagedRecord`). A relation waits for its staged
-endpoints (:class:`HeldRelation`). Nothing staged is written to the graph.
+endpoints (:class:`HeldRelation`). Nothing staged is written to the graph. A
+relation between two records states two entities, so one whose endpoints
+resolve to the same entity is never written (:class:`DroppedRelation`).
 Candidate gathering (:mod:`graflo.link.candidates`) lists the entities a staged
 record may be; something else -- a pick, a rule, a person -- decides.
 """
@@ -176,12 +178,33 @@ class Staged(ConfigBaseModel):
     relations: list[HeldRelation] = Field(default_factory=list)
 
 
+DropReason = Literal["same_entity"]
+
+
+class DroppedRelation(ConfigBaseModel):
+    """A relation resolution never writes, and why."""
+
+    source_id: str
+    relation: RecordRelation
+    reason: DropReason = Field(
+        description=(
+            "``same_entity``: its two records resolved to one entity (same type "
+            "and identity); a relation between two records states two entities, "
+            "so it is not written as a self-loop."
+        )
+    )
+
+
 class Resolution(ConfigBaseModel):
     """The outcome of resolving record graphs."""
 
     graphs: list[RecordGraph] = Field(default_factory=list)
     resolved: list[Resolved] = Field(default_factory=list)
     staged: Staged = Field(default_factory=Staged)
+    dropped: list[DroppedRelation] = Field(
+        default_factory=list,
+        description="Relations between resolved records that are never written.",
+    )
 
     def identity_of(self, source_id: str, ref: str) -> dict[str, Any] | None:
         """Identity of record *ref* of *source_id*, when resolved."""
