@@ -38,6 +38,10 @@ PostgreSQL 15 or later, for the unique key on each edge table. An edge table
 created by an earlier version gains that key at schema definition or on its
 first ingest, which fails with a clear error if the table holds duplicate edges.
 
+GraFlo needs Neo4j 5.7 or later. Its queries are built from the schema, so it
+turns off Neo4j's notifications about labels, properties and relation types
+that nothing has written yet.
+
 A URI without a port gets the database's default. For Neo4j the default
 follows the scheme: `bolt_port` when it is set and otherwise 7687 for `bolt`
 and `neo4j` URIs, 7474 for `http` and `https`.

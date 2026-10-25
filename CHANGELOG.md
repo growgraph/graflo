@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.24.0]
+
+### Changed
+
+- **Neo4j**: notifications about labels, properties and relation types nothing has written yet are
+  turned off at the driver. Neo4j 5.7 or later is required.
+- **`lookup_candidates`** (breaking): `Candidate.lane` and `.mention` are replaced by `hits`
+  (`LaneHit {lane, matched}`), the best hit of every lane that found the vertex, best first.
+- **`gather_candidates`** (`graflo.link`, breaking):
+  - `EntityCandidate.lane`, `.matched`, `.relation`, `.anchor` and `.role` are replaced by `lanes`
+    (`CandidateHit`, every lane that found the entity; each lane carries only its own fields).
+  - New `attributes` (`AttributeCheck {field, verdict, compare}`) check the record's other stated
+    properties against stored values, which are never returned.
+  - Key comparison is literal, as the field's declared type.
+  - New `comparable=` limits which stated fields are read; reserved fields never are.
+  - `max_candidates` counts entities after the key check.
+
 ## [1.23.0]
 
 ### Added

@@ -219,12 +219,13 @@ CandidateLane = Literal[
 ]
 
 
-class EntityCandidate(ConfigBaseModel):
-    """An entity a staged record may be. A candidate never closes a record."""
+class CandidateHit(ConfigBaseModel):
+    """One way an entity was found for a staged record.
 
-    vertex_type: str
-    key: dict[str, Any] = Field(description="Its identity fields and values.")
-    label: str | None = Field(default=None, description="Its label, if it has one.")
+    Each lane carries its own fields and no others: ``relation`` the relation
+    and the anchor, ``metadata`` a role, every other lane what matched.
+    """
+
     lane: CandidateLane = Field(
         description=(
             "How it was found. ``alternate``: one of the entities a stated "
@@ -249,6 +250,69 @@ class EntityCandidate(ConfigBaseModel):
     role: str | None = Field(
         default=None,
         description="``metadata`` lane: a role the caller assigns.",
+    )
+
+    @model_validator(mode="after")
+    def _fields_of_its_lane(self) -> CandidateHit:
+        if self.lane == "relation":
+            expected = {"relation", "anchor"}
+        elif self.lane == "metadata":
+            expected = {"role"}
+        else:
+            expected = {"matched"}
+        stated = {
+            name
+            for name in ("matched", "relation", "anchor", "role")
+            if getattr(self, name) is not None
+        }
+        if stated != expected:
+            raise ValueError(
+                f"a {self.lane} hit carries {sorted(expected)}, got {sorted(stated)}"
+            )
+        return self
+
+
+#: How a stated value was compared with the stored one.
+AttributeVerdict = Literal["agree", "contradict", "unknown"]
+
+
+class AttributeCheck(ConfigBaseModel):
+    """A stated property of the record against the candidate's stored value.
+
+    The stored value itself is never carried.
+    """
+
+    field: str
+    verdict: AttributeVerdict = Field(
+        description=(
+            "``agree`` / ``contradict``: the stated and stored values are "
+            "equal / differ. ``unknown``: nothing is stored to compare with."
+        )
+    )
+    compare: Literal["literal", "normalized"] = Field(
+        description=(
+            "``literal``: equal as the field's declared type. ``normalized``: "
+            "equal in ``normalize_label`` form, for a declared normalized field."
+        )
+    )
+
+
+class EntityCandidate(ConfigBaseModel):
+    """An entity a staged record may be. A candidate never closes a record."""
+
+    vertex_type: str
+    key: dict[str, Any] = Field(description="Its identity fields and values.")
+    label: str | None = Field(default=None, description="Its label, if it has one.")
+    lanes: list[CandidateHit] = Field(
+        min_length=1, description="Every way it was found, best first."
+    )
+    attributes: list[AttributeCheck] = Field(
+        default_factory=list,
+        description=(
+            "The record's other comparable stated properties against the "
+            "candidate's stored values. A contradicted key never appears: it "
+            "leaves the candidate out."
+        ),
     )
 
 

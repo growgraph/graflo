@@ -19,6 +19,8 @@ from graflo.hq.container_write import write_container
 from graflo.hq.lookup import AliasHop, KeyPattern, LookupSpec
 from graflo.link.candidates import gather_candidates
 from graflo.link.records import (
+    CandidateHit,
+    EntityCandidate,
     PartialRecord,
     RecordGraph,
     RecordRelation,
@@ -51,7 +53,11 @@ SCHEMA: dict[str, Any] = {
                 },
                 {
                     "name": "Product",
-                    "properties": ["sku", {"name": "name", "semantics": NAME}],
+                    "properties": [
+                        "sku",
+                        {"name": "name", "semantics": NAME},
+                        "name_norm",
+                    ],
                     "identity": ["sku"],
                 },
                 {
@@ -137,7 +143,9 @@ def _seed(conf: GraFloBackendConfig) -> None:
                         {"number": "HD-4411", "title": "Pump leak"},
                         {"number": "HD-9"},
                     ],
-                    "Product": [{"sku": "P-200", "name": "Pump X1"}],
+                    "Product": [
+                        {"sku": "P-200", "name": "Pump X1", "name_norm": "pump x1"}
+                    ],
                     "Alias": [{"label": "Berlin pump"}],
                 },
                 edges={
@@ -171,15 +179,26 @@ def _gather(db: Any, graphs: list[RecordGraph], **kwargs: Any):
 
 
 def _found(entry: StagedCandidates) -> list[tuple[str, str]]:
-    return [(next(iter(c.key.values())), c.lane) for c in entry.candidates]
+    """Each candidate's first key value and its best lane."""
+    return [(next(iter(c.key.values())), c.lanes[0].lane) for c in entry.candidates]
+
+
+def _lanes(candidate: EntityCandidate) -> list[str]:
+    return [hit.lane for hit in candidate.lanes]
+
+
+def _attributes(candidate: EntityCandidate) -> list[tuple[str, str, str]]:
+    return [(a.field, a.verdict, a.compare) for a in candidate.attributes]
 
 
 def test_a_stated_label_finds_its_entity_exactly(db):
     (entry,) = _gather(db, [_g("m1", [_m("c", "Customer", "Ann Lee", name="Ann Lee")])])
     assert (entry.record.ref, entry.reason) == ("c", "no_key")
     assert _found(entry) == [("ACC-2", "exact")]
-    assert entry.candidates[0].label == "Ann Lee"
-    assert entry.candidates[0].matched == "Ann Lee"
+    (candidate,) = entry.candidates
+    assert candidate.label == "Ann Lee"
+    assert candidate.lanes[0].matched == "Ann Lee"
+    assert _attributes(candidate) == [("name", "agree", "literal")]
 
 
 def test_an_alias_leads_to_what_it_names(db):
@@ -196,7 +215,8 @@ def test_a_stated_relation_to_a_resolved_anchor_gives_the_linked_entities(db):
     (entry,) = _gather(db, [graph])
     assert _found(entry) == [("ACC-2", "relation")]
     (candidate,) = entry.candidates
-    assert (candidate.relation, candidate.anchor) == ("RAISED", "t")
+    (hit,) = candidate.lanes
+    assert (hit.relation, hit.anchor, hit.matched) == ("RAISED", "t", None)
     assert candidate.label == "Ann Lee"
 
 
@@ -238,7 +258,7 @@ def test_a_candidate_contradicting_a_stated_key_is_left_out(db):
     assert _found(entry) == [("ACC-6", "exact")]
 
 
-def test_one_candidate_per_entity_from_its_best_lane(db):
+def test_one_candidate_per_entity_with_every_lane_best_first(db):
     graph = _g(
         "m1",
         [
@@ -248,7 +268,135 @@ def test_one_candidate_per_entity_from_its_best_lane(db):
         [(RAISED, "c", "t")],
     )
     (entry,) = _gather(db, [graph])
+    (candidate,) = entry.candidates
+    assert candidate.key == {"account": "ACC-2"}
+    assert _lanes(candidate) == ["exact", "relation"]
+
+
+def test_the_cap_counts_entities_not_lanes(db):
+    graph = _g(
+        "m1",
+        [
+            _m("c", "Customer", "Ann Lee", name="Ann Lee"),
+            _m("t", "Ticket", number="HD-4411"),
+        ],
+        [(RAISED, "c", "t")],
+    )
+    (entry,) = _gather(db, [graph], max_candidates=1)
     assert _found(entry) == [("ACC-2", "exact")]
+    assert not entry.truncated
+
+
+def test_a_dropped_candidate_never_takes_the_place_of_a_kept_one(db):
+    # Both desks and ACC-1 hold another email; only ACC-6 can be this record,
+    # though the desks are found first by their longer names.
+    graph = _g(
+        "m1",
+        [
+            _m(
+                "c",
+                "Customer",
+                "Front Desk and Back Desk and Jo Park",
+                email="jo2@x.com",
+            )
+        ],
+    )
+    (entry,) = _gather(db, [graph], max_candidates=1)
+    assert _found(entry) == [("ACC-6", "exact")]
+    assert not entry.truncated
+
+
+def test_a_non_key_contradiction_is_shown_not_dropped(db):
+    graph = _g("m1", [_m("p", "Product", "Pump X1", name="Pump X2")])
+    (entry,) = _gather(db, [graph])
+    (candidate,) = entry.candidates
+    assert candidate.key == {"sku": "P-200"}
+    assert _attributes(candidate) == [("name", "contradict", "literal")]
+
+
+def test_nothing_stored_is_unknown(db):
+    # ACC-2 holds no email: the stated one neither agrees nor contradicts.
+    graph = _g(
+        "m1", [_m("c", "Customer", "Ann Lee", name="Ann Lee", email="ann@lee.com")]
+    )
+    (entry,) = _gather(db, [graph])
+    (candidate,) = entry.candidates
+    assert candidate.key == {"account": "ACC-2"}
+    assert _attributes(candidate) == [
+        ("name", "agree", "literal"),
+        ("email", "unknown", "literal"),
+    ]
+
+
+def test_a_key_differing_only_in_case_contradicts(db):
+    graph = _g("m1", [_m("c", "Customer", "Jo Park", name="Jo Park", email="JO@x.com")])
+    (entry,) = _gather(db, [graph])
+    assert _found(entry) == [("ACC-6", "exact")]
+
+
+def test_a_batch_alternate_matches_literally():
+    graphs = [
+        _g("a", [_m("c", "Customer", account="ACC-8", email="x@x.com")]),
+        _g("b", [_m("c", "Customer", account="ACC-9", email="x@x.com")]),
+        _g("d", [_m("c", "Customer", account="ACC-7", email="X@x.com")]),
+        _g("c", [_m("c", "Customer", email="x@x.com")]),
+    ]
+    schema = _schema()
+    resolution = resolve_records(schema, graphs)
+    (entry,) = gather_candidates(schema, resolution)
+    assert sorted(_found(entry)) == [("ACC-8", "alternate"), ("ACC-9", "alternate")]
+    assert all(
+        _attributes(c) == [("email", "unknown", "literal")] for c in entry.candidates
+    )
+
+
+def test_a_normalized_field_compares_in_normal_form(db):
+    spec = SPEC.model_copy(update={"normalized_fields": {"Product": ["name_norm"]}})
+    graph = _g(
+        "m1", [_m("p", "Product", "Pump X1", name="Pump X1", name_norm="PUMP-x1")]
+    )
+    (entry,) = _gather(db, [graph], spec=spec)
+    (candidate,) = entry.candidates
+    assert _attributes(candidate) == [
+        ("name", "agree", "literal"),
+        ("name_norm", "agree", "normalized"),
+    ]
+
+
+def test_a_field_the_caller_refuses_is_never_compared(db):
+    # Compared, email leaves ACC-1 out; refused, it neither drops nor shows.
+    graph = _g("m1", [_m("c", "Customer", "Jo Park", name="Jo Park", email="zz@x.com")])
+    (entry,) = _gather(db, [graph], comparable=lambda _type, field: field != "email")
+    assert sorted(_found(entry)) == [("ACC-1", "exact"), ("ACC-6", "exact")]
+    assert all(
+        _attributes(c) == [("name", "agree", "literal")] for c in entry.candidates
+    )
+
+
+def test_a_reserved_field_is_never_compared(zoned):
+    graph = _g("m1", [_m("c", "Customer", "Ann Lee", name="Ann Lee", access_zones=[2])])
+    (entry,) = _gather(zoned, [graph], schema=_zoned_schema())
+    (candidate,) = entry.candidates
+    assert _attributes(candidate) == [("name", "agree", "literal")]
+
+
+@pytest.mark.parametrize(
+    ("fields", "message"),
+    [
+        ({"lane": "relation", "relation": "RAISED"}, "anchor"),
+        ({"lane": "exact"}, "matched"),
+        ({"lane": "exact", "matched": "Ann", "role": "author"}, "role"),
+        ({"lane": "metadata", "matched": "Ann"}, "role"),
+    ],
+)
+def test_a_hit_carries_exactly_the_fields_of_its_lane(fields, message):
+    with pytest.raises(ValueError, match=message):
+        CandidateHit(**fields)
+
+
+def test_a_candidate_has_at_least_one_lane():
+    with pytest.raises(ValueError, match="lanes"):
+        EntityCandidate(vertex_type="Customer", key={"account": "ACC-2"}, lanes=[])
 
 
 def test_the_cap_holds_and_says_so(db):

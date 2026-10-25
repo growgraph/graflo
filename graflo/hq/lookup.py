@@ -17,7 +17,7 @@ candidates to a model without copying the graph's content into its prompt.
 from __future__ import annotations
 
 import re
-from typing import Any, Literal
+from typing import Any, Literal, NamedTuple
 
 from pydantic import Field
 
@@ -100,22 +100,64 @@ class LookupSpec(ConfigBaseModel):
     max_words: int = Field(default=4, ge=1)
 
 
+class LaneHit(ConfigBaseModel):
+    """One way a text names a vertex.
+
+    Attributes:
+        lane: How it was found.
+        matched: The words or key value of the text it was found from.
+    """
+
+    lane: Lane
+    matched: str
+
+
 class Candidate(ConfigBaseModel):
     """A vertex a text may name.
 
     Attributes:
         vertex_type: Logical type of the vertex.
         key: Its identity fields and values.
-        label: The label it was found by, if a label lane found it.
-        lane: How it was found.
-        mention: The text it was found from.
+        label: The label of its best label hit, if a label lane found it.
+        hits: The best hit of each lane that found it, best first.
     """
 
     vertex_type: str
     key: dict[str, Any]
     label: str | None = None
-    lane: Lane
-    mention: str
+    hits: list[LaneHit] = Field(min_length=1)
+
+
+class _Found(NamedTuple):
+    vertex_type: str
+    key: dict[str, Any]
+    label: str | None
+    hit: LaneHit
+
+
+def _rank(hit: LaneHit) -> tuple[int, int]:
+    return _LANE_RANK[hit.lane], -len(hit.matched)
+
+
+def _merge(found: list[_Found]) -> list[Candidate]:
+    """One candidate per vertex with its best hit in each lane, best vertex first."""
+    found = sorted(found, key=lambda f: _rank(f.hit))
+    merged: dict[tuple[str, tuple[tuple[str, str], ...]], Candidate] = {}
+    for item in found:
+        identity_key = tuple(sorted((k, str(v)) for k, v in item.key.items()))
+        candidate = merged.get((item.vertex_type, identity_key))
+        if candidate is None:
+            merged[(item.vertex_type, identity_key)] = Candidate(
+                vertex_type=item.vertex_type,
+                key=dict(item.key),
+                label=item.label,
+                hits=[item.hit],
+            )
+        elif all(hit.lane != item.hit.lane for hit in candidate.hits):
+            candidate.hits.append(item.hit)
+            if candidate.label is None:
+                candidate.label = item.label
+    return list(merged.values())
 
 
 def label_fields(vertex: Vertex) -> list[str]:
@@ -212,12 +254,12 @@ def _label_lanes(
     spec: LookupSpec,
     runs: list[str],
     labels: list[str],
-) -> list[Candidate]:
+) -> list[_Found]:
     """The ``exact`` and ``normalized`` lanes for one type."""
     identity = reader.identity(vertex_type)
     if not identity:
         return []
-    found: list[Candidate] = []
+    found: list[_Found] = []
     normal = [normalize_label(run) for run in runs]
     lanes: list[tuple[Lane, list[str], list[str]]] = [
         ("exact", labels, runs),
@@ -236,15 +278,14 @@ def _label_lanes(
             ).items():
                 for doc in docs:
                     found.append(
-                        Candidate(
-                            vertex_type=vertex_type,
-                            key={f: doc.get(f) for f in identity},
-                            label=next(
+                        _Found(
+                            vertex_type,
+                            {f: doc.get(f) for f in identity},
+                            next(
                                 (doc[f] for f in labels if doc.get(f) is not None),
                                 None,
                             ),
-                            lane=lane,
-                            mention=mentions[position],
+                            LaneHit(lane=lane, matched=mentions[position]),
                         )
                     )
     return found
@@ -260,8 +301,9 @@ def lookup_candidates(
 ) -> list[Candidate]:
     """Vertices of *db* that *text* may name, best first, at most ``max_seeds``.
 
-    One candidate per vertex, from its best lane (``exact``, ``key``,
-    ``normalized``, ``alias``); within a lane, the longer mention first.
+    One candidate per vertex, carrying the best hit of every lane that found
+    it, in the order ``exact``, ``key``, ``normalized``, ``alias``; within a
+    lane the longer match wins. Vertices are ordered by their best hit.
 
     Args:
         db: An open graph connection.
@@ -296,7 +338,7 @@ def lookup_candidates(
         vertex = vertex_by_name.get(vertex_type)
         return label_fields(vertex) if vertex is not None else []
 
-    found: list[Candidate] = []
+    found: list[_Found] = []
     for vertex_type in types:
         found.extend(
             _label_lanes(reader, vertex_type, spec, runs, labels_of(vertex_type))
@@ -317,11 +359,11 @@ def lookup_candidates(
             pattern.vertex_type, pattern.field, values, returned
         ).items():
             found.extend(
-                Candidate(
-                    vertex_type=pattern.vertex_type,
-                    key={f: doc.get(f) for f in identity},
-                    lane="key",
-                    mention=values[position],
+                _Found(
+                    pattern.vertex_type,
+                    {f: doc.get(f) for f in identity},
+                    None,
+                    LaneHit(lane="key", matched=values[position]),
                 )
                 for doc in docs
             )
@@ -337,18 +379,12 @@ def lookup_candidates(
                 hop.alias_type, alias.key, hop.relation, hop.target_type
             ):
                 found.append(
-                    Candidate(
-                        vertex_type=hop.target_type,
-                        key={f: doc.get(f) for f in target_identity},
-                        label=alias.label,
-                        lane="alias",
-                        mention=alias.mention,
+                    _Found(
+                        hop.target_type,
+                        {f: doc.get(f) for f in target_identity},
+                        alias.label,
+                        LaneHit(lane="alias", matched=alias.hit.matched),
                     )
                 )
 
-    found.sort(key=lambda c: (_LANE_RANK[c.lane], -len(c.mention)))
-    best: dict[tuple[str, tuple[tuple[str, str], ...]], Candidate] = {}
-    for candidate in found:
-        identity_key = tuple(sorted((k, str(v)) for k, v in candidate.key.items()))
-        best.setdefault((candidate.vertex_type, identity_key), candidate)
-    return list(best.values())[: spec.max_seeds]
+    return _merge(found)[: spec.max_seeds]

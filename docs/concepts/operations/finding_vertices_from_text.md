@@ -11,7 +11,7 @@ It uses no model and no vectors. A candidate is found in one of four ways:
 | `normalized` | A run of words, normalised, equals a stored normalised label field |
 | `alias` | A label lane finds an alias vertex, and its alias edge leads to the target |
 
-Each candidate carries the vertex type, its identity fields, the label it was found by, the lane and the words of the text it came from — never the vertex's other fields.
+Each candidate carries the vertex type, its identity fields, its label and `hits`: for every lane that found it, the words of the text it came from. It never carries the vertex's other fields.
 
 ## A first example
 
@@ -28,8 +28,10 @@ spec = LookupSpec(
 candidates = lookup_candidates(
     conn, schema, "the Berlin pump is down, see SUP-42", spec
 )
-# [Candidate(vertex_type="Ticket", key={"number": "SUP-42"}, lane="key", ...),
-#  Candidate(vertex_type="Product", key={"sku": "P-200"}, label="Berlin pump", lane="alias", ...)]
+# [Candidate(vertex_type="Ticket", key={"number": "SUP-42"},
+#            hits=[LaneHit(lane="key", matched="SUP-42")]),
+#  Candidate(vertex_type="Product", key={"sku": "P-200"}, label="Berlin pump",
+#            hits=[LaneHit(lane="alias", matched="Berlin pump")])]
 ```
 
 ## Label fields
@@ -50,8 +52,8 @@ transforms:
 
 ## Results
 
-- One candidate per vertex, from its best lane, in the order of the table above; within a lane, the longer mention first.
-- At most `max_seeds` candidates (default 20). Runs of up to `max_words` words (default 4) are tried as labels.
+- One candidate per vertex. Its `hits` hold the best hit of each lane that found it, in the order of the table above; within a lane, the longer match wins. Vertices are ordered by their best hit.
+- At most `max_seeds` vertices (default 20). Runs of up to `max_words` words (default 4) are tried as labels.
 - `vertex_types` restricts the types returned. Alias types are not returned unless listed there.
 
 ## Candidates for staged records
@@ -79,7 +81,10 @@ for entry in entries:
 ```
 
 - A candidate never closes a record; only keys do. A pick, a rule or a person chooses.
-- A candidate whose stored key or secondary-identity values contradict what the record states is left out.
+- One candidate per entity. `lanes` lists every way it was found, best lane first. A `relation` hit names the relation and the anchor, a `metadata` hit (added by the caller) a role, and every other hit what matched.
+- `attributes` checks each other property the record states against the entity's stored value: `agree`, `contradict`, or `unknown` when nothing is stored. Stored values are never returned. Equality is literal, as the field's declared type, so `"ANN@x.com"` is not `"ann@x.com"`. A field named in the spec's `normalized_fields` compares in `normalize_label` form (`compare: normalized`).
+- A candidate whose stored key or secondary-identity values contradict what the record states is left out. Any other contradiction is reported, not a bar.
+- `comparable(vertex_type, field)` limits which stated properties are probed, looked up by or checked, keys included. Reserved fields, such as access zones, are never compared.
 - A relation between two records states two entities: a record is never offered the entity a related record of the same source resolved to, and a relation whose two records resolve to one entity is not written. `promote` skips it and `resolution.dropped` lists it (`DroppedRelation`, reason `same_entity`); after fixing records by hand, `dropped_relations(resolution)` recomputes the list.
-- Best lane first, at most `max_candidates` per record (default 10); `truncated` says when more were found.
+- Best lane first, at most `max_candidates` entities per record (default 10), counted after lanes are merged and keys checked; `truncated` says when more were found.
 - `guard` limits every read, as in `resolve_records`.

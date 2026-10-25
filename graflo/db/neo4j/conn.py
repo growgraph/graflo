@@ -27,7 +27,7 @@ import logging
 from collections.abc import Sequence
 from typing import Any, LiteralString, cast
 
-from neo4j import GraphDatabase
+from neo4j import GraphDatabase, NotificationDisabledCategory
 from neo4j.exceptions import ClientError
 
 from graflo.architecture.graph_types import EdgeDirection, GraphContainer, Index
@@ -173,7 +173,15 @@ class Neo4jConnection(Connection):
         auth = None
         if config.password is not None:
             auth = (config.username or DEFAULT_NEO4J_USERNAME, config.password)
-        self._driver = GraphDatabase.driver(uri=config.url, auth=auth)
+        # Queries are built from the schema, so an unrecognized label, property or
+        # relation is one nothing has written yet, never a typo: no notification.
+        self._driver = GraphDatabase.driver(
+            uri=config.url,
+            auth=auth,
+            notifications_disabled_categories=[
+                NotificationDisabledCategory.UNRECOGNIZED
+            ],
+        )
         self.conn = self._driver.session()
 
     def execute(self, query, **kwargs):

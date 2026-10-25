@@ -19,6 +19,7 @@ from graflo.db.manager import ConnectionManager
 from graflo.filter.onto import ComparisonOperator, FilterExpression
 from graflo.hq.lookup import (
     AliasHop,
+    Candidate,
     KeyPattern,
     LookupSpec,
     label_fields,
@@ -121,7 +122,11 @@ SPEC = LookupSpec(
 
 
 def _found(candidates: list[Any]) -> set[tuple[str, str, str]]:
-    return {(c.vertex_type, next(iter(c.key.values())), c.lane) for c in candidates}
+    return {
+        (c.vertex_type, next(iter(c.key.values())), hit.lane)
+        for c in candidates
+        for hit in c.hits
+    }
 
 
 class TestNormalizeLabel:
@@ -171,22 +176,32 @@ class TestLookup:
             conn, _schema(), "the berlin pump is down again", SPEC
         )
         targets = [c for c in found if c.vertex_type == "Product"]
-        assert [(c.key, c.lane) for c in targets] == [({"sku": "P-200"}, "alias")]
-        assert targets[0].mention.lower() == "berlin pump"
+        assert [(c.key, [h.lane for h in c.hits]) for c in targets] == [
+            ({"sku": "P-200"}, ["alias"])
+        ]
+        assert targets[0].hits[0].matched.lower() == "berlin pump"
 
-    def test_a_candidate_carries_its_label_and_mention(self, conn: Any) -> None:
+    def test_a_candidate_carries_its_label_and_what_matched(self, conn: Any) -> None:
         (candidate,) = [
             c
             for c in lookup_candidates(conn, _schema(), "Valve Pro leaks", SPEC)
             if c.vertex_type == "Product"
         ]
         assert candidate.label == "Valve Pro"
-        assert candidate.mention == "Valve Pro"
+        assert candidate.hits[0].matched == "Valve Pro"
 
-    def test_one_candidate_per_vertex_best_lane_first(self, conn: Any) -> None:
+    def test_one_candidate_per_vertex_with_every_lane_best_first(
+        self, conn: Any
+    ) -> None:
         found = lookup_candidates(conn, _schema(), "Pump X1 or pump x1", SPEC)
         products = [c for c in found if c.vertex_type == "Product"]
-        assert [(c.key["sku"], c.lane) for c in products] == [("P-200", "exact")]
+        assert [(c.key["sku"], [h.lane for h in c.hits]) for c in products] == [
+            ("P-200", ["exact", "normalized"])
+        ]
+
+    def test_a_candidate_has_at_least_one_hit(self) -> None:
+        with pytest.raises(ValueError, match="hits"):
+            Candidate(vertex_type="Product", key={"sku": "P-200"}, hits=[])
 
     def test_the_cap_holds(self, conn: Any) -> None:
         spec = SPEC.model_copy(update={"max_seeds": 1})
