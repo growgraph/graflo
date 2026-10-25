@@ -17,11 +17,16 @@ type vocabulary, and merging it is the point of the overlay shape.
 ``--plot`` and ``--preview-json`` write the *preview*: the declaration graph
 and every conflict in it, rather than only the one merge raised. Both are
 written even when merge refuses -- which is the case they are for.
+``--plot-dir`` draws each equivalence as four small figures -- members,
+attributes, identity, lookups -- with their text in ``summary.md`` and
+``index.json``; with ``--declared`` it draws the op alone, without the
+manifests.
 """
 
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -114,8 +119,16 @@ def _fold_canonical_maps(
 
 
 @click.command("merge")
-@click.argument("left", type=click.Path(exists=True, dir_okay=False, path_type=Path))
-@click.argument("right", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.argument(
+    "left",
+    required=False,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+)
+@click.argument(
+    "right",
+    required=False,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+)
 @click.option(
     "--op",
     "op_path",
@@ -194,6 +207,53 @@ def _fold_canonical_maps(
     ),
 )
 @click.option(
+    "--plot-dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=None,
+    help=(
+        "Draw each equivalence here as four small figures (members, attributes, "
+        "identity, lookups), plus index.json and summary.md. Written even when "
+        "merge refuses."
+    ),
+)
+@click.option(
+    "--plot-format",
+    type=click.Choice(["svg", "png", "pdf", "dot"]),
+    default=None,
+    help="Format of the --plot-dir figures. [default: svg]",
+)
+@click.option(
+    "--plot-dpi",
+    type=click.IntRange(min=1),
+    default=None,
+    help="Resolution of --plot-dir figures in png.",
+)
+@click.option(
+    "--unit",
+    "unit_patterns",
+    multiple=True,
+    metavar="NAME",
+    help=(
+        "Draw only these equivalences, repeatable: a merged name, a position in "
+        "vertex_equivalences, or a pattern on the cluster id."
+    ),
+)
+@click.option(
+    "--view",
+    "view_names",
+    multiple=True,
+    type=click.Choice(["members", "attributes", "identity", "lookups"]),
+    help="Draw only these views, repeatable. [default: all four]",
+)
+@click.option(
+    "--declared",
+    is_flag=True,
+    help=(
+        "Draw the --op declarations alone, without LEFT and RIGHT: no checks, "
+        "no merge. Takes --plot-dir and --preview-json."
+    ),
+)
+@click.option(
     "--suggest",
     "suggest_path",
     type=click.Path(dir_okay=False, path_type=Path),
@@ -233,8 +293,8 @@ def _fold_canonical_maps(
     ),
 )
 def merge(
-    left: Path,
-    right: Path,
+    left: Path | None,
+    right: Path | None,
     op_path: Path | None,
     output: Path | None,
     canonical_map_options: tuple[str, ...],
@@ -244,6 +304,12 @@ def merge(
     dry_run: bool,
     plot_path: Path | None,
     preview_json_path: Path | None,
+    plot_dir: Path | None,
+    plot_format: str | None,
+    plot_dpi: int | None,
+    unit_patterns: tuple[str, ...],
+    view_names: tuple[str, ...],
+    declared: bool,
     suggest_path: Path | None,
     max_rows: int,
     profile_name: str | None,
@@ -252,6 +318,47 @@ def merge(
 ) -> None:
     """Merge LEFT and RIGHT into one manifest."""
     canonical_map_paths = _parse_canonical_map_option(canonical_map_options)
+    if plot_dir is None:
+        given = [
+            name
+            for name, value in (
+                ("--plot-format", plot_format),
+                ("--plot-dpi", plot_dpi),
+                ("--unit", unit_patterns),
+                ("--view", view_names),
+            )
+            if value
+        ]
+        if given:
+            raise click.UsageError(f"{', '.join(given)} needs --plot-dir")
+    units = _Units(
+        directory=plot_dir,
+        output_format=plot_format or "svg",
+        dpi=plot_dpi,
+        select=unit_patterns,
+        views=view_names,
+    )
+    if declared:
+        _declared(
+            left=left,
+            right=right,
+            op_path=op_path,
+            canonical_map_paths=canonical_map_paths,
+            name_conflict=name_conflict,
+            units=units,
+            json_path=preview_json_path,
+            refused={
+                "-o": output,
+                "--plot": plot_path,
+                "--suggest": suggest_path,
+                "--dry-run": dry_run,
+                "--check-profile": profile_name,
+                "-m": record_label,
+            },
+        )
+        return
+    if left is None or right is None:
+        raise click.UsageError("missing LEFT and RIGHT (or pass --declared)")
 
     try:
         left_manifest = load_manifest(left)
@@ -261,16 +368,7 @@ def merge(
             f"not a valid manifest -- {type(exc).__name__}: {exc}"
         ) from exc
 
-    payload: dict[str, Any] = load_mapping(op_path) if op_path is not None else {}
-    if name_conflict is not None:
-        payload["name_conflict"] = name_conflict
-    try:
-        _fold_canonical_maps(payload, canonical_map_paths)
-        # `op` is a Literal with a default, so a document carrying
-        # `op: merge_manifests` validates as written -- no key to strip.
-        op = MergeManifestsOp.model_validate(payload)
-    except ValueError as exc:
-        raise _MergeSetupError(f"{op_path}: invalid merge op -- {exc}") from exc
+    op = _load_op(op_path, name_conflict, canonical_map_paths)
 
     if suggest_path is not None:
         _write_suggestion(
@@ -281,7 +379,12 @@ def merge(
         )
         return
 
-    wants_preview = plot_path is not None or preview_json_path is not None or dry_run
+    wants_preview = (
+        plot_path is not None
+        or preview_json_path is not None
+        or plot_dir is not None
+        or dry_run
+    )
     if plot_path is not None:
         _check_plot_suffix(plot_path)
     # Built before merging and without merging again: `attempt=False`
@@ -292,6 +395,8 @@ def merge(
         if wants_preview
         else None
     )
+    if preview is not None:
+        units.check(preview)
 
     def emit(outcome: MergeOutcome, subjects: tuple[str, ...] = ()) -> None:
         if preview is not None:
@@ -303,6 +408,7 @@ def merge(
             plot_path=plot_path,
             json_path=preview_json_path,
             max_rows=max_rows,
+            units=units,
         )
 
     try:
@@ -468,12 +574,110 @@ def _check_plot_suffix(path: Path) -> None:
         )
 
 
+def _load_op(
+    op_path: Path | None,
+    name_conflict: str | None,
+    canonical_map_paths: list[tuple[Scope, Path]],
+) -> MergeManifestsOp:
+    """The op document, with the policy override and every ``--canonical-map`` folded in."""
+    payload: dict[str, Any] = load_mapping(op_path) if op_path is not None else {}
+    if name_conflict is not None:
+        payload["name_conflict"] = name_conflict
+    try:
+        _fold_canonical_maps(payload, canonical_map_paths)
+        # `op` is a Literal with a default, so a document carrying
+        # `op: merge_manifests` validates as written -- no key to strip.
+        return MergeManifestsOp.model_validate(payload)
+    except ValueError as exc:
+        raise _MergeSetupError(f"{op_path}: invalid merge op -- {exc}") from exc
+
+
+@dataclass(frozen=True)
+class _Units:
+    """What ``--plot-dir`` and its options asked for."""
+
+    directory: Path | None
+    output_format: str
+    dpi: int | None
+    select: tuple[str, ...]
+    views: tuple[str, ...]
+
+    def check(self, preview: MergePreview) -> None:
+        """Refuse a ``--unit`` that selects nothing, before any merge runs."""
+        if self.directory is None or not self.select:
+            return
+        from graflo.plot.equivalence import select_targets
+
+        names = [f"{c.id} ({c.into})" for c in preview.clusters]
+        for pattern in self.select:
+            if not select_targets(preview, [pattern]):
+                raise click.UsageError(
+                    f"--unit {pattern!r} selects nothing; equivalences: "
+                    f"{', '.join(names)}"
+                )
+
+    def write(self, preview: MergePreview, *, err: bool) -> None:
+        if self.directory is None:
+            return
+        from graflo.plot.equivalence import VIEWS, plot_equivalences
+
+        try:
+            index = plot_equivalences(
+                preview,
+                self.directory,
+                output_format=self.output_format,
+                select=self.select,
+                views=[v for v in VIEWS if not self.views or v in self.views],
+                dpi=self.dpi,
+            )
+        except RuntimeError as exc:
+            raise _MergeSetupError(str(exc)) from exc
+        entries = json.loads(index.read_text())["equivalences"]
+        count = sum(len(e["views"]) for e in entries)
+        noun = "figure" if count == 1 else "figures"
+        click.echo(f"plots: {index} ({count} {noun})", err=err)
+
+
+def _declared(
+    *,
+    left: Path | None,
+    right: Path | None,
+    op_path: Path | None,
+    canonical_map_paths: list[tuple[Scope, Path]],
+    name_conflict: str | None,
+    units: _Units,
+    json_path: Path | None,
+    refused: dict[str, Any],
+) -> None:
+    """``--declared``: draw the op's declarations alone, without the manifests."""
+    from graflo.architecture.evolution.preview_declared import declared_preview
+
+    if left is not None or right is not None:
+        raise click.UsageError("--declared draws the op alone; drop LEFT and RIGHT")
+    if op_path is None:
+        raise click.UsageError("--declared needs --op")
+    clashing = [name for name, value in refused.items() if value]
+    if clashing:
+        raise click.UsageError(f"--declared does not take {', '.join(clashing)}")
+    if units.directory is None and json_path is None:
+        raise click.UsageError("--declared needs --plot-dir or --preview-json")
+    preview = declared_preview(_load_op(op_path, name_conflict, canonical_map_paths))
+    units.check(preview)
+    click.echo("declared only: not checked against the manifests")
+    if json_path is not None:
+        json_path.parent.mkdir(parents=True, exist_ok=True)
+        json_path.write_text(json.dumps(preview.to_dict(), indent=2) + "\n")
+        click.echo(f"preview: {json_path}")
+    units.write(preview, err=False)
+
+
 def _write_preview(
     preview: MergePreview,
     *,
     plot_path: Path | None,
     json_path: Path | None,
     max_rows: int,
+    units: _Units,
 ) -> None:
     """Report the findings, and write whichever artifacts were asked for.
 
@@ -487,6 +691,7 @@ def _write_preview(
         json_path.parent.mkdir(parents=True, exist_ok=True)
         json_path.write_text(json.dumps(preview.to_dict(), indent=2) + "\n")
         click.echo(f"preview: {json_path}", err=preview.refused)
+    units.write(preview, err=preview.refused)
     if plot_path is None:
         return
     from graflo.plot.merge import plot_merge_preview

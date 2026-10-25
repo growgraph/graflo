@@ -2,7 +2,7 @@
 
 The picture a
 :class:`~graflo.architecture.evolution.preview.MergePreview` is asking to be:
-each side's classes down its own column, the merged names between them, and
+each side's classes grouped together, the merged names between them, and
 every declaration as an edge. Classes are drawn as records — one field per
 attribute, each its own Graphviz port — so a property rename lands on the row
 it renames rather than somewhere on the box. That is the whole reason to draw
@@ -32,16 +32,17 @@ import networkx as nx
 from graflo.architecture.evolution.preview import (
     MergeFinding,
     MergePreview,
+    PreviewEdge,
     PreviewNode,
 )
 from graflo.plot.render import draw, header_band, record_escape, sanitize_id, to_dot
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from collections.abc import Sequence
+    from collections.abc import Collection, Mapping, Sequence
 
     from graflo.plot.dot import DotGraph
 
-#: Header colour per column, from the palette the schema plots already use.
+#: Header colour per side or node kind, from the palette the schema plots use.
 HEADER_COLOR: dict[str, str] = {
     "left": "#B7D1DF",
     "right": "#BEDFC8",
@@ -49,6 +50,7 @@ HEADER_COLOR: dict[str, str] = {
     "canonical": "#DDD0E5",
     "ghost": "#E4E1D7",
     "relation": "#FFFFFF",
+    "resource": "#ECEFF1",
 }
 
 #: How a flagged element is drawn. A refusal is what merge raised; a
@@ -68,6 +70,18 @@ EDGE_STYLE: dict[str, dict[str, str]] = {
     "property_map": {"style": "dashed", "color": "#1F5FBF", "penwidth": "0.7"},
     "property_equivalence": {"style": "dotted", "color": "#6B4C9A", "penwidth": "0.9"},
     "suggested": {"style": "dashed", "color": "#1E8449", "penwidth": "1.2"},
+    "fusion": {"style": "solid", "color": "#A0A0A0", "penwidth": "0.6"},
+    "demotion": {"style": "dashed", "color": "#8E5A2B", "penwidth": "0.9"},
+    "property_rename": {"style": "dashed", "color": "#6B4C9A", "penwidth": "0.7"},
+    "derivation": {"style": "solid", "color": "#B9770E", "penwidth": "1.1"},
+    "local_key": {"style": "solid", "color": "#117A65", "penwidth": "1.1"},
+}
+
+#: An edge a later declaration overrode: still drawn, so the override shows.
+OVERRIDDEN_STYLE: dict[str, str] = {
+    "style": "dotted",
+    "color": "#B0B0B0",
+    "fontcolor": "#909090",
 }
 
 #: Point size of the class records; the header band is computed from it.
@@ -93,9 +107,7 @@ def _row(node: PreviewNode, *, typed: bool, badges: Sequence[int]) -> str:
     declares no field types would otherwise get a dangling separator on every
     row.
     """
-    text = node.name
-    if node.identity:
-        text += " (key)"
+    text = node.name + (" (key)" if node.identity else "")
     if typed and node.field_type:
         text += f": {node.field_type}"
     text += _marks(badges)
@@ -106,10 +118,11 @@ def _class_node(
     node: PreviewNode,
     rows: Sequence[PreviewNode],
     *,
-    badges: dict[str, list[int]],
+    badges: Mapping[str, list[int]],
     flagged: str | None,
-    row_flags: dict[str, str],
+    row_flags: Mapping[str, str],
     max_rows: int,
+    keep: Collection[str] = (),
 ) -> dict[str, str]:
     """A class as a record: a header field, then one field per attribute.
 
@@ -119,25 +132,25 @@ def _class_node(
     reader came for. ``rankdir=LR`` stacks a record's top-level fields, so the
     fields read top to bottom.
     """
-    kept, hidden = _trim(rows, row_flags=row_flags, max_rows=max_rows)
+    kept, hidden = _trim(rows, row_flags=row_flags, max_rows=max_rows, keep=keep)
     typed = any(row.field_type for row in kept)
-    header = record_escape(node.name + _marks(badges.get(node.id, [])))
-    header_lines = 1
+    lines = [node.name + _marks(badges.get(node.id, []))]
     if node.identity_mode and node.kind == "class":
-        header += "\\n" + record_escape(node.identity_mode)
-        header_lines = 2
-    fields = [f"<head> {header}"]
+        lines.append(node.identity_mode)
+    fields = ["<head> " + "\\n".join(record_escape(line) for line in lines)]
     fields += [_row(row, typed=typed, badges=badges.get(row.id, [])) for row in kept]
     if hidden:
         fields.append(f"+{hidden} more\\l")
     style = "rounded,filled,dashed" if node.kind == "ghost" else "rounded,filled"
+    if node.kind == "resource" and not node.exists:
+        style = "rounded,filled,dashed"
     colour = HEADER_COLOR.get(node.kind if node.side is None else node.side, "#FFFFFF")
     return {
         "shape": "record",
         "label": "|".join(fields),
         "style": style,
         **header_band(
-            colour, header_lines=header_lines, rows=len(fields) - 1, fontsize=FONT_SIZE
+            colour, header_lines=len(lines), rows=len(fields) - 1, fontsize=FONT_SIZE
         ),
         "color": SEVERITY_COLOR[flagged] if flagged else "#2C3E50",
         "penwidth": "2" if flagged else "1",
@@ -147,18 +160,22 @@ def _class_node(
 def _trim(
     rows: Sequence[PreviewNode],
     *,
-    row_flags: dict[str, str],
+    row_flags: Mapping[str, str],
     max_rows: int,
+    keep: Collection[str] = (),
 ) -> tuple[list[PreviewNode], int]:
     """Rows to draw, and how many were left out.
 
-    An attribute that takes part in the declarations -- flagged, or keying its
-    class -- survives whatever the budget, since dropping one would hide the
-    thing being explained.
+    An attribute that takes part in the declarations -- flagged, keying its
+    class, or an end of a drawn edge (*keep*) -- survives whatever the
+    budget, since dropping one would hide the thing being explained or leave
+    an edge pointing at a port that is not there.
     """
     if max_rows <= 0 or len(rows) <= max_rows:
         return list(rows), 0
-    must = [row for row in rows if row.id in row_flags or row.identity]
+    must = [
+        row for row in rows if row.id in row_flags or row.identity or row.id in keep
+    ]
     rest = [row for row in rows if row not in must]
     budget = max(max_rows - len(must), 0)
     kept = must + rest[:budget]
@@ -220,6 +237,62 @@ def _wrap(message: str, width: int = 88) -> str:
     return flat if len(flat) <= width else f"{flat[: width - 1]}…"
 
 
+def _edge_attrs(edge: PreviewEdge, severity: str | None) -> dict[str, Any]:
+    """Graphviz attributes of one declaration edge: its kind's style, then its state."""
+    attrs: dict[str, Any] = {
+        **EDGE_STYLE.get(edge.kind, {}),
+        "preview_id": edge.id,
+        "kind": edge.kind,
+    }
+    if not edge.effective:
+        attrs.update(OVERRIDDEN_STYLE)
+    if edge.label:
+        attrs["label"] = edge.label
+    if severity:
+        attrs["color"] = SEVERITY_COLOR[severity]
+        attrs["penwidth"] = "2"
+    return attrs
+
+
+def _attach(
+    graph: nx.MultiDiGraph,
+    tail: tuple[str, str | None, str | None],
+    head: tuple[str, str | None],
+    attrs: dict[str, Any],
+) -> None:
+    """Add an edge between drawn nodes, each end on a row port when it has one.
+
+    *tail* is ``(node, port, side)`` and *head* ``(node, port)``. ``rankdir=LR``
+    puts a tail on the left, so an edge leaving the right side is drawn
+    backwards to keep that side on the right -- which means swapping the ports
+    along with the endpoints, or each lands on a row the other node does not
+    have.
+    """
+    tail_node, tail_port, side = tail
+    head_node, head_port = head
+    if side == "right":
+        attrs = {**attrs, "dir": "back"}
+        if head_port:
+            attrs["tailport"] = head_port
+        if tail_port:
+            attrs["headport"] = tail_port
+        graph.add_edge(head_node, tail_node, **attrs)
+        return
+    if tail_port:
+        attrs["tailport"] = tail_port
+    if head_port:
+        attrs["headport"] = head_port
+    graph.add_edge(tail_node, head_node, **attrs)
+
+
+def _drawn_edges(preview: MergePreview, *, fusion: bool) -> list[PreviewEdge]:
+    return [e for e in preview.edges if e.kind != "fusion" or fusion]
+
+
+def _endpoints(edges: Sequence[PreviewEdge]) -> set[str]:
+    return {end for e in edges for end in (e.source, e.target)}
+
+
 def build_preview_graph(
     preview: MergePreview,
     *,
@@ -255,15 +328,44 @@ def build_preview_graph(
     graph.graph["edge"] = {"fontname": "Helvetica", "fontsize": "9"}
 
     node_flags, edge_flags, badges = _flags(preview)
+    edges = _drawn_edges(preview, fusion=fusion)
+    nodes = {n.id: n for n in preview.nodes}
+    taken = _class_nodes(
+        graph,
+        preview,
+        node_flags=node_flags,
+        badges=badges,
+        max_rows=max_rows,
+        keep=_endpoints(edges),
+    )
+    for edge in edges:
+        ends = _edge_ends(nodes, taken, edge)
+        if ends is not None:
+            _attach(graph, *ends, _edge_attrs(edge, edge_flags.get(edge.id)))
+
+    if legend:
+        graph.add_node("legend", **_legend(preview), kind="legend", preview_id="legend")
+    return graph
+
+
+def _class_nodes(
+    graph: nx.MultiDiGraph,
+    preview: MergePreview,
+    *,
+    node_flags: Mapping[str, str],
+    badges: Mapping[str, list[int]],
+    max_rows: int,
+    keep: Collection[str] = (),
+) -> dict[str, str]:
+    """Add every class-level node of *preview* as a record; return preview id → graph id."""
     taken: dict[str, str] = {}
     attributes: dict[str, list[PreviewNode]] = {}
-    for node in preview.nodes:
-        if node.owner is not None:
-            attributes.setdefault(node.owner, []).append(node)
-
     row_flags_by_owner: dict[str, dict[str, str]] = {}
     for node in preview.nodes:
-        if node.owner is not None and node.id in node_flags:
+        if node.owner is None:
+            continue
+        attributes.setdefault(node.owner, []).append(node)
+        if node.id in node_flags:
             row_flags_by_owner.setdefault(node.owner, {})[node.id] = node_flags[node.id]
 
     for node in preview.nodes:
@@ -279,56 +381,33 @@ def build_preview_graph(
                 flagged=node_flags.get(node.id),
                 row_flags=row_flags_by_owner.get(node.id, {}),
                 max_rows=max_rows,
+                keep=keep,
             ),
             preview_id=node.id,
             kind=node.kind,
             side=node.side or "",
         )
+    return taken
 
-    for edge in preview.edges:
-        if edge.kind == "fusion" and not fusion:
-            continue
-        source = preview.node(edge.source)
-        target = preview.node(edge.target)
-        if source is None or target is None:
-            continue
-        tail = source.owner or source.id
-        head = target.owner or target.id
-        if tail not in taken or head not in taken:
-            continue
-        attrs: dict[str, Any] = {
-            **EDGE_STYLE.get(edge.kind, {}),
-            "preview_id": edge.id,
-            "kind": edge.kind,
-        }
-        if source.owner is not None:
-            attrs["tailport"] = _port(source.name)
-        if target.owner is not None:
-            attrs["headport"] = _port(target.name)
-        if edge.label:
-            attrs["label"] = edge.label
-        severity = edge_flags.get(edge.id)
-        if severity:
-            attrs["color"] = SEVERITY_COLOR[severity]
-            attrs["penwidth"] = "2"
-        if source.side == "right":
-            # rankdir=LR puts a tail on the left. Drawing the right column's
-            # edges backwards keeps that column on the right where it belongs
-            # -- which means swapping the ports along with the endpoints, or
-            # each lands on a row the other node does not have.
-            attrs["dir"] = "back"
-            attrs["tailport"], attrs["headport"] = (
-                attrs.pop("headport", None),
-                attrs.pop("tailport", None),
-            )
-            attrs = {k: v for k, v in attrs.items() if v is not None}
-            graph.add_edge(taken[head], taken[tail], **attrs)
-        else:
-            graph.add_edge(taken[tail], taken[head], **attrs)
 
-    if legend:
-        graph.add_node("legend", **_legend(preview), kind="legend", preview_id="legend")
-    return graph
+def _edge_ends(
+    nodes: Mapping[str, PreviewNode], taken: Mapping[str, str], edge: PreviewEdge
+) -> tuple[tuple[str, str | None, str | None], tuple[str, str | None]] | None:
+    """``(tail, head)`` for :func:`_attach`, or ``None`` when an end is not drawn."""
+    source = nodes.get(edge.source)
+    target = nodes.get(edge.target)
+    if source is None or target is None:
+        return None
+    tail = taken.get(source.owner or source.id)
+    head = taken.get(target.owner or target.id)
+    if tail is None or head is None:
+        return None
+    # A class-level edge leaves and enters at the record's header field, so it
+    # does not read as starting from whichever row happens to be nearest.
+    return (
+        (tail, _port(source.name) if source.owner else "head", source.side),
+        (head, _port(target.name) if target.owner else "head"),
+    )
 
 
 def _title(preview: MergePreview) -> str:
@@ -341,8 +420,12 @@ def _title(preview: MergePreview) -> str:
     return f"{preview.left_name} + {preview.right_name} — {verdict}"
 
 
-def _columns(graph: nx.MultiDiGraph, dot: DotGraph) -> None:
-    """Put each side in its own cluster, so the picture reads left to right."""
+#: The groups a figure's nodes fall into, in drawing order.
+_SIDE_GROUPS: tuple[str, ...] = ("left", "merged", "right")
+
+
+def _side_groups(graph: nx.MultiDiGraph, dot: DotGraph) -> None:
+    """Put each side's nodes, and the merged ones, in a cluster subgraph of their own."""
     groups: dict[str, list[str]] = {}
     for name, data in graph.nodes(data=True):
         if data.get("kind") == "legend":
@@ -351,14 +434,14 @@ def _columns(graph: nx.MultiDiGraph, dot: DotGraph) -> None:
         key = side or ("merged" if data.get("kind") == "merged" else "")
         if key:
             groups.setdefault(key, []).append(name)
-    for key, label in (("left", "left"), ("merged", "merged"), ("right", "right")):
+    for key in _SIDE_GROUPS:
         members = groups.get(key)
         if not members:
             continue
         dot.add_subgraph(
             members,
             name=f"cluster_{key}",
-            label=label,
+            label=key,
             style="rounded",
             color="#B0B0B0",
             fontsize="10",
@@ -395,13 +478,14 @@ def plot_merge_preview(
     """
     graph = build_preview_graph(preview, max_rows=max_rows, legend=legend)
     dot = to_dot(graph)
-    _columns(graph, dot)
+    _side_groups(graph, dot)
     return draw(dot, path, output_format=output_format, prog=prog, dpi=dpi)
 
 
 __all__ = [
     "EDGE_STYLE",
     "HEADER_COLOR",
+    "OVERRIDDEN_STYLE",
     "SEVERITY_COLOR",
     "build_preview_graph",
     "plot_merge_preview",

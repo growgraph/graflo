@@ -15,6 +15,10 @@
         "merge3",
         "merge_example",
         "merge_findings",
+        "merge_view.attributes",
+        "merge_view.identity",
+        "merge_view.lookups",
+        "merge_view.members",
         "scripts"
     ]
 }

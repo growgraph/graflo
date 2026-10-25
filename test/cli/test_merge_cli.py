@@ -636,3 +636,133 @@ def test_a_dry_run_prints_the_routing_table_after_the_naming_table() -> None:
     assert rows["assets"] == ["left", "Asset", "owner", "id"]
     assert rows["devices"] == ["right", "Device", "owner", "id"]
     assert rows["work_orders"] == ["left", "Asset", "reference", "maintenance"]
+
+
+# ── one equivalence, four views ─────────────────────────────────────────────
+
+UNION = pathlib.Path(__file__).resolve().parents[2] / "examples" / "20-manifest-union"
+
+
+def _figures(tmp_path: pathlib.Path, *extra: str, op: str = "merge.yaml"):
+    return CliRunner().invoke(
+        graflo,
+        [
+            "merge",
+            str(UNION / "manifest_maintenance.yaml"),
+            str(UNION / "manifest_sensors.yaml"),
+            "--op",
+            str(UNION / op),
+            "--plot-dir",
+            str(tmp_path / "figs"),
+            "--plot-format",
+            "dot",
+            "--dry-run",
+            *extra,
+        ],
+    )
+
+
+def test_plot_dir_writes_each_view_an_index_and_a_summary(tmp_path):
+    result = _figures(tmp_path)
+
+    assert result.exit_code == 0, result.output
+    index = json.loads((tmp_path / "figs" / "index.json").read_text())
+    (entry,) = index["equivalences"]
+    assert set(entry["views"]) == {"members", "attributes", "identity", "lookups"}
+    assert entry["findings"], "the merge notes reach the index"
+    assert index["outcome"]["status"] == "merged"
+    assert (tmp_path / "figs" / "summary.md").is_file()
+    assert "(4 figures)" in result.output
+
+
+def test_a_view_option_draws_only_those_views(tmp_path):
+    result = _figures(tmp_path, "--view", "identity", "--view", "lookups")
+
+    assert result.exit_code == 0, result.output
+    names = sorted(p.name for p in (tmp_path / "figs").glob("*.dot"))
+    assert names == ["vertex-Machine.identity.dot", "vertex-Machine.lookups.dot"]
+
+
+def test_a_unit_selects_by_merged_name_position_or_cluster_id(tmp_path):
+    for pattern in ("Machine", "0", "vertex-cluster-0"):
+        out = tmp_path / pattern
+        result = _figures(out, "--unit", pattern)
+        assert result.exit_code == 0, result.output
+        index = json.loads((out / "figs" / "index.json").read_text())
+        assert [e["target"] for e in index["equivalences"]] == ["vertex-cluster-0"]
+
+
+def test_a_refused_run_still_writes_its_figures(tmp_path):
+    result = _figures(tmp_path, op="merge_no_identity.yaml")
+
+    assert result.exit_code == 1
+    index = json.loads((tmp_path / "figs" / "index.json").read_text())
+    assert index["outcome"]["status"] == "refused"
+    (entry,) = index["equivalences"]
+    assert any(f["severity"] == "refusal" for f in entry["findings"])
+
+
+def test_a_unit_that_selects_nothing_is_a_bad_invocation(tmp_path):
+    result = _figures(tmp_path, "--unit", "Nothing")
+
+    assert result.exit_code == 2
+    assert "vertex-cluster-0 (Machine)" in result.output, "the error lists them"
+    assert not (tmp_path / "figs").exists(), "refused before any work"
+
+
+def test_figure_options_need_a_plot_dir(tmp_path):
+    for option, value in (("--plot-format", "png"), ("--view", "identity")):
+        result = CliRunner().invoke(
+            graflo,
+            [
+                "merge",
+                str(UNION / "manifest_maintenance.yaml"),
+                str(UNION / "manifest_sensors.yaml"),
+                "--op",
+                str(UNION / "merge.yaml"),
+                option,
+                value,
+            ],
+        )
+        assert result.exit_code == 2
+        assert f"{option} needs --plot-dir" in result.output
+
+
+def test_declared_draws_the_op_without_the_manifests(tmp_path):
+    result = CliRunner().invoke(
+        graflo,
+        [
+            "merge",
+            "--declared",
+            "--op",
+            str(UNION / "merge.yaml"),
+            "--plot-dir",
+            str(tmp_path),
+            "--plot-format",
+            "dot",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "not checked against the manifests" in result.output
+    index = json.loads((tmp_path / "index.json").read_text())
+    assert index["outcome"]["status"] == "not_attempted"
+    (entry,) = index["equivalences"]
+    assert set(entry["views"]) == {"members", "identity"}
+
+
+def test_declared_refuses_what_needs_the_manifests(tmp_path):
+    base = ["merge", "--declared", "--op", str(UNION / "merge.yaml")]
+    for extra in (
+        [str(UNION / "manifest_maintenance.yaml"), "--plot-dir", str(tmp_path)],
+        ["--plot-dir", str(tmp_path), "-o", str(tmp_path / "out.yaml")],
+        [],
+    ):
+        result = CliRunner().invoke(graflo, [*base, *extra])
+        assert result.exit_code == 2, extra
+
+
+def test_without_declared_both_manifests_are_required():
+    result = CliRunner().invoke(graflo, ["merge", "--op", str(UNION / "merge.yaml")])
+    assert result.exit_code == 2
+    assert "LEFT and RIGHT" in result.output

@@ -159,6 +159,16 @@ def test_an_unknown_target_names_the_valid_ones(preview):
         preview.focus("vertex-cluster-9")
 
 
+@pytest.mark.parametrize("position", [0, "0"])
+def test_a_position_in_the_op_names_the_cluster_it_folded_into(preview, position):
+    assert preview.focus(position) == preview.focus("vertex-cluster-0")
+
+
+def test_a_position_no_cluster_holds_is_unknown(preview):
+    with pytest.raises(KeyError):
+        preview.focus(5)
+
+
 # ── what a focus keeps ──────────────────────────────────────────────────────
 
 

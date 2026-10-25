@@ -122,7 +122,8 @@ class PreviewDemotion(ConfigBaseModel):
     side: Side
     member: str
     fields: list[str] = PydanticField(
-        default_factory=list, description="The key fields, as the member spells them."
+        default_factory=list,
+        description="The key fields, as the member spells them after its vocabulary renames.",
     )
     merged_fields: list[str] = PydanticField(
         default_factory=list, description="Their names on the merged class."
@@ -276,6 +277,93 @@ def identity_block(
         retire=declaration.retire,
         derive_at={r: list(p) for r, p in declaration.derive_at.items()},
         demoted=demoted,
+    )
+
+
+def declared_identity(declaration: VertexEquivalence) -> PreviewIdentity:
+    """The identity *declaration* states, read without the manifests.
+
+    What :func:`identity_block` reports minus everything only the manifests
+    settle: no resource has a side, no member carries a property branch, an
+    omitted tag stays unresolved, and nothing is demoted or added
+    automatically.
+    """
+    identity = declaration.identity
+    if identity is None:
+        return PreviewIdentity(mode="carried")
+
+    def resource(name: str) -> BranchSource:
+        return BranchSource(resource=name, derive_at=declaration.derive_at.get(name))
+
+    def derived(branch: DerivedBranch, position: int) -> PreviewBranch:
+        return PreviewBranch(
+            position=position,
+            id=branch.name,
+            kind="derived",
+            fields=[branch.name],
+            sources=[
+                resource(name).model_copy(
+                    update={
+                        "member": member,
+                        "input": list(spec.input),
+                        "module": spec.module,
+                        "foo": spec.foo,
+                        "params": dict(spec.params),
+                        "when": _guard(spec),
+                        "label": derivation_label(spec),
+                    }
+                )
+                for name, entry in branch.sources.items()
+                for member, spec in _entries(entry)
+            ],
+        )
+
+    def local_key(branch: LocalKeyBranch, position: int) -> PreviewBranch:
+        return PreviewBranch(
+            position=position,
+            id=branch.name,
+            kind="local_key",
+            fields=[branch.name],
+            sources=[
+                resource(name).model_copy(
+                    update={
+                        "member": member,
+                        "field": source.field,
+                        "tag": None if source.tag_omitted else source.tag,
+                        "tag_omitted": source.tag_omitted,
+                        "when": _guard(source),
+                        "label": local_key_label(source, origin=None, auto=False),
+                    }
+                )
+                for name, entry in branch.local_key.items()
+                for member, source in _entries(entry)
+            ],
+            sep=branch.sep,
+        )
+
+    branches: list[PreviewBranch] = []
+    for position, branch in enumerate(identity, start=1):
+        if isinstance(branch, DerivedBranch):
+            branches.append(derived(branch, position))
+        elif isinstance(branch, LocalKeyBranch):
+            branches.append(local_key(branch, position))
+        else:
+            branches.append(
+                PreviewBranch(
+                    position=position,
+                    id=branch_id(branch),
+                    kind="raw",
+                    fields=branch_fields(branch),
+                )
+            )
+    funnel = declaration.has_derivation or len(identity) > 1
+    return PreviewIdentity(
+        mode="funnel" if funnel else "natural",
+        branches=branches,
+        derive=[derived(b, 0) for b in declaration.derive_attributes()],
+        digest_field=declaration.digest_field if funnel else None,
+        retire=declaration.retire,
+        derive_at={r: list(p) for r, p in declaration.derive_at.items()},
     )
 
 

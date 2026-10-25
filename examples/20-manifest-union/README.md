@@ -141,6 +141,24 @@ routing:
            work_orders  left   Asset    reference  maintenance
 ```
 
+`--plot-dir figs` draws the equivalence as four small figures, with their
+text in `figs/summary.md`:
+
+```bash
+uv run graflo merge manifest_maintenance.yaml manifest_sensors.yaml \
+    --op merge.yaml --plot-dir figs --dry-run
+```
+
+How a machine is keyed: a record tries `#1 match_key`, which each source
+derives from its serial number, then `#2 local_key`, its own key behind a tag.
+The first it completes is digested into `id`.
+
+![Raw fields of assets and devices feeding the two branches, which feed Machine.id](figs/vertex-Machine.identity.svg)
+
+Each side's own key stays on `Machine` as a lookup, named after its manifest:
+
+![Asset.asset_id and Device.device_id kept as maintenance__asset_id and sensors__device_id](figs/vertex-Machine.lookups.svg)
+
 ## What goes wrong
 
 **The combined type has no name.** [`merge_no_name.yaml`](merge_no_name.yaml) holds step 2 alone. Run step 4 with `--op merge_no_name.yaml`:

@@ -7,8 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.23.0]
 
+### Added
+
+- **Equivalence views** (`graflo.plot.plot_equivalences`, `plot_equivalence`,
+  `build_equivalence_view`; `graflo merge --plot-dir`): each equivalence as four small figures --
+  members, attributes, identity, lookups -- with no text on them; `summary.md` and `index.json`
+  carry the declaration, the identity in words, the lookups and the findings. `--plot-format`,
+  `--plot-dpi`, `--unit`, `--view`.
+- **`graflo merge --declared`** and `declared_preview(op)`: the same figures from the op alone,
+  without the manifests.
+- **`MergePreview.focus(target)` / `focus_targets()`**: the part of a preview one cluster, merged
+  attribute, `rest`, or position in `vertex_equivalences` is about.
+- **`PreviewCluster`** gains `declarations`, `declared_left`, `declared_right` and `allow`;
+  `PreviewBranch` gains `sep`.
+
+### Changed
+
+- **`--plot`**: every edge kind has a style, an overridden edge is drawn muted, and a class-level
+  edge attaches at the type's header.
+- **Merge preview**: a declared property equivalence that keeps the name is a
+  `property_equivalence` edge, not a `fusion`.
+
 ### Fixed
 
+- **`--plot`**: a row past `--max-rows` that an edge reaches is drawn, so the edge has a port.
 - **A relation between two records is never a self-loop** (`graflo.link`): `gather_candidates` no
   longer offers a record the entity a related record of the same source resolved to, and a relation
   whose two records resolve to one entity is not written but listed in `Resolution.dropped`

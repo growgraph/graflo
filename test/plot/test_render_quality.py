@@ -47,6 +47,7 @@ from graflo.architecture.evolution.preview import (
 )
 from graflo.cli.io import load_manifest, load_mapping
 from graflo.plot import ManifestPlotter
+from graflo.plot.equivalence import plot_equivalence
 from graflo.plot.merge import plot_merge_preview
 from graflo.plot.merge3 import plot_history, plot_merge3_preview
 from graflo.plot.render import (
@@ -100,6 +101,14 @@ def _dot_sources(out: Path) -> dict[str, str]:
         MergeManifestsOp.model_validate(load_mapping(example / "merge.yaml")),
     )
     plot_merge_preview(preview, out / "merge_example.dot")
+    union = EXAMPLES / "20-manifest-union"
+    lineage = preview_merge(
+        load_manifest(union / "manifest_maintenance.yaml"),
+        load_manifest(union / "manifest_sensors.yaml"),
+        MergeManifestsOp.model_validate(load_mapping(union / "merge.yaml")),
+    )
+    # Writes merge_view.members.dot, .attributes, .identity and .lookups.
+    plot_equivalence(lineage, 0, out, output_format="dot", stem="merge_view")
     findings = conflict._preview(
         findings=[
             MergeFinding(

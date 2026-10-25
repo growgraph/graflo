@@ -209,13 +209,30 @@ naming (vertex):
 ```
 
 ```text
-resource  own key  vertex type  matched on              vertex id
-register  A1       Equipment    hp-0042                 303d50890862
-register  A2       Equipment    maintenance:A2          d154517d907c
-register  L1       Equipment    left:ProductionLine:L1  cb413d9d4729
-devices   D7       Equipment    hp-0042                 303d50890862
-devices   D9       Equipment    lt-0007                 27ded24b71df
+resource  own key  vertex type  matched on                     vertex id
+register  A1       Equipment    hp-0042                        303d50890862
+register  A2       Equipment    maintenance:A2                 d154517d907c
+register  L1       Equipment    maintenance:ProductionLine:L1  4619849c5d54
+devices   D7       Equipment    hp-0042                        303d50890862
+devices   D9       Equipment    lt-0007                        27ded24b71df
 ```
+
+`--plot-dir figs` draws the group:
+
+```bash
+uv run graflo merge manifest_maintenance.yaml manifest_sensors.yaml \
+    --op merge_vocabulary.yaml --plot-dir figs --dry-run
+```
+
+`ProductionLine` joins `Equipment` by the vocabulary, the dashed edge; the
+equivalence names only `Machine` and `Device`:
+
+![Machine and Device into Equipment, ProductionLine joined by a dashed edge](figs/vertex-Equipment.members.svg)
+
+The register's sources are keyed by type. Machines derive `match_key`;
+production lines get only the local key merge adds for them, marked `auto`:
+
+![Raw fields of register and devices feeding the two branches, labelled with the type each is for](figs/vertex-Equipment.identity.svg)
 
 See [a vocabulary that merges several types](../../docs/concepts/schema/merging_manifests.md#a-vocabulary-that-merges-several-types).
 

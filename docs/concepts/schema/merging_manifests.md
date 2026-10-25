@@ -99,6 +99,8 @@ first:
 | `--dry-run` | Run the union, print every finding, the [naming table](#the-naming-table) and the [routing table](#the-routing-table), and write nothing. |
 | `--suggest FILE` | Write an op that settles every problem a rename or an `into` can settle, and exit. See [Suggesting the declarations](#suggesting-the-declarations). |
 | `--plot FILE`, `--preview-json FILE` | Draw the declarations and every conflict, or write them as JSON. Both are written even when the union refuses. See [Previewing every conflict](#previewing-every-conflict). |
+| `--plot-dir DIR` | Draw each equivalence as four small figures, with `summary.md` and `index.json`. With `--plot-format svg\|png\|pdf\|dot`, `--plot-dpi N`, `--unit NAME` and `--view members\|attributes\|identity\|lookups`. See [How do I see one equivalence in detail?](#how-do-i-see-one-equivalence-in-detail). |
+| `--declared` | Draw the `--op` declarations alone, without the two manifests. |
 | `--canonical-map SIDE=PATH` | Add a vocabulary for `left`, `right` or `both`, on top of the maps in the op. Repeatable. |
 | `--name-conflict error\|union_right\|prefix_right` | Override the op's policy for a name both sides carry. See [Names both sides carry](#names-both-sides-carry). |
 | `--bump-version minor\|none` | Bump the merged schema version (default `minor`). |
@@ -945,6 +947,70 @@ table:
 graflo merge manifest_maintenance.yaml manifest_sensors.yaml \
     --op merge_no_identity.yaml --plot conflicts.svg --dry-run
 ```
+
+### How do I see one equivalence in detail?
+
+`--plot-dir` draws each equivalence as four small figures, each about one
+thing, and writes what they would say in words to `summary.md` and
+`index.json`:
+
+```bash
+graflo merge manifest_maintenance.yaml manifest_sensors.yaml \
+    --op merge.yaml --plot-dir figures --plot-format png --dry-run
+```
+
+| View | File | Shows |
+|---|---|---|
+| members | `vertex-Machine.members.png` | The types that become the merged type. A dashed edge marks a member a vocabulary joins rather than one the equivalence names. |
+| attributes | `vertex-Machine.attributes.png` | Where each member property lands on the merged type: a dark edge for a declared equivalence, blue for a vocabulary rename, thin grey for a name kept as it is, dotted for a mapping a later declaration overrode. |
+| identity | `vertex-Machine.identity.png` | The raw fields each identity branch reads, labelled with the transform or the tag, the branches in the order a record tries them, and the key they feed. |
+| lookups | `vertex-Machine.lookups.png` | Each member's own key, kept on the merged type as a lookup; the edge names the key space. |
+
+![The identity of example 20: raw fields of two resources feeding two branches, which feed the digest](../../examples/manifest-union/figs/vertex-Machine.identity.svg)
+
+A figure carries no title, legend or note, so it can go into any document.
+Properties and raw fields sit in a box named after their type or resource,
+filled by side. A view with nothing to show is not written: no identity view
+when none is declared, no lookups when no key is demoted. A relation
+equivalence has only a members view.
+
+`summary.md` has one section per equivalence: its position in the op
+(`vertex_equivalences[0]`), the members it declares and those a vocabulary
+joins, `allow`, the identity in words, each lookup, the findings, and each
+figure with a caption. `index.json` holds the same as data, plus the outcome
+and the findings no equivalence holds.
+
+`--unit` draws only some equivalences: a merged name (`--unit Machine`), a
+position in `vertex_equivalences` (`--unit 0`) or a pattern on the cluster id.
+`--view identity` draws only that view; both options repeat. The figures are
+written when the union refuses.
+
+`--declared` draws the op alone, without the manifests:
+
+```bash
+graflo merge --declared --op merge.yaml --plot-dir figures
+```
+
+Only what the op says is shown: no properties beyond the ones it names, no
+resource sides, no lookups, no findings.
+
+From Python:
+
+```python
+from graflo.architecture.evolution.preview import preview_merge
+from graflo.architecture.evolution.preview_declared import declared_preview
+from graflo.plot import build_equivalence_view, plot_equivalence, plot_equivalences
+
+preview = preview_merge(left, right, op)
+plot_equivalence(preview, 0, "figures", views=("identity",))  # vertex_equivalences[0]
+plot_equivalences(
+    preview, "figures", output_format="png"
+)  # all, with index.json and summary.md
+plot_equivalences(declared_preview(op), "declared")  # the op alone
+graph = build_equivalence_view(preview, 0, "attributes")  # networkx, no Graphviz
+```
+
+`preview.focus(target)` returns the part of a preview one equivalence is about.
 
 ## Recording a union
 

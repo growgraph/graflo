@@ -541,8 +541,10 @@ class MergePreview(ConfigBaseModel):
         """Every edge from node *source* to node *target*."""
         return [e for e in self.edges if e.source == source and e.target == target]
 
-    def focus(self, target: str) -> MergePreview:
+    def focus(self, target: str | int) -> MergePreview:
         """The part of this preview one cluster, merged attribute or ``rest`` is about.
+
+        An integer names the cluster ``op.vertex_equivalences[target]`` folded into.
 
         See :func:`~graflo.architecture.evolution.preview_focus.focus`.
         """
@@ -636,6 +638,26 @@ class MergePreview(ConfigBaseModel):
         if not folded:
             findings.append(refusal)
         return self.model_copy(update={"outcome": outcome, "findings": findings})
+
+
+def _declares_same_name(cluster: Cluster, side: Side, member: str, prop: str) -> bool:
+    """Whether the group's declaration maps *member*'s *prop* onto the same name."""
+    declaration = cluster.declaration
+    if not isinstance(declaration, VertexEquivalence):
+        return False
+    for equivalence in declaration.properties:
+        if equivalence.into != prop:
+            continue
+        written = equivalence.left if side == "left" else equivalence.right
+        if isinstance(written, str):
+            if written == prop:
+                return True
+        elif written is not None and any(
+            cluster.resolved(side, key) == member and field == prop
+            for key, field in written.items()
+        ):
+            return True
+    return False
 
 
 def _is_same_problem(structural: MergeFinding, refusal: MergeFinding) -> bool:
@@ -1246,8 +1268,17 @@ class _Builder:
                                 declared_by=space,
                             )
                         elif not writes and composed == prop.name:
+                            # A declared equivalence that keeps the name writes
+                            # no rename, but it is still a declaration.
+                            declared = _declares_same_name(
+                                cluster, side, member, prop.name
+                            )
                             self.add_edge(
-                                source, target, "fusion", declared_by=cluster.into
+                                source,
+                                target,
+                                "property_equivalence" if declared else "fusion",
+                                label=prop.name if declared else "",
+                                declared_by=cluster.into,
                             )
         for side in _SIDES:
             members = {m for c in self.index.vertices for m in c.members(side)}

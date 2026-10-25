@@ -69,12 +69,13 @@ def focus_targets(
     return out
 
 
-def focus(preview: MergePreview, target: str) -> MergePreview:
+def focus(preview: MergePreview, target: str | int) -> MergePreview:
     """The part of *preview* that *target* is about.
 
     Args:
         preview: The whole preview.
-        target: A cluster id, a merged attribute node id, or ``rest``.
+        target: A cluster id, a merged attribute node id, ``rest``, or a
+            position in the op's ``vertex_equivalences``.
 
     Returns:
         A preview holding only the target's nodes, the edges between them,
@@ -99,7 +100,7 @@ def focus(preview: MergePreview, target: str) -> MergePreview:
     )
 
 
-def finding_positions(preview: MergePreview, target: str) -> list[int]:
+def finding_positions(preview: MergePreview, target: str | int) -> list[int]:
     """Positions in ``preview.findings`` of the findings *target* holds."""
     selection = _select(preview, target)
     if selection is None:
@@ -110,7 +111,30 @@ def finding_positions(preview: MergePreview, target: str) -> list[int]:
 # ── selection ───────────────────────────────────────────────────────────────
 
 
-def _select(preview: MergePreview, target: str) -> _Selection | None:
+def resolve_target(preview: MergePreview, target: str | int) -> str | None:
+    """The target id *target* names, or ``None``.
+
+    An integer, or a string of digits, is a position in the op's
+    ``vertex_equivalences``: it names the cluster that declaration folded into.
+    """
+    if isinstance(target, int) or target.isdigit():
+        position = int(target)
+        return next(
+            (
+                c.id
+                for c in preview.clusters
+                if c.kind == "vertex" and position in c.declarations
+            ),
+            None,
+        )
+    return target
+
+
+def _select(preview: MergePreview, target: str | int) -> _Selection | None:
+    resolved = resolve_target(preview, target)
+    if resolved is None:
+        return None
+    target = resolved
     if target == REST:
         return _rest(preview)
     cluster = next((c for c in preview.clusters if c.id == target), None)
@@ -276,4 +300,11 @@ def _touches(finding: MergeFinding, nodes: set[str], edges: set[str]) -> bool:
     return bool(set(finding.nodes) & nodes or set(finding.edges) & edges)
 
 
-__all__ = ["REST", "AttributeScope", "finding_positions", "focus", "focus_targets"]
+__all__ = [
+    "REST",
+    "AttributeScope",
+    "finding_positions",
+    "focus",
+    "focus_targets",
+    "resolve_target",
+]

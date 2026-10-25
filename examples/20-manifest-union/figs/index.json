@@ -1,0 +1,90 @@
+{
+    "version": 2,
+    "left": "maintenance",
+    "right": "sensors",
+    "outcome": {
+        "status": "merged",
+        "error_type": null,
+        "message": null,
+        "check": null,
+        "kinds": [],
+        "completion": null,
+        "vertices": 2,
+        "edges": 1,
+        "version": "1.1.0"
+    },
+    "format": "svg",
+    "summary": "summary.md",
+    "equivalences": [
+        {
+            "target": "vertex-cluster-0",
+            "kind": "vertex",
+            "into": "Machine",
+            "declared_into": null,
+            "declarations": [
+                "vertex_equivalences[0]"
+            ],
+            "synthesized": false,
+            "members": {
+                "left": [
+                    "Asset"
+                ],
+                "right": [
+                    "Device"
+                ]
+            },
+            "declared": {
+                "left": [
+                    "Asset"
+                ],
+                "right": [
+                    "Device"
+                ]
+            },
+            "joined_by_vocabulary": [],
+            "allow": [],
+            "identity": "Keyed by a funnel: a record tries 2 branches in order and the first it completes is digested into `id`. Each member's own key becomes a lookup.",
+            "lookups": [
+                {
+                    "member": "left:Asset",
+                    "field": "asset_id",
+                    "lookup": "maintenance__asset_id",
+                    "key_space": "maintenance",
+                    "tags": [
+                        "maintenance"
+                    ]
+                },
+                {
+                    "member": "right:Device",
+                    "field": "device_id",
+                    "lookup": "sensors__device_id",
+                    "key_space": "sensors",
+                    "tags": [
+                        "sensors"
+                    ]
+                }
+            ],
+            "views": {
+                "members": "vertex-Machine.members.svg",
+                "attributes": "vertex-Machine.attributes.svg",
+                "identity": "vertex-Machine.identity.svg",
+                "lookups": "vertex-Machine.lookups.svg"
+            },
+            "findings": [
+                {
+                    "index": 0,
+                    "severity": "note",
+                    "kind": "lookup_demotion",
+                    "message": "records of left:Asset key on the first of ['match_key', 'local_key'] they complete, so two with the same ['maintenance__asset_id'] that complete different ones become two 'Machine' vertices; ['maintenance__asset_id'] is now the lookup-only secondary 'maintenance' and no longer deduplicates them"
+                },
+                {
+                    "index": 1,
+                    "severity": "note",
+                    "kind": "lookup_demotion",
+                    "message": "records of right:Device key on the first of ['match_key', 'local_key'] they complete, so two with the same ['sensors__device_id'] that complete different ones become two 'Machine' vertices; ['sensors__device_id'] is now the lookup-only secondary 'sensors' and no longer deduplicates them"
+                }
+            ]
+        }
+    ],
+    "other_findings": []
+}

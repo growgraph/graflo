@@ -273,6 +273,14 @@ without a finding kind to report it under. A naming finding carries its kind;
 any other refusal is classified by the `check` phrase every `Refusal` in the
 union path carries, mapped to a finding kind in `preview.py`.
 
+**A figure is a projection of one preview.** `MergePreview.focus(target)`
+(`preview_focus.py`) keeps the nodes of one cluster, one merged attribute, or
+the findings no other target holds, and every edge between them. It selects by
+node id, because `PreviewEdge.declared_by` is a cluster id for some edge kinds
+and a merged name, a side or a key space for others. Every focus is closed, and
+every finding lands in some target. `declared_preview` (`preview_declared.py`)
+builds a preview from the op alone, with the same ids, so the plots take either.
+
 ## How a derived identity is lowered
 
 `identity_to_ops` (`graflo/architecture/evolution/alignment.py`) turns an

@@ -344,6 +344,60 @@ def test_trimming_never_drops_an_attribute_the_reader_came_for():
     assert "f37" in label, "the flagged row"
 
 
+def test_trimming_keeps_a_row_an_edge_points_at():
+    """A row past the budget that an edge reaches is drawn, so the edge has a port."""
+    preview = _wide(40)
+    preview.nodes += [
+        PreviewNode(id="merged:Wide", kind="merged", name="Wide"),
+        PreviewNode(
+            id="merged:Wide.f37", kind="attribute", name="f37", owner="merged:Wide"
+        ),
+    ]
+    preview.edges.append(
+        PreviewEdge(
+            id="property_equivalence:left:Wide.f37->merged:Wide.f37",
+            source="left:Wide.f37",
+            target="merged:Wide.f37",
+            kind="property_equivalence",
+        )
+    )
+    graph = build_preview_graph(preview, max_rows=3, legend=False)
+
+    assert "<p_f37>" in graph.nodes["left_Wide"]["label"]
+
+
+def test_an_overridden_edge_is_drawn_muted():
+    preview = _wide(2)
+    preview.nodes += [
+        PreviewNode(id="merged:Wide", kind="merged", name="Wide"),
+        PreviewNode(
+            id="merged:Wide.g", kind="attribute", name="g", owner="merged:Wide"
+        ),
+    ]
+    preview.edges.append(
+        PreviewEdge(
+            id="property_map:left:Wide.f1->merged:Wide.g",
+            source="left:Wide.f1",
+            target="merged:Wide.g",
+            kind="property_map",
+            effective=False,
+        )
+    )
+    graph = build_preview_graph(preview, legend=False)
+
+    ((_, _, data),) = graph.edges(data=True)
+    assert data["style"] == "dotted"
+    assert data["color"] == merge_plot.OVERRIDDEN_STYLE["color"]
+
+
+def test_a_class_level_edge_lands_on_the_header():
+    graph = build_preview_graph(_preview(), legend=False)
+
+    member = [d for _, _, d in graph.edges(data=True) if d["kind"] == "member"]
+    assert member
+    assert all("head" in (d.get("tailport"), d.get("headport")) for d in member)
+
+
 def test_no_budget_draws_everything():
     graph = build_preview_graph(_wide(40), max_rows=0, legend=False)
 

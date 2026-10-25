@@ -1,0 +1,112 @@
+{
+    "version": 2,
+    "left": "maintenance",
+    "right": "sensors",
+    "outcome": {
+        "status": "merged",
+        "error_type": null,
+        "message": null,
+        "check": null,
+        "kinds": [],
+        "completion": null,
+        "vertices": 1,
+        "edges": 0,
+        "version": "1.1.0"
+    },
+    "format": "svg",
+    "summary": "summary.md",
+    "equivalences": [
+        {
+            "target": "vertex-cluster-0",
+            "kind": "vertex",
+            "into": "Equipment",
+            "declared_into": null,
+            "declarations": [
+                "vertex_equivalences[0]"
+            ],
+            "synthesized": false,
+            "members": {
+                "left": [
+                    "Machine",
+                    "ProductionLine"
+                ],
+                "right": [
+                    "Device"
+                ]
+            },
+            "declared": {
+                "left": [
+                    "Machine"
+                ],
+                "right": [
+                    "Device"
+                ]
+            },
+            "joined_by_vocabulary": [
+                "ProductionLine"
+            ],
+            "allow": [],
+            "identity": "Keyed by a funnel: a record tries 2 branches in order and the first it completes is digested into `id`. Each member's own key becomes a lookup.",
+            "lookups": [
+                {
+                    "member": "left:Machine",
+                    "field": "asset_id",
+                    "lookup": "maintenance__asset_id",
+                    "key_space": "maintenance",
+                    "tags": [
+                        "maintenance"
+                    ]
+                },
+                {
+                    "member": "left:ProductionLine",
+                    "field": "asset_id",
+                    "lookup": "maintenance__asset_id",
+                    "key_space": "maintenance",
+                    "tags": []
+                },
+                {
+                    "member": "right:Device",
+                    "field": "device_id",
+                    "lookup": "sensors__device_id",
+                    "key_space": "sensors",
+                    "tags": [
+                        "sensors"
+                    ]
+                }
+            ],
+            "views": {
+                "members": "vertex-Equipment.members.svg",
+                "attributes": "vertex-Equipment.attributes.svg",
+                "identity": "vertex-Equipment.identity.svg",
+                "lookups": "vertex-Equipment.lookups.svg"
+            },
+            "findings": [
+                {
+                    "index": 0,
+                    "severity": "note",
+                    "kind": "auto_local_key",
+                    "message": "left:ProductionLine joins 'Equipment' without a key source for resource 'register'; its records key on their own 'asset_id' as 'maintenance:ProductionLine:<value>' and never fuse with another member's"
+                },
+                {
+                    "index": 1,
+                    "severity": "note",
+                    "kind": "lookup_demotion",
+                    "message": "records of left:Machine key on the first of ['match_key', 'local_key'] they complete, so two with the same ['maintenance__asset_id'] that complete different ones become two 'Equipment' vertices; ['maintenance__asset_id'] is now the lookup-only secondary 'maintenance' and no longer deduplicates them"
+                },
+                {
+                    "index": 2,
+                    "severity": "note",
+                    "kind": "lookup_demotion",
+                    "message": "records of right:Device key on the first of ['match_key', 'local_key'] they complete, so two with the same ['sensors__device_id'] that complete different ones become two 'Equipment' vertices; ['sensors__device_id'] is now the lookup-only secondary 'sensors' and no longer deduplicates them"
+                },
+                {
+                    "index": 3,
+                    "severity": "note",
+                    "kind": "shared_key_space",
+                    "message": "left:['Machine', 'ProductionLine'] share the key 'maintenance' on 'Equipment': an id of one finds a node of another"
+                }
+            ]
+        }
+    ],
+    "other_findings": []
+}
