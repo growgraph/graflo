@@ -539,11 +539,7 @@ def _opens(*zones: int) -> FilterExpression:
 
 
 @pytest.fixture
-def zoned(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
-    from graflo.db.graflo_backend.connection import GraFloBackendConnection
-
-    # The file backend evaluates a guard on vertex reads in memory.
-    monkeypatch.setattr(GraFloBackendConnection, "supports_read_guard", True)
+def zoned(tmp_path: Path) -> Iterator[Any]:
     conf = GraFloBackendConfig(output_dir=tmp_path)
     for zone, customers in ((1, [CUSTOMERS[1]]), (2, [CUSTOMERS[5]])):
         asyncio.run(
@@ -585,7 +581,26 @@ def test_the_guard_reaches_the_relation_path(zoned, monkeypatch):
     assert seen[0]["edge_types"] == ["RAISED"]
 
 
-def test_a_guard_is_refused_where_the_backend_cannot_apply_it(db):
+def test_a_guard_is_refused_where_the_backend_cannot_apply_it(db, monkeypatch):
+    monkeypatch.setattr(type(db), "supports_read_guard", False)
     graph = _g("m1", [_m("c", "Customer", "Ann Lee")])
     with pytest.raises(NotImplementedError, match="read guard"):
         _gather(db, [graph], guard=_opens(1))
+
+
+# -- order -------------------------------------------------------------------
+
+
+def test_the_candidate_order_does_not_follow_the_database_row_order(db, monkeypatch):
+    graph = _g("m1", [_m("c", "Customer", "Jo Park")])
+    (forward,) = _gather(db, [graph])
+    fetch = type(db).fetch_docs
+
+    def reversed_rows(self: Any, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        return list(reversed(fetch(self, *args, **kwargs)))
+
+    monkeypatch.setattr(type(db), "fetch_docs", reversed_rows)
+    (backward,) = _gather(db, [graph])
+
+    assert len(forward.candidates) == 2
+    assert backward.model_dump() == forward.model_dump()

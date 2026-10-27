@@ -32,6 +32,7 @@ from graflo.onto import DBType
 if TYPE_CHECKING:
     from graflo.architecture.schema.edge import Edge
     from graflo.db.conn import Connection
+    from graflo.filter.onto import FilterExpression
 
 logger = logging.getLogger(__name__)
 
@@ -144,6 +145,7 @@ def bfs_neighbors(
     filters: Any | None = None,
     limit: int | None = None,
     schema: Schema | None = None,
+    guard: FilterExpression | None = None,
 ) -> GraphContainer:
     """Breadth-first neighbourhood around one anchor, as a ``GraphContainer``.
 
@@ -162,6 +164,11 @@ def bfs_neighbors(
         limit: Maximum accumulated edges. Defaults to ``DEFAULT_EDGE_LIMIT``.
         schema: Required — logical names must be resolved to storage names, or
             the "universal layer" leaks backend naming to the caller.
+        guard: A trusted predicate, in stored names, that every vertex and edge
+            on a path must satisfy, the anchor included, as the Cypher backends
+            apply it to ``nodes(path)`` and ``relationships(path)``. Evaluated
+            in process, so a hidden element is never stepped through: an edge
+            is reported only when it and both its ends pass.
 
     Returns:
         GraphContainer: reached vertices and edges, deduplicated.
@@ -193,6 +200,10 @@ def bfs_neighbors(
     container = GraphContainer()
     anchor_id = _resolve_anchor_id(conn, schema, db_aware, anchor_type, anchor_key)
     if anchor_id is None:
+        return container
+    if guard is not None and not _admitted_docs(
+        guard, _hydrate_far_endpoints(conn, db_aware, schema, anchor_type, [anchor_id])
+    ):
         return container
 
     visited: set[tuple[str, str]] = {(anchor_type, anchor_id)}
@@ -253,12 +264,14 @@ def bfs_neighbors(
                     if read_as is None
                     else (edge.target, edge.source, read_as)
                 )
-                bucket = container.edges.setdefault(edge_id, [])
+                pending: list[tuple[dict[str, Any], str | None]] = []
                 far_ids: list[str] = []
                 for row in rows:
                     properties, source_key, target_key = normalize_edge_row(
                         row, conn.flavor
                     )
+                    if guard is not None and not _admits(guard, properties):
+                        continue
                     marker = (edge_id, _row_marker(properties, source_key, target_key))
                     if marker in seen_edges:
                         continue
@@ -270,21 +283,35 @@ def bfs_neighbors(
                         if read_as is None
                         else (target_key, source_key)
                     )
-                    bucket.append({**properties, "source": near, "target": far_end})
-                    edge_count += 1
                     far = target_key if source_key == current_id else source_key
-                    if far is not None and far != current_id or far is not None:
+                    pending.append(
+                        ({**properties, "source": near, "target": far_end}, far)
+                    )
+                    if far is not None:
                         far_ids.append(far)
 
-                for doc in _hydrate_far_endpoints(
-                    conn, db_aware, schema, far_type, far_ids
-                ):
+                docs = _hydrate_far_endpoints(conn, db_aware, schema, far_type, far_ids)
+                if guard is not None:
+                    docs = _admitted_docs(guard, docs)
+                # Without a guard every edge row is reported, as before; with
+                # one, only an edge whose far end the guard lets through.
+                shown: set[str] | None = None if guard is None else set()
+                for doc in docs:
                     identity = _vertex_identity_value(conn, schema, far_type, doc)
-                    if identity is None or (far_type, identity) in visited:
+                    if identity is None:
+                        continue
+                    if shown is not None:
+                        shown.add(identity)
+                    if (far_type, identity) in visited:
                         continue
                     visited.add((far_type, identity))
                     container.vertices.setdefault(far_type, []).append(doc)
                     next_frontier.append((far_type, identity))
+                for row, far in pending:
+                    if shown is not None and far not in shown:
+                        continue
+                    container.edges.setdefault(edge_id, []).append(row)
+                    edge_count += 1
         frontier = next_frontier
 
     if edge_count >= max_edges:
@@ -293,6 +320,20 @@ def bfs_neighbors(
         )
     container.pick_unique()
     return container
+
+
+def _admits(guard: FilterExpression, doc: dict[str, Any]) -> bool:
+    """Whether *guard* lets *doc* through; a document it cannot read fails it."""
+    try:
+        return bool(guard.matches(doc))
+    except Exception:
+        return False
+
+
+def _admitted_docs(
+    guard: FilterExpression, docs: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    return [doc for doc in docs if _admits(guard, doc)]
 
 
 def _anchor_side(

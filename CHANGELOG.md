@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [
+## [1.24.1]
 
 ### Changed
 
@@ -18,6 +18,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **PostgreSQL** builds declared edge indexes.
 - **Neo4j**: a declared uniqueness constraint the server refuses is an error; only the identity
   falls back to a plain index.
+- **File backend**: applies a read guard (`supports_read_guard`) to `fetch_docs`, `resolve_vertices`,
+  `graph_neighbors` and `traverse`, and unions `merge: union` fields (`supports_union_merge`).
+- **File backend**: reads fold records by identity, so an upsert written twice reads as one vertex
+  or edge, as on a database. Every read scans the whole collection it reads.
+- **`lookup_candidates`** and **`gather_candidates`**: candidates that tie on lane are ordered by
+  type and key, never by the database's row order.
+
+### Fixed
+
+- **File backend**: a connection sees writes published after its first read, its own or another
+  connection's; `fetch_edges` applies `filters` before `limit`.
+- **Neo4j**: reads return Neo4j dates, times and datetimes as Python `date`, `time` and `datetime`,
+  not the driver's `neo4j.time` types.
+- **`graph_neighbors`** on Neo4j, Memgraph, FalkorDB and ArangoDB returns the walked edges as well
+  as the reached vertices, in the same rows as other backends, and `limit` caps the edges as
+  documented. On ArangoDB, `limit` counts distinct reached vertices.
 
 ## [1.24.0]
 

@@ -135,16 +135,30 @@ class _Found(NamedTuple):
     hit: LaneHit
 
 
-def _rank(hit: LaneHit) -> tuple[int, int]:
-    return _LANE_RANK[hit.lane], -len(hit.matched)
+def _identity_key(key: dict[str, Any]) -> tuple[tuple[str, str], ...]:
+    return tuple(sorted((k, str(v)) for k, v in key.items()))
+
+
+def _rank(item: _Found) -> tuple[int, int, str, str, tuple[tuple[str, str], ...]]:
+    return (
+        _LANE_RANK[item.hit.lane],
+        -len(item.hit.matched),
+        item.hit.matched,
+        item.vertex_type,
+        _identity_key(item.key),
+    )
 
 
 def _merge(found: list[_Found]) -> list[Candidate]:
-    """One candidate per vertex with its best hit in each lane, best vertex first."""
-    found = sorted(found, key=lambda f: _rank(f.hit))
+    """One candidate per vertex with its best hit in each lane, best vertex first.
+
+    Ties break on matched text, so the candidates of one mention stay together,
+    then on type and key; the order never follows the database's row order.
+    """
+    found = sorted(found, key=_rank)
     merged: dict[tuple[str, tuple[tuple[str, str], ...]], Candidate] = {}
     for item in found:
-        identity_key = tuple(sorted((k, str(v)) for k, v in item.key.items()))
+        identity_key = _identity_key(item.key)
         candidate = merged.get((item.vertex_type, identity_key))
         if candidate is None:
             merged[(item.vertex_type, identity_key)] = Candidate(

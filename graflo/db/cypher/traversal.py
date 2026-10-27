@@ -6,8 +6,10 @@ variable-length pattern, so one builder serves all three — the same reason
 
 A native override is not only a performance choice here. ``fetch_edges`` on this
 family returns ``RETURN r``, and a driver renders a bare relationship without its
-endpoints, so the generic breadth-first default has nothing to walk to. Returning
-the reached nodes directly is the only way the question is answerable at all.
+endpoints, so the generic breadth-first default has nothing to walk to. The query
+returns the reached nodes and the relationships of the paths that reached them,
+and both are shaped as the default would return them: vertices by type, edge rows
+by edge id with their ends under ``source`` and ``target``.
 
 Anchor values always travel as query parameters (``$anchor_id``, then
 ``$anchor_id_1`` … for a composite key), never in the query text: they come from
@@ -24,7 +26,7 @@ import logging
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
-from graflo.architecture.graph_types import EdgeDirection, GraphContainer
+from graflo.architecture.graph_types import EdgeDirection, EdgeId, GraphContainer
 from graflo.db.cypher.direction import cypher_rel_pattern
 from graflo.db.cypher.escape import cypher_name
 from graflo.filter.onto import BoundParams, FilterExpression, parse_filter_expression
@@ -32,12 +34,17 @@ from graflo.onto import ExpressionFlavor
 
 if TYPE_CHECKING:
     from graflo.architecture.schema import Schema
+    from graflo.architecture.schema.edge import Edge
     from graflo.db.conn import Connection
 
 logger = logging.getLogger(__name__)
 
 #: Name of the query parameter carrying the anchor's key value.
 ANCHOR_PARAM = "anchor_id"
+
+#: The columns :func:`cypher_neighbors_query` returns, in order, for a driver
+#: that hands rows back as positional lists.
+NEIGHBOR_COLUMNS = ("far", "labels", "edges")
 
 #: One rendered pattern: relationship type(s), far storage label, far logical
 #: type, and the direction followed. A far type of None means "read it from the
@@ -67,11 +74,13 @@ def cypher_neighbors_query(
     ``$anchor_id`` and each further one as ``$anchor_id_<n>``
     (:func:`anchor_param`) when running the query.
 
-    Returns the reached nodes, their distance and their labels, deduplicated.
-    ``DISTINCT`` is load-bearing: a graph with a cycle reaches the same node by
-    several paths, and without it the row count grows with path multiplicity
-    rather than with neighbourhood size. The anchor itself is excluded, since a
-    walk in both directions can come back to it.
+    Returns one row per reached node: its properties (``far``), its labels, and
+    the relationships of every path that reached it (``edges``: ``type``,
+    ``properties``, and each end's properties and labels). Grouping by the node
+    is load-bearing: a graph with a cycle reaches the same node by several
+    paths, and without it the row count, and what ``LIMIT`` counts, grows with
+    path multiplicity rather than with neighbourhood size. The anchor itself is
+    excluded, since a walk in both directions can come back to it.
 
     Args:
         anchor_label: Storage label of the anchor node.
@@ -99,12 +108,18 @@ def cypher_neighbors_query(
         for i, field in enumerate(fields)
     )
     anchor = cypher_name(anchor_label)
+    far_column, labels_column, edges_column = NEIGHBOR_COLUMNS
     return (
         f"MATCH path = (anchor:{anchor} {{{key}}})"
         f"{pattern}{far}\n"
         f"WHERE {where}\n"
-        f"RETURN DISTINCT properties(far) AS far, length(path) AS distance, "
-        f"labels(far) AS labels"
+        "UNWIND relationships(path) AS _r\n"
+        "WITH far, collect(DISTINCT _r) AS _rs\n"
+        f"RETURN properties(far) AS {far_column}, labels(far) AS {labels_column}, "
+        "[_e IN _rs | {type: type(_e), properties: properties(_e), "
+        "start: properties(startNode(_e)), start_labels: labels(startNode(_e)), "
+        "end: properties(endNode(_e)), end_labels: labels(endNode(_e))}] "
+        f"AS {edges_column}"
         f"{limit_clause}"
     )
 
@@ -230,6 +245,7 @@ def cypher_graph_neighbors(
     from graflo.architecture.schema.edge_direction import reversed_direction
     from graflo.db.traversal import (
         _edge_direction_for,
+        _row_marker,
         _vertex_identity_value,
         edge_query_name,
         select_edges,
@@ -255,6 +271,11 @@ def cypher_graph_neighbors(
     # Direction is decided per edge, as in the generic default: an undirected
     # edge is followed both ways whatever the caller asked for, and a relation
     # read through its declared inverse is followed from the other end.
+    selected = [
+        (edge, read_as, storage)
+        for edge, read_as in select_edges(schema, edge_types)
+        if (storage := edge_query_name(db_aware, edge, conn.flavor)) is not None
+    ]
     edges = [
         (
             edge,
@@ -264,13 +285,24 @@ def cypher_graph_neighbors(
             ),
             storage,
         )
-        for edge, read_as in select_edges(schema, edge_types)
-        if (storage := edge_query_name(db_aware, edge, conn.flavor)) is not None
+        for edge, read_as, storage in selected
     ]
+    # A returned relationship is matched back to the selected edge by its stored
+    # type and its two ends; one stored edge read under two names reports twice.
+    by_relationship: dict[tuple[str, str, str], list[tuple[Edge, str | None]]] = {}
+    for edge, read_as, storage in selected:
+        by_relationship.setdefault((storage, edge.source, edge.target), []).append(
+            (edge, read_as)
+        )
     by_label = {
         db_aware.vertex_config.vertex_dbname(name): name
         for name in vertex_config.vertex_set
     }
+
+    def type_of(labels: Sequence[str] | None) -> str | None:
+        return next(
+            (by_label[label] for label in labels or () if label in by_label), None
+        )
 
     def reached(
         anchor_type: str,
@@ -306,20 +338,47 @@ def cypher_graph_neighbors(
                 )
                 continue
             for row in rows:
+                admit_edges(row.get("edges") or [])
                 doc = row.get("far")
                 if not isinstance(doc, dict):
                     continue
-                row_type = far_type or next(
-                    (
-                        by_label[label]
-                        for label in row.get("labels") or ()
-                        if label in by_label
-                    ),
-                    None,
-                )
+                row_type = far_type or type_of(row.get("labels"))
                 if row_type is not None:
                     out.append((row_type, doc))
         return out
+
+    def admit_edges(found: list[dict[str, Any]]) -> None:
+        """Add the returned relationships as edge rows, shaped as the default walk's.
+
+        A relationship read through a declared inverse is reported under that
+        name, its ends in that reading's order. At most *limit* rows are kept,
+        as ``graph_neighbors`` promises.
+        """
+        for rel in found:
+            if limit is not None and len(seen_edges) >= limit:
+                return
+            start_type = type_of(rel.get("start_labels"))
+            end_type = type_of(rel.get("end_labels"))
+            if start_type is None or end_type is None:
+                continue
+            start = _vertex_identity_value(conn, schema, start_type, rel["start"])
+            end = _vertex_identity_value(conn, schema, end_type, rel["end"])
+            properties = dict(rel.get("properties") or {})
+            for edge, read_as in by_relationship.get(
+                (rel.get("type") or "", start_type, end_type), []
+            ):
+                edge_id, near, far_end = (
+                    (edge.edge_id, start, end)
+                    if read_as is None
+                    else ((edge.target, edge.source, read_as), end, start)
+                )
+                marker = (edge_id, _row_marker(properties, near, far_end))
+                if marker in seen_edges:
+                    continue
+                seen_edges.add(marker)
+                container.edges.setdefault(edge_id, []).append(
+                    {**properties, "source": near, "target": far_end}
+                )
 
     def one_hop_queries(anchor_type: str) -> list[_NeighborQuery]:
         """One pattern per relation touching *anchor_type*, each in its own direction."""
@@ -339,6 +398,7 @@ def cypher_graph_neighbors(
     # Keyed by the full identity: two vertices of a composite identity can share
     # its first field, and an address built from that alone would merge them.
     seen: set[tuple[str, tuple[tuple[str, Any], ...]]] = set()
+    seen_edges: set[tuple[EdgeId, str]] = set()
 
     def admit(
         found: list[tuple[str, dict[str, Any]]],

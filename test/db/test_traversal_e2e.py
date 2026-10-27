@@ -102,12 +102,12 @@ MANIFEST: dict[str, Any] = {
 #: TigerGraph is excluded: its reverse reachability is a DDL-time decision and
 #: the outbound-only case is covered by the query-shape suite.
 BACKENDS = backend_params(
-    ["neo4j", "arango", "memgraph", "falkordb", "postgres", "nebula"]
+    ["neo4j", "arango", "memgraph", "falkordb", "postgres", "nebula", "graflo_backend"]
 )
 
 
-def _config(flavor: str):
-    return config_for(flavor, space=SPACE)
+def _config(flavor: str, tmp_path_factory: pytest.TempPathFactory):
+    return config_for(flavor, space=SPACE, tmp_path_factory=tmp_path_factory)
 
 
 def _manifest(root: Path) -> GraphManifest:
@@ -130,7 +130,7 @@ def ingested(request: pytest.FixtureRequest, tmp_path_factory) -> Iterator[Any]:
     (root / "links.csv").write_text(LINKS_CSV)
 
     try:
-        config = _config(flavor)
+        config = _config(flavor, tmp_path_factory)
     except Exception as error:  # pragma: no cover - environment dependent
         pytest.skip(f"{flavor} config unavailable: {error}")
     try:
@@ -187,6 +187,26 @@ def test_outbound_neighbourhood_by_hop_count(ingested, hops, expected):
         schema=manifest.require_schema(),
     )
     assert reached_ids(container) == expected
+
+
+def test_the_edges_come_with_the_neighbourhood(ingested):
+    """Edge rows too, one per relationship walked: A -> B, B -> C, B -> E.
+
+    A backend that returns the reached vertices alone fails here.
+    """
+    _flavor, db, manifest = ingested
+    container = db.graph_neighbors(
+        NODE,
+        "A",
+        hops=2,
+        direction=EdgeDirection.OUT,
+        schema=manifest.require_schema(),
+    )
+    rows = [row for rows in container.edges.values() for row in rows]
+    assert len(rows) == 3
+    assert all(
+        row.get("source") is not None and row.get("target") is not None for row in rows
+    )
 
 
 def test_inbound_is_not_outbound(ingested):

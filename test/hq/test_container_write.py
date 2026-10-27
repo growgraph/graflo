@@ -10,6 +10,7 @@ from graflo.architecture.graph_types.container import GraphContainer
 from graflo.architecture.graph_types.pending import EdgeEndpoint, PendingEdge
 from graflo.architecture.schema.document import Schema
 from graflo.connections.graflo_backend import GraFloBackendConfig
+from graflo.db.graflo_backend.connection import GraFloBackendConnection
 from graflo.db.manager import ConnectionManager
 from graflo.hq.container_write import write_container
 
@@ -119,7 +120,9 @@ def test_a_pending_edge_finds_a_vertex_of_the_same_container(tmp_path):
     assert report.edges == {"Person-OPERATES-Machine": 2}
 
 
-def test_a_guard_on_a_backend_without_read_guards_is_refused(tmp_path):
+def test_a_guard_on_a_backend_without_read_guards_is_refused(tmp_path, monkeypatch):
+    # A backend that declares no read guard.
+    monkeypatch.setattr(GraFloBackendConnection, "supports_read_guard", False)
     from graflo.filter.onto import FilterExpression
 
     conf = GraFloBackendConfig(output_dir=tmp_path)

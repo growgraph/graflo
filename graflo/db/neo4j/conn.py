@@ -27,8 +27,9 @@ import logging
 from collections.abc import Sequence
 from typing import Any, LiteralString, cast
 
-from neo4j import GraphDatabase, NotificationDisabledCategory
+from neo4j import GraphDatabase, NotificationDisabledCategory, Result
 from neo4j.exceptions import ClientError
+from neo4j.time import Date, DateTime, Time
 
 from graflo.architecture.graph_types import EdgeDirection, GraphContainer, Index
 from graflo.architecture.schema import Schema
@@ -80,6 +81,26 @@ _BENIGN_DUPLICATE_SCHEMA_CODES = frozenset(
 
 #: Neo4j's built-in user, taken when a password comes without a username.
 DEFAULT_NEO4J_USERNAME = "neo4j"
+
+
+def _native(value: Any) -> Any:
+    """*value* in plain Python: a Neo4j date, time or datetime becomes its ``datetime`` type."""
+    if isinstance(value, (DateTime, Date, Time)):
+        return value.to_native()
+    if isinstance(value, dict):
+        return {k: _native(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_native(v) for v in value]
+    return value
+
+
+def _rows(result: Result) -> list[dict[str, Any]]:
+    """The records of *result* as plain-Python dicts.
+
+    ``Result.data()`` keeps the driver's temporal types, which no caller can
+    serialize, so every document read goes through here.
+    """
+    return [_native(row) for row in result.data()]
 
 
 def _create_schema_rule(db: Any, query: str) -> None:
@@ -792,7 +813,7 @@ class Neo4jConnection(Connection):
             f"  {limit_clause}"
         )
         cursor = self.execute(q, **params.values)
-        r = [item["n"] for item in cursor.data()]
+        r = [item["n"] for item in _rows(cursor)]
         return r
 
     # TODO test
@@ -880,7 +901,7 @@ class Neo4jConnection(Connection):
         """
 
         cursor = self.execute(query, **params)
-        result = [item["r"] for item in cursor.data()]
+        result = [item["r"] for item in _rows(cursor)]
 
         # Note: unset_keys is not supported in Neo4j as we can't modify the result structure
         # after the query
@@ -990,7 +1011,7 @@ class Neo4jConnection(Connection):
             if discriminant:
                 field = cypher_name(discriminant, quoted=True)
                 query += f" RETURN n.{field} AS key, count(*) AS value"
-                rows = self.execute(query, **params.values).data()
+                rows = _rows(self.execute(query, **params.values))
                 return {row["key"]: row["value"] for row in rows}
             query += " RETURN count(n) AS value"
         else:
@@ -1012,7 +1033,7 @@ class Neo4jConnection(Connection):
                     f"Unsupported aggregation type: {aggregation_function}"
                 )
 
-        rows = self.execute(query, **params.values).data()
+        rows = _rows(self.execute(query, **params.values))
         if aggregation_function == AggregationType.SORTED_UNIQUE:
             return [row["value"] for row in rows]
         return rows[0]["value"] if rows else None
@@ -1080,7 +1101,7 @@ class Neo4jConnection(Connection):
             edge_types=edge_types,
             limit=limit,
             schema=schema,
-            run=lambda query, params: self.execute(query, **params).data(),
+            run=lambda query, params: _rows(self.execute(query, **params)),
             filters=filters,
             guard=guard,
         )
@@ -1099,7 +1120,7 @@ class Neo4jConnection(Connection):
             RETURN properties(n) AS props
             {limit_clause}
         """
-        rows = self.execute(query).data()
+        rows = _rows(self.execute(query))
         return [
             strip_internal_properties(row["props"]) for row in rows if row.get("props")
         ]
@@ -1129,7 +1150,7 @@ class Neo4jConnection(Connection):
                    properties(r) AS edge_props
             {limit_clause}
         """
-        rows = self.execute(query).data()
+        rows = _rows(self.execute(query))
         result: list[list[dict[str, Any]]] = []
         for row in rows:
             source_doc = strip_internal_properties(row.get("source_props") or {})

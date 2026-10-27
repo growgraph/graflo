@@ -1027,21 +1027,15 @@ class FalkordbConnection(Connection):
         relationship carries no endpoints, so the generic breadth-first default
         has nothing to walk to.
         """
-        from graflo.db.cypher.traversal import cypher_graph_neighbors
+        from graflo.db.cypher.traversal import (
+            NEIGHBOR_COLUMNS,
+            cypher_graph_neighbors,
+        )
 
         def run(query: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+            # FalkorDB returns rows as positional lists.
             result = self.execute(query, **params)
-            rows: list[dict[str, Any]] = []
-            for row in result.result_set:
-                far = row[0]
-                properties = (
-                    dict(far.properties)
-                    if hasattr(far, "properties")
-                    else (dict(far) if isinstance(far, dict) else {})
-                )
-                labels = row[2] if len(row) > 2 else None
-                rows.append({"far": properties, "labels": labels})
-            return rows
+            return [dict(zip(NEIGHBOR_COLUMNS, row)) for row in result.result_set]
 
         return cypher_graph_neighbors(
             self,

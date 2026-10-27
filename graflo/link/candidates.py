@@ -348,7 +348,11 @@ class _Gatherer:
         return out
 
     def merge(self, staged: StagedRecord, hits: list[_Hit]) -> list[EntityCandidate]:
-        """One candidate per entity, with every lane that found it, best first."""
+        """One candidate per entity, with every lane that found it, best first.
+
+        The order is total and independent of the database's row order: by best
+        lane, then key, and a candidate's lanes by rank, then content.
+        """
         vertex_type = staged.record.type
         distinct = self.related(staged)
         hits = [
@@ -357,7 +361,13 @@ class _Gatherer:
             if not any(_empty(v) for v in h.key.values())
             and (vertex_type, self.freeze(vertex_type, h.key)) not in distinct
         ]
-        hits.sort(key=lambda h: LANE_ORDER[h.hit.lane])
+        hits.sort(
+            key=lambda h: (
+                LANE_ORDER[h.hit.lane],
+                _frozen(h.key),
+                h.hit.model_dump_json(),
+            )
+        )
         merged: dict[tuple, EntityCandidate] = {}
         for item in hits:
             frozen = self.freeze(vertex_type, item.key)

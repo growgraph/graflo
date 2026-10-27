@@ -1586,8 +1586,15 @@ class ArangoConnection(Connection):
         anchors on a document ``_id`` (``collection/key``) while callers hold a
         *logical* identity. Resolving the anchor inside the traversal query keeps
         Arango's internal key out of the agent-facing contract entirely.
+
+        Returns the reached vertices and the edges of the paths that reached
+        them, shaped as the default walk returns them: edge rows by edge id,
+        their ends under ``source`` and ``target``, at most *limit* of each.
         """
+        from graflo.architecture.graph_types import EdgeId
+        from graflo.architecture.schema.edge import Edge
         from graflo.db.traversal import (
+            _row_marker,
             _vertex_identity_value,
             check_anchor_fields,
             edge_query_name,
@@ -1633,6 +1640,9 @@ class ArangoConnection(Connection):
         # collections stops at the first hop.
         allowed = set(edge_types) if edge_types is not None else None
         collections: list[str] = []
+        # A walked edge is matched back to its declared edge by its collection
+        # and the collections of its two ends.
+        by_collection_ends: dict[tuple[str, str, str], Edge] = {}
         for edge in schema.core_schema.edge_config.edges:
             if allowed is not None and edge.relation not in allowed:
                 continue
@@ -1642,6 +1652,7 @@ class ArangoConnection(Connection):
             safe = _arango_safe_collection_name(name)
             if safe not in collections:
                 collections.append(safe)
+            by_collection_ends[(safe, edge.source, edge.target)] = edge
         if not collections:
             return GraphContainer()
 
@@ -1651,14 +1662,27 @@ class ArangoConnection(Connection):
             EdgeDirection.ANY: "ANY",
         }[direction]
         limit_clause = f"LIMIT {int(limit)}" if limit is not None else ""
+        # One row per reached vertex, so a cycle that reaches it by several paths
+        # counts once against LIMIT; its edges are those of every such path.
         query = f"""
             FOR doc IN {anchor_collection}
                 FILTER {anchor_filter}
                 LIMIT 1
-                FOR v IN 1..{int(hops)} {aql_direction} doc {", ".join(collections)}
+                FOR v, e, p IN 1..{int(hops)} {aql_direction} doc {", ".join(collections)}
                     FILTER v._id != doc._id
+                    COLLECT far_id = v._id INTO walked = {{v: v, edges: p.edges}}
                     {limit_clause}
-                    RETURN DISTINCT v
+                    RETURN {{
+                        far: FIRST(walked).v,
+                        edges: (
+                            FOR x IN UNIQUE(FLATTEN(walked[*].edges))
+                                RETURN {{
+                                    edge: x,
+                                    start: DOCUMENT(x._from),
+                                    end: DOCUMENT(x._to)
+                                }}
+                        )
+                    }}
         """
         rows = get_data_from_cursor(self.conn.aql.execute(query, bind_vars=bind_vars))
 
@@ -1668,13 +1692,50 @@ class ArangoConnection(Connection):
             db_aware.vertex_config.vertex_dbname(name): name
             for name in schema.core_schema.vertex_config.vertex_set
         }
+
+        def type_of(doc: Any) -> str | None:
+            if not isinstance(doc, dict):
+                return None
+            return by_collection.get(str(doc.get("_id", "")).split("/", 1)[0])
+
         container = GraphContainer()
         seen: set[tuple[str, str]] = set()
-        for doc in rows:
-            if not isinstance(doc, dict):
+        seen_edges: set[tuple[EdgeId, str]] = set()
+        for row in rows:
+            if not isinstance(row, dict):
                 continue
-            collection = str(doc.get("_id", "")).split("/", 1)[0]
-            far_type = by_collection.get(collection)
+            for walked in row.get("edges") or []:
+                if limit is not None and len(seen_edges) >= limit:
+                    break
+                found = walked.get("edge") or {}
+                start_type = type_of(walked.get("start"))
+                end_type = type_of(walked.get("end"))
+                if start_type is None or end_type is None:
+                    continue
+                edge = by_collection_ends.get(
+                    (str(found.get("_id", "")).split("/", 1)[0], start_type, end_type)
+                )
+                if edge is None:
+                    continue
+                marker = (edge.edge_id, _row_marker(found, None, None))
+                if marker in seen_edges:
+                    continue
+                seen_edges.add(marker)
+                source = _vertex_identity_value(
+                    self, schema, start_type, strip_internal_properties(walked["start"])
+                )
+                target = _vertex_identity_value(
+                    self, schema, end_type, strip_internal_properties(walked["end"])
+                )
+                container.edges.setdefault(edge.edge_id, []).append(
+                    {
+                        **strip_internal_properties(found),
+                        "source": source,
+                        "target": target,
+                    }
+                )
+            doc = row.get("far")
+            far_type = type_of(doc)
             if far_type is None:
                 continue
             cleaned = strip_internal_properties(doc)

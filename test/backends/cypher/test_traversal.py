@@ -342,3 +342,147 @@ def test_a_hop_by_hop_walk_anchors_each_hop_on_the_full_identity(
     for key in ("p2", "p3"):
         assert {ANCHOR_PARAM: "eu", f"{ANCHOR_PARAM}_1": key} in sent
     assert sorted(doc["key"] for doc in container.vertices["peer"]) == ["p2", "p3"]
+
+
+def _rel(
+    relation: str, start: tuple[str, str], end: tuple[str, str], **props: Any
+) -> dict[str, Any]:
+    """A relationship as the neighbourhood query returns it."""
+    return {
+        "type": relation,
+        "properties": props,
+        "start": {"key": start[1]},
+        "start_labels": [start[0]],
+        "end": {"key": end[1]},
+        "end_labels": [end[0]],
+    }
+
+
+def test_the_query_returns_each_reached_node_once_with_its_relationships() -> None:
+    query = cypher_neighbors_query(
+        anchor_label="node",
+        edge_type="links",
+        far_label=None,
+        direction=EdgeDirection.OUT,
+        hops=2,
+        limit=5,
+    )
+    assert "UNWIND relationships(path) AS _r" in query
+    assert "collect(DISTINCT _r)" in query
+    assert "RETURN DISTINCT" not in query
+    assert query.rstrip().endswith("LIMIT 5")
+
+
+def test_one_hop_returns_the_edges_as_the_default_walk_does(schema: Schema) -> None:
+    """Rows keyed by the edge id, endpoints under ``source`` and ``target``."""
+    run = _Recorder(
+        rows=[
+            {
+                "far": {"key": "press"},
+                "labels": ["machine"],
+                "edges": [
+                    _rel("targets", ("work_order", "WO1"), ("machine", "press"), w=1)
+                ],
+            }
+        ]
+    )
+    container = _neighbors(schema, run, direction=EdgeDirection.OUT)
+
+    assert container.edges == {
+        ("work_order", "machine", "targets"): [
+            {"w": 1, "source": "WO1", "target": "press"}
+        ]
+    }
+
+
+def test_several_hops_return_every_relationship_of_the_paths_once(
+    schema: Schema,
+) -> None:
+    targets = _rel("targets", ("work_order", "WO1"), ("machine", "press"))
+    uses = _rel("uses", ("line", "stamping"), ("machine", "press"))
+    run = _Recorder(
+        rows=[
+            {"far": {"key": "press"}, "labels": ["machine"], "edges": [targets]},
+            {"far": {"key": "stamping"}, "labels": ["line"], "edges": [targets, uses]},
+        ]
+    )
+    container = _neighbors(schema, run, hops=2)
+
+    assert container.edges == {
+        ("work_order", "machine", "targets"): [{"source": "WO1", "target": "press"}],
+        ("line", "machine", "uses"): [{"source": "stamping", "target": "press"}],
+    }
+
+
+def test_a_relationship_of_an_unselected_relation_is_left_out(schema: Schema) -> None:
+    run = _Recorder(
+        rows=[
+            {
+                "far": {"key": "press"},
+                "labels": ["machine"],
+                "edges": [_rel("uses", ("line", "stamping"), ("machine", "press"))],
+            }
+        ]
+    )
+    container = _neighbors(schema, run, edge_types=["targets"])
+
+    assert container.edges == {}
+
+
+@pytest.fixture
+def inverse_schema() -> Schema:
+    spec = {
+        **SCHEMA,
+        "graph": {
+            **SCHEMA["graph"],
+            "edge_config": {
+                **SCHEMA["graph"]["edge_config"],
+                "inverses": [{"relation": "targets", "inverse": "targeted_by"}],
+            },
+        },
+    }
+    manifest = GraphManifest.model_validate({"schema": spec})
+    manifest.finish_init()
+    return manifest.require_schema()
+
+
+def test_a_declared_inverse_reports_the_edge_under_its_name(
+    inverse_schema: Schema,
+) -> None:
+    """Read backwards, endpoints in that reading's order, as the default walk."""
+    run = _Recorder(
+        rows=[
+            {
+                "far": {"key": "WO1"},
+                "labels": ["work_order"],
+                "edges": [_rel("targets", ("work_order", "WO1"), ("machine", "press"))],
+            }
+        ]
+    )
+    container = _neighbors(
+        inverse_schema,
+        run,
+        vertex_type="machine",
+        key="press",
+        edge_types=["targeted_by"],
+        direction=EdgeDirection.OUT,
+    )
+
+    assert container.edges == {
+        ("machine", "work_order", "targeted_by"): [{"source": "press", "target": "WO1"}]
+    }
+
+
+def test_the_limit_caps_the_edge_rows(schema: Schema) -> None:
+    """``limit`` is the most edges a neighbourhood holds, on every backend."""
+    path = [
+        _rel("targets", ("work_order", "WO1"), ("machine", "press")),
+        _rel("uses", ("line", "stamping"), ("machine", "press")),
+        _rel("depends_on", ("product", "bracket"), ("line", "stamping")),
+    ]
+    run = _Recorder(
+        rows=[{"far": {"key": "bracket"}, "labels": ["product"], "edges": path}]
+    )
+    container = _neighbors(schema, run, hops=3, limit=1)
+
+    assert sum(len(rows) for rows in container.edges.values()) == 1

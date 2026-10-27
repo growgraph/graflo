@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import shutil
 from collections import Counter
+from collections.abc import Callable, Sequence
 from typing import Any, cast
 
 from graflo.architecture.backend import GraFloBackendReader, GraFloBackendWriter
@@ -21,8 +22,8 @@ from graflo.architecture.schema.physical_keys import PhysicalKeys
 from graflo.architecture.schema.vertex import VertexConfig
 from graflo.connections.graflo_backend import GraFloBackendConfig
 from graflo.db.conn import Connection, NamespaceNotFoundError, SchemaExistsError
-from graflo.db.traversal import edge_query_name
-from graflo.filter.onto import FilterExpression, parse_filter_expression
+from graflo.db.traversal import bfs_neighbors, edge_query_name
+from graflo.filter.onto import FilterExpression, conjoin
 from graflo.onto import AggregationType, DBType
 
 logger = logging.getLogger(__name__)
@@ -30,6 +31,22 @@ logger = logging.getLogger(__name__)
 #: Ceiling on rows held in the in-process edge index. Traversal over a file
 #: backend larger than this is the wrong tool; the bound is logged, never silent.
 _EDGE_INDEX_MAX_ROWS = 2_000_000
+
+
+def _matcher(*filters: Any) -> Callable[[dict[str, Any]], bool]:
+    """A predicate for the ``AND`` of *filters*; ``None`` operands are skipped."""
+    predicate = conjoin(*filters)
+    if predicate is None:
+        return lambda _doc: True
+
+    def _keep(doc: dict[str, Any]) -> bool:
+        try:
+            return predicate.matches(doc)
+        except Exception:
+            # A document missing a filtered field simply does not match.
+            return False
+
+    return _keep
 
 
 def _first_value(doc: Any, fields: list[str]) -> str | None:
@@ -44,13 +61,23 @@ def _first_value(doc: Any, fields: list[str]) -> str | None:
 
 
 class GraFloBackendConnection(Connection):
-    """Read/write graph data through a chunked on-disk GraFlo backend."""
+    """Read/write graph data through a chunked on-disk GraFlo backend.
+
+    Writes append; reads fold the appended records by identity
+    (:mod:`~graflo.architecture.backend.fold`), so an upsert behaves as on a
+    database, ``merge: union`` fields included. Every read therefore scans the
+    whole collection it reads, whatever its ``limit``: this backend suits
+    exports, tests and small graphs, not large ones.
+    """
 
     flavor = DBType.GRAFLO_BACKEND
     supports_graph_export = True
     supports_schema_introspection = True
     #: Introspection reads the ``schema.yaml`` catalogue the writer keeps.
     schema_introspection_is_sampled = False
+    #: Guards are evaluated in process, on every document and edge row read.
+    supports_read_guard = True
+    supports_union_merge = True
 
     def __init__(self, config: GraFloBackendConfig) -> None:
         super().__init__()
@@ -148,6 +175,8 @@ class GraFloBackendConnection(Connection):
         match_keys: list[str] | tuple[str, ...],
         **kwargs: Any,
     ) -> None:
+        # ``union_fields`` needs no handling here: reads fold every record by
+        # the schema's identity and merge modes, the same ones it was built from.
         if kwargs.get("dry"):
             return
         self._writer.write_vertex_batch(class_name, docs)
@@ -176,39 +205,40 @@ class GraFloBackendConnection(Connection):
         return docs
 
     def _sync_for_read(self) -> None:
-        """Persist buffered writes so reads observe them.
+        """Persist buffered writes, and see what any writer has published since.
 
         Chunk writers buffer records in memory and the index is only written on
         flush, so a read issued mid-ingest would otherwise miss data — or find
         no ``INDEX.json`` at all. Every other backend is read-your-writes;
-        flushing here gives the file backend the same contract.
+        flushing here gives the file backend the same contract. Another
+        connection may write the same directory, so the index is re-read and
+        the edge index dropped when it changed.
         """
         try:
             self._writer.flush_index()
         except ValueError:
             # No schema written yet, so nothing has been ingested to observe.
             pass
+        if self._reader.reload_index():
+            self._edge_index_cache = None
 
     def fetch_docs(
         self,
         class_name: str,
-        filters: list[Any] | dict[str, Any] | None = None,
+        filters: list[Any] | dict[str, Any] | FilterExpression | None = None,
         limit: int | None = None,
         return_keys: list[str] | None = None,
         unset_keys: list[str] | None = None,
+        guard: FilterExpression | None = None,
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
-        self._sync_for_read()
-        predicate = parse_filter_expression(filters) if filters is not None else None
+        """Documents of *class_name*, one per entity, that match *filters*.
 
-        def _keep(doc: dict[str, Any]) -> bool:
-            if predicate is None:
-                return True
-            try:
-                return predicate.matches(doc)
-            except Exception:
-                # A document missing a filtered field simply does not match.
-                return False
+        Args:
+            guard: A trusted predicate every document must also satisfy.
+        """
+        self._sync_for_read()
+        keep = _matcher(filters, guard)
 
         def _project(doc: dict[str, Any]) -> dict[str, Any]:
             if return_keys:
@@ -217,13 +247,13 @@ class GraFloBackendConnection(Connection):
                 doc = {k: v for k, v in doc.items() if k not in unset_keys}
             return doc
 
-        docs: list[dict[str, Any]] = []
         # `limit` bounds the *result* size, so filtering happens before slicing.
-        for batch in self._reader.iter_vertex_batches(class_name):
-            docs.extend(_project(doc) for doc in batch if _keep(doc))
-            if limit is not None and len(docs) >= limit:
-                return docs[:limit]
-        return docs
+        docs = [
+            _project(doc)
+            for doc in self._reader.vertex_records(class_name)
+            if keep(doc)
+        ]
+        return docs if limit is None else docs[:limit]
 
     def fetch_edges(
         self,
@@ -247,12 +277,15 @@ class GraFloBackendConnection(Connection):
         building one here does not contradict the ``MATERIALIZATION_REQUIRED``
         tier in the capability matrix — it is exactly what that tier prescribes.
         """
+        self._sync_for_read()
         index = self._edge_index()
         entries = index.get(edge_type) if edge_type is not None else None
         if entries is None:
             # No edge_type: search every indexed edge type.
             entries = [row for rows in index.values() for row in rows]
 
+        # Filtered before `limit`, which bounds the result.
+        keep = _matcher(filters)
         matched: list[dict[str, Any]] = []
         for row in entries:
             source_id = row.get("_from_key")
@@ -274,13 +307,12 @@ class GraFloBackendConnection(Connection):
                 continue
             if to_id is not None and far != to_id:
                 continue
+            if not keep(row):
+                continue
             matched.append(row)
             if limit is not None and len(matched) >= limit:
                 break
 
-        if filters is not None:
-            expression = parse_filter_expression(filters)
-            matched = [row for row in matched if expression.matches(row)]
         if return_keys or unset_keys:
             keep = set(return_keys) if return_keys else None
             drop = set(unset_keys) if unset_keys else set()
@@ -321,30 +353,29 @@ class GraFloBackendConnection(Connection):
             target_identity = keys.vertex_fields(
                 edge.target, db_aware.vertex_config.identity_fields(edge.target)
             )
-            for batch in self._reader.iter_edge_batches(
+            for record in self._reader.edge_records(
                 edge_chunk_key(schema, edge.edge_id)
             ):
-                for record in batch:
-                    if not isinstance(record, list) or len(record) < 2:
-                        continue
-                    source_doc, target_doc = record[0], record[1]
-                    weight = record[2] if len(record) > 2 else {}
-                    rows.append(
-                        {
-                            **(weight if isinstance(weight, dict) else {}),
-                            "_from_key": _first_value(source_doc, source_identity),
-                            "_to_key": _first_value(target_doc, target_identity),
-                        }
+                if not isinstance(record, list) or len(record) < 2:
+                    continue
+                source_doc, target_doc = record[0], record[1]
+                weight = record[2] if len(record) > 2 else {}
+                rows.append(
+                    {
+                        **(weight if isinstance(weight, dict) else {}),
+                        "_from_key": _first_value(source_doc, source_identity),
+                        "_to_key": _first_value(target_doc, target_identity),
+                    }
+                )
+                total += 1
+                if total >= _EDGE_INDEX_MAX_ROWS:
+                    logger.warning(
+                        "GraFlo file backend edge index hit its %s-row bound; "
+                        "traversal results may be incomplete",
+                        _EDGE_INDEX_MAX_ROWS,
                     )
-                    total += 1
-                    if total >= _EDGE_INDEX_MAX_ROWS:
-                        logger.warning(
-                            "GraFlo file backend edge index hit its %s-row bound; "
-                            "traversal results may be incomplete",
-                            _EDGE_INDEX_MAX_ROWS,
-                        )
-                        self._edge_index_cache = index
-                        return index
+                    self._edge_index_cache = index
+                    return index
         self._edge_index_cache = index
         return index
 
@@ -481,13 +512,36 @@ class GraFloBackendConnection(Connection):
         limit: int | None = None,
         collection_name: str | None = None,
     ) -> list[list[dict[str, Any]]]:
-        edge_key = (source_class, target_class, relation_name)
-        docs: list[list[dict[str, Any]]] = []
-        for batch in self._reader.iter_edge_batches(edge_key, limit=limit):
-            docs.extend(batch)
-            if limit is not None and len(docs) >= limit:
-                return docs[:limit]
-        return docs
+        self._sync_for_read()
+        docs = self._reader.edge_records((source_class, target_class, relation_name))
+        return docs if limit is None else docs[:limit]
+
+    def _graph_neighbors(
+        self,
+        vertex_type: str,
+        key: str | dict[str, Any],
+        *,
+        hops: int = 1,
+        direction: EdgeDirection = EdgeDirection.OUT,
+        edge_types: Sequence[str] | None = None,
+        filters: Any | None = None,
+        limit: int | None = None,
+        schema: Schema | None = None,
+        guard: FilterExpression | None = None,
+    ) -> GraphContainer:
+        """The default breadth-first walk, with *guard* applied to every element."""
+        return bfs_neighbors(
+            self,
+            anchor_type=vertex_type,
+            anchor_key=key,
+            hops=hops,
+            direction=direction,
+            edge_types=edge_types,
+            filters=filters,
+            limit=limit,
+            schema=schema,
+            guard=guard,
+        )
 
     def bulk_load_append(
         self, session_id: str, gc: GraphContainer, schema: Schema

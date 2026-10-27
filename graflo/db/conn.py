@@ -1087,7 +1087,10 @@ class Connection(abc.ABC):
         *schema* is the schema as the database stores it
         (:func:`~graflo.architecture.evolution.sanitize.physical_schema`), and
         *key* and *filters* are already translated to it. The default walks
-        breadth-first over :meth:`fetch_edges` and :meth:`fetch_docs`.
+        breadth-first over :meth:`fetch_edges` and :meth:`fetch_docs`; a backend
+        that declares ``supports_read_guard`` and keeps this default overrides
+        it to pass ``guard`` on to
+        :func:`~graflo.db.traversal.bfs_neighbors`.
         """
         from graflo.db.traversal import bfs_neighbors
 

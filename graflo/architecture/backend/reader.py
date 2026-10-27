@@ -6,8 +6,9 @@ import gzip
 import json
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
+from graflo.architecture.backend.fold import fold_edges, fold_vertices
 from graflo.architecture.backend.index import GraFloIndex
 from graflo.architecture.backend.layout import GraFloLayout
 from graflo.architecture.graph_types import EdgeId, GraphContainer
@@ -46,12 +47,36 @@ def edge_chunk_key(schema: Schema, edge_id: EdgeId) -> EdgeId:
     )
 
 
+class _Folding(NamedTuple):
+    """What folds the records of one stored collection, in stored names."""
+
+    identity: tuple[str, ...]
+    union: frozenset[str]
+
+
+class _EdgeFolding(NamedTuple):
+    source_identity: tuple[str, ...]
+    target_identity: tuple[str, ...]
+    key_fields: tuple[str, ...]
+    union: frozenset[str]
+
+
 class GraFloBackendReader:
-    """Read schema and chunked graph data from a GraFlo backend directory."""
+    """Read schema and chunked graph data from a GraFlo backend directory.
+
+    :meth:`iter_vertex_batches` and :meth:`iter_edge_batches` yield records as
+    written; :meth:`vertex_records`, :meth:`edge_records` and
+    :meth:`load_graph_container` fold them by identity
+    (:mod:`~graflo.architecture.backend.fold`), so a read sees one document per
+    entity, as a database would.
+    """
 
     def __init__(self, input_dir: Path) -> None:
         self._layout = GraFloLayout(input_dir)
         self._index: GraFloIndex | None = None
+        self._schema: Schema | None = None
+        self._vertex_folding: dict[str, tuple[str, _Folding]] | None = None
+        self._edge_folding: dict[str, tuple[EdgeId, _EdgeFolding]] | None = None
 
     def read_index(self) -> GraFloIndex:
         if self._index is None:
@@ -60,8 +85,113 @@ class GraFloBackendReader:
             self._index = GraFloIndex.model_validate(payload)
         return self._index
 
+    def reload_index(self) -> bool:
+        """Re-read ``INDEX.json``, which any writer may have published since.
+
+        Returns:
+            Whether it changed since the last read; on a change, the cached
+            schema is dropped too.
+        """
+        previous = self._index
+        if not self._layout.index_path.exists():
+            self._index = None
+        else:
+            self._index = None
+            self.read_index()
+        changed = self._index != previous
+        if changed:
+            self._schema = None
+            self._vertex_folding = None
+            self._edge_folding = None
+        return changed
+
     def read_schema(self) -> Schema:
-        return Schema.from_yaml(str(self._layout.schema_path))
+        if self._schema is None:
+            self._schema = Schema.from_yaml(str(self._layout.schema_path))
+        return self._schema
+
+    def _foldings(
+        self,
+    ) -> tuple[dict[str, tuple[str, _Folding]], dict[str, tuple[EdgeId, _EdgeFolding]]]:
+        """Per stored collection: its logical type and how its records fold."""
+        if self._vertex_folding is not None and self._edge_folding is not None:
+            return self._vertex_folding, self._edge_folding
+        schema = self.read_schema()
+        stored = stored_schema(schema)
+        db_aware = schema.resolve_db_aware(DBType.GRAFLO_BACKEND)
+        keys = PhysicalKeys(stored.db_profile)
+        vc = db_aware.vertex_config
+
+        def identity(vertex: str) -> tuple[str, ...]:
+            return tuple(keys.vertex_fields(vertex, vc.identity_fields(vertex)))
+
+        vertices: dict[str, tuple[str, _Folding]] = {}
+        for vertex in schema.core_schema.vertex_config.vertices:
+            union = [f.name for f in vc.properties(vertex.name) if f.merge == "union"]
+            vertices[vertex_chunk_key(schema, vertex.name)] = (
+                vertex.name,
+                _Folding(
+                    identity(vertex.name),
+                    frozenset(keys.vertex_fields(vertex.name, union)),
+                ),
+            )
+        edges: dict[str, tuple[EdgeId, _EdgeFolding]] = {}
+        for edge in schema.core_schema.edge_config.values():
+            merge = db_aware.edge_config.relationship_merge_property_names(edge)
+            union = [f.name for f in edge.properties if f.merge == "union"]
+            name = GraFloLayout.edge_key_to_index_name(
+                edge_chunk_key(schema, edge.edge_id)
+            )
+            edges[name] = (
+                edge.edge_id,
+                _EdgeFolding(
+                    identity(edge.source),
+                    identity(edge.target),
+                    tuple(keys.edge_fields(edge.edge_id, merge)),
+                    frozenset(keys.edge_fields(edge.edge_id, union)),
+                ),
+            )
+        self._vertex_folding, self._edge_folding = vertices, edges
+        return vertices, edges
+
+    def vertex_type_of(self, collection: str) -> str | None:
+        """The logical vertex type stored under *collection*, if one is."""
+        found = self._foldings()[0].get(collection)
+        return found[0] if found is not None else None
+
+    def edge_id_of(self, edge_key: tuple[str, str, str | None]) -> EdgeId | None:
+        """The logical edge stored under *edge_key*, if one is."""
+        name = GraFloLayout.edge_key_to_index_name(edge_key)
+        found = self._foldings()[1].get(name)
+        return found[0] if found is not None else None
+
+    def vertex_records(self, collection: str) -> list[dict[str, Any]]:
+        """Every entity stored under *collection*, one folded record each."""
+        records = [
+            record for batch in self.iter_vertex_batches(collection) for record in batch
+        ]
+        found = self._foldings()[0].get(collection)
+        if found is None:
+            return records
+        folding = found[1]
+        return fold_vertices(records, folding.identity, folding.union)
+
+    def edge_records(self, edge_key: tuple[str, str, str | None]) -> list[list[Any]]:
+        """Every edge stored under *edge_key*, one folded record each."""
+        records = [
+            record for batch in self.iter_edge_batches(edge_key) for record in batch
+        ]
+        found = self._foldings()[1].get(GraFloLayout.edge_key_to_index_name(edge_key))
+        if found is None:
+            return records
+        folding = found[1]
+        return fold_edges(
+            records,
+            folding.source_identity,
+            folding.target_identity,
+            folding.key_fields,
+            folding.union,
+        )
 
     def iter_vertex_batches(
         self,
@@ -136,24 +266,18 @@ class GraFloBackendReader:
         edges: dict[EdgeId, list] = {}
 
         for vertex in schema.core_schema.vertex_config.vertices:
-            docs: list[dict[str, Any]] = []
-            for batch in self.iter_vertex_batches(
-                vertex_chunk_key(schema, vertex.name), limit=limit
-            ):
-                docs.extend(keys.logical_vertex_doc(vertex.name, doc) for doc in batch)
+            records = self.vertex_records(vertex_chunk_key(schema, vertex.name))
+            docs = [
+                keys.logical_vertex_doc(vertex.name, doc) for doc in records[:limit]
+            ]
             if docs:
                 vertices[vertex.name] = docs
 
         for edge in schema.core_schema.edge_config.values():
-            edge_docs: list[list[Any]] = []
-            for batch in self.iter_edge_batches(
-                edge_chunk_key(schema, edge.edge_id), limit=limit
-            ):
-                edge_docs.extend(
-                    keys.logical_edge_triples(
-                        edge.edge_id, edge.source, edge.target, batch
-                    )
-                )
+            stored_edges = self.edge_records(edge_chunk_key(schema, edge.edge_id))
+            edge_docs = keys.logical_edge_triples(
+                edge.edge_id, edge.source, edge.target, stored_edges[:limit]
+            )
             if edge_docs:
                 edges[edge.edge_id] = edge_docs
 

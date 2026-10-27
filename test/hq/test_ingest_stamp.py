@@ -14,6 +14,7 @@ from graflo.architecture.contract.manifest import GraphManifest
 from graflo.connections.graflo_backend import GraFloBackendConfig
 from graflo.data_source.factory import DataSourceFactory
 from graflo.data_source.registry import DataSourceRegistry
+from graflo.db.graflo_backend.connection import GraFloBackendConnection
 from graflo.db.manager import ConnectionManager
 from graflo.filter.onto import ComparisonOperator, FilterExpression
 from graflo.hq.caster import Caster
@@ -227,7 +228,11 @@ def test_the_hooks_are_never_serialized() -> None:
     ],
     ids=["every-record", "a-later-record"],
 )
-def test_a_guard_on_a_backend_without_read_guards_writes_nothing(tmp_path, guard_for):
+def test_a_guard_on_a_backend_without_read_guards_writes_nothing(
+    tmp_path, guard_for, monkeypatch
+):
+    # A backend that declares no read guard.
+    monkeypatch.setattr(GraFloBackendConnection, "supports_read_guard", False)
     params = IngestionParams(stamp_for=_zone_stamp, guard_for=guard_for)
 
     with pytest.raises(NotImplementedError, match="read guard"):

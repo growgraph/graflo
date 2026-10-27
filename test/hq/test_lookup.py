@@ -15,6 +15,7 @@ from graflo.architecture.schema.edge import Edge, EdgeConfig
 from graflo.architecture.schema.semantics import FieldSemantics
 from graflo.architecture.schema.vertex import Field, Vertex, VertexConfig
 from graflo.connections.graflo_backend import GraFloBackendConfig
+from graflo.db.graflo_backend.connection import GraFloBackendConnection
 from graflo.db.manager import ConnectionManager
 from graflo.filter.onto import ComparisonOperator, FilterExpression
 from graflo.hq.lookup import (
@@ -267,6 +268,10 @@ def test_a_guard_reaches_every_read_the_lookup_makes() -> None:
     assert all(kw["guard"] is guard for kw in reader.neighbour_kwargs)
 
 
-def test_a_guard_is_refused_where_the_backend_cannot_apply_it(conn: Any) -> None:
+def test_a_guard_is_refused_where_the_backend_cannot_apply_it(
+    conn: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A backend that declares no read guard.
+    monkeypatch.setattr(GraFloBackendConnection, "supports_read_guard", False)
     with pytest.raises(NotImplementedError, match="read guard"):
         lookup_candidates(conn, _schema(), "pump", guard=zones_guard({1}))
