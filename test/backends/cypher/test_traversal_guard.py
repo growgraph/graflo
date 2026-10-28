@@ -180,10 +180,10 @@ def test_neo4j_declares_the_guard_and_the_union() -> None:
     assert not MemgraphConnection.supports_read_guard
 
 
-def test_falkordb_declares_the_guard() -> None:
+def test_falkordb_declares_the_guard_and_the_union() -> None:
     assert FalkordbConnection.supports_read_guard
     assert FalkordbConnection.supports_graph_export
-    assert not FalkordbConnection.supports_union_merge
+    assert FalkordbConnection.supports_union_merge
 
 
 class _Falkor(FalkordbConnection):
@@ -226,6 +226,29 @@ def test_falkordb_guards_a_lookup_by_key(schema: Schema) -> None:
     assert "any(_any_in IN coalesce(n.access_zones, [])" in query
     assert [3] in params.values()
     assert "SUP-42" in params.values()
+
+
+def test_falkordb_unions_a_list_field_instead_of_replacing_it() -> None:
+    conn = _Falkor()
+
+    conn.upsert_docs_batch(
+        [{"key": "SUP-42", "title": "t", "access_zones": [3, 4]}],
+        "Ticket",
+        ["key"],
+        union_fields=("access_zones",),
+    )
+
+    ((query, params),) = conn.sent
+    assert "UNWIND $data AS row" in query
+    assert "MERGE (n:Ticket { key: row.p.key })" in query
+    assert "SET n += row.p" in query
+    assert "n.`access_zones` = reduce(acc = [], x IN [y IN" in query
+    assert (
+        "coalesce(n.`access_zones`, []) + coalesce(row.u.`access_zones`, [])" in query
+    )
+    assert params == {
+        "data": [{"p": {"key": "SUP-42", "title": "t"}, "u": {"access_zones": [3, 4]}}]
+    }
 
 
 def test_a_traversal_filter_on_a_reserved_field_is_refused(schema: Schema) -> None:

@@ -10,8 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **FalkorDB**: applies a read guard (`supports_read_guard`) on every node and relationship of
-  `graph_neighbors` and `traverse` and to `resolve_vertices`, and exports the graph
-  (`supports_graph_export`).
+  `graph_neighbors` and `traverse` and to `resolve_vertices`, exports the graph
+  (`supports_graph_export`), and writes `merge: union` list fields (`supports_union_merge`).
 - **`GraphEngine.delete_scoped`** / **`DBWriter.delete_scoped`**: remove the vertices and edges of
   the given types whose scope field equals a value (`supports_scoped_delete`; Neo4j and FalkorDB).
 - **`merge_manifests`**: `renames.<side>.connectors` renames a side's connectors; references to

@@ -1,11 +1,12 @@
-"""Read guards and scoped deletes, shared by the Neo4j and FalkorDB suites.
+"""Read guards, scoped deletes and union-merged zones, shared by the Neo4j and
+FalkorDB suites.
 
 A diamond whose short path crosses a hidden vertex: ``a -> h -> d`` and
 ``a -> b -> c -> d``, with ``h`` in a zone the reader does not open.
 
 Not collected here: each backend's ``test_access_guard.py`` imports the cases
 and the ``diamond`` fixture, and defines ``zones_merge`` — ``union`` where the
-backend supports it, ``replace`` otherwise.
+backend supports it, ``replace`` otherwise. The union case needs ``union``.
 """
 
 from __future__ import annotations
@@ -151,6 +152,15 @@ def test_a_hidden_vertex_is_never_matched(conn_conf, diamond):
         )
 
     assert found == {}
+
+
+def test_a_union_field_holds_every_writer_s_zones(conn_conf, diamond):
+    write_zone(conn_conf, diamond, ["d"], [], HIDDEN)
+
+    with ConnectionManager(connection_config=conn_conf) as db:
+        (doc,) = db.fetch_docs("Node", filters=["==", "d", "key"])
+
+    assert sorted(doc["access_zones"]) == [OPEN, HIDDEN]
 
 
 def test_a_scoped_delete_removes_exactly_its_scope(conn_conf, clean_db, zones_merge):

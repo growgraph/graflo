@@ -427,6 +427,7 @@ def test_falkordb_paths() -> None:
 
     conn.fetch_docs(LABEL, filters=["==", "x", "key"], return_keys=[FIELD])
     conn.upsert_docs_batch([{"key": "a"}], LABEL, ["key"])
+    conn.upsert_docs_batch([{"key": "a"}], LABEL, ["key"], union_fields=[FIELD])
     for merge in ((), ("since",)):
         conn.insert_edges_batch(
             [[{"key": "a"}, {"key": "b"}, {"since": 1}]],
@@ -453,7 +454,7 @@ def test_falkordb_paths() -> None:
     conn._add_index(LABEL, Index(fields=[FIELD]))
     conn._add_index(RELATION, Index(fields=[FIELD]), is_vertex_index=False)
 
-    assert_sent_safely(sent, 10)
+    assert_sent_safely(sent, 11)
 
 
 def test_memgraph_schema_indexes_quote_storage_names(schema: Schema) -> None:

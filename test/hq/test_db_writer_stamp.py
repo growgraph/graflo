@@ -203,7 +203,7 @@ def test_neo4j_writes_a_union_without_letting_the_row_overwrite_it() -> None:
         "n.`access_zones` = reduce(acc = [], x IN [y IN coalesce(n.`access_zones`, []) "
         "+ coalesce(row.u.`access_zones`, []) WHERE y IS NOT NULL]" in query
     )
-    assert params["batch"] == [{"p": {"sku": "P", "name": "pump"}, "u": {ZONES: [3]}}]
+    assert params["data"] == [{"p": {"sku": "P", "name": "pump"}, "u": {ZONES: [3]}}]
 
 
 def test_neo4j_keeps_its_plain_upsert_without_union_fields() -> None:
