@@ -57,6 +57,7 @@ from graflo.db.cypher.delete import (
     delete_scoped_nodes,
     delete_scoped_relationships,
 )
+from graflo.db.cypher.union import union_upsert_query, union_upsert_rows
 from graflo.db.field_type_support import assert_schema_supported
 from graflo.db.graph_introspection import (
     GraphSchemaInferencer,
@@ -98,6 +99,7 @@ class FalkordbConnection(Connection):
     #: The guard is rendered by the Cypher traversal shared with Neo4j, and
     #: conjoined into ``fetch_docs`` filters like any other predicate.
     supports_read_guard = True
+    supports_union_merge = True
 
     # Type annotations for instance attributes
     client: FalkorDB | None
@@ -681,11 +683,14 @@ class FalkordbConnection(Connection):
             match_keys: Keys to match for upsert operation
             **kwargs: Additional options:
                 - dry (bool): If True, build query but don't execute
+                - union_fields: List properties written as the union of the
+                  stored and the given members rather than replaced.
 
         Raises:
             ValueError: If any document is missing a required match_key or has None value
         """
         dry = kwargs.pop("dry", False)
+        union_fields: tuple[str, ...] = tuple(kwargs.pop("union_fields", ()) or ())
 
         if not docs:
             return
@@ -697,6 +702,12 @@ class FalkordbConnection(Connection):
         sanitized_docs = self._sanitize_batch(docs, match_keys_list)
 
         if not sanitized_docs:
+            return
+
+        if union_fields:
+            q = union_upsert_query(class_name, match_keys_list, union_fields)
+            if not dry:
+                self.execute(q, data=union_upsert_rows(sanitized_docs, union_fields))
             return
 
         # Build the MERGE clause with match keys

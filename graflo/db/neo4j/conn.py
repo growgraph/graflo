@@ -57,6 +57,7 @@ from graflo.db.cypher.delete import (
     delete_scoped_relationships,
 )
 from graflo.db.cypher.traversal import cypher_graph_neighbors
+from graflo.db.cypher.union import union_upsert_query, union_upsert_rows
 from graflo.db.field_type_support import assert_schema_supported
 from graflo.db.graph_introspection import (
     GraphSchemaInferencer,
@@ -119,45 +120,6 @@ def _create_schema_rule(db: Any, query: str) -> None:
             )
             return
         raise
-
-
-def _union_upsert(
-    docs: list[dict[str, Any]],
-    class_name: str,
-    match_keys: Sequence[str],
-    union_fields: Sequence[str],
-) -> tuple[str, list[dict[str, Any]]]:
-    """A node upsert that unions *union_fields* with what the node holds.
-
-    Each row carries the replaced properties under ``p`` and the union ones
-    under ``u``, so ``n += row.p`` can never overwrite a stored list. Members
-    keep first-seen order, stored ones first; null members are dropped,
-    since ``null IN acc`` is never true and they would pile up.
-    """
-    index_str = ", ".join(
-        f"{cypher_name(k)}: row.p.{cypher_name(k)}" for k in match_keys
-    )
-    unions = ", ".join(
-        f"n.{q} = reduce(acc = [], x IN [y IN "
-        f"coalesce(n.{q}, []) + coalesce(row.u.{q}, []) "
-        "WHERE y IS NOT NULL] | CASE WHEN x IN acc THEN acc ELSE acc + x END)"
-        for q in (cypher_name(f, quoted=True) for f in union_fields)
-    )
-    query = f"""
-            WITH $batch AS batch
-            UNWIND batch as row
-            MERGE (n:{cypher_name(class_name)} {{ {index_str} }})
-            SET n += row.p
-            SET {unions}
-        """
-    batch = [
-        {
-            "p": {k: v for k, v in doc.items() if k not in union_fields},
-            "u": {k: doc[k] for k in union_fields if k in doc},
-        }
-        for doc in docs
-    ]
-    return query, batch
 
 
 class Neo4jConnection(Connection):
@@ -643,8 +605,10 @@ class Neo4jConnection(Connection):
         dry = kwargs.pop("dry", False)
         union_fields: tuple[str, ...] = tuple(kwargs.pop("union_fields", ()) or ())
 
+        params: dict[str, Any]
         if union_fields:
-            q, batch = _union_upsert(docs, class_name, match_keys, union_fields)
+            q = union_upsert_query(class_name, match_keys, union_fields)
+            params = {"data": union_upsert_rows(docs, union_fields)}
         else:
             index_str = ", ".join(
                 [f"{cypher_name(k)}: row.{cypher_name(k)}" for k in match_keys]
@@ -656,11 +620,11 @@ class Neo4jConnection(Connection):
             ON MATCH set n += row
             ON CREATE set n += row
         """
-            batch = docs
+            params = {"batch": docs}
         if not dry:
             # Consumed so the write has committed, and raised any error, before
             # the call returns; ``run`` alone returns before the commit.
-            self.execute(q, batch=batch).consume()
+            self.execute(q, **params).consume()
 
     def insert_edges_batch(
         self,
