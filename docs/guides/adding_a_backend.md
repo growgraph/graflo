@@ -61,6 +61,9 @@ Other methods have a default that you override for a capability or for speed:
 - `delete_vertices` and `delete_edges` raise `NotImplementedError`. Implement
   them together with `supports_instance_delete`; `delete_vertices` must remove
   the edges that touch a removed vertex.
+- `delete_scoped_vertices` and `delete_scoped_edges` raise `NotImplementedError`.
+  Implement them together with `supports_scoped_delete`; the same rule holds for
+  a removed vertex's edges.
 
 If your store speaks Cypher, reuse `graflo/db/cypher/`: escaping,
 relationship merge, direction handling, traversal queries, delete statements
@@ -103,6 +106,7 @@ class MyConnection(Connection):
     schema_introspection_is_sampled = False  # False only with a real catalog
     supports_schema_ddl = False  # True only with a migration emitter (step 3)
     supports_instance_delete = True  # delete_vertices and delete_edges
+    supports_scoped_delete = True  # delete_scoped_vertices and delete_scoped_edges
 ```
 
 An introspector that samples records must leave `property_types` empty and

@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **FalkorDB**: applies a read guard (`supports_read_guard`) on every node and relationship of
+  `graph_neighbors` and `traverse` and to `resolve_vertices`, and exports the graph
+  (`supports_graph_export`).
+- **`GraphEngine.delete_scoped`** / **`DBWriter.delete_scoped`**: remove the vertices and edges of
+  the given types whose scope field equals a value (`supports_scoped_delete`; Neo4j and FalkorDB).
+- **`merge_manifests`**: `renames.<side>.connectors` renames a side's connectors; references to
+  them (`resource_connector`, `connector_connection`, an API connector's `parent`) follow.
+
+### Changed
+
+- **Push connectors**: the name is part of a push connector's identity, so a manifest can hold
+  several; their hashes change.
+- **Provenance lift**: keeps a `SourceRecord` or `Agent` that conforms to the aspect's type (same
+  key, class IRI and typed properties) and adds no edge twice, instead of refusing the manifest.
+
+### Fixed
+
+- **`merge_manifests`**: a connector renamed by `prefix_right` takes an API connector's `parent`
+  reference with it.
+
 ## [1.24.1]
 
 ### Changed

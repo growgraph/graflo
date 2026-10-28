@@ -999,6 +999,13 @@ class PushConnector(ResourceConnector):
     name: str = Field(..., min_length=1)  # ty: ignore[invalid-mutable-override]
     records_path: str | None = None
 
+    def _hash_payload(self) -> dict[str, Any]:
+        payload = super()._hash_payload()
+        # It has no address: the name is what records are pushed to, so two
+        # push connectors with different names are two sources.
+        payload["name"] = self.name
+        return payload
+
     def matches(self, resource_identifier: str) -> bool:
         """Match connector name or resource name."""
         return resource_identifier == self.name or (

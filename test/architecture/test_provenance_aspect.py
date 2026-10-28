@@ -122,6 +122,47 @@ def test_a_name_the_aspect_would_mint_and_that_already_exists_is_refused() -> No
         plan_provenance(_manifest(config))
 
 
+def _carrying_the_vocabulary() -> GraphManifest:
+    """A kit's manifest: it carries the aspect's types, extended with its own fields."""
+    lifted = apply_evolution(_manifest(), plan_provenance(_manifest()))
+    config = lifted.model_dump(mode="json", by_alias=True)
+    for vertex in config["schema"]["core_schema"]["vertex_config"]["vertices"]:
+        if vertex["name"] == "Agent":
+            vertex["properties"].append({"name": "email", "type": "STRING"})
+            vertex["description"] = "A person, keyed by email."
+    return _manifest(config)
+
+
+def test_types_that_conform_are_kept_and_nothing_is_added_twice() -> None:
+    manifest = _carrying_the_vocabulary()
+
+    ops = plan_provenance(manifest, attach=["Ticket"])
+
+    assert [op.op for op in ops] == ["add_edges"]
+    core = apply_evolution(manifest, ops).require_schema().core_schema
+    assert "email" in core.vertex_config.property_names("Agent")
+    assert sorted(e.edge_id for e in core.edge_config.edges) == [
+        ("SourceRecord", "Agent", "wasAttributedTo"),
+        ("Ticket", "SourceRecord", "wasDerivedFrom"),
+    ]
+
+
+def test_a_manifest_already_lifted_plans_nothing() -> None:
+    assert plan_provenance(_carrying_the_vocabulary()) == []
+
+
+def test_a_type_that_does_not_conform_is_named_with_what_differs() -> None:
+    config = _carrying_the_vocabulary().model_dump(mode="json", by_alias=True)
+    for vertex in config["schema"]["core_schema"]["vertex_config"]["vertices"]:
+        if vertex["name"] == "SourceRecord":
+            vertex["properties"] = [
+                p for p in vertex["properties"] if p["name"] != "content_hash"
+            ]
+
+    with pytest.raises(LiftError, match="no field 'content_hash'"):
+        plan_provenance(_manifest(config))
+
+
 def test_an_unknown_aspect_is_refused_by_name() -> None:
     with pytest.raises(LiftError, match="no aspect named"):
         plan_lift(_manifest(), aspects=["no-such-aspect"])

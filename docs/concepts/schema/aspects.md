@@ -82,6 +82,14 @@ Which types gain `wasDerivedFrom`:
 `SourceRecord -wasAttributedTo-> Agent` is added even when nothing else is, so
 the schema can always say who produced a record.
 
+A manifest that already has a `SourceRecord` or an `Agent` keeps it when it
+conforms: the same key and class IRI, and every property in the table with the
+same type. Further properties, secondary identities and its own description
+stay. An edge the manifest already has is not added again. So manifests that
+carry the vocabulary, such as source kits, can be composed first and lifted
+after. A type with the name that does not conform is refused, and the error
+says what differs.
+
 ## Filling the provenance types
 
 A lifted `Ticket` is filled like any other type: a resource writes the ticket,

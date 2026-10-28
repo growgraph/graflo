@@ -50,7 +50,12 @@ from graflo.db.cypher import (
     rel_absent_upsert_clause,
     rel_merge_props_map_from_row_index,
 )
-from graflo.db.cypher.delete import delete_nodes, delete_relationships
+from graflo.db.cypher.delete import (
+    delete_nodes,
+    delete_relationships,
+    delete_scoped_nodes,
+    delete_scoped_relationships,
+)
 from graflo.db.cypher.traversal import cypher_graph_neighbors
 from graflo.db.field_type_support import assert_schema_supported
 from graflo.db.graph_introspection import (
@@ -169,6 +174,7 @@ class Neo4jConnection(Connection):
 
     flavor = DBType.NEO4J
     supports_instance_delete = True
+    supports_scoped_delete = True
     supports_graph_export = True
     # A migration emitter is registered for this backend
     # (graflo/migrate/executor.py); the other six have none.
@@ -947,6 +953,35 @@ class Neo4jConnection(Connection):
             match_keys_source,
             match_keys_target,
             chunk_size,
+        )
+
+    def delete_scoped_vertices(self, class_name: str, field: str, value: Any) -> None:
+        """Remove the nodes whose *field* equals *value*, with ``DETACH DELETE``."""
+        delete_scoped_nodes(
+            lambda query, params: self.execute(query, **params),
+            class_name,
+            field,
+            value,
+        )
+
+    def delete_scoped_edges(
+        self,
+        source_class: str,
+        target_class: str,
+        relation_name: str | None,
+        field: str,
+        value: Any,
+        *,
+        collection_name: str | None = None,
+    ) -> None:
+        """Remove the relationships of one type whose *field* equals *value*."""
+        delete_scoped_relationships(
+            lambda query, params: self.execute(query, **params),
+            source_class,
+            target_class,
+            relation_name,
+            field,
+            value,
         )
 
     def fetch_present_documents(

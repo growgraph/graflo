@@ -1,5 +1,8 @@
 import pytest
 
+# Before the shared cases are imported, so their asserts are rewritten too.
+pytest.register_assert_rewrite("test.db.cypher_cases")
+
 from graflo.connections.onto import Neo4jConfig
 from graflo.db.manager import ConnectionManager
 

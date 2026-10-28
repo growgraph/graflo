@@ -227,7 +227,12 @@ renames:
         properties: {WorkOrder: {wo_id: work_order_id}}
     right:
         resources: {devices: sensor_devices}
+        connectors: {devices: sensor_devices}
 ```
+
+A renamed connector takes its references with it: the `resource_connector` and
+`connector_connection` entries that name it, and the `parent` of an API
+connector that fetches per record of it.
 
 Every source must exist on its side. A type an equivalence holds is named by
 its `into`, and its properties by the equivalence's `properties`: a `renames`
@@ -409,8 +414,8 @@ them and carry the equivalence to declare; `prefix_right` keeps them apart.
 
 Resource and connector names are matched exactly, never by spelling, and
 `union_right` does not merge them: they are addresses, not concepts. Rename a
-side's resources with `renames: {right: {resources: {old: new}}}`, or use
-`prefix_right`. Property names are also matched exactly: `customer_email` and
+side's resources or connectors with `renames: {right: {resources: {old: new}}}`
+or `renames: {right: {connectors: {old: new}}}`, or use `prefix_right`. Property names are also matched exactly: `customer_email` and
 `customerEmail` stay two properties, because each is fed by a different column.
 
 ## Keying the merged type

@@ -417,6 +417,74 @@ class DBWriter:
                 collection_name=runtime.storage_name(),
             )
 
+    def delete_scoped(
+        self,
+        conn_conf: DBConfig,
+        field: str,
+        value: Any,
+        *,
+        vertices: Sequence[str] = (),
+        edges: Sequence[EdgeId] = (),
+    ) -> None:
+        """Remove the elements of the given types whose *field* equals *value*.
+
+        Names are logical. Edges go first; a removed vertex takes every edge
+        incident to it, scoped or not. Nothing is removed in a dry run.
+
+        Args:
+            conn_conf: The database to remove them from.
+            field: The scope field, declared on every type named.
+            value: The scope; never ``None``.
+            vertices: Logical vertex types.
+            edges: Logical ``(source, target, relation)`` of declared edges.
+
+        Raises:
+            ValueError: If the target does not support scoped deletes, *value*
+                is ``None``, an edge is not declared, or a type does not
+                declare *field*.
+        """
+        ConnectionManager.require(conn_conf, ConnectionCapability.SCOPED_DELETE)
+        if value is None:
+            raise ValueError("a scoped delete needs a scope value, not None")
+        core = self.schema.core_schema
+        for vertex in vertices:
+            if field not in core.vertex_config.property_names(vertex):
+                raise ValueError(f"Vertex {vertex!r} declares no field {field!r}")
+        for edge_id in edges:
+            if edge_id not in core.edge_config:
+                raise ValueError(f"Edge {edge_id} is not declared in the schema")
+            if field not in core.edge_config.edge_for(edge_id).property_names:
+                raise ValueError(f"Edge {edge_id} declares no field {field!r}")
+        if self.dry:
+            return
+        schema_db = self._db_aware_for(conn_conf)
+        vc = schema_db.vertex_config
+        keys = self._keys_for(conn_conf)
+        with ConnectionManager(connection_config=conn_conf) as db:
+            for edge_id in edges:
+                edge = core.edge_config.edge_for(edge_id)
+                runtime = schema_db.edge_config.runtime(edge)
+                _, relation_name = self._project_edge_docs_for_db(
+                    docs=[],
+                    relation=edge.relation,
+                    runtime=runtime,
+                    conn_type=conn_conf.connection_type,
+                )
+                db.delete_scoped_edges(
+                    vc.vertex_dbname(edge.source),
+                    vc.vertex_dbname(edge.target),
+                    relation_name,
+                    keys.edge_fields(edge_id, [field])[0],
+                    value,
+                    collection_name=runtime.storage_name(),
+                )
+            for vertex in vertices:
+                db.delete_scoped_vertices(
+                    vc.vertex_dbname(vertex),
+                    keys.vertex_fields(vertex, [field])[0],
+                    value,
+                )
+
     def _validate_bulk_resource(self, resource_name: str | None) -> None:
         if resource_name is None:
             return

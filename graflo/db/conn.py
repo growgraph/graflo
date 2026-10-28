@@ -168,6 +168,7 @@ class ConnectionCapability(Enum):
     INSTANCE_DELETE = "supports_instance_delete"
     READ_GUARD = "supports_read_guard"
     UNION_MERGE = "supports_union_merge"
+    SCOPED_DELETE = "supports_scoped_delete"
 
     @property
     def label(self) -> str:
@@ -180,6 +181,7 @@ class ConnectionCapability(Enum):
             ConnectionCapability.INSTANCE_DELETE: "deleting vertices and edges",
             ConnectionCapability.READ_GUARD: "a read guard on every element read",
             ConnectionCapability.UNION_MERGE: "union-merged list fields",
+            ConnectionCapability.SCOPED_DELETE: "deleting the elements of a scope",
         }[self]
 
 
@@ -295,6 +297,8 @@ class Connection(abc.ABC):
     schema_introspection_is_sampled: ClassVar[bool] = True
     #: Implements :meth:`delete_vertices` and :meth:`delete_edges`.
     supports_instance_delete: ClassVar[bool] = False
+    #: Implements :meth:`delete_scoped_vertices` and :meth:`delete_scoped_edges`.
+    supports_scoped_delete: ClassVar[bool] = False
 
     def __init__(self):
         """Initialize the connection."""
@@ -786,6 +790,54 @@ class Connection(abc.ABC):
         """
         raise NotImplementedError(
             f"{type(self).__name__} does not support deleting edges"
+        )
+
+    def delete_scoped_vertices(self, class_name: str, field: str, value: Any) -> None:
+        """Remove the vertices of one type whose *field* equals *value*.
+
+        Every edge incident to them goes too. Names are stored names.
+
+        Args:
+            class_name: Stored name of the vertex type.
+            field: Stored name of the scope field.
+            value: The scope; never ``None``.
+
+        Raises:
+            NotImplementedError: On a backend that does not declare
+                ``supports_scoped_delete``.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support deleting vertices by scope"
+        )
+
+    def delete_scoped_edges(
+        self,
+        source_class: str,
+        target_class: str,
+        relation_name: str | None,
+        field: str,
+        value: Any,
+        *,
+        collection_name: str | None = None,
+    ) -> None:
+        """Remove the edges of one type whose *field* equals *value*.
+
+        Names are stored names, as for :meth:`delete_edges`.
+
+        Args:
+            source_class: Stored name of the source vertex type.
+            target_class: Stored name of the target vertex type.
+            relation_name: Stored relation, as passed to :meth:`insert_edges_batch`.
+            field: Stored name of the scope field on the edge.
+            value: The scope; never ``None``.
+            collection_name: Edge collection, where the backend has one.
+
+        Raises:
+            NotImplementedError: On a backend that does not declare
+                ``supports_scoped_delete``.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support deleting edges by scope"
         )
 
     @abc.abstractmethod

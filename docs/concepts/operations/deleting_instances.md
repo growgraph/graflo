@@ -40,3 +40,27 @@ translates them to the names the database stores.
 Both calls raise `ValueError` before a connection is opened on a target that
 cannot remove, and `delete_edges` also raises it for an edge the schema does
 not declare.
+
+## Removing a scope
+
+To replace everything one source wrote, remove the elements whose scope field
+holds its value, then write the new snapshot:
+
+```python
+engine.delete_scoped(
+    conn_conf,
+    schema,
+    "installation",
+    "T1",
+    vertices=["account"],
+    edges=[("account", "zone", "holds")],
+)
+```
+
+Every type named must declare the field. Edges go first; a removed vertex takes
+every edge that touches it, scoped or not. A `None` value is refused.
+
+| Target | Removes a scope |
+|---|---|
+| Neo4j, FalkorDB | Yes |
+| Every other target | No: `ValueError` before a connection is opened |

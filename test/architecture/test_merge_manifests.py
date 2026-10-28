@@ -1487,6 +1487,118 @@ def test_union_right_rejects_a_connector_collision() -> None:
         )
 
 
+def _kit(side: str, connectors: list[dict]) -> GraphManifest:
+    """A kit pushing source records, plus whatever *connectors* it fetches by."""
+    vertex = f"A_{side}"
+    return _manifest(
+        name=side,
+        vertices=[Vertex(name=vertex, properties=[Field(name="id")], identity=["id"])],
+        edges=[],
+        resources=[{"name": f"{side}_records", "apply": [{"vertex": vertex}]}],
+        bindings={
+            "connectors": [{"name": "source_records", "kind": "push"}, *connectors],
+            "resource_connector": [
+                {"resource": f"{side}_records", "connector": "source_records"}
+            ],
+        },
+    )
+
+
+def test_two_kits_compose_their_push_connectors_by_declared_renames() -> None:
+    op = MergeManifestsOp.model_validate(
+        {
+            "renames": {
+                "left": {"connectors": {"source_records": "slack_source_records"}},
+                "right": {"connectors": {"source_records": "jira_source_records"}},
+            }
+        }
+    )
+
+    out = merge_manifests(_kit("slack", []), _kit("jira", []), op, bump_version=False)
+
+    assert out.bindings is not None
+    assert {c.name for c in out.bindings.connectors} == {
+        "slack_source_records",
+        "jira_source_records",
+    }
+    assert {(rc.resource, rc.connector) for rc in out.bindings.resource_connector} == {
+        ("slack_records", "slack_source_records"),
+        ("jira_records", "jira_source_records"),
+    }
+
+
+def test_a_renamed_connector_takes_its_children_with_it() -> None:
+    channels = {"name": "channels", "path": "/channels"}
+    history = {
+        "name": "history",
+        "path": "/history",
+        "params": {"channel": "{channel}"},
+        "parent": {"connector": "channels", "fields": {"channel": "id"}},
+    }
+    op = MergeManifestsOp.model_validate(
+        {
+            "renames": {
+                "left": {"connectors": {"source_records": "slack_source_records"}},
+                "right": {
+                    "connectors": {
+                        "source_records": "jira_source_records",
+                        "channels": "jira_channels",
+                    }
+                },
+            }
+        }
+    )
+
+    out = merge_manifests(
+        _kit("slack", []), _kit("jira", [channels, history]), op, bump_version=False
+    )
+
+    assert out.bindings is not None
+    (child,) = [c for c in out.bindings.connectors if c.name == "history"]
+    parent = out.bindings.get_parent_connector(child)
+    assert parent is not None and parent.name == "jira_channels"
+
+
+def test_a_connector_prefixed_on_collision_takes_its_children_with_it() -> None:
+    channels = {"name": "channels", "path": "/channels"}
+    history = {
+        "name": "history",
+        "path": "/history",
+        "params": {"channel": "{channel}"},
+        "parent": {"connector": "channels", "fields": {"channel": "id"}},
+    }
+    op = MergeManifestsOp.model_validate(
+        {
+            "name_conflict": "prefix_right",
+            "renames": {
+                "left": {"connectors": {"source_records": "slack_source_records"}},
+                "right": {"connectors": {"source_records": "jira_source_records"}},
+            },
+        }
+    )
+
+    out = merge_manifests(
+        _kit("slack", [{**channels, "path": "/slack/channels"}]),
+        _kit("jira", [channels, history]),
+        op,
+        bump_version=False,
+    )
+
+    assert out.bindings is not None
+    (child,) = [c for c in out.bindings.connectors if c.name == "history"]
+    parent = out.bindings.get_parent_connector(child)
+    assert parent is not None and parent.name == "r_channels"
+
+
+def test_a_rename_of_a_missing_connector_is_refused() -> None:
+    op = MergeManifestsOp.model_validate(
+        {"renames": {"right": {"connectors": {"nothing": "something"}}}}
+    )
+
+    with pytest.raises(ValueError, match="names no right connector"):
+        merge_manifests(_kit("slack", []), _kit("jira", []), op, bump_version=False)
+
+
 class TestComposedPropertyAttributes:
     """Attributes of a property that two sides both declare.
 

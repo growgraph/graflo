@@ -86,6 +86,7 @@ from .ops import (
     LocalKeyBranch,
     ManifestOp,
     MergeManifestsOp,
+    MergeRenames,
     RenameRelationsOp,
     RenameResourcesOp,
     RenameVerticesOp,
@@ -1510,81 +1511,96 @@ def _connector_name(connector: Any) -> str | None:
     return name if isinstance(name, str) else None
 
 
+def _rename_connectors(
+    data: dict[str, Any], renames: Mapping[str, str], *, side: str
+) -> dict[str, Any]:
+    """Bindings *data* with connectors renamed and every reference following.
+
+    A reference is a ``resource_connector`` or ``connector_connection`` entry,
+    or an API connector's ``parent``. Every source must name a connector of
+    the side.
+    """
+    effective = {old: new for old, new in renames.items() if old != new}
+    if not effective:
+        return data
+    connectors = [dict(c) for c in data.get("connectors") or []]
+    missing = sorted(set(effective) - {_connector_name(c) for c in connectors})
+    if missing:
+        raise ValueError(
+            f"merge_manifests: renames.{side}.connectors names no {side} "
+            f"connector: {missing}"
+        )
+    for connector in connectors:
+        name = connector.get("name")
+        if name in effective:
+            connector["name"] = effective[name]
+        parent = connector.get("parent")
+        if isinstance(parent, dict) and parent.get("connector") in effective:
+            connector["parent"] = {
+                **parent,
+                "connector": effective[parent["connector"]],
+            }
+    out = {**data, "connectors": connectors}
+    for key in ("resource_connector", "connector_connection"):
+        out[key] = [
+            {**entry, "connector": effective[entry["connector"]]}
+            if entry.get("connector") in effective
+            else dict(entry)
+            for entry in data.get(key) or []
+        ]
+    return out
+
+
 def _union_bindings(
     left: Bindings | None,
     right: Bindings | None,
     *,
     name_conflict: Literal["error", "prefix_right", "union_right"],
+    renames: MergeRenames,
 ) -> Bindings | None:
     """Assemble both bindings registries by name, renaming right-side collisions.
 
-    Connectors are *addresses*, not concepts, so they collide only on an exact
-    name and ``union_right`` is meaningless for them -- it behaves as ``error``.
-    A renamed right connector is propagated into the references that name it.
+    Each side's ``renames.<side>.connectors`` are applied first. Connectors are
+    *addresses*, not concepts, so they collide only on an exact name and
+    ``union_right`` is meaningless for them -- it behaves as ``error``. A
+    renamed connector, declared or by collision, is propagated into the
+    references that name it.
     """
     if left is None and right is None:
         return None
+    left_data = _rename_connectors(
+        left.to_dict(skip_defaults=False) if left is not None else {},
+        renames.left.connectors,
+        side="left",
+    )
+    right_data = _rename_connectors(
+        right.to_dict(skip_defaults=False) if right is not None else {},
+        renames.right.connectors,
+        side="right",
+    )
     if left is None:
-        return right.model_copy(deep=True) if right is not None else None
+        return Bindings.model_validate(right_data)
     if right is None:
-        return left.model_copy(deep=True)
+        return Bindings.model_validate(left_data)
 
-    left_data = left.to_dict(skip_defaults=False)
-    right_data = right.to_dict(skip_defaults=False)
-
-    left_connectors = list(left_data.get("connectors") or [])
-    right_connectors = list(right_data.get("connectors") or [])
-    left_names = {n for c in left_connectors if (n := _connector_name(c)) is not None}
-    right_names = [n for c in right_connectors if (n := _connector_name(c)) is not None]
+    left_names = {
+        n for c in left_data.get("connectors") or [] if (n := _connector_name(c))
+    }
+    right_names = [
+        n for c in right_data.get("connectors") or [] if (n := _connector_name(c))
+    ]
     # Connectors are addresses, like resources: the same exact-match policy,
     # the same ordinal disambiguation, and ``union_right`` behaves as ``error``.
-    rename_connectors = _resolve_name_collisions(
+    collisions = _resolve_name_collisions(
         left_names,
         right_names,
         name_conflict=name_conflict,
         kind="connector",
-        hint="rename before merge",
+        hint="rename one with `renames.<side>.connectors`",
     )
-
-    if rename_connectors:
-        # Rebuild right connectors/bindings with renamed connector names.
-        rebuilt_right: list[Any] = []
-        for connector in right_connectors:
-            d = (
-                dict(connector)
-                if isinstance(connector, dict)
-                else connector.to_dict(skip_defaults=False)
-            )
-            cname = d.get("name")
-            if isinstance(cname, str) and cname in rename_connectors:
-                d["name"] = rename_connectors[cname]
-            rebuilt_right.append(d)
-        right_connectors = rebuilt_right
-
-        def _remap_connector_ref(entries: list[Any], key: str) -> list[Any]:
-            out: list[Any] = []
-            for entry in entries:
-                d = (
-                    dict(entry)
-                    if isinstance(entry, dict)
-                    else (
-                        entry.to_dict(skip_defaults=False)
-                        if hasattr(entry, "to_dict")
-                        else dict(entry)
-                    )
-                )
-                ref = d.get(key)
-                if isinstance(ref, str) and ref in rename_connectors:
-                    d[key] = rename_connectors[ref]
-                out.append(d)
-            return out
-
-        right_data["resource_connector"] = _remap_connector_ref(
-            list(right_data.get("resource_connector") or []), "connector"
-        )
-        right_data["connector_connection"] = _remap_connector_ref(
-            list(right_data.get("connector_connection") or []), "connector"
-        )
+    right_data = _rename_connectors(right_data, collisions, side="right")
+    left_connectors = list(left_data.get("connectors") or [])
+    right_connectors = list(right_data.get("connectors") or [])
 
     merged = {
         "connector_templates": list(left_data.get("connector_templates") or [])
@@ -1825,7 +1841,10 @@ def _merge_manifests(
         out_left.ingestion_model, out_right.ingestion_model
     )
     composed_bindings = _union_bindings(
-        out_left.bindings, out_right.bindings, name_conflict=op.name_conflict
+        out_left.bindings,
+        out_right.bindings,
+        name_conflict=op.name_conflict,
+        renames=op.renames,
     )
 
     result = GraphManifest(

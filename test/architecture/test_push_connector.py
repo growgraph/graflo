@@ -34,15 +34,34 @@ def test_a_push_connector_matches_its_name_and_resource() -> None:
     assert not connector.matches("other")
 
 
-def test_the_hash_follows_the_envelope_not_the_name() -> None:
+def test_the_hash_follows_the_name_and_the_envelope() -> None:
     plain = PushConnector(kind="push", name="a")
     renamed = PushConnector(kind="push", name="b")
     enveloped = PushConnector(kind="push", name="a", records_path="data.items")
     annotated = PushConnector(
         kind="push", name="a", row_annotations={"source": "schemacast"}
     )
-    assert plain.hash == renamed.hash
-    assert len({plain.hash, enveloped.hash, annotated.hash}) == 3
+    assert len({plain.hash, renamed.hash, enveloped.hash, annotated.hash}) == 4
+    assert plain.hash == PushConnector(kind="push", name="a").hash
+
+
+def test_two_push_connectors_load_in_one_manifest() -> None:
+    bindings = Bindings.model_validate(
+        {
+            "connectors": [
+                {"name": "slack_source_records", "kind": "push"},
+                {"name": "jira_source_records", "kind": "push"},
+            ],
+            "resource_connector": [
+                {"resource": "slack_records", "connector": "slack_source_records"},
+                {"resource": "jira_records", "connector": "jira_source_records"},
+            ],
+        }
+    )
+    (slack,) = bindings.get_connectors_for_resource("slack_records")
+    (jira,) = bindings.get_connectors_for_resource("jira_records")
+    assert slack.name == "slack_source_records"
+    assert jira.name == "jira_source_records"
 
 
 def test_bindings_wire_a_push_connector_to_its_resource() -> None:

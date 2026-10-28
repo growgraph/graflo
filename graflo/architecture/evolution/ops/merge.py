@@ -42,6 +42,13 @@ class SideRenames(ConfigBaseModel):
         default_factory=dict,
         description="Resource renames, applied before the union: ``{old: new}``.",
     )
+    connectors: dict[str, str] = PydanticField(
+        default_factory=dict,
+        description=(
+            "Connector renames, applied before the union: ``{old: new}``. "
+            "References to a renamed connector follow it."
+        ),
+    )
 
     @model_validator(mode="after")
     def _validate_renames(self) -> SideRenames:
@@ -60,6 +67,11 @@ class SideRenames(ConfigBaseModel):
             kind="renames.resources",
             merge_hint="distinct resource names",
         )
+        validate_rename_map_is_injective(
+            {s: t for s, t in self.connectors.items() if s != t},
+            kind="renames.connectors",
+            merge_hint="distinct connector names",
+        )
         for cls, attr_map in self.properties.items():
             validate_rename_map_is_injective(
                 attr_map,
@@ -71,7 +83,11 @@ class SideRenames(ConfigBaseModel):
     def is_empty(self) -> bool:
         """Whether no rename is declared."""
         return not (
-            self.vertices or self.relations or self.properties or self.resources
+            self.vertices
+            or self.relations
+            or self.properties
+            or self.resources
+            or self.connectors
         )
 
 

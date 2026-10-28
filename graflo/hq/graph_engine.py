@@ -8,6 +8,7 @@ and data ingestion.
 import asyncio
 import inspect
 import logging
+from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -799,6 +800,38 @@ class GraphEngine:
         """
         writer = DBWriter(schema=schema, ingestion_model=IngestionModel(resources=[]))
         writer.delete_edges(target_db_config, edge_id, endpoints)
+
+    def delete_scoped(
+        self,
+        target_db_config: DBConfig,
+        schema: Schema,
+        field: str,
+        value: Any,
+        *,
+        vertices: Sequence[str] = (),
+        edges: Sequence[tuple[str, str, str | None]] = (),
+    ) -> None:
+        """Remove the vertices and edges of the given types whose *field* equals *value*.
+
+        A removed vertex takes every edge incident to it, scoped or not.
+
+        Args:
+            target_db_config: The database to remove them from.
+            schema: The schema the graph was written with.
+            field: Logical scope field, declared on every type named.
+            value: The scope; never ``None``.
+            vertices: Logical vertex types.
+            edges: Logical ``(source, target, relation)`` of declared edges.
+
+        Raises:
+            ValueError: If the target does not support scoped deletes, *value*
+                is ``None``, an edge is not declared, or a type does not
+                declare *field*.
+        """
+        writer = DBWriter(schema=schema, ingestion_model=IngestionModel(resources=[]))
+        writer.delete_scoped(
+            target_db_config, field, value, vertices=vertices, edges=edges
+        )
 
     def export_graph(
         self,

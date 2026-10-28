@@ -17,6 +17,7 @@ from graflo.architecture.query import ReservedFieldError, TraverseQuery
 from graflo.architecture.schema import Schema
 from graflo.db.arango.conn import ArangoConnection
 from graflo.db.cypher.traversal import ANCHOR_PARAM, cypher_graph_neighbors
+from graflo.db.falkordb.conn import FalkordbConnection
 from graflo.db.memgraph.conn import MemgraphConnection
 from graflo.db.neo4j.conn import Neo4jConnection
 from graflo.db.postgres.conn import PostgresConnection
@@ -177,6 +178,54 @@ def test_neo4j_declares_the_guard_and_the_union() -> None:
     assert Neo4jConnection.supports_read_guard
     assert Neo4jConnection.supports_union_merge
     assert not MemgraphConnection.supports_read_guard
+
+
+def test_falkordb_declares_the_guard() -> None:
+    assert FalkordbConnection.supports_read_guard
+    assert FalkordbConnection.supports_graph_export
+    assert not FalkordbConnection.supports_union_merge
+
+
+class _Falkor(FalkordbConnection):
+    """A FalkorDB connection with no server: statements are recorded, rows empty."""
+
+    def __init__(self) -> None:
+        self.sent: list[tuple[str, dict[str, Any]]] = []
+
+    def execute(self, query: str, **params: Any) -> Any:
+        self.sent.append((query, params))
+        return type("R", (), {"result_set": []})()
+
+
+def test_falkordb_guards_every_node_and_relationship_of_a_walk(
+    schema: Schema,
+) -> None:
+    conn = _Falkor()
+
+    conn.graph_neighbors(
+        "Ticket", "SUP-42", hops=2, schema=schema, guard=zones_guard({11, 12})
+    )
+
+    walks = [(q, p) for q, p in conn.sent if "path" in q]
+    assert walks
+    for query, params in walks:
+        assert "all(_gn IN nodes(path) WHERE any(_any_in IN" in query
+        assert "all(_gr IN relationships(path) WHERE any(_any_in IN" in query
+        assert "[11, 12]" not in query
+        assert [11, 12] in params.values()
+
+
+def test_falkordb_guards_a_lookup_by_key(schema: Schema) -> None:
+    conn = _Falkor()
+
+    conn.resolve_vertices(
+        "Ticket", [{"key": "SUP-42"}], ("key",), ("key",), guard=zones_guard({3})
+    )
+
+    ((query, params),) = conn.sent
+    assert "any(_any_in IN coalesce(n.access_zones, [])" in query
+    assert [3] in params.values()
+    assert "SUP-42" in params.values()
 
 
 def test_a_traversal_filter_on_a_reserved_field_is_refused(schema: Schema) -> None:

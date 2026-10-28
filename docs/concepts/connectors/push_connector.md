@@ -22,7 +22,7 @@ bindings:
       connector: findings
 ```
 
-`kind: push` is required: it is how GraFlo tells a push connector from the other connector kinds.
+`kind: push` is required: it is how GraFlo tells a push connector from the other connector kinds. The name is the connector's identity, so one manifest can hold several push connectors with different names.
 
 Hand the records over when you build the data sources, keyed by the connector's name:
 
