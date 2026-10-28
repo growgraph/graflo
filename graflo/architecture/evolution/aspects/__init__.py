@@ -30,7 +30,6 @@ from graflo.architecture.contract.manifest import GraphManifest
 from ..ops import ManifestOp
 from .access.plan import plan_access
 from .base import Aspect, LiftError
-from .provenance import vocabulary as provenance_vocab
 from .provenance.plan import plan_provenance
 from .spec import EdgeGrounding, Grounding, LiftSpec
 from .state.plan import StatePlan, plan_state
@@ -113,13 +112,27 @@ def plan_lift(
         LiftError: an unknown aspect, a missing declaration, or a name the lift
             would mint that is already taken.
     """
+    # Deferred: apply sits beside this package, and only a composed lift needs it.
+    from ..apply import apply_evolution
+
     chosen = {aspect.name for aspect in resolve_aspects(aspects)}
     spec = spec or LiftSpec()
     ops: list[ManifestOp] = []
+    # Each aspect is planned against the manifest as the aspects before it left
+    # it, so every join sees the types and fields it would otherwise only be
+    # told about.
+    lifted = manifest
+
+    def _then(planned: list[ManifestOp]) -> None:
+        nonlocal lifted
+        ops.extend(planned)
+        if planned:
+            lifted = apply_evolution(lifted, planned, bump_version=False)
+
     state: StatePlan | None = None
     if STATE in chosen:
         state = plan_state(manifest, spec, authored=authored)
-        ops += state.ops
+        _then(state.ops)
 
     if PROVENANCE in chosen and spec.provenance:
         schema = manifest.graph_schema
@@ -137,26 +150,10 @@ def plan_lift(
             *sorted(spec.provenance_for),
             *(state.scaffolded if state is not None else []),
         ]
-        ops += plan_provenance(manifest, attach=attach)
+        _then(plan_provenance(lifted, attach=attach))
 
     if ACCESS in chosen:
-        lifted_provenance = PROVENANCE in chosen and spec.provenance
-        ops += plan_access(
-            manifest,
-            vertices=spec.access_for,
-            edges=spec.access_edges,
-            minted_vertices=[
-                *(
-                    [provenance_vocab.SOURCE_RECORD, provenance_vocab.AGENT]
-                    if lifted_provenance
-                    else []
-                ),
-                *(state.scaffolded if state is not None else []),
-            ],
-            minted_relations=(
-                ["wasDerivedFrom", "wasAttributedTo"] if lifted_provenance else []
-            ),
-        )
+        _then(plan_access(lifted, vertices=spec.access_for, edges=spec.access_edges))
 
     if state is not None:
         ops += state.retire

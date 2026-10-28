@@ -24,12 +24,11 @@ from pydantic import Field as PydanticField
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.contract.manifest import GraphManifest
+from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.semantics import FieldSemantics, Semantics
 from graflo.architecture.schema.vertex import Field, Vertex
 
 from ...ops import (
-    AddEdgesOp,
-    AddVerticesOp,
     FieldSemanticsTarget,
     ManifestOp,
     RemoveVertexPropertiesOp,
@@ -40,6 +39,7 @@ from ...ops import (
     SetVertexSemanticsOp,
 )
 from ..base import LiftError
+from ..join import join
 from ..spec import LiftSpec
 from . import vocabulary as vocab
 
@@ -123,9 +123,9 @@ def plan_state(
     ops += _grounding_ops(spec, core)
     ops += _directionality_ops(core)
     ops += _unit_ops(spec, by_name)
-    scaffold_ops, scaffolded = _scaffold_ops(spec, by_name, existing)
+    scaffold_ops, scaffolded = _scaffold_ops(spec, by_name, core)
     ops += scaffold_ops
-    return StatePlan(ops=ops, scaffolded=scaffolded, retire=_retire_ops(spec))
+    return StatePlan(ops=ops, scaffolded=scaffolded, retire=_retire_ops(spec, by_name))
 
 
 # --- declared identity ------------------------------------------------------
@@ -154,19 +154,18 @@ def _identity_ops(
             )
         return []
 
-    return [
-        ReplaceIdentityOp(
-            replacements={
-                name: {
-                    "to": {"mode": "natural", "identity": fields},
-                    # The old "identity" was the all-properties fallback, so
-                    # there is nothing worth demoting to a lookup key.
-                    "retire": "keep",
-                }
-                for name, fields in sorted(spec.identity.items())
-            }
-        )
-    ]
+    replacements = {
+        name: {
+            "to": {"mode": "natural", "identity": fields},
+            # The old "identity" was the all-properties fallback, so
+            # there is nothing worth demoting to a lookup key.
+            "retire": "keep",
+        }
+        for name, fields in sorted(spec.identity.items())
+        # Already declared: a second lift leaves it as it is.
+        if list(vertex_config[name].identity) != list(fields)
+    }
+    return [ReplaceIdentityOp(replacements=replacements)] if replacements else []
 
 
 def _identity_fallbacks(authored: dict[str, Any]) -> set[str]:
@@ -283,13 +282,15 @@ def _unit_ops(spec: LiftSpec, by_name: dict[str, Vertex]) -> list[ManifestOp]:
 
 
 def _scaffold_ops(
-    spec: LiftSpec, by_name: dict[str, Vertex], existing: set[str]
+    spec: LiftSpec, by_name: dict[str, Vertex], core: Any
 ) -> tuple[list[ManifestOp], list[str]]:
-    """``<Type>State`` / ``<Type>Observation`` types and the edges tying them back."""
+    """``<Type>State`` / ``<Type>Observation`` types and the edges tying them back.
+
+    Joined with what the manifest has (:func:`~..join.join`), so a scaffold it
+    already declares is kept and completed, and a second lift adds nothing.
+    """
     vertices: list[Vertex] = []
-    edges: list[Any] = []
-    scaffolded: list[str] = []
-    collisions: list[str] = []
+    edges: list[Edge] = []
 
     for subject in sorted(spec.stateful):
         vertex = by_name[subject]
@@ -299,14 +300,12 @@ def _scaffold_ops(
                 f"{subject!r} has no identity fields, so its state rows would have "
                 "nothing to point back to"
             )
-        moved = _moved_fields(subject, spec.stateful[subject], vertex, key_fields)
         name = vocab.state_type_name(subject)
-        if name in existing:
-            collisions.append(name)
-            continue
+        moved = _moved_fields(
+            subject, spec.stateful[subject], vertex, key_fields, by_name.get(name)
+        )
         vertices.append(vocab.state_vertex(subject, key_fields, moved))
         edges.append(vocab.specialization_edge(subject))
-        scaffolded.append(name)
 
     for subject in sorted(spec.observed):
         vertex = by_name[subject]
@@ -316,34 +315,27 @@ def _scaffold_ops(
                 f"{subject!r} has no identity fields, so its observations would "
                 "have nothing to point back to"
             )
-        name = vocab.observation_type_name(subject)
-        if name in existing:
-            collisions.append(name)
-            continue
         vertices.append(vocab.observation_vertex(subject, key_fields))
         edges.append(vocab.feature_of_interest_edge(subject))
-        scaffolded.append(name)
 
-    if collisions:
-        raise LiftError(
-            f"the lift would mint types the manifest already has: {sorted(collisions)}. "
-            "Rename them first -- silently folding into an existing type is not a "
-            "lift, it is a schema change nobody asked for"
-        )
-
-    ops: list[ManifestOp] = []
-    if vertices:
-        ops.append(AddVerticesOp(vertices=vertices))
-    if edges:
-        ops.append(AddEdgesOp(edges=edges))
-    return ops, scaffolded
+    return join(core, vertices=vertices, edges=edges), [v.name for v in vertices]
 
 
 def _moved_fields(
-    subject: str, names: list[str], vertex: Vertex, key_fields: list[Field]
+    subject: str,
+    names: list[str],
+    vertex: Vertex,
+    key_fields: list[Field],
+    state: Vertex | None,
 ) -> list[Field]:
-    by_field = {field.name: field for field in vertex.properties}
-    unknown = sorted(set(names) - set(by_field))
+    """The fields *names* moves to *state*: from the entity, or already moved.
+
+    A field gone from the entity and present on its ``State`` was moved by an
+    earlier lift.
+    """
+    on_entity = {field.name: field for field in vertex.properties}
+    on_state = {field.name: field for field in state.properties} if state else {}
+    unknown = sorted(set(names) - set(on_entity) - set(on_state))
     if unknown:
         raise LiftError(f"{subject!r} has no properties {unknown}")
     key_names = {field.name for field in key_fields}
@@ -353,25 +345,25 @@ def _moved_fields(
             f"{subject!r}: {keyed} identify the type, so they cannot also be facts "
             "that change over time -- an identity that changes is not an identity"
         )
-    return [by_field[name] for name in names]
+    return [on_entity.get(name) or on_state[name] for name in names]
 
 
 # --- the destructive half, emitted last -------------------------------------
 
 
-def _retire_ops(spec: LiftSpec) -> list[ManifestOp]:
+def _retire_ops(spec: LiftSpec, by_name: dict[str, Vertex]) -> list[ManifestOp]:
     """Remove the moved properties from the entities they no longer belong on.
 
     Last, and separable: everything before this is additive, so a caller who
     wants the scaffolding without the surgery sets ``retire: keep`` and the op
-    list simply ends earlier.
+    list simply ends earlier. A field already gone is not removed again.
     """
     if spec.retire == "keep":
         return []
     removals = {
-        subject: list(names)
+        subject: kept
         for subject, names in sorted(spec.stateful.items())
-        if names
+        if (kept := [n for n in names if n in by_name[subject].property_names])
     }
     return [RemoveVertexPropertiesOp(removals=removals)] if removals else []
 

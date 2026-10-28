@@ -21,8 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Push connectors**: the name is part of a push connector's identity, so a manifest can hold
   several; their hashes change.
-- **Provenance lift**: keeps a `SourceRecord` or `Agent` that conforms to the aspect's type (same
-  key, class IRI and typed properties) and adds no edge twice, instead of refusing the manifest.
+- **Lifts** (`provenance`, `state`, `access`): a type, edge or property of the aspect's vocabulary
+  that the manifest already declares is kept and gains its missing properties and IRIs, instead of
+  being refused; only another key, IRI, property type, `reserved`, `merge` or `directed` is refused,
+  every difference in one `LiftError`. Lifting twice is lifting once.
+- **`plan_access`**: `minted_vertices` and `minted_relations` are removed; it plans against the
+  manifest as the earlier aspects of the same lift leave it.
 
 ### Fixed
 

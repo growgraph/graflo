@@ -172,7 +172,7 @@ def test_a_scoped_delete_removes_exactly_its_scope(conn_conf, clean_db, zones_me
         },
     )
     writer = _writer(schema)
-    asyncio.run(writer.write(gc, conn_conf, None))
+    asyncio.run(writer.write(gc, conn_conf, None, stamp={"access_zones": [OPEN]}))
 
     writer.delete_scoped(conn_conf, "installation", "T1", edges=[NEXT])
     with ConnectionManager(connection_config=conn_conf) as db:

@@ -232,7 +232,7 @@ def test_moving_an_identity_property_is_refused() -> None:
         plan_lift(_manifest(), LiftSpec(stateful={"Machine": ["machine_id"]}))
 
 
-def test_a_name_the_lift_would_mint_and_that_already_exists_is_refused() -> None:
+def test_a_type_the_lift_would_mint_and_that_is_keyed_otherwise_is_refused() -> None:
     config = {
         "schema": {
             "metadata": {"name": "m", "version": "1.0.0"},
@@ -250,7 +250,7 @@ def test_a_name_the_lift_would_mint_and_that_already_exists_is_refused() -> None
             },
         }
     }
-    with pytest.raises(LiftError, match="already has"):
+    with pytest.raises(LiftError, match=r"SourceRecord is keyed by \['id'\]"):
         plan_lift(_manifest(config), LiftSpec())
 
 
@@ -332,3 +332,16 @@ def test_the_lift_inverts_back_to_the_original() -> None:
         "status",
         "temp_c",
     }
+
+
+def test_a_second_lift_leaves_the_lifted_manifest_as_it_is() -> None:
+    """State and provenance join what the first lift added: the moved field is
+    found on its State type, the scaffolds and their edges are kept."""
+    lifted = _lift()
+
+    again = apply_evolution(lifted, plan_lift(lifted, FULL_SPEC))
+
+    def core(manifest: GraphManifest) -> dict:
+        return manifest.require_schema().core_schema.to_dict(skip_defaults=False)
+
+    assert core(again) == core(lifted)

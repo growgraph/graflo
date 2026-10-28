@@ -156,13 +156,24 @@ def test_the_lift_refuses_what_it_cannot_plan(spec: dict, message: str) -> None:
         plan_lift(_manifest(), LiftSpec(**spec), aspects=["access"])
 
 
-def test_a_second_lift_is_refused() -> None:
+def test_a_second_lift_adds_nothing() -> None:
+    lifted = _lifted(access_for={"Ticket": "replace"}, access_edges=["about"])
+
+    assert (
+        plan_lift(
+            lifted,
+            LiftSpec(access_for={"Ticket": "replace"}, access_edges=["about"]),
+            aspects=["access"],
+        )
+        == []
+    )
+
+
+def test_zones_declared_with_another_merge_mode_are_refused() -> None:
     lifted = _lifted(access_for={"Ticket": "replace"})
 
-    with pytest.raises(LiftError, match="already declare"):
-        plan_lift(
-            lifted, LiftSpec(access_for={"Ticket": "replace"}), aspects=["access"]
-        )
+    with pytest.raises(LiftError, match="merges by 'replace', not 'union'"):
+        plan_lift(lifted, LiftSpec(access_for={"Ticket": "union"}), aspects=["access"])
 
 
 # -- reserved fields stay out of what a model sees ------------------------------
