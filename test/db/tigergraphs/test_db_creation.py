@@ -91,6 +91,8 @@ def test_schema_creation(conn_conf, test_graph_name, schema_obj):
     schema_obj = schema_obj("review")
     # Set graph name in schema.metadata.name; conn_conf.database is set by fixture
     schema_obj.metadata.name = test_graph_name
+    # TigerGraph builds no edge index, so it refuses the one review.yaml declares.
+    schema_obj.db_profile.edge_specs = []
 
     with ConnectionManager(connection_config=conn_conf) as db_client:
         # init_db will: create graph, define schema, define indexes

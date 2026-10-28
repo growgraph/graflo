@@ -72,22 +72,6 @@ def test_vertex_index_cursor_closes_after_every_outcome(
     assert fake.cursors[0].close_calls == 1
 
 
-def test_an_upsert_creates_its_merge_index_once_per_connection(monkeypatch) -> None:
-    from graflo.connections.onto import MemgraphConfig
-    from graflo.db.memgraph import conn as memgraph_conn
-
-    fake = _Conn()
-    monkeypatch.setattr(memgraph_conn.mgclient, "connect", lambda **kwargs: fake)
-    db = memgraph_conn.MemgraphConnection(MemgraphConfig(uri="bolt://localhost:7687"))
-
-    for batch in range(3):
-        db.upsert_docs_batch([{"id": str(batch)}], "person", match_keys=["id"])
-
-    assert [s for s in fake.statements if s.startswith("CREATE INDEX")] == [
-        "CREATE INDEX ON :person(id)"
-    ]
-
-
 def _memgraph(monkeypatch) -> tuple[Any, _Conn]:
     from graflo.connections.onto import MemgraphConfig
     from graflo.db.memgraph import conn as memgraph_conn
@@ -130,86 +114,73 @@ def test_a_vertex_identity_is_indexed_and_constrained_unique(monkeypatch) -> Non
     ]
 
 
-@pytest.mark.parametrize("tuple_keys", [False, True])
-def test_composite_merge_indexes_distinguish_field_order(
-    monkeypatch: pytest.MonkeyPatch, tuple_keys: bool
-) -> None:
-    """Reversing the same fields creates a distinct index, each ensured once."""
+def test_an_upsert_issues_no_ddl(monkeypatch) -> None:
+    """Indexes come from ``define_indexes``; writing never takes the DDL lock."""
     db, fake = _memgraph(monkeypatch)
 
-    for fields in [["tenant", "id"], ["id", "tenant"]] * 2:
-        db.upsert_docs_batch(
-            [{"tenant": "acme", "id": "1"}],
-            "person",
-            match_keys=tuple(fields) if tuple_keys else fields,
-        )
-        assert all(cursor.close_calls == 1 for cursor in fake.cursors)
+    for fields in (["id"], ["tenant", "id"]):
+        db.upsert_docs_batch([{"tenant": "acme", "id": "1"}], "person", fields)
 
-    assert [s for s in fake.statements if s.startswith("CREATE INDEX")] == [
-        "CREATE INDEX ON :person(tenant, id)",
-        "CREATE INDEX ON :person(id, tenant)",
-    ]
-    assert sum(s.startswith("UNWIND") for s in fake.statements) == 4
+    assert [s.split()[0] for s in fake.statements] == ["UNWIND", "UNWIND"]
 
 
-@pytest.mark.parametrize("already_exists", [False, True])
-def test_only_successful_merge_indexes_are_cached(
-    monkeypatch: pytest.MonkeyPatch, already_exists: bool
-) -> None:
-    """Retry failed DDL without interrupting ingestion or retrying existing indexes."""
-    db, fake = _memgraph(monkeypatch)
-    execute = _Cursor.execute
-    attempts: list[str] = []
-
-    def fail_first_index(self: _Cursor, query: str, params: object = None) -> None:
-        """Simulate a catalogue failure on the first index request."""
-        if query.startswith("CREATE INDEX"):
-            attempts.append(query)
-            if len(attempts) == 1:
-                raise RuntimeError("Index already exists" if already_exists else "busy")
-        execute(self, query, params)
-
-    monkeypatch.setattr(_Cursor, "execute", fail_first_index)
-    for _ in range(3):
-        db.upsert_docs_batch([{"id": "1"}], "person", match_keys=["id"])
-        assert all(cursor.close_calls == 1 for cursor in fake.cursors)
-
-    assert len(attempts) == (1 if already_exists else 2)
-    assert sum(s.startswith("UNWIND") for s in fake.statements) == 3
-
-
-def test_merge_indexes_distinguish_field_groups(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """An existing simple index does not stand in for a composite one."""
-    db, fake = _memgraph(monkeypatch)
-
-    for fields in [["id"], ["tenant", "id"], ["id"], ["tenant", "id"]]:
-        db.upsert_docs_batch(
-            [{"tenant": "acme", "id": "1"}], "person", match_keys=fields
-        )
-
-    assert [s for s in fake.statements if s.startswith("CREATE INDEX")] == [
-        "CREATE INDEX ON :person(id)",
-        "CREATE INDEX ON :person(tenant, id)",
-    ]
-
-
-def test_composite_indexes_quote_each_identifier(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_composite_indexes_quote_each_identifier() -> None:
     """A comma or backtick in a property name remains part of that name."""
+    fake = _Conn()
+
+    _create_vertex_index(fake, "work item", ["tenant, id", "external`id"])
+
+    assert fake.statements == [
+        "CREATE INDEX ON :`work item`(`tenant, id`, `external``id`)"
+    ]
+
+
+def test_an_edge_index_memgraph_cannot_build_is_skipped(monkeypatch, caplog) -> None:
+    """Edge-type indexes cover one property: a multi-field one is skipped, loudly."""
+    from graflo.architecture.schema import Schema
+
+    schema = Schema.model_validate(
+        {
+            "metadata": {"name": "people"},
+            "core_schema": {
+                "vertex_config": {
+                    "vertices": [
+                        {"name": "person", "properties": ["id"], "identity": ["id"]}
+                    ]
+                },
+                "edge_config": {
+                    "edges": [
+                        {
+                            "source": "person",
+                            "target": "person",
+                            "relation": "KNOWS",
+                            "properties": ["since", "role"],
+                        }
+                    ]
+                },
+            },
+            "db_profile": {
+                "db_flavor": "memgraph",
+                "edge_specs": [
+                    {
+                        "source": "person",
+                        "target": "person",
+                        "relation": "KNOWS",
+                        "indexes": [
+                            {"fields": ["since"]},
+                            {"fields": ["since", "role"]},
+                        ],
+                    }
+                ],
+            },
+        }
+    )
     db, fake = _memgraph(monkeypatch)
 
-    db.upsert_docs_batch(
-        [{"tenant, id": "acme", "external`id": "1"}],
-        "work item",
-        match_keys=["tenant, id", "external`id"],
-    )
+    db.define_edge_indexes(list(schema.core_schema.edge_config.values()), schema)
 
-    assert fake.statements[0] == (
-        "CREATE INDEX ON :`work item`(`tenant, id`, `external``id`)"
-    )
+    assert fake.statements == ["CREATE EDGE INDEX ON :KNOWS(since)"]
+    assert "composite edge index on KNOWS['since', 'role']" in caplog.text
 
 
 class _CatalogCursor(_Cursor):

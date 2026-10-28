@@ -48,7 +48,7 @@ class _Recorder:
     def cursor(self) -> _Cursor:
         return _Cursor()
 
-    def _add_index(self, label: str, index: Any) -> None:
+    def _add_index(self, label: str, index: Any, **_: Any) -> None:
         self.added.append(label)
 
 

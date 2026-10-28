@@ -40,9 +40,18 @@ An index entry takes `fields` and, optionally, `unique` (default `false`),
 index. Only ArangoDB builds `fulltext`; on any other database a `fulltext`
 index is refused when the schema is applied, with the vertex or edge it is
 declared on. The file backend builds no index and ignores it. With
-`unique: true`, ArangoDB and PostgreSQL build the index as a uniqueness
-constraint and reject a write that repeats a value; the table below says what
-the other backends do with it.
+`unique: true`, the index is a uniqueness constraint over its fields together,
+and a write that repeats their values is rejected.
+
+An index over several fields is one index over them, in the order you list
+them; put the field your lookups filter on most first. Some backends cannot
+build every index: TigerGraph builds no edge index, no index over several
+fields and no uniqueness constraint, Memgraph builds edge indexes over one
+field and without uniqueness, and NebulaGraph builds no uniqueness
+constraint. An index you declare that the backend cannot build is refused
+when the schema is applied, naming the vertex or edge and the fields. An index
+GraFlo derives itself, for an identity or a secondary identity, is skipped
+there with a warning instead.
 
 `sparse` and `deduplicate` are ArangoDB index options; the other backends
 ignore them.
@@ -83,13 +92,13 @@ logs a warning, because every filtered read on that tag then fails with
 
 | Backend | Identity index | Declared vertex indexes | Declared edge indexes |
 |---|---|---|---|
-| Neo4j | A uniqueness constraint over the identity fields, created with the other indexes. If the server refuses a composite constraint (Community edition may), a plain index with a warning | `CREATE INDEX`, or a uniqueness constraint when `unique: true` | A relationship index, or a uniqueness constraint when `unique: true` |
-| Memgraph (3.2 or later) | One composite index over the identity fields and a uniqueness constraint over all of them, created with the other indexes; the match-field index is ensured again when vertices are written, until it succeeds | One index over the declared fields, in their order, plus a uniqueness constraint when `unique: true` | One `CREATE EDGE INDEX ON :<relation>(<field>)` per field |
-| FalkorDB | One index per identity field, created with the other indexes | One index per field | One relationship index per field |
-| NebulaGraph | A tag index over the identity fields, always created, because `LOOKUP` and filtered `MATCH` need it | A tag index | An edge index |
+| Neo4j | A uniqueness constraint over the identity fields, created with the other indexes. If the server refuses a composite constraint (Community edition may), a plain index with a warning | `CREATE INDEX`, or a uniqueness constraint when `unique: true`; a constraint the server refuses is an error | A relationship index, or a uniqueness constraint when `unique: true` |
+| Memgraph (3.2 or later) | One index over the identity fields and a uniqueness constraint over them, created with the other indexes | One index over the fields, plus a uniqueness constraint when `unique: true` | `CREATE EDGE INDEX ON :<relation>(<field>)`, one field only, never unique |
+| FalkorDB | Each identity field indexed and a uniqueness constraint over them, created with the other indexes | Each field indexed (FalkorDB keeps one index per label), plus a uniqueness constraint when `unique: true` | The same, on the relationship type |
+| NebulaGraph | A tag index over the identity fields, always created, because `LOOKUP` and filtered `MATCH` need it | A tag index; never unique | An edge index; never unique |
 | ArangoDB | A unique persistent index over the identity fields, created with the collection; none when the identity is `_key`, which ArangoDB indexes itself | As declared, with `unique` and `type` applied | As declared, on each edge collection |
-| TigerGraph | The primary key (`PRIMARY_ID`, or `PRIMARY KEY` for a composite identity), which TigerGraph indexes itself | Single-field indexes only; a multi-field index is skipped with a warning | Not supported; skipped with a log message |
-| PostgreSQL | The vertex table's `PRIMARY KEY` | `CREATE INDEX`, or `CREATE UNIQUE INDEX` when `unique: true` | Not created. Every edge table gets an index on its target columns, and a unique index over its endpoint columns and the edge's merge properties |
+| TigerGraph | The primary key (`PRIMARY_ID`, or `PRIMARY KEY` for a composite identity), which TigerGraph indexes itself | One field only, never unique | None |
+| PostgreSQL | The vertex table's `PRIMARY KEY` | `CREATE INDEX`, or `CREATE UNIQUE INDEX` when `unique: true` | The same, over the edge's property columns. Every edge table also gets an index on its target columns, and a unique index over its endpoint columns and the edge's identity properties, which covers its `identities` |
 | GraFlo file backend | None | None | None |
 
 On ArangoDB, TigerGraph and PostgreSQL the identity is covered when the
@@ -110,6 +119,9 @@ a warning; NebulaGraph gets one anyway, and PostgreSQL gets no secondary
 indexes. `GraphEngine.define_schema` and `define_and_ingest` always pass the
 schema. Pass it yourself when you call `define_vertex_indexes` or
 `define_indexes` directly.
+
+Writing never creates an index, on any backend. Upserting into a database whose
+schema was not defined is still correct, but each lookup scans.
 
 ## Edge upserts and `MERGE` (Neo4j, Memgraph, FalkorDB)
 

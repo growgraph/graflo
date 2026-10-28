@@ -408,6 +408,11 @@ class _FalkorResult:
     result_set: list[Any] = []
 
 
+class _FalkorGraph:
+    def list_constraints(self) -> list[dict[str, object]]:
+        return []
+
+
 def test_falkordb_paths() -> None:
     sent: list[str] = []
     conn = cast(Any, object.__new__(FalkordbConnection))
@@ -418,6 +423,7 @@ def test_falkordb_paths() -> None:
 
     conn.execute = execute
     conn.client = object()
+    conn.graph = _FalkorGraph()
 
     conn.fetch_docs(LABEL, filters=["==", "x", "key"], return_keys=[FIELD])
     conn.upsert_docs_batch([{"key": "a"}], LABEL, ["key"])

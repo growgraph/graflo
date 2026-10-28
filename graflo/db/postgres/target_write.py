@@ -14,7 +14,10 @@ from psycopg2.extras import execute_values
 
 from graflo.architecture.graph_types import EdgeDirection
 from graflo.architecture.schema import Schema
-from graflo.architecture.schema.db_aware import relationship_merge_properties
+from graflo.architecture.schema.db_aware import (
+    edge_identity_index,
+    relationship_merge_properties,
+)
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import (
     Field,
@@ -410,6 +413,49 @@ def _create_edge_key(
             "`identities: [[source, target, <property>]]` on the edge to keep "
             "them. The key also needs PostgreSQL 15 or later."
         ) from exc
+
+
+def _define_declared_edge_indexes(
+    conn: Any, pg_schema: str, table: str, edge: Edge, schema: Schema
+) -> None:
+    """Create *edge*'s declared indexes on *table*, less those its identities compile to."""
+    derived = {
+        tuple(index.fields)
+        for key in edge.identities
+        if (index := edge_identity_index(key, DBType.POSTGRES)) is not None
+    }
+    columns = {field.name for field in edge.properties}
+    for index in schema.db_profile.edge_secondary_indexes(edge.edge_id):
+        fields = [str(f) for f in index.fields]
+        if not fields or tuple(fields) in derived:
+            continue
+        missing = [f for f in fields if f not in columns]
+        if missing:
+            raise ValueError(
+                f"Edge index on {fields} of {edge.edge_id} names {missing}, "
+                "which are not properties of the edge; PostgreSQL indexes "
+                "edge property columns only."
+            )
+        index_name = _pg_index_name(f"ix_{table}_{'_'.join(fields)}")
+        q = (
+            f"CREATE {'UNIQUE ' if index.unique else ''}INDEX IF NOT EXISTS "
+            f"{_quote_ident(index_name)} ON "
+            f"{_quote_ident(pg_schema)}.{_quote_ident(table)} "
+            f"({', '.join(_quote_ident(f) for f in fields)})"
+        )
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(q)
+            conn.commit()
+        except Exception as error:
+            conn.rollback()
+            logger.warning(
+                "Failed to create index %s on %s.%s: %s",
+                index_name,
+                pg_schema,
+                table,
+                error,
+            )
 
 
 _KEY_COLUMNS_SQL = (
@@ -1416,17 +1462,27 @@ class PostgresTargetWriteMixin:
     def define_edge_indexes(
         self, edges: list[Edge], schema: Schema | None = None
     ) -> None:
-        """Index the target columns of every edge table, making reverse lookup viable.
+        """Index the target columns of every edge table, then its declared indexes.
 
         The only pre-existing edge index is the composite uniqueness constraint,
         whose leading columns are the source's — it cannot serve a lookup keyed
         on the target, so reaching an edge from its target end meant a sequential
         scan. That is the whole cost of an undirected edge on PostgreSQL, and it
         is one index per table.
+
+        Each declared edge index becomes one index over its property columns.
+        One compiled from the edge's ``identities`` is skipped: the edge key
+        already covers it, scoped to the endpoints.
+
+        Raises:
+            ValueError: A declared edge index names a field that is not one of
+                the edge's properties.
         """
         pg_schema = _pg_schema_name(self.config)
         for edge in edges:
             table = edge_table_name(edge.source, edge.target, edge.relation)
+            if schema is not None:
+                _define_declared_edge_indexes(self.conn, pg_schema, table, edge, schema)
             index_name = _pg_index_name(f"ix_{table}_target_id")
             columns = edge_endpoint_columns(
                 "target",

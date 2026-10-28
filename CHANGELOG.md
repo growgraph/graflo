@@ -5,17 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [
 
 ### Changed
 
-- **Memgraph** builds one composite index, in declared field order, for a multi-field
-  vertex index, identity or upsert match key (Memgraph 3.2 or later). The Docker default is 3.14.0.
-
-### Fixed
-
-- **Memgraph** retries a failed automatic index creation on a later batch instead of
-  treating it as created.
+- **Indexes**: a multi-field index is one index over its fields, in declared order, on every
+  backend. A declared index the backend cannot build (several fields, unique, or any edge index
+  on TigerGraph) is refused when the schema is applied; one derived from an identity is skipped.
+- **Memgraph** builds a multi-field vertex index or identity as one composite index (Memgraph 3.2
+  or later) and no longer creates indexes while writing. The Docker default is 3.14.0.
+- **FalkorDB** enforces identities and `unique: true` indexes with uniqueness constraints.
+- **PostgreSQL** builds declared edge indexes.
+- **Neo4j**: a declared uniqueness constraint the server refuses is an error; only the identity
+  falls back to a plain index.
 
 ## [1.24.0]
 

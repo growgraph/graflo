@@ -297,8 +297,11 @@ class Neo4jConnection(Connection):
                     if tuple(identity_idx.fields) not in seen:
                         index_list = [identity_idx, *index_list]
             label = db_vertex.vertex_dbname(c) if db_vertex else c
+            identity = tuple(db_vertex.identity_fields(c)) if db_vertex else ()
             for index_obj in index_list:
-                self._add_index(label, index_obj)
+                self._add_index(
+                    label, index_obj, is_identity=tuple(index_obj.fields) == identity
+                )
 
     def define_edge_indexes(self, edges: list[Edge], schema: Schema | None = None):
         """Define indexes for relationship types.
@@ -326,18 +329,22 @@ class Neo4jConnection(Connection):
                     continue
                 self._add_index(rel_label, index_obj, is_vertex_index=False)
 
-    def _add_index(self, obj_name, index: Index, is_vertex_index=True):
+    def _add_index(
+        self, obj_name, index: Index, is_vertex_index=True, *, is_identity=False
+    ):
         """Add an index or a uniqueness constraint to a label or relationship type.
 
         ``Index.unique`` emits a uniqueness constraint, which Neo4j backs with
-        its own index; otherwise a range index. A composite vertex constraint
-        the server refuses (Community edition may) falls back to an index, with
-        a warning that the identity is not enforced as unique.
+        its own index; otherwise a range index. A constraint the server refuses
+        raises, except a composite identity constraint (Community edition may
+        refuse it), which falls back to an index with a warning that the
+        identity is not enforced as unique.
 
         Args:
             obj_name: Label or relationship type name
             index: Index configuration to create
             is_vertex_index: If True, create index on nodes, otherwise on relationships
+            is_identity: Whether *index* is the vertex identity
         """
         fields_str = ", ".join([f"x.{cypher_name(f)}" for f in index.fields])
         index_name = cypher_name(f"{obj_name}_{'_'.join(index.fields)}")
@@ -357,7 +364,7 @@ class Neo4jConnection(Connection):
         try:
             _create_schema_rule(self, constraint)
         except ClientError as e:
-            if not is_vertex_index or len(index.fields) == 1:
+            if not is_identity or len(index.fields) == 1:
                 raise
             logger.warning(
                 "Neo4j refused a uniqueness constraint on %s(%s): %s. Creating an "

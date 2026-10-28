@@ -103,7 +103,7 @@ from graflo.db.cypher import (
     rel_merge_props_map_from_row_props,
 )
 from graflo.db.cypher.delete import delete_nodes, delete_relationships
-from graflo.db.field_type_support import assert_schema_supported
+from graflo.db.field_type_support import assert_schema_supported, index_limit
 from graflo.db.graph_introspection import GraphSchemaInferencer
 from graflo.db.resolve import absent_documents, present_documents
 from graflo.filter.onto import (
@@ -192,7 +192,7 @@ def _create_vertex_index(conn: Any, label: str, fields: Sequence[str]) -> None:
     """Create one label-property index, preserving composite field order.
 
     Memgraph 3.2 and later support native composite indexes. An existing index
-    is accepted; other failures propagate so callers can retry on a later batch.
+    is accepted; other failures propagate.
 
     Args:
         conn: An open, autocommit Memgraph driver connection.
@@ -317,8 +317,6 @@ class MemgraphConnection(Connection):
         self.conn = mgclient.connect(**connect_kwargs)
         self.conn.autocommit = True
         self._database_name = config.database or "memgraph"
-        # (label, ordered fields) whose MERGE index this connection ensured.
-        self._merge_indexed: set[tuple[str, tuple[str, ...]]] = set()
 
     def execute(self, query: str, **kwargs) -> QueryResult:
         """Execute a raw OpenCypher query against the database.
@@ -624,7 +622,11 @@ class MemgraphConnection(Connection):
                 logger.debug("DROP CONSTRAINT on %s: %s", label, e)
 
     def define_edge_indexes(self, edges: list[Edge], schema: Schema | None = None):
-        """Create an edge-type property index for each declared edge index field.
+        """Create an edge-type property index for each single-field edge index.
+
+        Memgraph edge-type property indexes cover one property and enforce no
+        uniqueness, so a multi-field or unique edge index is skipped with a
+        warning; the schema gate refuses a declared one before it gets here.
 
         Parameters
         ----------
@@ -642,24 +644,29 @@ class MemgraphConnection(Connection):
                 else []
             )
             for idx in index_list:
-                for field in idx.fields:
-                    try:
-                        query = edge_property_index_query(edge.relation, field)
-                        cursor = self.conn.cursor()
-                        cursor.execute(query)
-                        cursor.close()
-                        logger.debug(
-                            f"Created index on relationship {edge.relation}.{field}"
+                limit = index_limit(DBType.MEMGRAPH, idx, on_edge=True)
+                if limit is not None:
+                    logger.warning(
+                        f"Skipping the {limit} index on {edge.relation}{idx.fields}: "
+                        "Memgraph cannot build it"
+                    )
+                    continue
+                (field,) = idx.fields
+                try:
+                    query = edge_property_index_query(edge.relation, field)
+                    cursor = self.conn.cursor()
+                    cursor.execute(query)
+                    cursor.close()
+                    logger.debug(
+                        f"Created index on relationship {edge.relation}.{field}"
+                    )
+                except Exception as e:
+                    if "already exists" in str(e).lower():
+                        logger.debug(f"Index on {edge.relation}.{field} already exists")
+                    else:
+                        logger.warning(
+                            f"Could not create index on {edge.relation}.{field}: {e}"
                         )
-                    except Exception as e:
-                        if "already exists" in str(e).lower():
-                            logger.debug(
-                                f"Index on {edge.relation}.{field} already exists"
-                            )
-                        else:
-                            logger.warning(
-                                f"Could not create index on {edge.relation}.{field}: {e}"
-                            )
 
     def delete_graph_structure(
         self,
@@ -852,18 +859,6 @@ class MemgraphConnection(Connection):
 
         if not sanitized_docs:
             return
-
-        # Auto-create an index on match_keys for MERGE performance, once per
-        # connection: the statement is DDL, and Memgraph takes a unique-access
-        # lock for it even when the index exists.
-        merge_index = (class_name, tuple(match_keys_list))
-        if match_keys_list and merge_index not in self._merge_indexed:
-            try:
-                _create_vertex_index(self.conn, class_name, match_keys_list)
-            except Exception as error:
-                logger.debug("Index on %s%s: %s", class_name, match_keys_list, error)
-            else:
-                self._merge_indexed.add(merge_index)
 
         # Build the MERGE clause with match keys
         index_str = ", ".join(

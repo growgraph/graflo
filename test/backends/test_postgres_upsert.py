@@ -843,3 +843,54 @@ def test_a_refused_comment_leaves_the_table_defined(monkeypatch, caplog) -> None
     assert pg.conn.executed[-1].startswith("CREATE UNIQUE INDEX")
     assert (pg.conn.rollbacks, pg.conn.commits) == (0, 1)
     assert "could not comment" in caplog.text.lower()
+
+
+def _indexed_edge_schema(indexes: list[dict[str, Any]]) -> Schema:
+    schema = _schema([["source", "target", "since"]])
+    return Schema.model_validate(
+        {
+            **schema.model_dump(by_alias=True, exclude_none=True),
+            "db_profile": {
+                "db_flavor": "postgres",
+                "edge_specs": [
+                    {
+                        "source": "person",
+                        "target": "org",
+                        "relation": "works",
+                        "indexes": indexes,
+                    }
+                ],
+            },
+        }
+    )
+
+
+def test_declared_edge_indexes_are_built_over_property_columns() -> None:
+    schema = _indexed_edge_schema(
+        [
+            {"fields": ["note"]},
+            {"fields": ["since", "note"], "unique": True},
+            {"fields": ["since"]},
+        ]
+    )
+    pg = _Pg(schema)
+
+    PostgresConnection.define_edge_indexes(cast(Any, pg), [_edge(schema)], schema)
+
+    # The identity's own index ("since") is covered by the edge key.
+    on = f'ON "g"."{EDGE_TABLE}"'
+    name = f'"ix_{EDGE_TABLE}'
+    assert pg.conn.executed == [
+        f'CREATE INDEX IF NOT EXISTS {name}_note" {on} ("note")',
+        f'CREATE UNIQUE INDEX IF NOT EXISTS {name}_since_note" {on} ("since", "note")',
+        f'CREATE INDEX IF NOT EXISTS {name}_target_id" {on} ("target_id")',
+    ]
+
+
+def test_an_edge_index_on_a_field_the_edge_lacks_is_refused() -> None:
+    schema = _indexed_edge_schema([{"fields": ["weight"]}])
+
+    with pytest.raises(ValueError, match="'weight'"):
+        PostgresConnection.define_edge_indexes(
+            cast(Any, _Pg(schema)), [_edge(schema)], schema
+        )

@@ -117,7 +117,7 @@ recovered schema.
 | 1 | `graflo/onto.py`: a `DBType` member | The flavor itself |
 | 2 | `graflo/onto.py`: `DB_TYPE_TO_EXPRESSION_FLAVOR` | `Connection.expression_flavor()` raises `KeyError` without it |
 | 3 | `graflo/architecture/schema/edge_direction.py`: `REVERSE_TRAVERSAL_COST` | `reverse_traversal_cost()` raises `KeyError` without it |
-| 4 | `graflo/db/field_type_support.py`: `_LIST_NATIVE_DBS` and `_INDEX_KINDS_BUILT` | Say whether `LIST` is native, and which index kinds beyond a plain index your DDL builds; DDL refuses the rest with `UnsupportedFieldTypeError` or `UnsupportedIndexKindError` |
+| 4 | `graflo/db/field_type_support.py`: `_LIST_NATIVE_DBS`, `_INDEX_KINDS_BUILT` and `_INDEX_LIMITS` | Say whether `LIST` is native, which index kinds beyond a plain index your DDL builds, and which index shapes (several fields, unique, any edge index) it cannot build; DDL refuses the rest with `UnsupportedFieldTypeError`, `UnsupportedIndexKindError` or `UnsupportedIndexError`. A multi-field index is one index over its fields, in order |
 | 5 | `graflo/connections/onto.py`: a `DBConfig` subclass with `from_docker_env` | The config, and the test wiring |
 | 6 | `graflo/connections/onto.py`: `TARGET_DATABASES` | `ConnectionManager` refuses to open a flavor that is not listed as a target |
 | 7 | `graflo/connections/mapping.py`: `DB_TYPE_MAPPING` | Flavor to config class, used by `DBConfig.from_dict` |

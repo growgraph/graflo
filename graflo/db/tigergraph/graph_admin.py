@@ -512,7 +512,8 @@ class GraphAdmin:
         """Define indexes for edges if specified.
 
         Note: TigerGraph does not support creating indexes on edge attributes.
-        Edge indexes are skipped with a warning. Only vertex indexes are supported.
+        The schema gate refuses a declared one; one compiled from an edge
+        identity is skipped here with a log message.
         """
         for edge in edges:
             index_list = (

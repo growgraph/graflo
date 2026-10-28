@@ -1,4 +1,4 @@
-"""Backend support checks for schema field types and index kinds (native or raise — no soft conversion)."""
+"""Backend support checks for schema field types and indexes (native or raise — no soft conversion)."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ from collections.abc import Iterable
 
 from graflo.architecture.graph_types import IndexType
 from graflo.architecture.graph_types.index_config import Index
+from graflo.architecture.schema.db_aware import edge_identity_index
 from graflo.architecture.schema.document import Schema
 from graflo.architecture.schema.vertex import (
     Field,
@@ -131,18 +132,79 @@ def assert_index_kind_supported(db_type: DBType, index: Index, owner: str) -> No
     )
 
 
-def assert_schema_index_kinds_supported(db_type: DBType, schema: Schema) -> None:
-    """Validate every declared vertex and edge index against backend support."""
+class UnsupportedIndexError(ValueError):
+    """Raised when a declared index cannot be built as declared on the target backend."""
+
+
+#: Index shapes each backend cannot build: an index over several fields, a
+#: uniqueness constraint, or (``"edge"``) any edge index. A declared index that
+#: needs one is refused; one GraFlo derives (identity, secondary identity, edge
+#: identity) is skipped by the backend instead, since no lookup depends on it.
+_INDEX_LIMITS: dict[DBType, frozenset[str]] = {
+    DBType.MEMGRAPH: frozenset({"composite edge", "unique edge"}),
+    DBType.NEBULA: frozenset({"unique vertex", "unique edge"}),
+    DBType.TIGERGRAPH: frozenset({"composite vertex", "unique vertex", "edge"}),
+}
+
+
+def index_limit(db_type: DBType, index: Index, *, on_edge: bool) -> str | None:
+    """The index shape *db_type* cannot build that *index* needs, or ``None``."""
+    limits = _INDEX_LIMITS.get(db_type, frozenset())
+    if on_edge and "edge" in limits:
+        return "edge"
+    owner = "edge" if on_edge else "vertex"
+    if len(index.fields) > 1 and f"composite {owner}" in limits:
+        return f"composite {owner}"
+    if index.unique and f"unique {owner}" in limits:
+        return f"unique {owner}"
+    return None
+
+
+def _assert_index_buildable(
+    db_type: DBType, index: Index, owner: str, *, on_edge: bool
+) -> None:
+    limit = index_limit(db_type, index, on_edge=on_edge)
+    if limit is None:
+        return
+    flavor = getattr(db_type, "value", db_type)
+    article = "An" if limit == "edge" else "A"
+    raise UnsupportedIndexError(
+        f"{article} {limit} index on {index.fields} of '{owner}' cannot be built on "
+        f"backend '{flavor}'. Remove it from the database profile."
+    )
+
+
+def assert_schema_indexes_supported(db_type: DBType, schema: Schema) -> None:
+    """Validate every declared vertex and edge index against backend support.
+
+    An index over exactly the fields of an identity or a secondary identity is
+    GraFlo's own, so only its kind is checked: the backend skips it if it
+    cannot build it.
+    """
     profile = schema.db_profile
-    for vertex in schema.core_schema.vertex_config.vertices:
+    vertex_config = schema.core_schema.vertex_config
+    for vertex in vertex_config.vertices:
+        derived = {
+            tuple(vertex_config.identity_fields(vertex.name)),
+            *(tuple(entry.fields) for entry in vertex.secondary_identities),
+        }
         for index in profile.vertex_secondary_indexes(vertex.name):
             assert_index_kind_supported(db_type, index, vertex.name)
+            if tuple(index.fields) not in derived:
+                _assert_index_buildable(db_type, index, vertex.name, on_edge=False)
     for edge in schema.core_schema.edge_config.values():
+        derived = {
+            tuple(index.fields)
+            for key in edge.identities
+            if (index := edge_identity_index(key, db_type)) is not None
+        }
         for index in profile.edge_secondary_indexes(edge.edge_id):
             assert_index_kind_supported(db_type, index, str(edge.edge_id))
+            if tuple(index.fields) not in derived:
+                _assert_index_buildable(db_type, index, str(edge.edge_id), on_edge=True)
 
 
 def assert_schema_supported(db_type: DBType, schema: Schema) -> None:
-    """Refuse a schema whose field types or index kinds *db_type* cannot store."""
+    """Refuse a schema whose field types or indexes *db_type* cannot build."""
     assert_schema_field_types_supported(db_type, schema)
-    assert_schema_index_kinds_supported(db_type, schema)
+    assert_schema_indexes_supported(db_type, schema)

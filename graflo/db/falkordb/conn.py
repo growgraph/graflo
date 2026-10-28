@@ -350,7 +350,8 @@ class FalkordbConnection(Connection):
 
         Creates indexes for each vertex label based on the configuration.
         FalkorDB supports range indexes on node properties. Identity index is
-        prepended when schema is provided (FalkorDB has no implicit identity index).
+        prepended when schema is provided (FalkorDB has no implicit identity index)
+        and is enforced unique.
 
         Args:
             vertex_config: Vertex configuration containing index definitions
@@ -378,8 +379,11 @@ class FalkordbConnection(Connection):
                     if tuple(identity_idx.fields) not in seen:
                         index_list = [identity_idx, *index_list]
             label = db_vertex.vertex_dbname(c) if db_vertex else c
+            identity = tuple(db_vertex.identity_fields(c)) if db_vertex else ()
             for index_obj in index_list:
-                self._add_index(label, index_obj)
+                self._add_index(
+                    label, index_obj, is_identity=tuple(index_obj.fields) == identity
+                )
 
     def define_edge_indexes(self, edges: list[Edge], schema: Schema | None = None):
         """Define indexes for relationship types.
@@ -400,30 +404,95 @@ class FalkordbConnection(Connection):
                 if edge.relation is not None:
                     self._add_index(edge.relation, index_obj, is_vertex_index=False)
 
-    def _add_index(self, obj_name: str, index: Index, is_vertex_index: bool = True):
-        """Add an index to a label or relationship type.
+    def _add_index(
+        self,
+        obj_name: str,
+        index: Index,
+        is_vertex_index: bool = True,
+        *,
+        is_identity: bool = False,
+    ):
+        """Add an index, and a uniqueness constraint when unique, to a label or type.
+
+        FalkorDB keeps one range index per label holding each indexed attribute,
+        so the fields are added one at a time: an attribute indexed already does
+        not abort the rest. ``Index.unique`` adds a constraint over all the
+        fields together. One the server refuses raises, unless it is the
+        identity's, which logs a warning that the identity is not enforced.
 
         Args:
             obj_name: Label or relationship type name
             index: Index configuration to create
             is_vertex_index: If True, create index on nodes, otherwise on relationships
+            is_identity: Whether *index* is the vertex identity
         """
         label = cypher_name(obj_name)
         for field in index.fields:
             prop = cypher_name(field)
+            if is_vertex_index:
+                q = f"CREATE INDEX FOR (n:{label}) ON (n.{prop})"
+            else:
+                q = f"CREATE INDEX FOR ()-[r:{label}]-() ON (r.{prop})"
             try:
-                if is_vertex_index:
-                    # FalkorDB node index syntax
-                    q = f"CREATE INDEX FOR (n:{label}) ON (n.{prop})"
-                else:
-                    # FalkorDB relationship index syntax
-                    q = f"CREATE INDEX FOR ()-[r:{label}]-() ON (r.{prop})"
-
                 self.execute(q)
                 logger.debug(f"Created index on {obj_name}.{field}")
             except Exception as e:
-                # Index may already exist, log and continue
-                logger.debug(f"Index creation note for {obj_name}.{field}: {e}")
+                if "already indexed" in str(e).lower():
+                    logger.debug(f"Index on {obj_name}.{field} already exists")
+                else:
+                    logger.warning(f"Could not create index on {obj_name}.{field}: {e}")
+        if not (index.unique and index.fields):
+            return
+        if self.graph is None:
+            raise RuntimeError("Connection is closed")
+        create = (
+            self.graph.create_node_unique_constraint
+            if is_vertex_index
+            else self.graph.create_edge_unique_constraint
+        )
+        try:
+            create(obj_name, *index.fields)
+        except Exception as e:
+            if "already exists" in str(e).lower():
+                return
+            if not is_identity:
+                raise
+            logger.warning(
+                f"FalkorDB refused a uniqueness constraint on {obj_name}"
+                f"({', '.join(index.fields)}): {e}. The identity is not enforced as unique."
+            )
+
+    def _drop_unique_constraints(self, labels: set[str] | None) -> None:
+        """Drop the unique constraints on *labels* (every constraint when ``None``).
+
+        They outlive the nodes, and a later schema reusing a label with another
+        identity would be refused by them.
+        """
+        if self.graph is None:
+            raise RuntimeError("Connection is closed")
+        try:
+            constraints = self.graph.list_constraints()
+        except Exception as e:
+            logger.debug(f"Could not list constraints: {e}")
+            return
+        for constraint in constraints:
+            label = str(constraint["label"])
+            if str(constraint["type"]).upper() != "UNIQUE":
+                continue
+            if labels is not None and label not in labels:
+                continue
+            raw = constraint["properties"]
+            properties = [str(p) for p in raw] if isinstance(raw, list) else []
+            on_nodes = str(constraint["entitytype"]).upper() == "NODE"
+            drop = (
+                self.graph.drop_node_unique_constraint
+                if on_nodes
+                else self.graph.drop_edge_unique_constraint
+            )
+            try:
+                drop(label, *properties)
+            except Exception as e:
+                logger.debug(f"Could not drop the unique constraint on {label}: {e}")
 
     def define_schema(self, schema: Schema):
         """Define vertex and edge classes based on schema.
@@ -473,6 +542,7 @@ class FalkordbConnection(Connection):
                 logger.debug("Deleted all nodes and relationships from graph")
             except Exception as e:
                 logger.debug(f"Graph may be empty or not exist: {e}")
+            self._drop_unique_constraints(None)
         elif vertex_types:
             # Delete nodes with specific labels
             for label in vertex_types:
@@ -481,6 +551,7 @@ class FalkordbConnection(Connection):
                     logger.debug(f"Deleted all nodes with label '{label}'")
                 except Exception as e:
                     logger.warning(f"Failed to delete nodes with label '{label}': {e}")
+            self._drop_unique_constraints(set(vertex_types))
 
         # Delete specific graphs
         if self.client is None:

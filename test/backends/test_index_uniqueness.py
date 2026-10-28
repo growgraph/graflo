@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, cast
 
+import pytest
+
 from graflo.architecture.graph_types.index_config import Index
 from graflo.architecture.schema import CoreSchema, GraphMetadata, Schema
 from graflo.architecture.schema.edge import EdgeConfig
@@ -122,11 +124,14 @@ def test_a_composite_vertex_identity_is_a_composite_constraint() -> None:
     ]
 
 
-def test_a_refused_composite_constraint_falls_back_to_an_index(caplog) -> None:
+def test_a_refused_composite_identity_falls_back_to_an_index(caplog) -> None:
     fake = _Refusing("Neo.ClientError.Statement.UnsupportedAdministrationCommand")
 
     Neo4jConnection._add_index(
-        cast(Any, fake), "person", Index(fields=["name", "born"], unique=True)
+        cast(Any, fake),
+        "person",
+        Index(fields=["name", "born"], unique=True),
+        is_identity=True,
     )
 
     assert fake.queries == [
@@ -156,3 +161,15 @@ def test_a_non_unique_vertex_index_stays_an_index() -> None:
 
     (query,) = fake.queries
     assert query.startswith("CREATE INDEX person_email")
+
+
+def test_a_refused_declared_composite_constraint_raises() -> None:
+    """Only the identity falls back: a declared unique index is never weakened."""
+    from neo4j.exceptions import ClientError
+
+    fake = _Refusing("Neo.ClientError.Statement.UnsupportedAdministrationCommand")
+
+    with pytest.raises(ClientError):
+        Neo4jConnection._add_index(
+            cast(Any, fake), "person", Index(fields=["name", "born"], unique=True)
+        )

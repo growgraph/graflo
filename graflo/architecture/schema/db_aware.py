@@ -6,7 +6,7 @@ These wrappers materialize database-specific naming/defaults from logical
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
@@ -57,6 +57,50 @@ def compile_secondary_identity_indexes(
             db_profile.add_vertex_index(
                 vertex.name, Index(fields=list(entry.fields), unique=False)
             )
+
+
+def edge_identity_index(identity_key: Sequence[str], db_flavor: DBType) -> Index | None:
+    """The index an edge ``identities`` key compiles to on *db_flavor*, or ``None``.
+
+    Logical uniqueness is always ``(source, *relationship_fields, target)``.
+
+    * **ArangoDB** — Edge documents carry ``_from`` / ``_to``. Unique persistent
+      indexes must include them before other fields, even when the YAML
+      ``identities`` entry lists only relationship tokens (e.g. ``_role``).
+    * **Neo4j, FalkorDB, Memgraph, Nebula** — Indexed columns are relationship /
+      edge-type properties only; they cannot express endpoint scope. We still
+      register the property fields for lookups but set ``unique=False`` so the
+      database is not asked to enforce a misleading global uniqueness on those
+      properties alone. (Application MERGE / ingest semantics remain authoritative.)
+    * **TigerGraph, PostgreSQL** — Uniqueness is kept on the index; neither builds
+      it (TigerGraph has no edge indexes, the PostgreSQL edge key covers it).
+    """
+    fields: list[str] = []
+    for token in identity_key:
+        if token == "source":
+            if db_flavor == DBType.ARANGO:
+                fields.append("_from")
+        elif token == "target":
+            if db_flavor == DBType.ARANGO:
+                fields.append("_to")
+        elif token == "relation":
+            if db_flavor != DBType.TIGERGRAPH:
+                fields.append("relation")
+        else:
+            fields.append(token)
+    fields = list(dict.fromkeys(fields))
+    if not fields:
+        return None
+    if db_flavor == DBType.ARANGO:
+        rest = [f for f in fields if f not in ("_from", "_to")]
+        return Index(fields=["_from", "_to", *rest], unique=True)
+    unique = db_flavor not in (
+        DBType.NEO4J,
+        DBType.FALKORDB,
+        DBType.MEMGRAPH,
+        DBType.NEBULA,
+    )
+    return Index(fields=fields, unique=unique)
 
 
 @runtime_checkable
@@ -381,74 +425,9 @@ class EdgeConfigDBAware:
         db_flavor = self.db_profile.db_flavor
         for edge in self.logical.edges:
             for identity_key in edge.identities:
-                identity_fields = self._identity_key_index_fields(
-                    identity_key, db_flavor
-                )
-                if not identity_fields:
-                    continue
-                fields, unique = self._normalize_edge_identity_index(
-                    identity_fields, db_flavor
-                )
-                if not fields:
-                    continue
-                self.db_profile.add_edge_index(
-                    edge.edge_id,
-                    Index(fields=fields, unique=unique),
-                    purpose=None,
-                )
-
-    def _identity_key_index_fields(
-        self, identity_key: list[str], db_flavor: DBType
-    ) -> list[str]:
-        fields: list[str] = []
-        for token in identity_key:
-            if token == "source":
-                if db_flavor == DBType.ARANGO:
-                    fields.append("_from")
-            elif token == "target":
-                if db_flavor == DBType.ARANGO:
-                    fields.append("_to")
-            elif token == "relation":
-                if db_flavor != DBType.TIGERGRAPH:
-                    fields.append("relation")
-            else:
-                fields.append(token)
-        deduped: list[str] = []
-        for field in fields:
-            if field not in deduped:
-                deduped.append(field)
-        return deduped
-
-    @staticmethod
-    def _normalize_edge_identity_index(
-        fields: list[str], db_flavor: DBType
-    ) -> tuple[list[str], bool]:
-        """Map logical edge identity to physical index fields and DB uniqueness.
-
-        Logical uniqueness is always ``(source, *relationship_fields, target)``.
-
-        * **ArangoDB** — Edge documents carry ``_from`` / ``_to``. Unique persistent
-          indexes must include them before other fields, even when the YAML
-          ``identities`` entry lists only relationship tokens (e.g. ``_role``).
-        * **Neo4j, FalkorDB, Memgraph, Nebula** — Indexed columns are relationship /
-          edge-type properties only; they cannot express endpoint scope. We still
-          register the property fields for lookups but set ``unique=False`` so the
-          database is not asked to enforce a misleading global uniqueness on those
-          properties alone. (Application MERGE / ingest semantics remain authoritative.)
-        * **TigerGraph** — Edge secondary indexes are not applied by the driver today;
-          fields are kept for profiling; uniqueness is preserved for consistency.
-        """
-        rest = [f for f in fields if f not in ("_from", "_to")]
-        if db_flavor == DBType.ARANGO:
-            return (["_from", "_to", *rest], True)
-        if db_flavor in (
-            DBType.NEO4J,
-            DBType.FALKORDB,
-            DBType.MEMGRAPH,
-            DBType.NEBULA,
-        ):
-            return (fields, False)
-        return (fields, True)
+                index = edge_identity_index(identity_key, db_flavor)
+                if index is not None:
+                    self.db_profile.add_edge_index(edge.edge_id, index, purpose=None)
 
 
 @dataclass(frozen=True)

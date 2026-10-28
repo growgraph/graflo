@@ -12,6 +12,8 @@ def test_create_vertex_index(conn_conf, schema_obj, test_graph_name):
     """Test creating vertex indexes using GSQL CREATE INDEX."""
     schema_obj = schema_obj("review")
     schema_obj.metadata.name = test_graph_name
+    # TigerGraph builds no edge index, so it refuses the one review.yaml declares.
+    schema_obj.db_profile.edge_specs = []
 
     with ConnectionManager(connection_config=conn_conf) as db_client:
         # Initialize database with schema
