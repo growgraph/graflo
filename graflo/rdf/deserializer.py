@@ -293,6 +293,9 @@ class ManifestRdfDeserializer:
         semantics = self._read_semantics(graph, field_uri)
         reserved = self._literal(graph, field_uri, ns.fieldReserved)
         merge_mode = self._literal(graph, field_uri, ns.fieldMergeMode)
+        match = self._read_match(graph, field_uri)
+        derived_source = self._literal(graph, field_uri, ns.derivedSource)
+        derived_form = self._literal(graph, field_uri, ns.derivedForm)
         # A field with nothing but a name round-trips as a bare string, which is
         # how most schemas author it. Semantics has to join that condition or a
         # grounded field would collapse back to a string and lose its block.
@@ -303,6 +306,8 @@ class ManifestRdfDeserializer:
             and semantics is None
             and reserved is None
             and merge_mode is None
+            and match is None
+            and derived_source is None
         ):
             return name
         field: dict[str, Any] = {"name": name}
@@ -322,7 +327,33 @@ class ManifestRdfDeserializer:
             field["reserved"] = reserved.lower() == "true"
         if merge_mode is not None:
             field["merge"] = merge_mode
+        if match is not None:
+            field["match"] = match
+        if derived_source is not None:
+            field["derived"] = {"source": derived_source, "form": derived_form}
         return field
+
+    def _read_match(
+        self, graph: Graph, field_uri: URIRef | BNode
+    ) -> dict[str, Any] | None:
+        """Mirror of ``ManifestRdfSerializer._emit_match``."""
+        match_uri = self._object(graph, field_uri, ns.fieldMatch)
+        if match_uri is None:
+            return None
+        match: dict[str, Any] = {}
+        normalizer = self._literal(graph, match_uri, ns.matchNormalizer)
+        if normalizer is not None:
+            match["normalizer"] = normalizer
+        split = self._literal(graph, match_uri, ns.matchSplit)
+        if split is not None:
+            match["parts"] = {
+                "split": split if split == "words" else json.loads(split),
+                "order": self._literal(graph, match_uri, ns.matchOrder),
+            }
+        exclusive = self._literal(graph, match_uri, ns.matchExclusive)
+        if exclusive is not None:
+            match["exclusive"] = exclusive.lower() == "true"
+        return match
 
     def _read_naming(
         self, graph: Graph, subject: URIRef | BNode | None

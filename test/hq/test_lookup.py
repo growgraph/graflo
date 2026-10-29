@@ -11,9 +11,17 @@ import pytest
 
 from graflo.architecture.backend import GraFloBackendWriter
 from graflo.architecture.schema import CoreSchema, GraphMetadata, Schema
+from graflo.architecture.schema.derive import derive_fields
 from graflo.architecture.schema.edge import Edge, EdgeConfig
 from graflo.architecture.schema.semantics import FieldSemantics
-from graflo.architecture.schema.vertex import Field, Vertex, VertexConfig
+from graflo.architecture.schema.vertex import (
+    Field,
+    FieldDerived,
+    FieldMatch,
+    FieldParts,
+    Vertex,
+    VertexConfig,
+)
 from graflo.connections.graflo_backend import GraFloBackendConfig
 from graflo.db.graflo_backend.connection import GraFloBackendConnection
 from graflo.db.manager import ConnectionManager
@@ -32,6 +40,9 @@ from graflo.util.transform import normalize_label
 
 NAME = "https://schema.org/name"
 ALT_LABEL = "http://www.w3.org/2004/02/skos/core#altLabel"
+LABEL_MATCH = FieldMatch(normalizer="label_v1")
+NORMAL_OF_NAME = FieldDerived(source="name", form="normal")
+NORMAL_OF_LABEL = FieldDerived(source="label", form="normal")
 
 
 def zones_guard(zones: set[int]) -> FilterExpression:
@@ -54,8 +65,12 @@ def _schema() -> Schema:
                         name="Product",
                         properties=[
                             Field(name="sku"),
-                            Field(name="name", semantics=FieldSemantics(iri=NAME)),
-                            Field(name="name_norm"),
+                            Field(
+                                name="name",
+                                semantics=FieldSemantics(iri=NAME),
+                                match=LABEL_MATCH,
+                            ),
+                            Field(name="name_norm", derived=NORMAL_OF_NAME),
                         ],
                         identity=["sku"],
                     ),
@@ -63,9 +78,11 @@ def _schema() -> Schema:
                         name="Alias",
                         properties=[
                             Field(
-                                name="label", semantics=FieldSemantics(iri=ALT_LABEL)
+                                name="label",
+                                semantics=FieldSemantics(iri=ALT_LABEL),
+                                match=LABEL_MATCH,
                             ),
-                            Field(name="label_norm"),
+                            Field(name="label_norm", derived=NORMAL_OF_LABEL),
                         ],
                         identity=["label"],
                     ),
@@ -115,7 +132,6 @@ def conn(tmp_path: Path) -> Iterator[Any]:
 
 
 SPEC = LookupSpec(
-    normalized_fields={"Product": ["name_norm"], "Alias": ["label_norm"]},
     key_patterns=[
         KeyPattern(vertex_type="Ticket", field="number", pattern=r"\bSUP-\d+\b")
     ],
@@ -205,6 +221,7 @@ class TestLookup:
             ({"sku": "P-200"}, ["alias"])
         ]
         assert targets[0].hits[0].matched.lower() == "berlin pump"
+        assert targets[0].hits[0].targets == 1
 
     def test_a_candidate_carries_its_label_and_what_matched(self, conn: Any) -> None:
         (candidate,) = [
@@ -299,3 +316,80 @@ def test_a_guard_is_refused_where_the_backend_cannot_apply_it(
     monkeypatch.setattr(GraFloBackendConnection, "supports_read_guard", False)
     with pytest.raises(NotImplementedError, match="read guard"):
         lookup_candidates(conn, _schema(), "pump", guard=zones_guard({1}))
+
+
+# -- the compatible lane ------------------------------------------------------
+
+SITE = FieldMatch(
+    normalizer="label_v1",
+    parts=FieldParts(split=[",", "/"], order="general_first"),
+)
+
+
+def _sites() -> Schema:
+    unit = Vertex(
+        name="Unit",
+        properties=[
+            Field(name="serial", semantics=FieldSemantics(iri=NAME)),
+            Field(name="site", match=SITE),
+            Field(
+                name="site_keys",
+                type="LIST",
+                item_type="STRING",
+                derived=FieldDerived(source="site", form="keys"),
+            ),
+        ],
+        identity=["serial"],
+    )
+    return Schema(
+        metadata=GraphMetadata(name="sites"),
+        core_schema=CoreSchema(
+            vertex_config=VertexConfig(vertices=[unit]),
+            edge_config=EdgeConfig(edges=[]),
+        ),
+    )
+
+
+@pytest.fixture
+def sites(tmp_path: Path) -> Iterator[Any]:
+    schema = _sites()
+    (unit,) = schema.core_schema.vertex_config.vertices
+    rows = [
+        {"serial": "KP-1", "site": "Berlin, pump hall 2"},
+        {"serial": "KP-2", "site": "Berlin / hall 5"},
+        {"serial": "KP-3", "site": "Lyon"},
+    ]
+    with GraFloBackendWriter(tmp_path) as writer:
+        writer.write_schema(schema)
+        writer.write_vertex_batch("Unit", [derive_fields(unit, dict(r)) for r in rows])
+        writer.flush_index()
+    with ConnectionManager(
+        connection_config=GraFloBackendConfig(output_dir=tmp_path)
+    ) as connection:
+        yield connection
+
+
+def test_a_less_specific_form_finds_every_value_it_is_part_of(sites: Any) -> None:
+    found = lookup_candidates(sites, _sites(), "the Berlin pump is down")
+    assert [
+        (c.key["serial"], [(h.lane, h.matched) for h in c.hits]) for c in found
+    ] == [
+        ("KP-1", [("compatible", "Berlin")]),
+        ("KP-2", [("compatible", "Berlin")]),
+    ]
+
+
+def test_the_most_specific_run_matched_ranks_first(sites: Any) -> None:
+    found = lookup_candidates(sites, _sites(), "seen in Berlin pump hall 2 today")
+    assert [(c.key["serial"], c.hits[0].matched) for c in found] == [
+        ("KP-1", "Berlin pump hall 2"),
+        ("KP-2", "Berlin"),
+    ]
+
+
+def test_a_keys_field_is_refused_where_membership_cannot_be_read(
+    sites: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(GraFloBackendConnection, "supports_membership_read", False)
+    with pytest.raises(NotImplementedError, match="ANY_IN"):
+        lookup_candidates(sites, _sites(), "Berlin")

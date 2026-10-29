@@ -27,6 +27,7 @@ from graflo.architecture.graph_types import EdgeId, GraphContainer, Weight
 from graflo.architecture.graph_types.merge import fuse_doc_basis
 from graflo.architecture.graph_types.transform import VertexRep
 from graflo.architecture.schema import EdgeRuntime, Schema, SchemaDBAware
+from graflo.architecture.schema.derive import derive_fields
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.identity_digest import (
     ensure_digest_identities_on_docs,
@@ -531,6 +532,7 @@ class DBWriter:
 
                 def _sync():
                     with self._connection(conn_conf) as db:
+                        self._derive_fields(vcol, data, conn_conf)
                         if vc.is_hash_identity(vcol):
                             self._assign_hash_identity_ids(
                                 vcol=vcol, data=data, conn_conf=conn_conf
@@ -702,6 +704,15 @@ class DBWriter:
         vertex = vc.logical._get_vertex_by_name(vcol)
         for doc in data:
             validate_uuid_typed_identity_fields(doc, vertex)
+
+    def _derive_fields(self, vcol: str, data: list[dict], conn_conf: DBConfig) -> None:
+        """Set *vcol*'s derived fields on every doc, so no write path skips them."""
+        vertex = self._db_aware_for(
+            conn_conf
+        ).vertex_config.logical._get_vertex_by_name(vcol)
+        if vertex.derived_fields:
+            for doc in data:
+                derive_fields(vertex, doc)
 
     def _assign_hash_identity_ids(
         self, vcol: str, data: list[dict], conn_conf: DBConfig
@@ -923,6 +934,7 @@ class DBWriter:
         vc = self._db_aware_for(conn_conf).vertex_config
         keys = self._keys_for(conn_conf)
         union = self._union_fields(vcol, conn_conf)
+        self._derive_fields(vcol, filled, conn_conf)
         db.upsert_docs_batch(
             keys.vertex_docs(vcol, filled),
             vc.vertex_dbname(vcol),

@@ -442,6 +442,13 @@
             "target": "https://ontology.growgraph.dev/graflo/Index"
         },
         {
+            "id": "prop:https://ontology.growgraph.dev/graflo/fieldMatch",
+            "kind": "objectProperty",
+            "label": "fieldMatch",
+            "source": "https://ontology.growgraph.dev/graflo/Field",
+            "target": "https://ontology.growgraph.dev/graflo/FieldMatch"
+        },
+        {
             "id": "prop:https://ontology.growgraph.dev/graflo/fieldType",
             "kind": "objectProperty",
             "label": "fieldType",
@@ -1072,6 +1079,14 @@
             "comment": "Manifest-facing field item used in vertex.properties and edge.properties.",
             "datatypeProperties": [
                 {
+                    "label": "derivedForm",
+                    "range": "string"
+                },
+                {
+                    "label": "derivedSource",
+                    "range": "string"
+                },
+                {
                     "label": "fieldMergeMode",
                     "range": "string"
                 },
@@ -1085,6 +1100,32 @@
             "kind": "gf",
             "label": "Field",
             "local": "Field"
+        },
+        {
+            "comment": "How a stated value of a field is compared with a stored one: its normalizer, how it splits into parts, and whether a difference is a conflict. Structure only, never meaning.",
+            "datatypeProperties": [
+                {
+                    "label": "matchExclusive",
+                    "range": "boolean"
+                },
+                {
+                    "label": "matchNormalizer",
+                    "range": "string"
+                },
+                {
+                    "label": "matchOrder",
+                    "range": "string"
+                },
+                {
+                    "label": "matchSplit",
+                    "range": "string"
+                }
+            ],
+            "group": "schema",
+            "id": "https://ontology.growgraph.dev/graflo/FieldMatch",
+            "kind": "gf",
+            "label": "FieldMatch",
+            "local": "FieldMatch"
         },
         {
             "comment": null,

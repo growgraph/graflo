@@ -25,6 +25,7 @@ import re
 import time
 import unicodedata
 from collections import defaultdict
+from collections.abc import Callable
 from datetime import datetime
 from functools import lru_cache
 from typing import Any, TypeVar
@@ -611,6 +612,16 @@ def normalize_label(value: object | None) -> str | None:
     text = unicodedata.normalize("NFKC", str(value)).casefold()
     text = " ".join(re.sub(r"[^\w\s]|_", " ", text).split())
     return text or None
+
+
+#: Scalar normalizers a field's ``match.normalizer`` names, by versioned name. A
+#: name never changes meaning: a new behaviour is a new name, and since a derived
+#: identity digests its normalizer's name, a new name gives new ids. Words are
+#: whitespace-separated after ``label_v1``, so a script written without spaces
+#: gives one word per run of letters.
+NORMALIZERS: dict[str, Callable[[object | None], str | None]] = {
+    "label_v1": normalize_label,
+}
 
 
 def affix_gated_key(

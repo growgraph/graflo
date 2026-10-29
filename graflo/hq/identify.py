@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from pydantic import Field
 
 from graflo.architecture.base import ConfigBaseModel
+from graflo.architecture.schema.derive import complete_derived
 from graflo.architecture.schema.document import Schema
 from graflo.architecture.schema.key_contract import (
     KeyContract,
@@ -170,6 +171,8 @@ def identify_many(
     keyed: list[int] = []
     waiting: list[int] = []
     for position, given in enumerate(values):
+        # Derived fields first: a key may name one its source completes.
+        given = complete_derived(vertex, given)
         status = key_status(contract, given)
         identity = None
         if status.state == "primary":

@@ -100,6 +100,7 @@ class FalkordbConnection(Connection):
     #: conjoined into ``fetch_docs`` filters like any other predicate.
     supports_read_guard = True
     supports_union_merge = True
+    supports_membership_read = True
 
     # Type annotations for instance attributes
     client: FalkorDB | None

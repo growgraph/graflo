@@ -88,6 +88,7 @@ nav:
     -   Schema and manifest:
         -   Sampling and profiling: concepts/schema/sampling_and_profiling.md
         -   Vertex identity: concepts/schema/vertex_identity.md
+        -   Comparing and deriving field values: concepts/schema/comparing_values.md
         -   Cross-resource identity discovery: concepts/schema/cross_resource_identity.md
         -   Cards: concepts/schema/cards.md
         -   Schema context for a language model: concepts/schema/llm_context.md

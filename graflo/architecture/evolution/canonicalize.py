@@ -89,6 +89,8 @@ LIST_ORDER: dict[tuple[str, str], ListOrder] = {
     # and read by iterating all of them -- no precedence. Each inner key keeps
     # its own order, which the sort does not touch.
     ("Edge", "identities"): SORTED,
+    # A value is split on every separator, so their order changes no part.
+    ("FieldParts", "split"): SORTED,
     # ── Identity ────────────────────────────────────────────────────────────
     # `Vertex.identity` order is load-bearing: a backend's `vertex_address`
     # resolves an endpoint through the *first* identity field present, a

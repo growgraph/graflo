@@ -173,6 +173,7 @@ class ConnectionCapability(Enum):
     READ_GUARD = "supports_read_guard"
     UNION_MERGE = "supports_union_merge"
     SCOPED_DELETE = "supports_scoped_delete"
+    MEMBERSHIP_READ = "supports_membership_read"
 
     @property
     def label(self) -> str:
@@ -186,6 +187,7 @@ class ConnectionCapability(Enum):
             ConnectionCapability.READ_GUARD: "a read guard on every element read",
             ConnectionCapability.UNION_MERGE: "union-merged list fields",
             ConnectionCapability.SCOPED_DELETE: "deleting the elements of a scope",
+            ConnectionCapability.MEMBERSHIP_READ: "reading a list field by ANY_IN",
         }[self]
 
 
@@ -283,6 +285,9 @@ class Connection(abc.ABC):
     #: Writes ``merge: union`` list fields as the union of the stored and the
     #: written value. A writer refuses such a field on a backend without it.
     supports_union_merge: ClassVar[bool] = False
+    #: :meth:`fetch_docs` takes an ``ANY_IN`` filter on a list field. Lookup by a
+    #: derived keys field refuses a backend without it.
+    supports_membership_read: ClassVar[bool] = False
     #: A migration emitter exists for this backend, so a non-dry-run apply can
     #: be attempted at all. Declaring it is what lets a caller refuse an
     #: unsupported backend **by name, before opening a connection**, instead of

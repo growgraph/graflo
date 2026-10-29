@@ -144,6 +144,7 @@ class Neo4jConnection(Connection):
     supports_schema_introspection = True
     supports_read_guard = True
     supports_union_merge = True
+    supports_membership_read = True
 
     def __init__(self, config: Neo4jConfig):
         """Initialize Neo4j connection.

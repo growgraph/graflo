@@ -32,11 +32,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Union merge on edges**: an edge field declared `merge: union` is written as the union of the
   stored list and the written one, on FalkorDB, Neo4j and the file backend; other backends refuse
   the write.
+- **`Field.match`** (`normalizer`, `parts: {split, order}`, `exclusive`) declares how a field's
+  values compare, and `graflo.architecture.schema.compare.compare_value` grades a stated value
+  against a stored one: `exact`, `compatible`, `differs`, `conflict` or `unknown`.
+- **`Field.derived`** (`{source, form: normal | keys}`): a field GraFlo computes from another before
+  every write and digest, overwriting a stated value and hidden from type sheets. A derived
+  identity field names its source in `identity_label` and its normalizer in the digest.
+- **`NORMALIZERS`** (`graflo.util.transform`) with `label_v1`.
+- **Lookup lane `compatible`**: a derived keys field read by `ANY_IN`
+  (`supports_membership_read`: Neo4j, FalkorDB, the file backend). An `alias` hit carries
+  `targets`.
+- **`graflo.link`**: lane `context` (neighbours one hop from entities a source resolved by key or
+  the `subjects` passed to `gather_candidates`), `EntityCandidate.support` and
+  `support(candidate) -> accept | propose`.
+- **Ontology 1.10.0** also declares `gf:FieldMatch`, `gf:fieldMatch`, `gf:matchNormalizer`,
+  `gf:matchSplit`, `gf:matchOrder`, `gf:matchExclusive`, `gf:derivedSource` and `gf:derivedForm`.
 
 ### Changed
 
 - **Access aspect**: `LiftSpec.access_edges` maps each relation to the merge mode of its zones
   (`{about: union}`), as `access_for` does for vertex types; the list form is refused.
+- **`graflo.link`** is stable. `AttributeCheck` is `{field, level, exclusive}`; `verdict`,
+  `compare` and `AttributeVerdict` are removed. A candidate is left out only when a key field is in
+  `conflict`.
+- **`LookupSpec.normalized_fields`** is removed: the `normalized` lane reads the schema's
+  `derived: {form: normal}` fields.
 
 - IRIs in `semantics`, parents, `base_iri` and `namespaces` must be absolute: a non-IRI or a
   prefixed name (`foaf:Agent`, or one using a declared prefix) is refused. A local vertex or edge

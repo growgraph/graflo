@@ -255,13 +255,18 @@ class Edge(ConfigBaseModel):
         duplicates since they gained typed properties; edges are brought to the
         same rule here, with the same merge and the same refusals.
         """
+        owner = f"edge ({self.source!r}, {self.target!r}, {self.relation!r})"
+        declared = [f.name for f in self.properties if f.match or f.derived]
+        if declared:
+            # Linking compares and derives vertex fields only.
+            raise ValueError(
+                f"{owner}: match and derived are vertex field declarations, "
+                f"found on {declared}"
+            )
         object.__setattr__(
             self,
             "properties",
-            union_field_lists(
-                self.properties,
-                owner=f"edge ({self.source!r}, {self.target!r}, {self.relation!r})",
-            ),
+            union_field_lists(self.properties, owner=owner),
         )
         return self
 

@@ -1,14 +1,17 @@
 """Which existing vertices a short text may name.
 
-:func:`lookup_candidates` reads a graph for vertices a text mentions, by four
+:func:`lookup_candidates` reads a graph for vertices a text mentions, by five
 lanes, all exact or rule-based -- no model and no vectors:
 
 - ``exact``: a run of the text's words equals a label field;
 - ``key``: a declared pattern matches the text and its value equals a key field;
-- ``normalized``: a run of words, in :func:`~graflo.util.transform.normalize_label`
-  form, equals a stored normalised label field;
+- ``normalized``: a run of words, through its source's normalizer, equals a
+  derived normal-form field (``derived: {form: normal}``);
 - ``alias``: a label lane finds a vertex of a declared alias type, and its
-  alias edge leads to the target.
+  alias edge leads to the target;
+- ``compatible``: a run of words, through its source's normalizer, is one of a
+  derived keys field's less specific forms (``derived: {form: keys}``), read by
+  ``ANY_IN``.
 
 It returns keys and labels only, never other fields, so a caller can show the
 candidates to a model without copying the graph's content into its prompt.
@@ -17,6 +20,7 @@ candidates to a model without copying the graph's content into its prompt.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from typing import Any, Literal, NamedTuple
 
 from pydantic import Field
@@ -25,10 +29,11 @@ from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.evolution.sanitize import with_physical_names
 from graflo.architecture.graph_types.enums import EdgeDirection
 from graflo.architecture.schema import Schema
+from graflo.architecture.schema.derive import normal_value
 from graflo.architecture.schema.physical_keys import PhysicalKeys
+from graflo.architecture.schema.vertex import Field as SchemaField
 from graflo.architecture.schema.vertex import Vertex
-from graflo.filter.onto import FilterExpression
-from graflo.util.transform import normalize_label
+from graflo.filter.onto import ComparisonOperator, FilterExpression, conjoin
 
 #: Field semantics IRIs that mark a property as a name a text may use.
 LABEL_IRIS: frozenset[str] = frozenset(
@@ -52,8 +57,17 @@ NOTATION_IRIS: frozenset[str] = frozenset(
     }
 )
 
-Lane = Literal["exact", "key", "normalized", "alias"]
-_LANE_RANK: dict[str, int] = {"exact": 0, "key": 1, "normalized": 2, "alias": 3}
+Lane = Literal["exact", "key", "normalized", "alias", "compatible"]
+
+#: Whether a field ``(vertex type, field)`` may be matched on.
+Readable = Callable[[str, str], bool]
+_LANE_RANK: dict[str, int] = {
+    "exact": 0,
+    "key": 1,
+    "normalized": 2,
+    "alias": 3,
+    "compatible": 4,
+}
 _EDGE_PUNCTUATION = "\"'`.,;:!?()[]{}<>«»“”‘’"
 
 
@@ -94,8 +108,6 @@ class LookupSpec(ConfigBaseModel):
             the alias types.
         label_fields: Label fields per type, replacing those found by
             :func:`label_fields`.
-        normalized_fields: Fields per type that hold a label in
-            ``normalize_label`` form, for the ``normalized`` lane.
         key_patterns: Patterns for the ``key`` lane.
         aliases: Alias hops for the ``alias`` lane.
         max_seeds: Most candidates returned.
@@ -104,7 +116,6 @@ class LookupSpec(ConfigBaseModel):
 
     vertex_types: list[str] | None = None
     label_fields: dict[str, list[str]] = Field(default_factory=dict)
-    normalized_fields: dict[str, list[str]] = Field(default_factory=dict)
     key_patterns: list[KeyPattern] = Field(default_factory=list)
     aliases: list[AliasHop] = Field(default_factory=list)
     max_seeds: int = Field(default=20, ge=1)
@@ -117,10 +128,13 @@ class LaneHit(ConfigBaseModel):
     Attributes:
         lane: How it was found.
         matched: The words or key value of the text it was found from.
+        targets: ``alias`` lane: how many vertices the alias reached under the
+            guard. One means the alias names only this vertex in the reader's view.
     """
 
     lane: Lane
     matched: str
+    targets: int | None = None
 
 
 class Candidate(ConfigBaseModel):
@@ -267,6 +281,38 @@ class _Reader:
             for position, docs in found.items()
         }
 
+    def members(
+        self,
+        vertex_type: str,
+        field: str,
+        values: list[str],
+        returned: list[str],
+    ) -> list[dict[str, Any]]:
+        """Vertices whose list *field* holds any of *values*, by ``ANY_IN``."""
+        if not values:
+            return []
+        if not self.db.supports_membership_read:
+            raise NotImplementedError(
+                f"{type(self.db).__name__} cannot read a list field by ANY_IN, "
+                f"so {vertex_type}.{field} cannot be looked up"
+            )
+        (stored,) = self.keys.vertex_fields(vertex_type, [field])
+        match = FilterExpression(
+            kind="leaf",
+            field=stored,
+            cmp_operator=ComparisonOperator.ANY_IN,
+            value=[sorted(set(values))],
+        )
+        # Cypher fetch_docs takes no guard argument: it travels in the filter.
+        docs = self.db.fetch_docs(
+            self.vertices.vertex_dbname(vertex_type),
+            filters=conjoin(match, self.guard),
+            return_keys=self.keys.vertex_fields(
+                vertex_type, list(dict.fromkeys([*returned, field]))
+            ),
+        )
+        return [self.keys.logical_vertex_doc(vertex_type, d) for d in docs or []]
+
     def neighbours(
         self, vertex_type: str, key: dict[str, Any], relation: str, target: str
     ) -> list[dict[str, Any]]:
@@ -282,46 +328,108 @@ class _Reader:
         return list(reached.vertices.get(target, []))
 
 
+def _derived(
+    vertex: Vertex | None, form: str, readable: Readable
+) -> list[tuple[SchemaField, SchemaField]]:
+    """``(derived field, its source)`` pairs of *vertex* in *form*, both readable."""
+    if vertex is None:
+        return []
+    by_name = {f.name: f for f in vertex.properties}
+    return [
+        (field, by_name[field.derived.source])
+        for field in vertex.derived_fields
+        if field.derived is not None
+        and field.derived.form == form
+        and readable(vertex.name, field.name)
+        and readable(vertex.name, field.derived.source)
+    ]
+
+
+def _normal_runs(source: SchemaField, runs: list[str]) -> list[tuple[str, str]]:
+    """``(run, its normal form)`` for every run that has one, under *source*."""
+    out: list[tuple[str, str]] = []
+    for run in runs:
+        normal = normal_value(source, run)
+        if normal is not None:
+            out.append((run, str(normal)))
+    return out
+
+
+def _label(doc: dict[str, Any], labels: list[str]) -> str | None:
+    return next((doc[f] for f in labels if doc.get(f) is not None), None)
+
+
 def _label_lanes(
     reader: _Reader,
+    vertex: Vertex | None,
     vertex_type: str,
-    spec: LookupSpec,
     runs: list[str],
     labels: list[str],
+    readable: Readable,
 ) -> list[_Found]:
     """The ``exact`` and ``normalized`` lanes for one type."""
     identity = reader.identity(vertex_type)
     if not identity:
         return []
-    found: list[_Found] = []
-    normal = [normalize_label(run) for run in runs]
-    lanes: list[tuple[Lane, list[str], list[str]]] = [
-        ("exact", labels, runs),
-        (
-            "normalized",
-            spec.normalized_fields.get(vertex_type, []),
-            [n for n in normal if n],
-        ),
+    lanes: list[tuple[Lane, str, list[tuple[str, str]]]] = [
+        ("exact", field, [(run, run) for run in runs]) for field in labels
     ]
-    for lane, fields, values in lanes:
-        mentions = runs if lane == "exact" else [r for r, n in zip(runs, normal) if n]
-        for field in fields:
-            returned = list(dict.fromkeys([*identity, *labels]))
-            for position, docs in reader.find(
-                vertex_type, field, values, returned
-            ).items():
-                for doc in docs:
-                    found.append(
-                        _Found(
-                            vertex_type,
-                            {f: doc.get(f) for f in identity},
-                            next(
-                                (doc[f] for f in labels if doc.get(f) is not None),
-                                None,
-                            ),
-                            LaneHit(lane=lane, matched=mentions[position]),
-                        )
+    lanes += [
+        ("normalized", field.name, _normal_runs(source, runs))
+        for field, source in _derived(vertex, "normal", readable)
+    ]
+    returned = list(dict.fromkeys([*identity, *labels]))
+    found: list[_Found] = []
+    for lane, field, pairs in lanes:
+        if not pairs:
+            continue
+        values = [value for _, value in pairs]
+        for position, docs in reader.find(vertex_type, field, values, returned).items():
+            for doc in docs:
+                found.append(
+                    _Found(
+                        vertex_type,
+                        {f: doc.get(f) for f in identity},
+                        _label(doc, labels),
+                        LaneHit(lane=lane, matched=pairs[position][0]),
                     )
+                )
+    return found
+
+
+def _compatible_lane(
+    reader: _Reader,
+    vertex: Vertex | None,
+    vertex_type: str,
+    runs: list[str],
+    labels: list[str],
+    readable: Readable,
+) -> list[_Found]:
+    """Vertices one of whose derived keys equals a run of the text."""
+    identity = reader.identity(vertex_type)
+    if not identity:
+        return []
+    returned = list(dict.fromkeys([*identity, *labels]))
+    found: list[_Found] = []
+    for field, source in _derived(vertex, "keys", readable):
+        run_of: dict[str, str] = {}
+        for run, normal in _normal_runs(source, runs):
+            run_of.setdefault(normal, run)  # runs come longest first
+        for doc in reader.members(vertex_type, field.name, list(run_of), returned):
+            hits = [run_of[k] for k in doc.get(field.name) or [] if k in run_of]
+            if not hits:
+                continue
+            found.append(
+                _Found(
+                    vertex_type,
+                    {f: doc.get(f) for f in identity},
+                    _label(doc, labels),
+                    LaneHit(
+                        lane="compatible",
+                        matched=max(hits, key=lambda run: (len(run), run)),
+                    ),
+                )
+            )
     return found
 
 
@@ -332,12 +440,14 @@ def lookup_candidates(
     spec: LookupSpec | None = None,
     *,
     guard: FilterExpression | None = None,
+    comparable: Readable | None = None,
 ) -> list[Candidate]:
     """Vertices of *db* that *text* may name, best first, at most ``max_seeds``.
 
     One candidate per vertex, carrying the best hit of every lane that found
-    it, in the order ``exact``, ``key``, ``normalized``, ``alias``; within a
-    lane the longer match wins. Vertices are ordered by their best hit.
+    it, in the order ``exact``, ``key``, ``normalized``, ``alias``,
+    ``compatible``; within a lane the longer match wins. Vertices are ordered
+    by their best hit.
 
     Args:
         db: An open graph connection.
@@ -348,12 +458,16 @@ def lookup_candidates(
         guard: A trusted read guard (see ``Connection.graph_neighbors``); a
             vertex it hides is never a candidate, and an alias is followed
             only through elements it lets through.
+        comparable: Which fields may be matched on, as ``(vertex type, field)
+            -> bool``. A label, a key pattern's field or a derived field (or
+            its source) it refuses is never read. Default: every field.
 
     Returns:
         The candidates; empty when the text names nothing found.
 
     Raises:
-        NotImplementedError: A *guard* on a backend that cannot apply one.
+        NotImplementedError: A *guard* on a backend that cannot apply one, or
+            a type with a derived keys field on a backend that cannot read one.
     """
     spec = spec or LookupSpec()
     if guard is not None:
@@ -365,21 +479,29 @@ def lookup_candidates(
         name for name in vertex_by_name if name not in alias_types
     ]
     runs = word_runs(text, spec.max_words)
+    readable: Readable = comparable or (lambda _type, _field: True)
 
     def labels_of(vertex_type: str) -> list[str]:
         if vertex_type in spec.label_fields:
-            return list(spec.label_fields[vertex_type])
-        vertex = vertex_by_name.get(vertex_type)
-        return label_fields(vertex) if vertex is not None else []
+            named = list(spec.label_fields[vertex_type])
+        else:
+            vertex = vertex_by_name.get(vertex_type)
+            named = label_fields(vertex) if vertex is not None else []
+        return [f for f in named if readable(vertex_type, f)]
 
     found: list[_Found] = []
     for vertex_type in types:
+        vertex = vertex_by_name.get(vertex_type)
+        labels = labels_of(vertex_type)
+        found.extend(_label_lanes(reader, vertex, vertex_type, runs, labels, readable))
         found.extend(
-            _label_lanes(reader, vertex_type, spec, runs, labels_of(vertex_type))
+            _compatible_lane(reader, vertex, vertex_type, runs, labels, readable)
         )
 
     for pattern in spec.key_patterns:
-        if pattern.vertex_type not in types:
+        if pattern.vertex_type not in types or not readable(
+            pattern.vertex_type, pattern.field
+        ):
             continue
         values = list(
             dict.fromkeys(
@@ -407,17 +529,31 @@ def lookup_candidates(
             continue
         target_identity = reader.identity(hop.target_type)
         for alias in _label_lanes(
-            reader, hop.alias_type, spec, runs, labels_of(hop.alias_type)
+            reader,
+            vertex_by_name.get(hop.alias_type),
+            hop.alias_type,
+            runs,
+            labels_of(hop.alias_type),
+            readable,
         ):
-            for doc in reader.neighbours(
+            reached = reader.neighbours(
                 hop.alias_type, alias.key, hop.relation, hop.target_type
-            ):
+            )
+            targets = {
+                _identity_key({f: doc.get(f) for f in target_identity})
+                for doc in reached
+            }
+            for doc in reached:
                 found.append(
                     _Found(
                         hop.target_type,
                         {f: doc.get(f) for f in target_identity},
                         alias.label,
-                        LaneHit(lane="alias", matched=alias.hit.matched),
+                        LaneHit(
+                            lane="alias",
+                            matched=alias.hit.matched,
+                            targets=len(targets),
+                        ),
                     )
                 )
 

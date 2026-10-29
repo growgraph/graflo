@@ -107,6 +107,7 @@ class MyConnection(Connection):
     supports_schema_ddl = False  # True only with a migration emitter (step 3)
     supports_instance_delete = True  # delete_vertices and delete_edges
     supports_scoped_delete = True  # delete_scoped_vertices and delete_scoped_edges
+    supports_membership_read = False  # True only if fetch_docs takes an ANY_IN filter
 ```
 
 An introspector that samples records must leave `property_types` empty and

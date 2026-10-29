@@ -148,6 +148,10 @@ def _join_fields(
             )
         if present.merge != field.merge:
             conflicts.append(f"{at} merges by {present.merge!r}, not {field.merge!r}")
+        for attribute in ("match", "derived"):
+            have, wanted = getattr(present, attribute), getattr(field, attribute)
+            if wanted is not None and have != wanted:
+                conflicts.append(f"{at} declares {attribute} {have}, not {wanted}")
         grounded = _join_semantics(present.semantics, field.semantics, at, conflicts)
         if grounded is not None:
             out.grounded[field.name] = grounded

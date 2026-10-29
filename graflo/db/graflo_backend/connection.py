@@ -78,6 +78,7 @@ class GraFloBackendConnection(Connection):
     #: Guards are evaluated in process, on every document and edge row read.
     supports_read_guard = True
     supports_union_merge = True
+    supports_membership_read = True
 
     def __init__(self, config: GraFloBackendConfig) -> None:
         super().__init__()

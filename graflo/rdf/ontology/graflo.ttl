@@ -616,6 +616,45 @@ gf:fieldMergeMode a owl:DatatypeProperty ;
     rdfs:range xsd:string ;
     rdfs:comment "How an upsert combines a value with the stored one: `replace` or `union` (LIST fields). Absent means `replace`."@en .
 
+gf:FieldMatch a owl:Class ;
+    rdfs:label "Field match"@en ;
+    skos:prefLabel "FieldMatch"@en ;
+    rdfs:comment "How a stated value of a field is compared with a stored one: its normalizer, how it splits into parts, and whether a difference is a conflict. Structure only, never meaning."@en .
+
+gf:fieldMatch a owl:ObjectProperty ;
+    rdfs:domain gf:Field ;
+    rdfs:range gf:FieldMatch .
+
+gf:matchNormalizer a owl:DatatypeProperty ;
+    rdfs:domain gf:FieldMatch ;
+    rdfs:range xsd:string ;
+    rdfs:comment "A registered scalar normalizer, by versioned name (e.g. `label_v1`). Absent: values compare after type coercion alone."@en .
+
+gf:matchSplit a owl:DatatypeProperty ;
+    rdfs:domain gf:FieldMatch ;
+    rdfs:range xsd:string ;
+    rdfs:comment "How a value splits into parts: `words`, or a JSON list of separators."@en .
+
+gf:matchOrder a owl:DatatypeProperty ;
+    rdfs:domain gf:FieldMatch ;
+    rdfs:range xsd:string ;
+    rdfs:comment "Which end of a split value is the general one: `general_first`, `specific_first` or `unordered`."@en .
+
+gf:matchExclusive a owl:DatatypeProperty ;
+    rdfs:domain gf:FieldMatch ;
+    rdfs:range xsd:boolean ;
+    rdfs:comment "Whether two different values are evidence against a match. Absent: true on a key field, false otherwise."@en .
+
+gf:derivedSource a owl:DatatypeProperty ;
+    rdfs:domain gf:Field ;
+    rdfs:range xsd:string ;
+    rdfs:comment "The field of the same vertex a derived field is computed from."@en .
+
+gf:derivedForm a owl:DatatypeProperty ;
+    rdfs:domain gf:Field ;
+    rdfs:range xsd:string ;
+    rdfs:comment "What a derived field holds: `normal` (the source's normal form) or `keys` (its less specific forms)."@en .
+
 gf:dbFlavor a owl:ObjectProperty ;
     rdfs:domain gf:DatabaseProfile ;
     rdfs:range gf:DBType .

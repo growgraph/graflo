@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any, cast
 
 from rdflib import RDF, BNode, Graph, Literal, URIRef
@@ -393,6 +394,32 @@ class ManifestRdfSerializer:
             add_literal(graph, field_uri, ns.fieldReserved, True)
         if field_obj.merge != "replace":
             add_literal(graph, field_uri, ns.fieldMergeMode, field_obj.merge)
+        self._emit_match(graph, field_uri, field_obj)
+        if field_obj.derived is not None:
+            add_literal(graph, field_uri, ns.derivedSource, field_obj.derived.source)
+            add_literal(graph, field_uri, ns.derivedForm, field_obj.derived.form)
+
+    def _emit_match(self, graph: Graph, field_uri: URIRef, field_obj: Field) -> None:
+        """Emit a field's ``match`` as a node of its own, so an empty one survives."""
+        match = field_obj.match
+        if match is None:
+            return
+        match_uri = URIRef(join_uri(str(field_uri), "match"))
+        graph.add((field_uri, ns.fieldMatch, match_uri))
+        graph.add((match_uri, RDF.type, ns.FieldMatch))
+        add_literal(graph, match_uri, ns.matchNormalizer, match.normalizer)
+        if match.parts is not None:
+            split = match.parts.split
+            # One literal: separators keep their order, and "words" stays a mode.
+            add_literal(
+                graph,
+                match_uri,
+                ns.matchSplit,
+                split if isinstance(split, str) else json.dumps(split),
+            )
+            add_literal(graph, match_uri, ns.matchOrder, match.parts.order)
+        if match.exclusive is not None:
+            add_literal(graph, match_uri, ns.matchExclusive, match.exclusive)
 
     def _emit_edge(
         self,

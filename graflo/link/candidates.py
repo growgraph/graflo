@@ -6,22 +6,26 @@ entities it may be, by three kinds of evidence:
 
 - ``alternate``: the entities a stated secondary identity matched -- several,
   or the record would have resolved (``ambiguous``);
-- ``exact`` / ``key`` / ``normalized`` / ``alias``:
+- ``exact`` / ``key`` / ``normalized`` / ``alias`` / ``compatible``:
   :func:`~graflo.hq.lookup.lookup_candidates` over the label fields the record
-  states and the caller's lookup text for it;
+  states, the values of fields others are derived from, and the caller's
+  lookup text for it;
 - ``relation``: a relation stated between the record and a resolved one --
   "the customer" that RAISED a resolved HD-4411 gives the customers linked to
-  HD-4411 by ``RAISED``.
+  HD-4411 by ``RAISED``;
+- ``context``: a neighbour of the record's type, one hop from an entity the
+  same source resolved by key or a subject it is known to concern -- "the
+  unit" of a ticket about one unit.
 
 One candidate per entity carries every lane that found it, best first, and
-the record's other stated properties checked against the entity's stored
-values (``agree``, ``contradict``, ``unknown``); stored values are never
-returned. Equality is literal, as the field's declared type; a declared
-normalized field compares in ``normalize_label`` form.
+the record's other stated properties graded against the entity's stored
+values (:mod:`graflo.architecture.schema.compare`: ``exact``, ``compatible``,
+``differs``, ``conflict``, ``unknown``); stored values are never returned.
 
 Candidates never close a record: only keys do. A pick, a declared rule, an
-agent or a person chooses among them. A candidate whose stored key or
-secondary-identity values contradict what the record states is left out: a
+agent or a person chooses among them, and :func:`support` says whether a
+candidate's features identify it. A candidate whose stored key or
+secondary-identity values conflict with what the record states is left out: a
 record that states ``email`` is not an entity holding another email. Nor is
 the entity a record of the same source, related to this one by a stated
 relation, resolved to: the relation states two entities.
@@ -29,11 +33,18 @@ relation, resolved to: the relation states two entities.
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import Any, NamedTuple
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any, Literal, NamedTuple
 
 from graflo.architecture.graph_types.enums import EdgeDirection
 from graflo.architecture.schema.coerce import CoercionError, coerce_value
+from graflo.architecture.schema.compare import (
+    LEVEL_ORDER,
+    MatchLevel,
+    compare_value,
+    is_exclusive,
+)
+from graflo.architecture.schema.derive import complete_derived
 from graflo.architecture.schema.document import Schema
 from graflo.architecture.schema.key_contract import (
     KeyContract,
@@ -45,17 +56,17 @@ from graflo.filter.onto import FilterExpression
 from graflo.hq.lookup import LookupSpec, _Reader, label_fields, lookup_candidates
 from graflo.link.records import (
     AttributeCheck,
-    AttributeVerdict,
     CandidateHit,
     CandidateLane,
     EntityCandidate,
+    KnownSubject,
     PartialRecord,
     Resolution,
     Resolved,
     StagedCandidates,
     StagedRecord,
+    SupportFeatures,
 )
-from graflo.util.transform import normalize_label
 
 #: Words to look a staged record up by, besides its stated label values.
 LookupText = Callable[[PartialRecord], str | None]
@@ -70,9 +81,16 @@ LANE_ORDER: dict[CandidateLane, int] = {
     "key": 2,
     "normalized": 3,
     "alias": 4,
-    "relation": 5,
-    "metadata": 6,
+    "compatible": 5,
+    "relation": 6,
+    "metadata": 7,
+    "context": 8,
 }
+
+#: Lanes whose hit alone identifies a candidate (``support``).
+IDENTIFYING_LANES: frozenset[CandidateLane] = frozenset(
+    {"key", "alternate", "exact", "normalized"}
+)
 
 
 def _frozen(key: dict[str, Any]) -> tuple[tuple[str, str], ...]:
@@ -103,8 +121,10 @@ class _Gatherer:
         spec: LookupSpec,
         lookup_text: LookupText | None,
         comparable: Comparable | None,
+        subjects: Mapping[str, Sequence[KnownSubject]],
     ) -> None:
         self.schema = schema
+        self.subjects = subjects
         self.db = db
         self.guard = guard
         self.spec = spec
@@ -171,12 +191,29 @@ class _Gatherer:
         return self.allowed is None or self.allowed(vertex_type, name)
 
     def values(self, record: PartialRecord) -> dict[str, Any]:
-        """The record's stated values that may be read and compared."""
+        """The record's stated values that may be read and compared.
+
+        Derived fields are set from their sources first, so a key may name one.
+        """
+        stated = complete_derived(self.vertices[record.type], record.values())
         return {
             name: value
-            for name, value in record.values().items()
+            for name, value in stated.items()
             if not _empty(value) and self.comparable(record.type, name)
         }
+
+    def derived(self, vertex_type: str) -> set[str]:
+        return {f.name for f in self.vertices[vertex_type].derived_fields}
+
+    def sources(self, vertex_type: str) -> list[str]:
+        """Fields some derived field of the type is computed from."""
+        return list(
+            dict.fromkeys(
+                f.derived.source
+                for f in self.vertices[vertex_type].derived_fields
+                if f.derived is not None
+            )
+        )
 
     def equal(self, vertex_type: str, name: str, a: Any, b: Any) -> bool:
         """Whether *a* and *b* are one value of field *name*, as its declared type."""
@@ -253,7 +290,9 @@ class _Gatherer:
         words = [self.lookup_text(record) or ""] if self.lookup_text else []
         words += [
             values[f]
-            for f in self.labels(record.type)
+            for f in dict.fromkeys(
+                [*self.labels(record.type), *self.sources(record.type)]
+            )
             if isinstance(values.get(f), str)
         ]
         text = " ".join(dict.fromkeys(w.strip() for w in words if w and w.strip()))
@@ -263,13 +302,18 @@ class _Gatherer:
             update={"vertex_types": [record.type], "max_seeds": limit}
         )
         found = lookup_candidates(
-            self.db, self.schema, text, spec, guard=self.guard_for(record.type)
+            self.db,
+            self.schema,
+            text,
+            spec,
+            guard=self.guard_for(record.type),
+            comparable=self.comparable,
         )
         return [
             _Hit(
                 dict(c.key),
                 c.label,
-                CandidateHit(lane=hit.lane, matched=hit.matched),
+                CandidateHit(lane=hit.lane, matched=hit.matched, targets=hit.targets),
             )
             for c in found
             if c.vertex_type == record.type
@@ -316,6 +360,83 @@ class _Gatherer:
                     )
                 )
         return found
+
+    def context(self, staged: StagedRecord) -> list[_Hit]:
+        """Neighbours of the record's type around what its source is known to be about.
+
+        Anchors are the source's records resolved by key and its known subjects.
+        One hop in both directions, under the guard, which the caller sets to
+        what every reader of the source may see. A neighbour is ranked by its
+        label against the record's stated one; a ``conflict`` drops it. The
+        quote alone ranks nothing.
+        """
+        if self.db is None:
+            return []
+        record = staged.record
+        identity = list(self.contract(record.type).identity_fields)
+        anchors: list[tuple[str, dict[str, Any], CandidateHit]] = [
+            (
+                item.type,
+                dict(item.identity),
+                CandidateHit(lane="context", anchor=ref, level="unknown"),
+            )
+            for (source_id, ref), item in sorted(self.resolved.items())
+            if source_id == staged.source_id and item.by == "key" and ref != record.ref
+        ]
+        anchors += [
+            (
+                subject.vertex_type,
+                dict(subject.key),
+                CandidateHit(lane="context", role="subject", level="unknown"),
+            )
+            for subject in self.subjects.get(staged.source_id, ())
+        ]
+        stated = {
+            f: v
+            for f, v in self.values(record).items()
+            if f in self.labels(record.type)
+        }
+        found: list[_Hit] = []
+        for anchor_type, key, hit in anchors:
+            reached = self.db.graph_neighbors(
+                anchor_type,
+                key,
+                hops=1,
+                direction=EdgeDirection.ANY,
+                schema=self.schema,
+                guard=self.guard_for(record.type),
+            )
+            for doc in reached.vertices.get(record.type, []):
+                entity = {f: doc.get(f) for f in identity}
+                if anchor_type == record.type and self.freeze(
+                    record.type, entity
+                ) == self.freeze(record.type, key):
+                    continue
+                level = self.label_level(record.type, stated, doc)
+                if level == "conflict":
+                    continue
+                found.append(
+                    _Hit(
+                        entity,
+                        self.label_of(record.type, doc),
+                        hit.model_copy(update={"level": level}),
+                    )
+                )
+        return found
+
+    def label_level(
+        self, vertex_type: str, stated: dict[str, Any], doc: dict[str, Any]
+    ) -> MatchLevel:
+        """The best level of any stated label against any of the entity's labels."""
+        levels: list[MatchLevel] = []
+        for value in stated.values():
+            for label in self.labels(vertex_type):
+                field = self.fields[vertex_type].get(label)
+                if field is not None:
+                    levels.append(
+                        compare_value(field, value, doc.get(label), keyed=False)
+                    )
+        return min(levels, key=LEVEL_ORDER.__getitem__, default="unknown")
 
     # -- checks --------------------------------------------------------------
 
@@ -364,6 +485,7 @@ class _Gatherer:
         hits.sort(
             key=lambda h: (
                 LANE_ORDER[h.hit.lane],
+                LEVEL_ORDER[h.hit.level] if h.hit.level is not None else 0,
                 _frozen(h.key),
                 h.hit.model_dump_json(),
             )
@@ -388,10 +510,11 @@ class _Gatherer:
     def check(
         self, staged: StagedRecord, candidates: list[EntityCandidate]
     ) -> list[EntityCandidate]:
-        """*candidates* whose stored keys agree with the record, with its attributes.
+        """*candidates* whose stored keys do not conflict with the record, graded.
 
-        A contradicted key or secondary-identity field leaves the candidate out;
-        every other stated field the caller lets through is reported.
+        A key or secondary-identity field in ``conflict`` leaves the candidate
+        out; every other stated field the caller lets through is graded and
+        reported, and the candidate's support features are set.
         """
         record = staged.record
         contract = self.contract(record.type)
@@ -399,17 +522,20 @@ class _Gatherer:
         values = self.values(record)
         keyed = {f for key in contract.keys for f in key.fields}
         keyed |= {f for alt in contract.alternates for f in alt.fields}
-        normalized = set(self.spec.normalized_fields.get(record.type, []))
+        keyed |= set(identity)
+        fields = self.fields[record.type]
         kept = [
             c
             for c in candidates
             if all(
-                self.equal(record.type, f, c.key.get(f), values[f])
+                self.level(record.type, f, values[f], c.key.get(f), keyed=True)
+                != "conflict"
                 for f in identity
                 if f in values
             )
         ]
-        compared = [f for f in values if f not in identity]
+        derived = self.derived(record.type)
+        compared = [f for f in values if f not in identity and f not in derived]
         reader = self.reader_for(record.type)
         stored: dict[int, list[dict[str, Any]]] = {}
         if compared and kept and reader is not None:
@@ -425,30 +551,65 @@ class _Gatherer:
             doc = docs[0] if docs else {}  # a batch entity: nothing stored
             checks: list[AttributeCheck] = []
             for name in compared:
-                compare = "normalized" if name in normalized else "literal"
-                verdict = self.verdict(
-                    record.type, name, compare, doc.get(name), values[name]
+                level = self.level(
+                    record.type, name, values[name], doc.get(name), keyed=name in keyed
                 )
-                if verdict == "contradict" and name in keyed:
+                if level == "conflict" and name in keyed:
                     break
                 checks.append(
-                    AttributeCheck(field=name, verdict=verdict, compare=compare)
+                    AttributeCheck(
+                        field=name,
+                        level=level,
+                        exclusive=_exclusive(fields.get(name), keyed=name in keyed),
+                    )
                 )
             else:
                 candidate.attributes = checks
+                candidate.support = _features(candidate)
                 out.append(candidate)
         return out
 
-    def verdict(
-        self, vertex_type: str, name: str, compare: str, stored: Any, stated: Any
-    ) -> AttributeVerdict:
-        if _empty(stored):
-            return "unknown"
-        if compare == "normalized":
-            same = normalize_label(stored) == normalize_label(stated)
-        else:
-            same = self.equal(vertex_type, name, stored, stated)
-        return "agree" if same else "contradict"
+    def level(
+        self, vertex_type: str, name: str, stated: Any, stored: Any, *, keyed: bool
+    ) -> MatchLevel:
+        field = self.fields[vertex_type].get(name)
+        if field is None:
+            if _empty(stated) or _empty(stored):
+                return "unknown"
+            return "exact" if stated == stored else ("conflict" if keyed else "differs")
+        return compare_value(field, stated, stored, keyed=keyed)
+
+
+def _exclusive(field: Field | None, *, keyed: bool) -> bool:
+    return keyed if field is None else is_exclusive(field, keyed=keyed)
+
+
+def _features(candidate: EntityCandidate) -> SupportFeatures:
+    return SupportFeatures(
+        identifying_lane=any(h.lane in IDENTIFYING_LANES for h in candidate.lanes),
+        exclusive_agreement=any(
+            a.exclusive and a.level == "exact" for a in candidate.attributes
+        ),
+        unique_alias=any(h.lane == "alias" and h.targets == 1 for h in candidate.lanes),
+        conflict=any(a.level == "conflict" for a in candidate.attributes),
+    )
+
+
+def support(candidate: EntityCandidate) -> Literal["accept", "propose"]:
+    """``accept`` when a feature identifies *candidate* and nothing conflicts.
+
+    Identifying: a hit in an identifying lane (``key``, ``alternate``,
+    ``exact``, ``normalized``), an exclusive field stated and stored alike, or
+    an alias naming only it in the reader's view. ``compatible`` and
+    ``context`` hits never identify on their own.
+    """
+    features = candidate.support
+    identified = (
+        features.identifying_lane
+        or features.exclusive_agreement
+        or features.unique_alias
+    )
+    return "accept" if identified and not features.conflict else "propose"
 
 
 def gather_candidates(
@@ -460,6 +621,7 @@ def gather_candidates(
     spec: LookupSpec | None = None,
     lookup_text: LookupText | None = None,
     comparable: Comparable | None = None,
+    subjects: Mapping[str, Sequence[KnownSubject]] | None = None,
     max_candidates: int = 10,
 ) -> list[StagedCandidates]:
     """The entities each staged record of *resolution* may be, best first.
@@ -477,10 +639,10 @@ def gather_candidates(
             declares every field it names, and on a relation path to every
             vertex and edge of the path. Refused by a backend without read
             guards.
-        spec: Lookup spec for the label lanes (normalised fields, key
-            patterns, alias hops, label field overrides). Its ``vertex_types``
-            and ``max_seeds`` are set per record; its normalised fields are
-            compared in ``normalize_label`` form.
+        spec: Lookup spec for the label lanes (key patterns, alias hops,
+            label field overrides). Its ``vertex_types`` and ``max_seeds`` are
+            set per record. The ``normalized`` and ``compatible`` lanes read
+            the schema's derived fields.
         lookup_text: Words to look each staged record up by besides the label
             values it states, such as the passage it was read from; typically
             taken from the caller's own ``evidence``.
@@ -488,6 +650,9 @@ def gather_candidates(
             ``(vertex type, field) -> bool``; one it refuses is never probed,
             looked up by or checked, keys included. Declared, unreserved
             fields are the only ones ever considered.
+        subjects: Per source id, the entities the source is known to concern
+            (from its metadata), anchors of the ``context`` lane besides the
+            records it resolved by key.
         max_candidates: Most candidates per record, counted as entities after
             lanes are merged and keys checked; ``truncated`` says when more
             were found.
@@ -504,7 +669,9 @@ def gather_candidates(
     if guard is not None and db is not None:
         db.require_read_guard()
     spec = spec or LookupSpec()
-    gatherer = _Gatherer(schema, resolution, db, guard, spec, lookup_text, comparable)
+    gatherer = _Gatherer(
+        schema, resolution, db, guard, spec, lookup_text, comparable, subjects or {}
+    )
     limit = max(spec.max_seeds, max_candidates + 1)
     out: list[StagedCandidates] = []
     for staged in resolution.staged.records:
@@ -521,6 +688,7 @@ def gather_candidates(
             *gatherer.alternate(staged),
             *gatherer.lookup(staged, limit),
             *gatherer.relation(staged),
+            *gatherer.context(staged),
         ]
         kept = gatherer.check(staged, gatherer.merge(staged, hits))
         entry.candidates = kept[:max_candidates]

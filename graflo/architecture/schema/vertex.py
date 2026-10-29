@@ -49,6 +49,7 @@ from graflo.onto import (
     SECONDARY_IDENTITY_SUGAR,
     BaseEnum,
 )
+from graflo.util.transform import NORMALIZERS
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,8 @@ PropertiesInputType = list[str] | list["Field"] | list[dict[str, Any]]
 VertexName: TypeAlias = str
 IdentityMode: TypeAlias = Literal["natural", "hash", "blank", "assigned"]
 FieldMerge: TypeAlias = Literal["replace", "union"]
+PartsOrder: TypeAlias = Literal["general_first", "specific_first", "unordered"]
+DerivedForm: TypeAlias = Literal["normal", "keys"]
 
 
 class FieldType(BaseEnum):
@@ -151,6 +154,101 @@ def _normalize_field_type_input(v: Any, *, label: str) -> FieldType | None:
     )
 
 
+class FieldParts(ConfigBaseModel):
+    """How a value splits into parts, and which end of it is the general one.
+
+    A less specific form of a value is a run of its parts that keeps the general
+    end: "Berlin" of "Berlin, pump hall 2" (``general_first``), "example.com" of
+    "eu.example.com" (``specific_first``). ``unordered`` parts have no such run:
+    one value is less specific when its parts are a subset of the other's.
+    """
+
+    split: Literal["words"] | list[str] = PydanticField(
+        ...,
+        description=(
+            "``words`` (whitespace, after the normalizer) or the separators "
+            "between parts. Required: no separator is assumed."
+        ),
+    )
+    order: PartsOrder = PydanticField(
+        ...,
+        description=(
+            "Which end is the general one: ``general_first``, ``specific_first`` "
+            "or ``unordered``. Required: no order is assumed."
+        ),
+    )
+
+    @field_validator("split")
+    @classmethod
+    def _separators(
+        cls, v: Literal["words"] | list[str]
+    ) -> Literal["words"] | list[str]:
+        if isinstance(v, list):
+            if not v or any(not separator for separator in v):
+                raise ValueError("split needs one or more non-empty separators")
+            return _dedupe_ordered(v)
+        return v
+
+
+class FieldMatch(ConfigBaseModel):
+    """How a stated value of the field is compared with a stored one.
+
+    It declares the value's structure, never its meaning. See
+    :mod:`graflo.architecture.schema.compare` for the levels it yields.
+    """
+
+    normalizer: str | None = PydanticField(
+        default=None,
+        exclude_if=lambda value: value is None,
+        description=(
+            "A registered scalar normalizer (``graflo.util.transform.NORMALIZERS``), "
+            "applied to the whole value and to each part. Without one, values "
+            "compare after ``coerce_value`` alone."
+        ),
+    )
+    parts: FieldParts | None = PydanticField(
+        default=None,
+        exclude_if=lambda value: value is None,
+        description="How the value splits into parts; makes ``compatible`` possible.",
+    )
+    exclusive: bool | None = PydanticField(
+        default=None,
+        exclude_if=lambda value: value is None,
+        description=(
+            "Whether two different values are evidence against a match "
+            "(``conflict``) rather than ``differs``. Unset: true on a key or "
+            "alternate-key field, false otherwise."
+        ),
+    )
+
+    @field_validator("normalizer")
+    @classmethod
+    def _registered(cls, v: str | None) -> str | None:
+        if v is not None and v not in NORMALIZERS:
+            raise ValueError(
+                f"unknown normalizer {v!r}; registered: {', '.join(sorted(NORMALIZERS))}"
+            )
+        return v
+
+
+class FieldDerived(ConfigBaseModel):
+    """A field core computes from another field of the same vertex.
+
+    Stored, never supplied: core overwrites a stated value, and a type sheet
+    never shows the field.
+    """
+
+    source: str = PydanticField(..., description="The field it is computed from.")
+    form: DerivedForm = PydanticField(
+        ...,
+        description=(
+            "``normal``: the source's normal form under its ``match.normalizer``. "
+            "``keys``: every less specific form of the source under its "
+            "``match.parts`` (a LIST of strings)."
+        ),
+    )
+
+
 #: Vertex keys that moved elsewhere. Kept as a lookup so the error names the
 #: destination instead of just refusing an unknown key.
 RELOCATED_VERTEX_KEYS: dict[str, str] = {
@@ -221,6 +319,20 @@ class Field(ConfigBaseModel):
             "(LIST fields only)."
         ),
     )
+    # Left out of a dump when absent, as the flags above.
+    match: FieldMatch | None = PydanticField(
+        default=None,
+        exclude_if=lambda value: value is None,
+        description="How a stated value is compared with a stored one.",
+    )
+    derived: FieldDerived | None = PydanticField(
+        default=None,
+        exclude_if=lambda value: value is None,
+        description=(
+            "Computed by core from another field of the vertex, before every write "
+            "and digest; never supplied by a document."
+        ),
+    )
 
     @field_validator("type", mode="before")
     @classmethod
@@ -259,7 +371,38 @@ class Field(ConfigBaseModel):
                 f"Field '{self.name}': merge 'union' needs type LIST, got "
                 f"{type_val or 'untyped'}"
             )
+        if self.derived is not None:
+            self._check_derived(self.derived, type_val, item_val)
         return self
+
+    def _check_derived(
+        self, derived: FieldDerived, type_val: str | None, item_val: str | None
+    ) -> None:
+        clashes = [
+            what
+            for what, present in (
+                ("match", self.match is not None),
+                ("reserved", self.reserved),
+                ("merge 'union'", self.merge == "union"),
+            )
+            if present
+        ]
+        if clashes:
+            # A derived field is computed, never compared or stamped: its source is.
+            raise ValueError(
+                f"Field '{self.name}': a derived field cannot also declare "
+                f"{', '.join(clashes)}"
+            )
+        if derived.source == self.name:
+            raise ValueError(f"Field '{self.name}': derived from itself")
+        if derived.form == "keys" and (type_val, item_val) != ("LIST", "STRING"):
+            raise ValueError(
+                f"Field '{self.name}': derived keys need type LIST, item_type STRING"
+            )
+        if derived.form == "normal" and type_val not in (None, "STRING"):
+            raise ValueError(
+                f"Field '{self.name}': a derived normal form is a STRING, got {type_val}"
+            )
 
     def __str__(self) -> str:
         """Return field name as string for backward compatibility."""
@@ -555,6 +698,20 @@ def merge_fields(
             "Declare the property the same way on both sides before merging.",
             field=a.name,
         )
+    # One side declaring how the field matches, or that it is derived, carries;
+    # two different declarations would change identity or comparison silently.
+    declared: dict[str, Any] = {}
+    for attribute in ("match", "derived"):
+        left, right = getattr(a, attribute), getattr(b, attribute)
+        if left is not None and right is not None and left != right:
+            raise FieldMergeConflict(
+                owner,
+                f"property {a.name!r}: {attribute} {left.to_dict()} vs "
+                f"{right.to_dict()}",
+                "Declare the property the same way on both sides before merging.",
+                field=a.name,
+            )
+        declared[attribute] = left if left is not None else right
 
     try:
         semantics = merge_field_semantics(
@@ -578,6 +735,7 @@ def merge_fields(
             **base.to_dict(skip_defaults=False),
             "description": _fold_field_description(base.description, other.description),
             "semantics": semantics,
+            **declared,
         }
     )
 
@@ -916,12 +1074,48 @@ class Vertex(ConfigBaseModel):
                 if name not in seen_names:
                     augmented.append(Field(name=name, type=None))
                     seen_names.add(name)
+        self._check_derived_fields(merged_properties, funnel=set(funnel_field_names))
 
         object.__setattr__(self, "identity", identity_names)
         object.__setattr__(self, "hash_identity_properties", hash_identity_names)
         object.__setattr__(self, "secondary_identities", secondary)
         object.__setattr__(self, "properties", augmented)
         return self
+
+    def _check_derived_fields(
+        self, properties: list[Field], *, funnel: set[str]
+    ) -> None:
+        """Each derived field reads a plain field of this vertex that says how.
+
+        The normalizer and the split are read from the source's ``match``, never
+        defaulted, so a derived field, its lookup and its comparison use one rule.
+        """
+        by_name = {f.name: f for f in properties}
+        for field in properties:
+            derived = field.derived
+            if derived is None:
+                continue
+            at = f"Vertex '{self.name}': derived field '{field.name}'"
+            source = by_name.get(derived.source)
+            if source is None:
+                raise ValueError(f"{at} reads '{derived.source}', not a property")
+            if source.derived is not None or source.reserved:
+                raise ValueError(
+                    f"{at} reads '{source.name}', which is derived or reserved"
+                )
+            match = source.match
+            if match is None or match.normalizer is None:
+                raise ValueError(
+                    f"{at}: its source '{source.name}' declares no match.normalizer"
+                )
+            if derived.form == "keys" and (
+                match.parts is None or match.parts.order == "unordered"
+            ):
+                raise ValueError(
+                    f"{at}: keys need ordered match.parts on '{source.name}'"
+                )
+            if field.name in funnel:
+                raise ValueError(f"{at}: an identity_funnel branch cannot read it")
 
     def _validated_secondary_identities(
         self, *, identity_names: list[str], list_prop_names: set[str]
@@ -1017,6 +1211,11 @@ class Vertex(ConfigBaseModel):
         if self.identity_funnel is not None:
             return self.identity_funnel.field_names
         return list(self.hash_identity_properties)
+
+    @property
+    def derived_fields(self) -> list[Field]:
+        """Fields core computes from another field, in declared order."""
+        return [field for field in self.properties if field.derived is not None]
 
     @property
     def identity_mode(self) -> IdentityMode:

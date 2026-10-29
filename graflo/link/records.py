@@ -28,6 +28,7 @@ from pydantic import Field, model_validator
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.graph_types.identifiers import EdgeId
+from graflo.architecture.schema.compare import MatchLevel
 
 _EVIDENCE = "The producer's own record of where this was stated; never interpreted."
 
@@ -215,25 +216,44 @@ class Resolution(ConfigBaseModel):
 
 
 CandidateLane = Literal[
-    "alternate", "exact", "key", "normalized", "alias", "relation", "metadata"
+    "alternate",
+    "exact",
+    "key",
+    "normalized",
+    "alias",
+    "compatible",
+    "relation",
+    "metadata",
+    "context",
 ]
+
+
+class KnownSubject(ConfigBaseModel):
+    """An entity a source is known to concern, from its metadata, not its text."""
+
+    vertex_type: str
+    key: dict[str, Any] = Field(description="Its identity fields and values.")
 
 
 class CandidateHit(ConfigBaseModel):
     """One way an entity was found for a staged record.
 
     Each lane carries its own fields and no others: ``relation`` the relation
-    and the anchor, ``metadata`` a role, every other lane what matched.
+    and the anchor, ``metadata`` a role, ``context`` its anchor (a record's ref,
+    or the role ``subject``) and the level of its label, every other lane what
+    matched, and ``alias`` also how many entities the alias reached.
     """
 
     lane: CandidateLane = Field(
         description=(
             "How it was found. ``alternate``: one of the entities a stated "
             "secondary identity matched. ``exact``, ``key``, ``normalized``, "
-            "``alias``: a lookup over the record's stated labels and the "
-            "caller's lookup text. ``relation``: linked by a stated relation to a "
-            "resolved record of the same source. ``metadata``: named by the "
-            "source's metadata, added by the caller."
+            "``alias``, ``compatible``: a lookup over the record's stated labels "
+            "and the caller's lookup text. ``relation``: linked by a stated "
+            "relation to a resolved record of the same source. ``metadata``: "
+            "named by the source's metadata, added by the caller. ``context``: a "
+            "neighbour of the record's type, one hop from an entity the source "
+            "resolved by key or a subject it is known to concern."
         )
     )
     matched: str | None = Field(
@@ -249,31 +269,40 @@ class CandidateHit(ConfigBaseModel):
     )
     role: str | None = Field(
         default=None,
-        description="``metadata`` lane: a role the caller assigns.",
+        description="``metadata`` lane: a role the caller assigns; ``context``: ``subject``.",
+    )
+    targets: int | None = Field(
+        default=None,
+        description="``alias`` lane: how many entities the alias reached in the reader's view.",
+    )
+    level: MatchLevel | None = Field(
+        default=None,
+        description="``context`` lane: the record's stated label against the entity's.",
     )
 
     @model_validator(mode="after")
     def _fields_of_its_lane(self) -> CandidateHit:
         if self.lane == "relation":
-            expected = {"relation", "anchor"}
+            allowed = [{"relation", "anchor"}]
         elif self.lane == "metadata":
-            expected = {"role"}
+            allowed = [{"role"}]
+        elif self.lane == "context":
+            allowed = [{"anchor", "level"}, {"role", "level"}]
+        elif self.lane == "alias":
+            allowed = [{"matched", "targets"}, {"matched"}]
         else:
-            expected = {"matched"}
+            allowed = [{"matched"}]
         stated = {
             name
-            for name in ("matched", "relation", "anchor", "role")
+            for name in ("matched", "relation", "anchor", "role", "targets", "level")
             if getattr(self, name) is not None
         }
-        if stated != expected:
+        if stated not in allowed:
             raise ValueError(
-                f"a {self.lane} hit carries {sorted(expected)}, got {sorted(stated)}"
+                f"a {self.lane} hit carries {' or '.join(str(sorted(a)) for a in allowed)}, "
+                f"got {sorted(stated)}"
             )
         return self
-
-
-#: How a stated value was compared with the stored one.
-AttributeVerdict = Literal["agree", "contradict", "unknown"]
 
 
 class AttributeCheck(ConfigBaseModel):
@@ -283,17 +312,35 @@ class AttributeCheck(ConfigBaseModel):
     """
 
     field: str
-    verdict: AttributeVerdict = Field(
+    level: MatchLevel = Field(
         description=(
-            "``agree`` / ``contradict``: the stated and stored values are "
-            "equal / differ. ``unknown``: nothing is stored to compare with."
+            "``exact``, ``compatible`` (one is a less specific form of the other), "
+            "``differs`` (not evidence against), ``conflict`` (evidence against: "
+            "an exclusive field) or ``unknown`` (nothing stored to compare with). "
+            "See :mod:`graflo.architecture.schema.compare`."
         )
     )
-    compare: Literal["literal", "normalized"] = Field(
-        description=(
-            "``literal``: equal as the field's declared type. ``normalized``: "
-            "equal in ``normalize_label`` form, for a declared normalized field."
-        )
+    exclusive: bool = Field(
+        description="Whether a difference on the field is a ``conflict``."
+    )
+
+
+class SupportFeatures(ConfigBaseModel):
+    """What identifies a candidate, as :func:`graflo.link.candidates.support` reads it."""
+
+    identifying_lane: bool = Field(
+        default=False,
+        description="Found by ``key``, ``alternate``, ``exact`` or ``normalized``.",
+    )
+    exclusive_agreement: bool = Field(
+        default=False, description="An exclusive field stated and stored alike."
+    )
+    unique_alias: bool = Field(
+        default=False,
+        description="Found by an alias that names only it in the reader's view.",
+    )
+    conflict: bool = Field(
+        default=False, description="A stated field is evidence against it."
     )
 
 
@@ -310,9 +357,13 @@ class EntityCandidate(ConfigBaseModel):
         default_factory=list,
         description=(
             "The record's other comparable stated properties against the "
-            "candidate's stored values. A contradicted key never appears: it "
+            "candidate's stored values. A key in conflict never appears: it "
             "leaves the candidate out."
         ),
+    )
+    support: SupportFeatures = Field(
+        default_factory=SupportFeatures,
+        description="The features that identify it, read by ``support()``.",
     )
 
 
