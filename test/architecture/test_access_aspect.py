@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.evolution import apply_evolution, invert_ops
@@ -95,7 +96,7 @@ def test_access_is_registered_and_not_lifted_by_default() -> None:
 def test_the_lift_adds_a_reserved_label_with_its_merge_mode() -> None:
     lifted = _lifted(
         access_for={"Ticket": "replace", "Product": "union"},
-        access_edges=["about"],
+        access_edges={"about": "replace"},
     )
 
     ticket = _field(lifted, "Ticket", ACCESS_ZONES)
@@ -107,6 +108,20 @@ def test_the_lift_adds_a_reserved_label_with_its_merge_mode() -> None:
     assert product.reserved and product.merge == "union"
     assert edge_zones.reserved and edge_zones.merge == "replace"
     assert str(ticket.type) == "LIST" and str(ticket.item_type) == "INT"
+
+
+def test_an_edge_relation_takes_the_merge_mode_it_names() -> None:
+    lifted = _lifted(access_for={"Ticket": "replace"}, access_edges={"about": "union"})
+
+    edge = next(iter(lifted.require_schema().core_schema.edge_config.values()))
+    edge_zones = next(f for f in edge.properties if f.name == ACCESS_ZONES)
+
+    assert edge_zones.reserved and edge_zones.merge == "union"
+
+
+def test_access_edges_is_a_map_of_merge_modes() -> None:
+    with pytest.raises(ValidationError):
+        LiftSpec(access_edges=["about"])  # ty: ignore[invalid-argument-type]
 
 
 def test_the_lift_inverts_back_to_the_original() -> None:
@@ -132,7 +147,7 @@ def test_access_labels_the_types_provenance_mints_in_the_same_lift() -> None:
         LiftSpec(
             provenance_for=["Ticket"],
             access_for={"SourceRecord": "replace", "Agent": "union"},
-            access_edges=["wasDerivedFrom"],
+            access_edges={"wasDerivedFrom": "replace"},
         ),
         aspects=["provenance", "access"],
     )
@@ -148,7 +163,7 @@ def test_access_labels_the_types_provenance_mints_in_the_same_lift() -> None:
     [
         ({}, "needs access_for"),
         ({"access_for": {"Nope": "replace"}}, "lacks"),
-        ({"access_edges": ["nope"]}, "lacks"),
+        ({"access_edges": {"nope": "replace"}}, "lacks"),
     ],
 )
 def test_the_lift_refuses_what_it_cannot_plan(spec: dict, message: str) -> None:
@@ -157,12 +172,16 @@ def test_the_lift_refuses_what_it_cannot_plan(spec: dict, message: str) -> None:
 
 
 def test_a_second_lift_adds_nothing() -> None:
-    lifted = _lifted(access_for={"Ticket": "replace"}, access_edges=["about"])
+    lifted = _lifted(
+        access_for={"Ticket": "replace"}, access_edges={"about": "replace"}
+    )
 
     assert (
         plan_lift(
             lifted,
-            LiftSpec(access_for={"Ticket": "replace"}, access_edges=["about"]),
+            LiftSpec(
+                access_for={"Ticket": "replace"}, access_edges={"about": "replace"}
+            ),
             aspects=["access"],
         )
         == []
@@ -181,7 +200,7 @@ def test_zones_declared_with_another_merge_mode_are_refused() -> None:
 
 def test_a_reserved_field_is_left_out_of_every_model_facing_view() -> None:
     schema = _lifted(
-        access_for={"Ticket": "replace"}, access_edges=["about"]
+        access_for={"Ticket": "replace"}, access_edges={"about": "replace"}
     ).require_schema()
 
     assert ACCESS_ZONES not in render_type_sheet(schema)

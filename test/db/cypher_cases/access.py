@@ -2,7 +2,8 @@
 FalkorDB suites.
 
 A diamond whose short path crosses a hidden vertex: ``a -> h -> d`` and
-``a -> b -> c -> d``, with ``h`` in a zone the reader does not open.
+``a -> b -> c -> d``, with ``h`` in a zone the reader does not open. A second
+relation, ``rated``, is keyed by its ``kind`` beside its endpoints.
 
 Not collected here: each backend's ``test_access_guard.py`` imports the cases
 and the ``diamond`` fixture, and defines ``zones_merge`` — ``union`` where the
@@ -12,6 +13,7 @@ backend supports it, ``replace`` otherwise. The union case needs ``union``.
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 import pytest
 
@@ -27,6 +29,7 @@ from graflo.hq.db_writer import DBWriter
 
 OPEN, HIDDEN = 1, 2
 NEXT = ("Node", "Node", "next")
+RATED = ("Node", "Node", "rated")
 
 
 def zones_guard(zones: set[int]) -> FilterExpression:
@@ -50,7 +53,8 @@ def _zones(merge: str) -> Field:
 
 
 def access_schema(conn_conf, zones_merge: str) -> Schema:
-    """One vertex type and one edge, both zoned and scoped by ``installation``."""
+    """One vertex type and two edges, zoned by *zones_merge*; ``next`` is scoped by
+    ``installation``, ``rated`` keyed by ``kind``."""
     return Schema(
         metadata=GraphMetadata(name="access_guard"),
         core_schema=CoreSchema(
@@ -73,8 +77,15 @@ def access_schema(conn_conf, zones_merge: str) -> Schema:
                         source="Node",
                         target="Node",
                         relation="next",
-                        properties=[Field(name="installation"), _zones("replace")],
-                    )
+                        properties=[Field(name="installation"), _zones(zones_merge)],
+                    ),
+                    Edge(
+                        source="Node",
+                        target="Node",
+                        relation="rated",
+                        properties=[Field(name="kind"), _zones(zones_merge)],
+                        identities=[["kind"]],
+                    ),
                 ]
             ),
         ),
@@ -161,6 +172,48 @@ def test_a_union_field_holds_every_writer_s_zones(conn_conf, diamond):
         (doc,) = db.fetch_docs("Node", filters=["==", "d", "key"])
 
     assert sorted(doc["access_zones"]) == [OPEN, HIDDEN]
+
+
+def _edge_zones(conn_conf, relation: str) -> list[tuple[str, str, Any, list[int]]]:
+    with ConnectionManager(connection_config=conn_conf) as db:
+        rows = db.fetch_all_edges("Node", "Node", relation)
+    # An edge without ``kind`` sorts after the keyed ones; ``None`` does not compare.
+    return sorted(
+        (
+            (s["key"], t["key"], props.get("kind"), sorted(props["access_zones"]))
+            for s, t, props in rows
+        ),
+        key=lambda row: (row[0], row[1], row[2] is None, row[2] or ""),
+    )
+
+
+def test_an_edge_written_twice_holds_both_writers_zones(conn_conf, diamond):
+    write_zone(conn_conf, diamond, [], [("a", "b")], HIDDEN)
+
+    assert [row for row in _edge_zones(conn_conf, "next") if row[:2] == ("a", "b")] == [
+        ("a", "b", None, [OPEN, HIDDEN])
+    ]
+
+
+def test_a_keyed_edge_unions_its_zones_with_and_without_its_key(conn_conf, diamond):
+    for zone in (OPEN, HIDDEN):
+        gc = GraphContainer(
+            edges={
+                RATED: [
+                    ({"key": "a"}, {"key": "b"}, {"kind": "good"}),
+                    ({"key": "a"}, {"key": "b"}, {}),
+                    ({"key": "a"}, {"key": "b"}, {}),
+                ]
+            }
+        )
+        asyncio.run(
+            _writer(diamond).write(gc, conn_conf, None, stamp={"access_zones": [zone]})
+        )
+
+    assert _edge_zones(conn_conf, "rated") == [
+        ("a", "b", "good", [OPEN, HIDDEN]),
+        ("a", "b", None, [OPEN, HIDDEN]),
+    ]
 
 
 def test_a_scoped_delete_removes_exactly_its_scope(conn_conf, clean_db, zones_merge):

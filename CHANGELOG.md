@@ -29,8 +29,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`notation_fields(vertex)`** and `NOTATION_IRIS` (`graflo.hq.lookup`): the fields grounded as
   a vertex's short code (`skos:notation`, `dcterms:identifier`, `schema:identifier`), beside
   `label_fields`.
+- **Union merge on edges**: an edge field declared `merge: union` is written as the union of the
+  stored list and the written one, on FalkorDB, Neo4j and the file backend; other backends refuse
+  the write.
 
 ### Changed
+
+- **Access aspect**: `LiftSpec.access_edges` maps each relation to the merge mode of its zones
+  (`{about: union}`), as `access_for` does for vertex types; the list form is refused.
 
 - IRIs in `semantics`, parents, `base_iri` and `namespaces` must be absolute: a non-IRI or a
   prefixed name (`foaf:Agent`, or one using a declared prefix) is refused. A local vertex or edge
@@ -1742,7 +1748,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Example 20 — version control** (`examples/22-version-control/`): record commits over a manifest, fork it, hit a real identity conflict, resolve it, record the merge commit, and replay the recorded decision after one branch advances. Database-free. Documented in the new "Version control" concepts page.
 
-- **The `docs` extra no longer carries `ruff`.** A linter declared as a documentation dependency, unpinned, and a second uncoordinated source of truth for the version beside `.pre-commit-config.yaml`'s `rev`. The pinned `ruff-pre-commit` hook owns it now, matching `graflo-server`, `schewea` and `decigent`, which declare it nowhere.
+- **The `docs` extra no longer carries `ruff`.** A linter declared as a documentation dependency, unpinned, and a second uncoordinated source of truth for the version beside `.pre-commit-config.yaml`'s `rev`. The pinned `ruff-pre-commit` hook owns it now.
 
 - **Canonical form** (`graflo.architecture.evolution.canonicalize`) — the payload a content hash is taken over, and the first half of V0 of version control for world models. `to_minimal_canonical_dict()` already normalized defaults, `None`, aliases and key order; what it did not normalize is **list order**, so two identical schemas authored in different order — or one authored and one replayed, since `apply_add_vertices` appends — hashed differently. `canonical_payload()` adds exactly that one normalization.
 

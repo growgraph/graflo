@@ -47,8 +47,8 @@ from graflo.db.cypher import (
     cypher_name,
     cypher_rel_pattern,
     partition_by_absent_merge_props,
-    rel_absent_upsert_clause,
-    rel_merge_props_map_from_row_index,
+    rel_union_rows,
+    rel_upsert_clause,
 )
 from graflo.db.cypher.delete import (
     delete_nodes,
@@ -660,10 +660,13 @@ class Neo4jConnection(Connection):
                 - on_duplicate: Unused in Neo4j (ArangoDB-specific AQL policy)
                 - relationship_merge_properties: Property names included in ``MERGE`` so parallel
                   edges (same endpoints and type, different weights) are distinct.
+                - union_fields: List properties written as the union of the
+                  stored list and the row's.
         """
         opts = consume_insert_edges_kwargs(kwargs)
         dry = opts.dry
         relationship_merge_properties_raw = opts.relationship_merge_properties
+        union = opts.union_fields
 
         # Apply head limit if specified
         if head is not None and isinstance(docs_edges, list):
@@ -677,7 +680,6 @@ class Neo4jConnection(Connection):
         target_match_str = [
             f"target.{k} = row[1].{k}" for k in map(cypher_name, match_keys_target)
         ]
-        rel = cypher_name(relation_name)
 
         match_clause = "WHERE " + " AND ".join(source_match_str + target_match_str)
 
@@ -689,23 +691,15 @@ class Neo4jConnection(Connection):
                 merge_props,
                 props_of=lambda row: row[2] if len(row) > 2 else None,
                 ends_of=lambda row: (row[0], row[1]),
+                union=union,
             )
-            if merge_props
+            if merge_props or union
             else [((), rows)]
         )
         for absent, group in groups:
-            if absent:
-                upsert = rel_absent_upsert_clause(
-                    relation_name, merge_props, absent, props_expr="row[2]"
-                )
-            elif merge_props:
-                map_clause = rel_merge_props_map_from_row_index(merge_props)
-                upsert = (
-                    f"MERGE (source)-[r:{rel} {{{map_clause}}}]->(target)\n"
-                    "SET r += row[2]"
-                )
-            else:
-                upsert = f"MERGE (source)-[r:{rel}]->(target)\nSET r += row[2]"
+            upsert = rel_upsert_clause(relation_name, merge_props, absent, union=union)
+            if union:
+                group = rel_union_rows(group, union)
             q = f"""
             WITH $batch AS batch
             UNWIND batch as row

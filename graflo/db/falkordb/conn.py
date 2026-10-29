@@ -48,8 +48,8 @@ from graflo.db.cypher import (
     cypher_name,
     cypher_rel_pattern,
     partition_by_absent_merge_props,
-    rel_absent_upsert_clause,
-    rel_merge_props_map_from_row_index,
+    rel_union_rows,
+    rel_upsert_clause,
 )
 from graflo.db.cypher.delete import (
     delete_nodes,
@@ -753,6 +753,7 @@ class FalkordbConnection(Connection):
         opts = consume_insert_edges_kwargs(kwargs)
         dry = opts.dry
         relationship_merge_properties_raw = opts.relationship_merge_properties
+        union = opts.union_fields
 
         # Apply head limit if specified
         if head is not None and isinstance(docs_edges, list):
@@ -804,7 +805,6 @@ class FalkordbConnection(Connection):
         target_match_str = [
             f"target.{k} = row[1].{k}" for k in map(cypher_name, match_keys_target)
         ]
-        rel = cypher_name(relation_name)
 
         match_clause = "WHERE " + " AND ".join(source_match_str + target_match_str)
 
@@ -815,23 +815,15 @@ class FalkordbConnection(Connection):
                 merge_props,
                 props_of=lambda row: row[2],
                 ends_of=lambda row: (row[0], row[1]),
+                union=union,
             )
-            if merge_props
+            if merge_props or union
             else [((), list(sanitized_edges))]
         )
         for absent, group in groups:
-            if absent:
-                upsert = rel_absent_upsert_clause(
-                    relation_name, merge_props, absent, props_expr="row[2]"
-                )
-            elif merge_props:
-                map_clause = rel_merge_props_map_from_row_index(merge_props)
-                upsert = (
-                    f"MERGE (source)-[r:{rel} {{{map_clause}}}]->(target)\n"
-                    "SET r += row[2]"
-                )
-            else:
-                upsert = f"MERGE (source)-[r:{rel}]->(target)\nSET r += row[2]"
+            upsert = rel_upsert_clause(relation_name, merge_props, absent, union=union)
+            if union:
+                group = rel_union_rows(group, union)
             # Datetime objects are converted to ISO-8601 strings during sanitization
             q = f"""
             UNWIND $data AS row

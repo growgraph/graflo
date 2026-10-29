@@ -1,13 +1,13 @@
 """Planning the access aspect: a reserved ``access_zones`` field on named types.
 
-Each vertex type is labelled with a merge mode for its zones: ``replace`` (an
-upsert sets them) or ``union`` (an upsert keeps every zone stored and written).
-Edges always replace: a union is not written on edges.
+Each vertex type and edge relation is labelled with a merge mode for its
+zones: ``replace`` (an upsert sets them) or ``union`` (an upsert keeps every
+zone stored and written).
 """
 
 from __future__ import annotations
 
-from collections.abc import Collection, Mapping
+from collections.abc import Mapping
 
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.schema.vertex import Field, FieldMerge, FieldType
@@ -39,7 +39,7 @@ def plan_access(
     manifest: GraphManifest,
     *,
     vertices: Mapping[str, FieldMerge],
-    edges: Collection[str],
+    edges: Mapping[str, FieldMerge],
 ) -> list[ManifestOp]:
     """The ops that label *vertices* and *edges* with ``access_zones``.
 
@@ -51,7 +51,7 @@ def plan_access(
         manifest: the manifest to lift, already ``finish_init()``-ed, with the
             types and relations it names.
         vertices: vertex type -> merge mode of its zones.
-        edges: edge relations to label; their zones are replaced on upsert.
+        edges: edge relation -> merge mode of its zones.
 
     Raises:
         LiftError: nothing to label, a type or relation the manifest does not
@@ -70,7 +70,9 @@ def plan_access(
         vertex_fields={
             name: [access_field(merge)] for name, merge in sorted(vertices.items())
         },
-        relation_fields={relation: [access_field()] for relation in sorted(edges)},
+        relation_fields={
+            relation: [access_field(merge)] for relation, merge in sorted(edges.items())
+        },
     )
 
 

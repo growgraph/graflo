@@ -170,10 +170,11 @@ By default the moved properties are removed from their type (`retire: move`);
 ## The access aspect
 
 The lift adds one field, `access_zones: LIST<INT>`, to each vertex type in the
-spec's `access_for` and each edge relation in `access_edges`. Each vertex type
-names how an upsert combines its zones: `replace` (the element takes the zones of
-its latest write) or `union` (it keeps every zone it was written with). Edges
-always replace.
+spec's `access_for` and each edge relation in `access_edges`. Each type and
+relation names how an upsert combines its zones: `replace` (the element takes the
+zones of its latest write) or `union` (it keeps every zone it was written with).
+A union is written by FalkorDB, Neo4j and the file backend; another backend
+refuses the write.
 
 The field is **reserved**: no document supplies it, and a type sheet, element
 text or instance schema never shows it. The writer sets it from a stamp, and
@@ -250,7 +251,7 @@ The spec declares that. The `state` and `access` aspects require one;
 | `provenance_for` | provenance | the types that gain `wasDerivedFrom` |
 | `provenance` | provenance | `false` leaves the aspect out, like not naming it |
 | `access_for` | access | per vertex type, the merge mode of its zones: `{Ticket: replace, Product: union}` |
-| `access_edges` | access | the edge relations that gain `access_zones` |
+| `access_edges` | access | per edge relation, the merge mode of its zones: `{about: union}` |
 
 ## When a lift refuses
 

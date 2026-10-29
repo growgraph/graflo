@@ -114,6 +114,9 @@ class InsertEdgesKwArgs:
     uniq_weight_collections: Any
     on_duplicate: Literal["upsert", "ignore"]
     relationship_merge_properties: Any
+    #: Stored names of the list properties written as a union with what the
+    #: edge holds; only a backend that declares ``supports_union_merge`` reads it.
+    union_fields: tuple[str, ...] = ()
 
 
 def consume_insert_edges_kwargs(kwargs: dict[str, Any]) -> InsertEdgesKwArgs:
@@ -130,6 +133,7 @@ def consume_insert_edges_kwargs(kwargs: dict[str, Any]) -> InsertEdgesKwArgs:
         uniq_weight_collections=kwargs.pop("uniq_weight_collections", None),
         on_duplicate=_parse_on_duplicate(kwargs.pop("on_duplicate", "ignore")),
         relationship_merge_properties=kwargs.pop("relationship_merge_properties", None),
+        union_fields=tuple(kwargs.pop("union_fields", ()) or ()),
     )
     if kwargs:
         logger.warning(
@@ -544,6 +548,9 @@ class Connection(abc.ABC):
                 - relationship_merge_properties: Property names for Cypher MERGE
                   (Neo4j, FalkorDB, Memgraph) so parallel edges differ by weights;
                   on PostgreSQL, the edge table's key columns besides the endpoints
+                - union_fields: List properties written as the union of the
+                  stored list and the written one; only a backend that declares
+                  ``supports_union_merge`` is passed them
         """
 
     @abc.abstractmethod

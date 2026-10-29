@@ -70,9 +70,13 @@ def _writer(schema: Schema) -> DBWriter:
 class _DB:
     def __init__(self) -> None:
         self.upserts: list[tuple[str, list[dict], dict[str, Any]]] = []
+        self.edges: list[tuple[str, list, dict[str, Any]]] = []
 
     def upsert_docs_batch(self, docs, class_name, match_keys, **kwargs):
         self.upserts.append((class_name, docs, kwargs))
+
+    def insert_edges_batch(self, docs_edges, relation_name, **kwargs):
+        self.edges.append((relation_name, docs_edges, kwargs))
 
 
 def _manager(db: _DB) -> type:
@@ -279,18 +283,63 @@ def test_union_is_refused_up_front_on_the_bulk_path(monkeypatch) -> None:
         )
 
 
-def test_a_union_field_on_an_edge_is_refused() -> None:
+def _union_edge_schema() -> Schema:
     schema = _schema()
     edge = next(iter(schema.core_schema.edge_config.values()))
     edge.properties.append(
         Field(name="tags", type="LIST", item_type="STRING", merge="union")
     )
+    return schema
+
+
+def test_a_union_field_reaches_the_edge_insert_on_neo4j(monkeypatch) -> None:
+    db = _DB()
+    monkeypatch.setattr("graflo.hq.db_writer.ConnectionManager", _manager(db))
+    gc = GraphContainer(
+        edges={
+            ("Ticket", "Product", "about"): [
+                ({"key": "SUP-1"}, {"sku": "P"}, {"tags": ["a"]})
+            ]
+        }
+    )
+
+    asyncio.run(
+        _writer(_union_edge_schema()).write(gc, NEO4J, None, stamp={ZONES: [1]})
+    )
+
+    ((relation, _, kwargs),) = db.edges
+    assert relation == "about"
+    assert kwargs["union_fields"] == ("tags",)
+
+
+def test_an_edge_without_union_fields_passes_none(monkeypatch) -> None:
+    db = _DB()
+    monkeypatch.setattr("graflo.hq.db_writer.ConnectionManager", _manager(db))
     gc = GraphContainer(
         edges={("Ticket", "Product", "about"): [({"key": "SUP-1"}, {"sku": "P"}, {})]}
     )
 
-    with pytest.raises(ValueError, match="not written on edges"):
-        asyncio.run(_writer(schema).write(gc, NEO4J, None, stamp={ZONES: [1]}))
+    asyncio.run(_writer(_schema()).write(gc, NEO4J, None, stamp={ZONES: [1]}))
+
+    ((_, _, kwargs),) = db.edges
+    assert "union_fields" not in kwargs
+
+
+def test_a_union_field_on_an_edge_is_refused_where_the_backend_cannot_write_one(
+    monkeypatch,
+) -> None:
+    db = _DB()
+    monkeypatch.setattr("graflo.hq.db_writer.ConnectionManager", _manager(db))
+    gc = GraphContainer(
+        vertices={"Note": [{"id": "n"}]},
+        edges={("Ticket", "Product", "about"): [({"key": "SUP-1"}, {"sku": "P"}, {})]},
+    )
+
+    with pytest.raises(ValueError, match="union-merged list fields"):
+        asyncio.run(
+            _writer(_union_edge_schema()).write(gc, ARANGO, None, stamp={ZONES: [1]})
+        )
+    assert db.upserts == [] and db.edges == []
 
 
 def test_a_reserved_field_cannot_be_an_identity() -> None:

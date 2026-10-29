@@ -117,11 +117,11 @@ class LiftSpec(ConfigBaseModel):
             "its zones on upsert: ``replace`` or ``union``."
         ),
     )
-    access_edges: list[str] = PydanticField(
-        default_factory=list,
+    access_edges: dict[str, FieldMerge] = PydanticField(
+        default_factory=dict,
         description=(
-            "Edge relations that gain ``access_zones``; their zones are replaced "
-            "on upsert."
+            "Edge relations that gain ``access_zones``, each with the merge mode "
+            "of its zones on upsert: ``replace`` or ``union``."
         ),
     )
     retire: Literal["move", "keep"] = PydanticField(

@@ -110,6 +110,11 @@ def _weight_attributes(weight: Weight, doc: dict[str, Any]) -> dict[str, Any]:
     return attributes
 
 
+def _edge_union_fields(edge: Edge) -> list[str]:
+    """Logical names of *edge*'s ``merge: union`` fields."""
+    return [f.name for f in edge.properties if f.merge == "union"]
+
+
 def _document_edges(item: dict[Any, list], edge: Edge) -> list[tuple]:
     """The ``(source, target, attributes)`` triples of *edge* one document produced.
 
@@ -581,27 +586,25 @@ class DBWriter:
         Checked once, before anything is written, on every path.
 
         Raises:
-            ValueError: A union field on an edge (never written as a union), or
-                on a vertex type when the target lacks union support.
+            ValueError: A union field on a vertex or an edge when the target
+                lacks union support.
         """
         core = self.schema.core_schema
-        for edge_id, rows in gc.edges.items():
-            edge = core.edge_config.declared(edge_id)
-            if edge is not None and rows:
-                union = sorted(f.name for f in edge.properties if f.merge == "union")
-                if union:
-                    raise ValueError(
-                        f"edge {edge_id}: fields {union} merge by union, which is "
-                        "not written on edges"
-                    )
         vc = core.vertex_config
-        if any(
+        on_vertices = any(
             vcol in vc.vertex_set
             and docs
             and any(f.merge == "union" for f in vc.properties(vcol))
             for docs_by_type in (gc.vertices, gc.attached)
             for vcol, docs in docs_by_type.items()
-        ):
+        )
+        on_edges = any(
+            rows
+            and (edge := core.edge_config.declared(edge_id)) is not None
+            and _edge_union_fields(edge)
+            for edge_id, rows in gc.edges.items()
+        )
+        if on_vertices or on_edges:
             ConnectionManager.require(conn_conf, ConnectionCapability.UNION_MERGE)
 
     def _union_fields(self, vcol: str, conn_conf: DBConfig) -> tuple[str, ...]:
@@ -623,6 +626,20 @@ class DBWriter:
         ConnectionManager.require(conn_conf, ConnectionCapability.UNION_MERGE)
         keys = self._keys_for(conn_conf)
         return {"union_fields": tuple(keys.vertex_fields(vcol, list(union)))}
+
+    def _edge_union_kwargs(self, edge: Edge, conn_conf: DBConfig) -> dict[str, Any]:
+        """``union_fields`` for an edge insert, in stored names, or nothing.
+
+        Raises:
+            ValueError: If the target cannot write a union, rather than writing
+                a replace in its place.
+        """
+        union = _edge_union_fields(edge)
+        if not union:
+            return {}
+        ConnectionManager.require(conn_conf, ConnectionCapability.UNION_MERGE)
+        keys = self._keys_for(conn_conf)
+        return {"union_fields": tuple(keys.edge_fields(edge.edge_id, union))}
 
     def _drop_unkeyed_docs(
         self, vcol: str, data: list[dict], conn_conf: DBConfig
@@ -1200,6 +1217,7 @@ class DBWriter:
                                 edge_kw["on_duplicate"] = "upsert"
                                 if merge_props is not None:
                                     edge_kw["uniq_weight_fields"] = list(merge_props)
+                            edge_kw.update(self._edge_union_kwargs(edge, conn_conf))
                             db.insert_edges_batch(
                                 docs_edges=data,
                                 source_class=vc.vertex_dbname(edge.source),

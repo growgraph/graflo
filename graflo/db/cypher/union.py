@@ -1,7 +1,8 @@
-"""A Cypher node upsert that unions list fields with what the node holds.
+"""Cypher upserts that union list fields with what a node or relationship holds.
 
-The statement unwinds ``$data``, so one statement serves a chunk of documents on
-Neo4j and FalkorDB alike.
+The node statement unwinds ``$data``, so one statement serves a chunk of
+documents on Neo4j and FalkorDB alike; relationships take
+:func:`union_assignment` through :func:`~graflo.db.cypher.rel_merge.rel_upsert_clause`.
 """
 
 from __future__ import annotations
@@ -10,6 +11,20 @@ from collections.abc import Sequence
 from typing import Any
 
 from graflo.db.cypher.escape import cypher_name
+
+
+def union_assignment(var: str, field: str, incoming: str) -> str:
+    """``var.field = <stored members, then incoming ones>``, deduplicated.
+
+    Members keep first-seen order; null members are dropped, since ``null IN
+    acc`` is never true and they would pile up. Serves nodes and relationships.
+    """
+    q = cypher_name(field, quoted=True)
+    return (
+        f"{var}.{q} = reduce(acc = [], x IN [y IN "
+        f"coalesce({var}.{q}, []) + coalesce({incoming}, []) "
+        "WHERE y IS NOT NULL] | CASE WHEN x IN acc THEN acc ELSE acc + x END)"
+    )
 
 
 def union_upsert_query(
@@ -27,10 +42,8 @@ def union_upsert_query(
         f"{cypher_name(k)}: row.p.{cypher_name(k)}" for k in match_keys
     )
     unions = ", ".join(
-        f"n.{q} = reduce(acc = [], x IN [y IN "
-        f"coalesce(n.{q}, []) + coalesce(row.u.{q}, []) "
-        "WHERE y IS NOT NULL] | CASE WHEN x IN acc THEN acc ELSE acc + x END)"
-        for q in (cypher_name(f, quoted=True) for f in union_fields)
+        union_assignment("n", f, f"row.u.{cypher_name(f, quoted=True)}")
+        for f in union_fields
     )
     return f"""
             UNWIND $data AS row
