@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Vocabulary layer.** `semantics` gains `label` (`rdfs:label`), `close_match`
+  (`skos:closeMatch`) and `broader` (`skos:broader`); schema metadata gains `base_iri`, the
+  namespace the schema mints IRIs in, and `namespaces`, its vocabulary prefixes.
+- **Class and relation hierarchies**: `Vertex.subclass_of` (`{vertex: …}` or `{iri: …}`) and
+  `Edge.subproperty_of` (`{edge: {source, target, relation}}` or `{iri: …}`). Logical assertions,
+  checked by the schema: declared, acyclic, an edge's endpoints under its parent's, an undirected
+  edge under an undirected parent. Nothing is inherited.
+- **`graflo.architecture.schema.hierarchy`**: `Hierarchy` (transitive super/subclasses and
+  properties, external parents reached), `new_subsumptions(base, candidate)` and `vertex_iri`.
+- Renames, merges and retargets carry hierarchy references along; removing a parent splices it
+  out, so what was under it moves under its parents. A schema slice keeps the parents of what it
+  keeps.
+- **`set_vertex_subclass_of`** and **`set_edge_subproperty_of`** ops, emitted by
+  `diff_manifests` and reversible.
+- **Ontology 1.10.0**: `gf:subclassOf`, `gf:subpropertyOf`, `gf:baseIri`, `gf:NamespaceBinding` (`gf:hasNamespace`,
+  `gf:namespacePrefix`, `gf:namespaceIri`), and `rdfs:label`, `skos:closeMatch`, `skos:broader`
+  on grounded elements.
+- **`notation_fields(vertex)`** and `NOTATION_IRIS` (`graflo.hq.lookup`): the fields grounded as
+  a vertex's short code (`skos:notation`, `dcterms:identifier`, `schema:identifier`), beside
+  `label_fields`.
+
+### Changed
+
+- IRIs in `semantics`, parents, `base_iri` and `namespaces` must be absolute: a non-IRI or a
+  prefixed name (`foaf:Agent`, or one using a declared prefix) is refused. A local vertex or edge
+  named by IRI as a parent is refused too; write the local reference.
+- **Provenance aspect**: `Agent.label` is grounded in `rdfs:label`; a lift adds the grounding to
+  an existing `Agent` that has none.
+
 ## [1.24.1]
 
 ### Added

@@ -190,6 +190,13 @@
             "target": "https://ontology.growgraph.dev/graflo/GrafloArtifact"
         },
         {
+            "id": "sub:https://ontology.growgraph.dev/graflo/NamespaceBinding->https://ontology.growgraph.dev/graflo/GrafloArtifact",
+            "kind": "subClassOf",
+            "label": "subClassOf",
+            "source": "https://ontology.growgraph.dev/graflo/NamespaceBinding",
+            "target": "https://ontology.growgraph.dev/graflo/GrafloArtifact"
+        },
+        {
             "id": "sub:https://ontology.growgraph.dev/graflo/NamingConvention->https://ontology.growgraph.dev/graflo/GrafloArtifact",
             "kind": "subClassOf",
             "label": "subClassOf",
@@ -468,6 +475,13 @@
             "label": "hasSchema",
             "source": "https://ontology.growgraph.dev/graflo/GraphManifest",
             "target": "https://ontology.growgraph.dev/graflo/Schema"
+        },
+        {
+            "id": "prop:https://ontology.growgraph.dev/graflo/hasNamespace",
+            "kind": "objectProperty",
+            "label": "has namespace",
+            "source": "https://ontology.growgraph.dev/graflo/GraphMetadata",
+            "target": "https://ontology.growgraph.dev/graflo/NamespaceBinding"
         },
         {
             "id": "prop:https://ontology.growgraph.dev/graflo/hasNamingConvention",
@@ -1334,6 +1348,20 @@
             "local": "NameCase"
         },
         {
+            "comment": "A prefix and the namespace IRI it stands for, among the vocabularies a schema's IRIs come from.",
+            "datatypeProperties": [
+                {
+                    "label": "namespacePrefix",
+                    "range": "string"
+                }
+            ],
+            "group": "schema",
+            "id": "https://ontology.growgraph.dev/graflo/NamespaceBinding",
+            "kind": "gf",
+            "label": "NamespaceBinding",
+            "local": "NamespaceBinding"
+        },
+        {
             "comment": "Manifest-facing declaration of how a schema spells the identifiers it invents.",
             "datatypeProperties": [
                 {
@@ -1635,5 +1663,5 @@
         }
     ],
     "universalRoot": "https://ontology.growgraph.dev/graflo/GrafloArtifact",
-    "version": "1.9.0"
+    "version": "1.10.0"
 }

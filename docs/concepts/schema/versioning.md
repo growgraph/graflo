@@ -176,7 +176,7 @@ they touch. Checking out the parent commit is always exact.
 | rename: vertices, relations, resources, properties; `canonicalize` that only renames | `change_field_types`, `canonicalize` that merges |
 | `set_edge_directed`, `retarget_edges`, `add_inverse_edges`, `set_native_inverses`, `set_inverse_emission`; `declare_edge_inverses` and `retract_edge_inverses` | `sanitize`, `project_manifest` |
 | `replace_identity` (with `retire: keep`), secondary identities, `replace_edge_identities` | `add_resource_transforms`, `ensure_extracted_fields`, `merge_manifests` |
-| add, remove and replace resources; `set_bindings`, `set_db_profile`; grounding and descriptions | |
+| add, remove and replace resources; `set_bindings`, `set_db_profile`; grounding, superclasses, superproperties and descriptions | |
 
 Whether an op can be undone depends on the op and on the manifest it met.
 `invert_op` applies its candidate inverse and offers it only when the result

@@ -25,6 +25,11 @@ from graflo.architecture.schema.edge import (
     normalize_inverse_table,
     remap_inverses,
 )
+from graflo.architecture.schema.hierarchy import (
+    rewrite_vertex_refs,
+    spliced_superclasses,
+    spliced_superproperties,
+)
 from graflo.architecture.schema.vertex import (
     Field,
     FieldMergeConflict,
@@ -103,11 +108,13 @@ from .ops import (
     SetEdgeDescriptionsOp,
     SetEdgeDirectedOp,
     SetEdgeSemanticsOp,
+    SetEdgeSubpropertyOfOp,
     SetFieldSemanticsOp,
     SetInverseEmissionOp,
     SetNativeInversesOp,
     SetVertexDescriptionsOp,
     SetVertexSemanticsOp,
+    SetVertexSubclassOfOp,
 )
 from .project import compute_projection
 from .rewrite import (
@@ -302,13 +309,28 @@ def apply_remove_vertices(manifest: GraphManifest, op: RemoveVerticesOp) -> None
     missing = removed - core.vertex_config.vertex_set
     if missing:
         raise ValueError(f"Unknown vertices to remove: {sorted(missing)}")
+    # A removed class or relation is spliced out of the hierarchy: what was
+    # under it moves under its parents, so the survivors' subsumptions hold.
+    parents = spliced_superclasses(core.vertex_config.vertices, removed)
+    cascaded = {
+        e.edge_id
+        for e in core.edge_config.edges
+        if e.source in removed or e.target in removed
+    }
+    edge_parents = spliced_superproperties(core.edge_config.edges, cascaded)
 
     core.vertex_config.remove_vertices(removed)
+    for vertex in core.vertex_config.vertices:
+        if vertex.name in parents:
+            vertex.subclass_of = parents[vertex.name]
     filtered_edges = [
         e
         for e in core.edge_config.edges
         if e.source not in removed and e.target not in removed
     ]
+    for edge in filtered_edges:
+        if edge.edge_id in edge_parents:
+            edge.subproperty_of = edge_parents[edge.edge_id]
     retain_native_inverses(schema.db_profile, _relations_of(filtered_edges))
     schema.core_schema = CoreSchema(
         vertex_config=core.vertex_config,
@@ -376,7 +398,7 @@ def _build_merged_vertex_config(
         new_force[into] = deduped_ft
 
     return VertexConfig(
-        vertices=new_vertices,
+        vertices=rewrite_vertex_refs(new_vertices, {s: into for s in sources}),
         force_types=new_force,
     )
 
@@ -709,7 +731,9 @@ def _canonicalize_vertex_config(
                     accumulated.append(entry)
         if accumulated:
             new_force[target] = accumulated
-    return VertexConfig(vertices=new_vertices, force_types=new_force)
+    return VertexConfig(
+        vertices=rewrite_vertex_refs(new_vertices, mapping), force_types=new_force
+    )
 
 
 def _check_property_renames(
@@ -1319,6 +1343,18 @@ def _apply_rename_entities(
                             vertex["name"] = vertex_map.get(
                                 vertex["name"], vertex["name"]
                             )
+                        # A local superclass is named like any other reference.
+                        for parent in (
+                            vertex.get("subclass_of") or []
+                            if isinstance(vertex, dict)
+                            else []
+                        ):
+                            if isinstance(parent, dict) and isinstance(
+                                parent.get("vertex"), str
+                            ):
+                                parent["vertex"] = vertex_map.get(
+                                    parent["vertex"], parent["vertex"]
+                                )
 
                 force_types = vertex_config.get("force_types")
                 if isinstance(force_types, dict):
@@ -1359,6 +1395,20 @@ def _apply_rename_entities(
                             edge["relation"] = edge_map.get(
                                 edge["relation"], edge["relation"]
                             )
+                        # A local superproperty names an edge by its id.
+                        for parent in edge.get("subproperty_of") or []:
+                            ref = (
+                                parent.get("edge") if isinstance(parent, dict) else None
+                            )
+                            if not isinstance(ref, dict):
+                                continue
+                            for end in ("source", "target"):
+                                if isinstance(ref.get(end), str):
+                                    ref[end] = vertex_map.get(ref[end], ref[end])
+                            if isinstance(ref.get("relation"), str):
+                                ref["relation"] = edge_map.get(
+                                    ref["relation"], ref["relation"]
+                                )
 
     ingestion_payload = payload.get("ingestion_model")
     if isinstance(ingestion_payload, dict):
@@ -1609,6 +1659,14 @@ def apply_remove_edges(manifest: GraphManifest, op: RemoveEdgesOp) -> None:
     removed = set(op.relations)
     if not removed:
         return
+    _splice_superproperties(
+        schema.core_schema,
+        {
+            edge.edge_id
+            for edge in schema.core_schema.edge_config.edges
+            if edge.relation in removed
+        },
+    )
     apply_relation_removal_to_db_profile(schema.db_profile, removed)
     schema.db_profile = _revalidate_db_profile(schema.db_profile)
     schema.core_schema = CoreSchema(
@@ -1662,6 +1720,14 @@ def apply_remove_edges(manifest: GraphManifest, op: RemoveEdgesOp) -> None:
         )
 
 
+def _splice_superproperties(core: CoreSchema, removed: set[EdgeId]) -> None:
+    """Splice removed edges out of the relation hierarchy, in place."""
+    for edge_id, parents in spliced_superproperties(
+        core.edge_config.edges, removed
+    ).items():
+        core.edge_config.edge_for(edge_id).subproperty_of = parents
+
+
 def apply_remove_edge_ids(
     manifest: GraphManifest, removed_edge_ids: set[EdgeId]
 ) -> None:
@@ -1671,6 +1737,7 @@ def apply_remove_edge_ids(
     schema = manifest.graph_schema
     if schema is None:
         raise ValueError("remove_edge_ids requires graph_schema")
+    _splice_superproperties(schema.core_schema, removed_edge_ids)
 
     surviving = [
         edge
@@ -2334,10 +2401,18 @@ def _dispatch_op(manifest: GraphManifest, op: Any) -> None:
         from .semantics import apply_set_vertex_descriptions
 
         apply_set_vertex_descriptions(manifest, op)
+    elif isinstance(op, SetVertexSubclassOfOp):
+        from .semantics import apply_set_vertex_subclass_of
+
+        apply_set_vertex_subclass_of(manifest, op)
     elif isinstance(op, SetEdgeDescriptionsOp):
         from .semantics import apply_set_edge_descriptions
 
         apply_set_edge_descriptions(manifest, op)
+    elif isinstance(op, SetEdgeSubpropertyOfOp):
+        from .semantics import apply_set_edge_subproperty_of
+
+        apply_set_edge_subproperty_of(manifest, op)
     elif isinstance(op, SetEdgeSemanticsOp):
         from .semantics import apply_set_edge_semantics
 

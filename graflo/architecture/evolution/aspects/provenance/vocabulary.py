@@ -19,6 +19,7 @@ from ..iris import (
     PROV_GENERATED_AT,
     PROV_WAS_ATTRIBUTED_TO,
     PROV_WAS_DERIVED_FROM,
+    RDFS_LABEL,
     SOSA_SENSOR,
 )
 
@@ -66,7 +67,11 @@ def agent_vertex() -> Vertex:
         semantics=Semantics(iri=PROV_AGENT, exact_match=[PROV_AGENT, SOSA_SENSOR]),
         properties=[
             Field(name="agent_id", type=FieldType.STRING),
-            Field(name="label", type=FieldType.STRING),
+            Field(
+                name="label",
+                type=FieldType.STRING,
+                semantics=FieldSemantics(iri=RDFS_LABEL),
+            ),
             Field(name="agent_kind", type=FieldType.STRING),
         ],
         identity=["agent_id"],

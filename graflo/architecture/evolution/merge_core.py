@@ -9,10 +9,12 @@ from functools import reduce
 from graflo.architecture.graph_types import EdgeId
 from graflo.architecture.refusal import Refusal, RefusalKind
 from graflo.architecture.schema.edge import Edge
+from graflo.architecture.schema.hierarchy import rewrite_edge_refs
 from graflo.architecture.schema.identity_funnel import IdentityFunnel
 from graflo.architecture.schema.semantics import merge_semantics
 from graflo.architecture.schema.vertex import (
     SecondaryIdentity,
+    SuperClass,
     Vertex,
     union_field_lists,
 )
@@ -290,7 +292,24 @@ def merge_vertex_models(
         identity_funnel=funnel_out,
         secondary_identities=secondary_out,
         semantics=reduce(merge_semantics, (v.semantics for v in vertices), None),
+        subclass_of=_union_superclasses(vertices, into_name),
     )
+
+
+def _union_superclasses(vertices: list[Vertex], into_name: str) -> list[SuperClass]:
+    """Every source's superclasses, once each, except one merged into the result.
+
+    A source that was a subclass of another source becomes a subclass of
+    itself once both are one vertex, which says nothing.
+    """
+    merged = {v.name for v in vertices} | {into_name}
+    out: list[SuperClass] = []
+    for vertex in vertices:
+        for parent in vertex.subclass_of:
+            if parent.vertex in merged or parent in out:
+                continue
+            out.append(parent.model_copy(deep=True))
+    return out
 
 
 def merge_edge_pair(a: Edge, b: Edge, *, retype_remedy: str | None = None) -> Edge:
@@ -346,6 +365,10 @@ def merge_edge_pair(a: Edge, b: Edge, *, retype_remedy: str | None = None) -> Ed
         # inverse that duplicates it.
         directed=a.directed and b.directed,
         semantics=merge_semantics(a.semantics, b.semantics),
+        subproperty_of=[
+            *a.subproperty_of,
+            *(p for p in b.subproperty_of if p not in a.subproperty_of),
+        ],
     )
 
 
@@ -373,7 +396,7 @@ def redirect_and_merge_edges(edges: list[Edge], mapping: dict[str, str]) -> list
             by_id[eid] = e
         else:
             by_id[eid] = merge_edge_pair(by_id[eid], e)
-    return list(by_id.values())
+    return rewrite_edge_refs(by_id.values(), vertex_map=mapping)
 
 
 def remap_relation_and_merge_edges(
@@ -382,18 +405,24 @@ def remap_relation_and_merge_edges(
     """Remap edge relation names and merge duplicate edge identities."""
     if not relation_map:
         return list(edges)
-    remapped = [
-        edge.model_copy(
-            update={"relation": relation_map.get(edge.relation, edge.relation)}
+    edge_map: dict[EdgeId, EdgeId] = {}
+    remapped: list[Edge] = []
+    for edge in edges:
+        relation = (
+            relation_map.get(edge.relation, edge.relation)
+            if edge.relation is not None
+            else None
         )
-        if edge.relation is not None
-        else edge
-        for edge in edges
-    ]
+        edge_map[edge.edge_id] = (edge.source, edge.target, relation)
+        remapped.append(
+            edge
+            if relation == edge.relation
+            else edge.model_copy(update={"relation": relation})
+        )
     by_id: dict[EdgeId, Edge] = {}
     for edge in remapped:
         if edge.edge_id in by_id:
             by_id[edge.edge_id] = merge_edge_pair(by_id[edge.edge_id], edge)
             continue
         by_id[edge.edge_id] = edge
-    return list(by_id.values())
+    return rewrite_edge_refs(by_id.values(), edge_map=edge_map)

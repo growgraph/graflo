@@ -35,8 +35,8 @@ flowchart TB
 | Role | IRI |
 |------|-----|
 | Ontology document | `https://ontology.growgraph.dev/graflo` |
-| Version IRI | `https://ontology.growgraph.dev/graflo/1.9.0` |
-| Version info | `1.9.0` |
+| Version IRI | `https://ontology.growgraph.dev/graflo/1.10.0` |
+| Version info | `1.10.0` |
 | Vocabulary prefix `gf:` | `https://ontology.growgraph.dev/graflo/` |
 
 The Turtle source lives in the package at `graflo/rdf/ontology/graflo.ttl`. Constants are also exposed in Python as `graflo.rdf.namespace` (`GF_ONTOLOGY_IRI`, `GF_VERSION`, `GF_VERSION_IRI`, `GF_BASE`).
@@ -109,8 +109,13 @@ vertices:
     identity: [email]
     semantics:
         iri: https://schema.org/Person
+        label: Person
         exact_match: [http://xmlns.com/foaf/0.1/Person]
+        close_match: [https://www.wikidata.org/wiki/Q215627]
+        broader: [https://schema.org/Thing]
         synonyms: [individual, human]
+    subclass_of:
+    -   iri: http://xmlns.com/foaf/0.1/Agent
     properties:
     -   name: speed
         type: FLOAT
@@ -118,9 +123,35 @@ vertices:
             unit: m/s
 ```
 
-This maps to `gf:semanticIri`, `skos:exactMatch`, `skos:altLabel`, and — fields only — `gf:unit`. The block is purely descriptive: identity, storage naming and ingestion behave identically whether or not it is present. `unit` is rejected outside a field, where it would be meaningless.
+This maps to `gf:semanticIri`, `rdfs:label`, `skos:exactMatch`, `skos:closeMatch`, `skos:broader`, `skos:altLabel`, and — fields only — `gf:unit`. The block is purely descriptive: identity, storage naming and ingestion behave identically whether or not it is present. `unit` is rejected outside a field, where it would be meaningless. Every IRI is written in full: a prefixed name such as `foaf:Agent` is refused.
 
-Grounding survives a fold. When two definitions of one type or property are combined — by `merge_vertices`, or by a `merge_manifests` equivalence — `exact_match` and `synonyms` union, since they are sets of claims. A single-valued `iri` cannot: two sides denoting different concepts denote neither exactly, so a disagreement clears it rather than electing one. `unit` is the exception that refuses outright — unlike an `iri`, two units mean the combined property would hold numerically incomparable values, which is a defect in the data rather than in its description.
+**Class and relation hierarchies**
+
+A vertex's `subclass_of` lists its superclasses (`rdfs:subClassOf`, as `gf:subclassOf`); an edge's `subproperty_of` lists its superproperties (`rdfs:subPropertyOf`, as `gf:subpropertyOf`). Each parent is either local — `{vertex: <name>}`, or `{edge: {source, target, relation}}` — or external, `{iri: <absolute IRI>}`:
+
+```yaml
+vertices:
+-   {name: ci, identity: [id]}
+-   {name: server, identity: [id], subclass_of: [{vertex: ci}]}
+-   {name: application, identity: [id], subclass_of: [{vertex: ci}]}
+edges:
+-   {source: ci, target: ci, relation: depends_on}
+-   source: application
+    target: server
+    relation: runs_on
+    subproperty_of:
+    -   edge: {source: ci, target: ci, relation: depends_on}
+```
+
+Both are logical assertions, and the schema checks them: a local parent is declared, the hierarchy is acyclic, an edge's endpoints are subclasses of its parent edge's (either way round when the parent is undirected), and an undirected edge has an undirected parent. A local element is named locally, never by its IRI. Nothing is inherited — a subclass gets no property, identity or storage from its parent — and nothing at ingestion or query time reads either list.
+
+`graflo.architecture.schema.hierarchy` answers what a hierarchy entails: `Hierarchy` gives transitive superclasses, subclasses and the external classes reached through them (and the same for edges); `new_subsumptions(base, candidate)` lists subsumptions a candidate adds between elements the base already has; `vertex_iri` is the IRI a vertex denotes — its `semantics.iri`, else `base_iri` plus its name.
+
+Renames, merges and retargets carry the references along. Removing a parent splices it out: what was under it moves under its own parents, so every subsumption between the survivors still holds. A slice of the schema keeps the parents of what it keeps. `set_vertex_subclass_of` and `set_edge_subproperty_of` change the lists on existing elements.
+
+Schema metadata may declare `base_iri`, the namespace the schema mints IRIs in (ending in `/` or `#`; `gf:baseIri`), and `namespaces`, the prefixes its IRIs are written with (`gf:hasNamespace` → `gf:NamespaceBinding` with `gf:namespacePrefix` and `gf:namespaceIri`). Neither is `db_profile.target_namespace`, which names a database.
+
+Grounding survives a fold. When two definitions of one type or property are combined — by `merge_vertices`, or by a `merge_manifests` equivalence — the list-valued anchors union, since they are sets of claims, and so do superclasses and superproperties; a parent named by IRI that the fold brings into the schema becomes a local reference. A single-valued `iri` or `label` cannot: two sides denoting different concepts denote neither exactly, so a disagreement clears it rather than electing one; a disagreeing `base_iri` clears the same way. `unit` is the exception that refuses outright — unlike an `iri`, two units mean the combined property would hold numerically incomparable values, which is a defect in the data rather than in its description. A namespace prefix bound to two different IRIs refuses too.
 
 **Declared, symmetric and native inverses**
 

@@ -5,17 +5,70 @@ and ingestion behave identically whether or not these blocks are present. Their
 audience is the reader — human or agent — deciding what a type *means* before
 deciding what to ask about it.
 
-Serialized through the ``gf:`` meta-ontology, reusing ``skos:exactMatch`` and
-``skos:altLabel`` rather than minting GraFlo-specific equivalents.
+Serialized through the ``gf:`` meta-ontology, reusing ``rdfs:label`` and the SKOS
+mapping and labelling properties rather than minting GraFlo-specific equivalents.
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
 
 from pydantic import Field as PydanticField
+from pydantic import field_validator
 
 from graflo.architecture.base import ConfigBaseModel
+
+_ABSOLUTE_IRI = re.compile(r"^[A-Za-z][A-Za-z0-9+.\-]*:[^\s<>\"{}|\\^`]+$")
+
+#: Vocabulary prefixes that read as a URI scheme in a prefixed name such as
+#: ``foaf:Agent``. None is a registered scheme (``geo`` is, so it is absent).
+VOCABULARY_PREFIXES: frozenset[str] = frozenset(
+    {
+        "dc",
+        "dcat",
+        "dcterms",
+        "foaf",
+        "gf",
+        "owl",
+        "prov",
+        "qudt",
+        "rdf",
+        "rdfs",
+        "schema",
+        "sh",
+        "skos",
+        "sosa",
+        "ssn",
+        "xsd",
+    }
+)
+
+
+def iri_scheme(value: str) -> str:
+    """The part of *value* before its first colon."""
+    return value.split(":", 1)[0]
+
+
+def is_absolute_iri(value: str) -> bool:
+    """Whether *value* is an absolute IRI: a scheme, a colon, and no whitespace.
+
+    A prefixed name over a well-known vocabulary (``foaf:Agent``) is not one:
+    the contract stores full IRIs only.
+    """
+    return bool(_ABSOLUTE_IRI.match(value)) and (
+        iri_scheme(value).lower() not in VOCABULARY_PREFIXES
+    )
+
+
+def check_iri(value: str, what: str) -> str:
+    """Return *value*, or raise when it is not an absolute IRI."""
+    if not is_absolute_iri(value):
+        raise ValueError(
+            f"{what} {value!r} is not an absolute IRI; write the full IRI, "
+            "not a prefixed name"
+        )
+    return value
 
 
 class Semantics(ConfigBaseModel):
@@ -36,6 +89,33 @@ class Semantics(ConfigBaseModel):
         default_factory=list,
         description="Alternative labels an agent may encounter (``skos:altLabel``).",
     )
+    label: str | None = PydanticField(
+        default=None,
+        description="Human-readable name of the element (``rdfs:label``).",
+    )
+    close_match: list[str] = PydanticField(
+        default_factory=list,
+        description=(
+            "IRIs of concepts close enough to interchange in some applications, "
+            "but not asserted equivalent (``skos:closeMatch``)."
+        ),
+    )
+    broader: list[str] = PydanticField(
+        default_factory=list,
+        description="IRIs of broader concepts in an external vocabulary (``skos:broader``).",
+    )
+
+    @field_validator("iri")
+    @classmethod
+    def _check_iri(cls, v: str | None) -> str | None:
+        return None if v is None else check_iri(v, "semantics iri")
+
+    @field_validator("exact_match", "close_match", "broader")
+    @classmethod
+    def _check_iris(cls, v: list[str]) -> list[str]:
+        for iri in v:
+            check_iri(iri, "semantics link")
+        return v
 
 
 class FieldSemantics(Semantics):
@@ -66,19 +146,27 @@ def merge_semantics(
 ) -> Semantics | None:
     """Merge two semantic anchor blocks, unioning their anchors.
 
-    ``exact_match`` and ``synonyms`` are sets of claims and simply union.
-    ``iri`` is single-valued and cannot: a type composed from one denoting
+    The list-valued anchors are sets of claims and simply union. ``iri`` is
+    single-valued and cannot: a type composed from one denoting
     ``schema.org/Person`` and one denoting ``foaf:Agent`` denotes neither
     exactly, so a disagreement clears it rather than silently electing the left
-    side's concept as the merged type's meaning.
+    side's concept as the merged type's meaning. ``label`` folds the same way.
     """
     if left is None or right is None:
         source = left if right is None else right
         return source.model_copy(deep=True) if source is not None else None
+    return _merged_anchors(left, right)
+
+
+def _merged_anchors(left: Semantics, right: Semantics) -> Semantics:
+    """The fields :class:`Semantics` declares, merged as :func:`merge_semantics` says."""
     return Semantics(
         iri=left.iri if left.iri == right.iri else None,
-        exact_match=union_anchors(list(left.exact_match) + list(right.exact_match)),
-        synonyms=union_anchors(list(left.synonyms) + list(right.synonyms)),
+        label=left.label if left.label == right.label else None,
+        exact_match=union_anchors([*left.exact_match, *right.exact_match]),
+        synonyms=union_anchors([*left.synonyms, *right.synonyms]),
+        close_match=union_anchors([*left.close_match, *right.close_match]),
+        broader=union_anchors([*left.broader, *right.broader]),
     )
 
 
@@ -107,8 +195,5 @@ def merge_field_semantics(
             "numerically incomparable values -- convert one side or drop the unit."
         )
     return FieldSemantics(
-        iri=left.iri if left.iri == right.iri else None,
-        exact_match=union_anchors(list(left.exact_match) + list(right.exact_match)),
-        synonyms=union_anchors(list(left.synonyms) + list(right.synonyms)),
-        unit=left.unit or right.unit,
+        **_merged_anchors(left, right).model_dump(), unit=left.unit or right.unit
     )

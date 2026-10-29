@@ -40,6 +40,7 @@ from graflo.architecture.schema.identity_funnel import IdentityFunnel
 from graflo.architecture.schema.semantics import (
     FieldSemantics,
     Semantics,
+    check_iri,
     merge_field_semantics,
 )
 from graflo.filter.onto import FilterExpression
@@ -381,6 +382,36 @@ class SecondaryIdentity(ConfigBaseModel):
         return frozenset(self.fields)
 
 
+class SuperClass(ConfigBaseModel):
+    """A class a vertex type is a subclass of (``rdfs:subClassOf``).
+
+    Either a vertex of the same schema, by name, or a class outside it, by IRI.
+    A logical assertion: every instance of the subclass is an instance of the
+    parent. Core checks the hierarchy and computes what it entails
+    (:mod:`graflo.architecture.schema.hierarchy`); a subclass inherits no
+    property, identity or storage from its parent.
+
+    Examples:
+        >>> SuperClass(vertex="Person")
+        >>> SuperClass(iri="http://xmlns.com/foaf/0.1/Agent")
+    """
+
+    vertex: str | None = PydanticField(
+        default=None, description="Name of a vertex in the same schema."
+    )
+    iri: str | None = PydanticField(
+        default=None, description="Absolute IRI of a class outside the schema."
+    )
+
+    @model_validator(mode="after")
+    def _one_parent(self) -> SuperClass:
+        if (self.vertex is None) == (self.iri is None):
+            raise ValueError("a superclass names exactly one of `vertex` or `iri`")
+        if self.iri is not None:
+            check_iri(self.iri, "superclass iri")
+        return self
+
+
 class FieldMergeConflict(Refusal):
     """One property that two declarations describe incompatibly.
 
@@ -665,6 +696,14 @@ class Vertex(ConfigBaseModel):
     semantics: Semantics | None = PydanticField(
         default=None,
         description="Optional external-vocabulary anchors for this vertex type.",
+    )
+    subclass_of: list[SuperClass] = PydanticField(
+        default_factory=list,
+        description=(
+            "Classes this vertex type is a subclass of (``rdfs:subClassOf``): a "
+            "vertex of this schema by name, or an external class by IRI. A "
+            "logical assertion, checked and entailed; nothing is inherited."
+        ),
     )
     blank: bool = PydanticField(
         default=False,

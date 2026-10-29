@@ -120,8 +120,15 @@ LIST_ORDER: dict[tuple[str, str], ListOrder] = {
     # ── Semantics: sets of external terms ───────────────────────────────────
     ("Semantics", "exact_match"): SORTED,
     ("Semantics", "synonyms"): SORTED,
+    ("Semantics", "close_match"): SORTED,
+    ("Semantics", "broader"): SORTED,
     ("FieldSemantics", "exact_match"): SORTED,
     ("FieldSemantics", "synonyms"): SORTED,
+    ("FieldSemantics", "close_match"): SORTED,
+    ("FieldSemantics", "broader"): SORTED,
+    # Sets of parents: rdfs:subClassOf and rdfs:subPropertyOf have no order.
+    ("Vertex", "subclass_of"): SORTED,
+    ("Edge", "subproperty_of"): SORTED,
     # ── Ingestion ───────────────────────────────────────────────────────────
     # Registries, resolved by name.
     ("IngestionModel", "resources"): SORTED,

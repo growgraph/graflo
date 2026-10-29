@@ -44,8 +44,8 @@ from graflo.architecture.schema.database_features import (
     DatabaseProfile,
     EdgePhysicalSpec,
 )
-from graflo.architecture.schema.edge import Edge
-from graflo.architecture.schema.vertex import Field, Vertex
+from graflo.architecture.schema.edge import Edge, EdgeRef, SuperProperty
+from graflo.architecture.schema.vertex import Field, SuperClass, Vertex
 
 from .canonicalize import canonical_payload
 from .identity import SYNTHETIC_ID_FIELD
@@ -69,6 +69,7 @@ from .ops import (
     EdgePropertyAdditions,
     EdgePropertyRemovals,
     EdgeSelector,
+    EdgeSubpropertyTarget,
     FieldSemanticsTarget,
     ManifestOp,
     RemoveEdgeIndexesOp,
@@ -93,11 +94,13 @@ from .ops import (
     SetEdgeDescriptionsOp,
     SetEdgeDirectedOp,
     SetEdgeSemanticsOp,
+    SetEdgeSubpropertyOfOp,
     SetFieldSemanticsOp,
     SetInverseEmissionOp,
     SetNativeInversesOp,
     SetVertexDescriptionsOp,
     SetVertexSemanticsOp,
+    SetVertexSubclassOfOp,
     validate_rename_map_is_injective,
 )
 
@@ -813,6 +816,7 @@ def _semantics_ops(
 
     vertex_semantics: dict[str, Any] = {}
     vertex_descriptions: dict[str, str | None] = {}
+    vertex_parents: dict[str, list[SuperClass]] = {}
     field_targets: list[FieldSemanticsTarget | EdgeFieldSemanticsTarget] = []
     for name, new_vertex in _vertices(target).items():
         old_vertex = base_vertices.get(name)
@@ -822,6 +826,15 @@ def _semantics_ops(
             vertex_semantics[name] = new_vertex.semantics
         if old_vertex.description != new_vertex.description:
             vertex_descriptions[name] = new_vertex.description
+        # A local parent the hints rename is the same parent under its new name.
+        old_parents = [
+            p.model_copy(update={"vertex": hints.vertices.get(p.vertex, p.vertex)})
+            if p.vertex is not None
+            else p
+            for p in old_vertex.subclass_of
+        ]
+        if old_parents != new_vertex.subclass_of:
+            vertex_parents[name] = list(new_vertex.subclass_of)
         old_fields = {f.name: f for f in old_vertex.properties}
         for field in new_vertex.properties:
             old_field = old_fields.get(field.name)
@@ -835,14 +848,33 @@ def _semantics_ops(
         ops.append(SetVertexSemanticsOp(semantics=vertex_semantics))
     if vertex_descriptions:
         ops.append(SetVertexDescriptionsOp(descriptions=vertex_descriptions))
+    if vertex_parents:
+        ops.append(SetVertexSubclassOfOp(subclass_of=vertex_parents))
 
     base_edges = _edges_after_renames(base, hints)
     groups: dict[str, tuple[Any, list[EdgeSelector]]] = {}
     edge_descriptions: list[EdgeDescriptionTarget] = []
+    edge_parents: list[EdgeSubpropertyTarget] = []
     for key, new_edge in _edges(target).items():
         old_edge = base_edges.get(key)
         if old_edge is None:
             continue
+        # A local parent the hints rename is the same parent under its new id.
+        old_refs = [
+            SuperProperty(edge=EdgeRef.of(_renamed_edge_id(p.edge.edge_id(), hints)))
+            if p.edge is not None
+            else p
+            for p in old_edge.subproperty_of
+        ]
+        if old_refs != new_edge.subproperty_of:
+            edge_parents.append(
+                EdgeSubpropertyTarget(
+                    source=key[0],
+                    target=key[1],
+                    relation=key[2],
+                    subproperty_of=list(new_edge.subproperty_of),
+                )
+            )
         if old_edge.description != new_edge.description:
             edge_descriptions.append(
                 EdgeDescriptionTarget(
@@ -879,6 +911,8 @@ def _semantics_ops(
         )
     if edge_descriptions:
         ops.append(SetEdgeDescriptionsOp(edges=edge_descriptions))
+    if edge_parents:
+        ops.append(SetEdgeSubpropertyOfOp(edges=edge_parents))
     if field_targets:
         ops.append(SetFieldSemanticsOp(targets=field_targets))
     for canon in sorted(groups):
@@ -1494,19 +1528,24 @@ def _vertices_after_renames(
     }
 
 
+def _renamed_edge_id(
+    edge_id: tuple[str, str, str | None], hints: RenameHints
+) -> tuple[str, str, str | None]:
+    source, target, relation = edge_id
+    return (
+        hints.vertices.get(source, source),
+        hints.vertices.get(target, target),
+        hints.relations.get(relation, relation) if relation else relation,
+    )
+
+
 def _edges_after_renames(
     manifest: GraphManifest, hints: RenameHints
 ) -> dict[tuple[str, str, str | None], Edge]:
-    out: dict[tuple[str, str, str | None], Edge] = {}
-    for (source, target, relation), edge in _edges(manifest).items():
-        out[
-            (
-                hints.vertices.get(source, source),
-                hints.vertices.get(target, target),
-                hints.relations.get(relation, relation) if relation else relation,
-            )
-        ] = edge
-    return out
+    return {
+        _renamed_edge_id(edge_id, hints): edge
+        for edge_id, edge in _edges(manifest).items()
+    }
 
 
 def _type_of(field: Any) -> Any:

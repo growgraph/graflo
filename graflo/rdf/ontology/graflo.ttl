@@ -7,8 +7,8 @@
 @prefix prov: <http://www.w3.org/ns/prov#> .
 
 <https://ontology.growgraph.dev/graflo> a owl:Ontology ;
-    owl:versionIRI <https://ontology.growgraph.dev/graflo/1.9.0> ;
-    owl:versionInfo "1.9.0" ;
+    owl:versionIRI <https://ontology.growgraph.dev/graflo/1.10.0> ;
+    owl:versionInfo "1.10.0" ;
     rdfs:label "GraFlo Ontology"@en ;
     skos:prefLabel "GraFlo Ontology"@en ;
     rdfs:comment "OWL vocabulary describing GraFlo GraphManifest contracts: schema, ingestion, bindings, transforms, and pipeline actors."@en .
@@ -258,6 +258,12 @@ gf:NamingConvention a owl:Class ;
     skos:prefLabel "NamingConvention"@en ;
     rdfs:comment "Manifest-facing declaration of how a schema spells the identifiers it invents."@en .
 
+gf:NamespaceBinding a owl:Class ;
+    rdfs:subClassOf gf:GrafloArtifact ;
+    rdfs:label "Namespace binding"@en ;
+    skos:prefLabel "NamespaceBinding"@en ;
+    rdfs:comment "A prefix and the namespace IRI it stands for, among the vocabularies a schema's IRIs come from."@en .
+
 gf:DBType a owl:Class ;
     rdfs:label "Database type enumeration"@en ;
     skos:prefLabel "DBType"@en .
@@ -487,8 +493,9 @@ gf:description a owl:DatatypeProperty ;
 # Semantic grounding. Deliberately declared without rdfs:domain, following
 # gf:name / gf:description / gf:version: the documentation viz derives its
 # grouping from domain/range structure, and a domain-bearing object property
-# here would perturb that grouping for no modelling gain. Equivalence and
-# alternative labels reuse skos:exactMatch / skos:altLabel rather than minting
+# here would perturb that grouping for no modelling gain. Labels, equivalence,
+# close matches, broader concepts and alternative labels reuse rdfs:label and
+# skos:exactMatch / closeMatch / broader / altLabel rather than minting
 # GraFlo-specific twins.
 gf:semanticIri a owl:ObjectProperty ;
     rdfs:label "semantic IRI"@en ;
@@ -500,6 +507,46 @@ gf:unit a owl:DatatypeProperty ;
     rdfs:label "unit"@en ;
     skos:prefLabel "unit"@en ;
     rdfs:comment "Unit of measure for a field value, as a UCUM or QUDT token."@en .
+
+# The manifest's assertion of rdfs:subClassOf / rdfs:subPropertyOf between the
+# types these nodes describe. Not those properties themselves: a gf:Vertex or
+# gf:Edge node describes a type, it is not the class or the property. An export
+# to OWL maps them onto rdfs:subClassOf and rdfs:subPropertyOf.
+gf:subclassOf a owl:ObjectProperty ;
+    rdfs:domain gf:Vertex ;
+    rdfs:label "subclass of"@en ;
+    skos:prefLabel "subclass of"@en ;
+    rdfs:comment "A superclass of this vertex type: a vertex of the same schema, or an external class by IRI. A logical assertion; nothing is inherited."@en .
+
+gf:subpropertyOf a owl:ObjectProperty ;
+    rdfs:domain gf:Edge ;
+    rdfs:label "subproperty of"@en ;
+    skos:prefLabel "subproperty of"@en ;
+    rdfs:comment "A superproperty of this edge type: an edge of the same schema, or an external property by IRI. A logical assertion; nothing is inherited."@en .
+
+gf:baseIri a owl:ObjectProperty ;
+    rdfs:domain gf:GraphMetadata ;
+    rdfs:label "base IRI"@en ;
+    skos:prefLabel "base IRI"@en ;
+    rdfs:comment "Namespace the schema mints IRIs in; not a database namespace."@en .
+
+gf:hasNamespace a owl:ObjectProperty ;
+    rdfs:domain gf:GraphMetadata ;
+    rdfs:range gf:NamespaceBinding ;
+    rdfs:label "has namespace"@en ;
+    skos:prefLabel "has namespace"@en ;
+    rdfs:comment "A vocabulary prefix the schema's IRIs are written with."@en .
+
+gf:namespacePrefix a owl:DatatypeProperty ;
+    rdfs:domain gf:NamespaceBinding ;
+    rdfs:range xsd:string ;
+    rdfs:comment "The prefix of a namespace binding."@en .
+
+gf:namespaceIri a owl:ObjectProperty ;
+    rdfs:domain gf:NamespaceBinding ;
+    rdfs:label "namespace IRI"@en ;
+    skos:prefLabel "namespace IRI"@en ;
+    rdfs:comment "The namespace IRI a prefix stands for."@en .
 
 # Declared naming style. Descriptive like the grounding terms above: it records
 # how the schema's invented identifiers were spelled so a later author — human

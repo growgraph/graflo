@@ -41,6 +41,17 @@ LABEL_IRIS: frozenset[str] = frozenset(
     }
 )
 
+#: Field semantics IRIs that mark a property as the short code a reader names a
+#: vertex by (a ticket key, a channel handle), as against its label.
+NOTATION_IRIS: frozenset[str] = frozenset(
+    {
+        "http://www.w3.org/2004/02/skos/core#notation",
+        "http://purl.org/dc/terms/identifier",
+        "https://schema.org/identifier",
+        "http://schema.org/identifier",
+    }
+)
+
 Lane = Literal["exact", "key", "normalized", "alias"]
 _LANE_RANK: dict[str, int] = {"exact": 0, "key": 1, "normalized": 2, "alias": 3}
 _EDGE_PUNCTUATION = "\"'`.,;:!?()[]{}<>«»“”‘’"
@@ -180,6 +191,15 @@ def label_fields(vertex: Vertex) -> list[str]:
         field.name
         for field in vertex.properties
         if field.semantics is not None and field.semantics.iri in LABEL_IRIS
+    ]
+
+
+def notation_fields(vertex: Vertex) -> list[str]:
+    """Fields of *vertex* whose semantics IRI is one of :data:`NOTATION_IRIS`."""
+    return [
+        field.name
+        for field in vertex.properties
+        if field.semantics is not None and field.semantics.iri in NOTATION_IRIS
     ]
 
 

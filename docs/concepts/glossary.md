@@ -68,7 +68,11 @@ A named value on a vertex or an edge, written as a bare name (`serial_number`) o
 
 ### grounding
 
-An optional `semantics` block on the schema, a vertex type, an edge type or a property that ties it to an external vocabulary: an `iri`, `exact_match` IRIs, `synonyms` and, on a property, a `unit`. Nothing reads it when records are cast or written; the `world-model` profile checks it. See [Conformance profiles](schema/world_model_profile.md).
+An optional `semantics` block on the schema, a vertex type, an edge type or a property that ties it to an external vocabulary: an `iri`, a `label`, `exact_match`, `close_match` and `broader` IRIs, `synonyms` and, on a property, a `unit`. Nothing reads it when records are cast or written; the `world-model` profile checks it. See [Conformance profiles](schema/world_model_profile.md).
+
+### hierarchy
+
+A vertex type's `subclass_of` and an edge type's `subproperty_of`: the classes and relations it falls under, local or external by IRI. They are logical assertions the schema checks and core reasons over (an edge's endpoints fall under its parent's), but nothing is inherited. See [the ontology](schema/ontology.md).
 
 ### identity
 

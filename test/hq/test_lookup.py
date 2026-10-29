@@ -25,6 +25,7 @@ from graflo.hq.lookup import (
     LookupSpec,
     label_fields,
     lookup_candidates,
+    notation_fields,
 )
 from graflo.onto import DBType
 from graflo.util.transform import normalize_label
@@ -157,6 +158,29 @@ class TestLabelFields:
         assert label_fields(vertices["Product"]) == ["name"]
         assert label_fields(vertices["Alias"]) == ["label"]
         assert label_fields(vertices["Ticket"]) == []
+
+
+class TestNotationFields:
+    def test_fields_with_a_notation_iri_and_never_a_label(self) -> None:
+        ticket = Vertex(
+            name="Ticket",
+            properties=[
+                Field(name="issue_id"),
+                Field(
+                    name="key",
+                    semantics=FieldSemantics(
+                        iri="http://www.w3.org/2004/02/skos/core#notation"
+                    ),
+                ),
+                Field(
+                    name="summary",
+                    semantics=FieldSemantics(iri="https://schema.org/name"),
+                ),
+            ],
+            identity=["issue_id"],
+        )
+        assert notation_fields(ticket) == ["key"]
+        assert label_fields(ticket) == ["summary"]
 
 
 class TestLookup:

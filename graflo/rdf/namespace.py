@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from rdflib import Namespace
+from rdflib.namespace import RDFS
 from rdflib.term import URIRef
 
 from graflo.architecture.contract.bindings.connectors import (
@@ -25,7 +26,7 @@ from graflo.architecture.contract.bindings.connectors import (
 )
 
 GF_ONTOLOGY_IRI = "https://ontology.growgraph.dev/graflo"
-GF_VERSION = "1.9.0"
+GF_VERSION = "1.10.0"
 GF_VERSION_IRI = f"{GF_ONTOLOGY_IRI}/{GF_VERSION}"
 GF_BASE = "https://ontology.growgraph.dev/graflo/"
 GF = Namespace(GF_BASE)
@@ -33,6 +34,9 @@ GF = Namespace(GF_BASE)
 SKOS = Namespace("http://www.w3.org/2004/02/skos/core#")
 exactMatch = SKOS.exactMatch
 altLabel = SKOS.altLabel
+closeMatch = SKOS.closeMatch
+broader = SKOS.broader
+rdfsLabel = RDFS.label
 
 # Classes
 GraphManifest = GF.GraphManifest
@@ -129,6 +133,18 @@ description = GF.description
 # alternative labels reuse SKOS rather than minting parallel vocabulary.
 semanticIri = GF.semanticIri
 unit = GF.unit
+# A vertex type's superclass (a logical assertion): a vertex node of the same
+# manifest, or an external class IRI.
+subclassOf = GF.subclassOf
+# An edge type's superproperty: an edge node of the same manifest, or an
+# external property IRI.
+subpropertyOf = GF.subpropertyOf
+# Where a schema mints IRIs, and the vocabulary prefixes its IRIs come from.
+baseIri = GF.baseIri
+NamespaceBinding = GF.NamespaceBinding
+hasNamespace = GF.hasNamespace
+namespacePrefix = GF.namespacePrefix
+namespaceIri = GF.namespaceIri
 
 # Declared naming style. Like the grounding terms above, these are descriptive:
 # they record how the schema's invented identifiers were spelled, and nothing

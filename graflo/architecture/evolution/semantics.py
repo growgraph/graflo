@@ -23,9 +23,11 @@ from .ops import (
     FieldSemanticsTarget,
     SetEdgeDescriptionsOp,
     SetEdgeSemanticsOp,
+    SetEdgeSubpropertyOfOp,
     SetFieldSemanticsOp,
     SetVertexDescriptionsOp,
     SetVertexSemanticsOp,
+    SetVertexSubclassOfOp,
 )
 
 logger = logging.getLogger(__name__)
@@ -49,6 +51,28 @@ def apply_set_vertex_semantics(
             continue
         value = op.semantics[vertex.name]
         vertex.semantics = value.model_copy(deep=True) if value is not None else None
+
+    schema.finish_init()
+
+
+def apply_set_vertex_subclass_of(
+    manifest: GraphManifest, op: SetVertexSubclassOfOp
+) -> None:
+    """Declare, replace or clear the superclasses of selected vertex types."""
+    schema = manifest.graph_schema
+    if schema is None:
+        raise ValueError("set_vertex_subclass_of requires graph_schema")
+
+    vertex_config = schema.core_schema.vertex_config
+    unknown = sorted(set(op.subclass_of) - vertex_config.vertex_set)
+    if unknown:
+        raise ValueError(f"set_vertex_subclass_of: unknown vertices: {unknown}")
+
+    for vertex in vertex_config.vertices:
+        if vertex.name in op.subclass_of:
+            vertex.subclass_of = [
+                p.model_copy(deep=True) for p in op.subclass_of[vertex.name]
+            ]
 
     schema.finish_init()
 
@@ -92,6 +116,31 @@ def apply_set_edge_descriptions(
 
     for target in op.edges:
         by_edge_id[target.edge_id()].description = target.description
+
+    schema.finish_init()
+
+
+def apply_set_edge_subproperty_of(
+    manifest: GraphManifest, op: SetEdgeSubpropertyOfOp
+) -> None:
+    """Declare, replace or clear the superproperties of selected edges."""
+    schema = manifest.graph_schema
+    if schema is None:
+        raise ValueError("set_edge_subproperty_of requires graph_schema")
+
+    by_edge_id = {edge.edge_id: edge for edge in schema.core_schema.edge_config.edges}
+    unknown = sorted(
+        str(target.edge_id())
+        for target in op.edges
+        if target.edge_id() not in by_edge_id
+    )
+    if unknown:
+        raise ValueError(f"set_edge_subproperty_of: unknown edges: {unknown}")
+
+    for target in op.edges:
+        by_edge_id[target.edge_id()].subproperty_of = [
+            p.model_copy(deep=True) for p in target.subproperty_of
+        ]
 
     schema.finish_init()
 
@@ -179,7 +228,9 @@ def apply_set_field_semantics(manifest: GraphManifest, op: SetFieldSemanticsOp) 
 __all__ = [
     "apply_set_edge_descriptions",
     "apply_set_edge_semantics",
+    "apply_set_edge_subproperty_of",
     "apply_set_field_semantics",
     "apply_set_vertex_descriptions",
     "apply_set_vertex_semantics",
+    "apply_set_vertex_subclass_of",
 ]

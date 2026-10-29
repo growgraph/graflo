@@ -10,8 +10,9 @@ from pydantic import field_validator
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.schema.naming import NamingConvention
 from graflo.architecture.schema.provenance import Provenance
-from graflo.architecture.schema.semantics import Semantics
+from graflo.architecture.schema.semantics import Semantics, is_absolute_iri
 
+_PREFIX_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.\-]*$")
 _SEMVER_RE = re.compile(
     r"^\d+\.\d+\.\d+"
     r"(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?"
@@ -48,6 +49,21 @@ class GraphMetadata(ConfigBaseModel):
         default=None,
         description="Optional external-vocabulary anchors for the schema as a whole.",
     )
+    base_iri: str | None = PydanticField(
+        default=None,
+        description=(
+            "Namespace this schema mints IRIs in: a vertex ``Person`` is "
+            "``{base_iri}Person``. Ends in ``/`` or ``#``. Not "
+            "``db_profile.target_namespace``, which names a database."
+        ),
+    )
+    namespaces: dict[str, str] = PydanticField(
+        default_factory=dict,
+        description=(
+            "Prefix -> namespace IRI for the vocabularies the schema's IRIs come "
+            "from, e.g. ``{schema: https://schema.org/}``."
+        ),
+    )
     provenance: Provenance | None = PydanticField(
         default=None,
         description=(
@@ -66,6 +82,27 @@ class GraphMetadata(ConfigBaseModel):
             "convention from the names and usually infers it wrong."
         ),
     )
+
+    @field_validator("base_iri")
+    @classmethod
+    def _validate_base_iri(cls, v: str | None) -> str | None:
+        if v is not None and not (is_absolute_iri(v) and v[-1] in "/#"):
+            raise ValueError(
+                f"base_iri {v!r} must be an absolute IRI ending in '/' or '#'"
+            )
+        return v
+
+    @field_validator("namespaces")
+    @classmethod
+    def _validate_namespaces(cls, v: dict[str, str]) -> dict[str, str]:
+        for prefix, iri in v.items():
+            if not _PREFIX_RE.match(prefix):
+                raise ValueError(f"namespace prefix {prefix!r} is not a valid prefix")
+            if not is_absolute_iri(iri):
+                raise ValueError(
+                    f"namespace {prefix!r} -> {iri!r} is not an absolute IRI"
+                )
+        return v
 
     @field_validator("version")
     @classmethod

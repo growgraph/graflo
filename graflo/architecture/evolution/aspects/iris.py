@@ -24,6 +24,9 @@ SSN = "http://www.w3.org/ns/ssn/"
 TIME = "http://www.w3.org/2006/time#"
 QUDT = "http://qudt.org/schema/qudt/"
 DCTERMS = "http://purl.org/dc/terms/"
+RDFS = "http://www.w3.org/2000/01/rdf-schema#"
+
+RDFS_LABEL = f"{RDFS}label"
 
 PROV_ENTITY = f"{PROV}Entity"
 PROV_ACTIVITY = f"{PROV}Activity"

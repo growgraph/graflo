@@ -47,6 +47,7 @@ from .ops import (
     EdgePropertyRenames,
     EdgeRetargetEntry,
     EdgeSelector,
+    EdgeSubpropertyTarget,
     FieldSemanticsTarget,
     ManifestOp,
     RemoveEdgeIndexesOp,
@@ -72,11 +73,13 @@ from .ops import (
     SetEdgeDescriptionsOp,
     SetEdgeDirectedOp,
     SetEdgeSemanticsOp,
+    SetEdgeSubpropertyOfOp,
     SetFieldSemanticsOp,
     SetInverseEmissionOp,
     SetNativeInversesOp,
     SetVertexDescriptionsOp,
     SetVertexSemanticsOp,
+    SetVertexSubclassOfOp,
 )
 
 logger = logging.getLogger(__name__)
@@ -820,6 +823,23 @@ def _invert_set_vertex_semantics(
     return SetVertexSemanticsOp(semantics=prior)
 
 
+def _invert_set_vertex_subclass_of(
+    op: SetVertexSubclassOfOp, manifest: GraphManifest
+) -> ManifestOp | None:
+    """Restore each vertex's prior superclasses, an empty list included."""
+    schema = manifest.graph_schema
+    if schema is None:
+        return None
+    by_name = {v.name: v for v in schema.core_schema.vertex_config.vertices}
+    prior = {}
+    for name in op.subclass_of:
+        vertex = by_name.get(name)
+        if vertex is None:
+            return None
+        prior[name] = [p.model_copy(deep=True) for p in vertex.subclass_of]
+    return SetVertexSubclassOfOp(subclass_of=prior)
+
+
 def _invert_set_vertex_descriptions(
     op: SetVertexDescriptionsOp, manifest: GraphManifest
 ) -> ManifestOp | None:
@@ -856,6 +876,27 @@ def _invert_set_edge_descriptions(
             )
         )
     return SetEdgeDescriptionsOp(edges=prior)
+
+
+def _invert_set_edge_subproperty_of(
+    op: SetEdgeSubpropertyOfOp, manifest: GraphManifest
+) -> ManifestOp | None:
+    """Restore each edge's prior superproperties, an empty list included."""
+    existing = {(e.source, e.target, e.relation): e for e in _edges(manifest)}
+    prior: list[EdgeSubpropertyTarget] = []
+    for target in op.edges:
+        edge = existing.get(target.edge_id())
+        if edge is None:
+            return None
+        prior.append(
+            EdgeSubpropertyTarget(
+                source=target.source,
+                target=target.target,
+                relation=target.relation,
+                subproperty_of=[p.model_copy(deep=True) for p in edge.subproperty_of],
+            )
+        )
+    return SetEdgeSubpropertyOfOp(edges=prior)
 
 
 def _invert_set_edge_semantics(
@@ -1025,7 +1066,9 @@ _HANDLERS: dict[str, Any] = {
     "set_db_profile": _invert_set_db_profile,
     "set_vertex_semantics": _invert_set_vertex_semantics,
     "set_vertex_descriptions": _invert_set_vertex_descriptions,
+    "set_vertex_subclass_of": _invert_set_vertex_subclass_of,
     "set_edge_descriptions": _invert_set_edge_descriptions,
+    "set_edge_subproperty_of": _invert_set_edge_subproperty_of,
     "set_edge_semantics": _invert_set_edge_semantics,
     "set_field_semantics": _invert_set_field_semantics,
     "add_secondary_identities": _invert_add_secondary_identities,

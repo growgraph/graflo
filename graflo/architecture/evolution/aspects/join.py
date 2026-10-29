@@ -28,7 +28,7 @@ from typing import TypeVar
 from graflo.architecture.schema.core import CoreSchema
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.semantics import FieldSemantics, Semantics
-from graflo.architecture.schema.vertex import Field, Vertex
+from graflo.architecture.schema.vertex import Field, SuperClass, Vertex
 
 from ..ops import (
     AddEdgePropertiesOp,
@@ -39,12 +39,15 @@ from ..ops import (
     EdgeFieldSemanticsTarget,
     EdgeFieldTypes,
     EdgePropertyAdditions,
+    EdgeSubpropertyTarget,
     FieldSemanticsTarget,
     FieldTypeSpec,
     ManifestOp,
     SetEdgeSemanticsOp,
+    SetEdgeSubpropertyOfOp,
     SetFieldSemanticsOp,
     SetVertexSemanticsOp,
+    SetVertexSubclassOfOp,
 )
 from .base import LiftError
 
@@ -74,7 +77,10 @@ def _describe_key(vertex: Vertex) -> str:
     return f"a {mode} key"
 
 
-def _union(have: Sequence[str], want: Sequence[str]) -> list[str]:
+_T = TypeVar("_T")
+
+
+def _union(have: Sequence[_T], want: Sequence[_T]) -> list[_T]:
     return [*have, *(item for item in want if item not in have)]
 
 
@@ -91,8 +97,11 @@ def _join_semantics(
         return None
     update: dict[str, object] = {
         "iri": have.iri or want.iri,
+        "label": have.label or want.label,
         "exact_match": _union(have.exact_match, want.exact_match),
         "synonyms": _union(have.synonyms, want.synonyms),
+        "close_match": _union(have.close_match, want.close_match),
+        "broader": _union(have.broader, want.broader),
     }
     if isinstance(have, FieldSemantics) and isinstance(want, FieldSemantics):
         if have.unit is not None and want.unit is not None and have.unit != want.unit:
@@ -191,6 +200,7 @@ def join(
     added_fields: dict[str, list[Field]] = {}
     retypes: dict[str, dict[str, FieldTypeSpec]] = {}
     groundings: list[FieldSemanticsTarget | EdgeFieldSemanticsTarget] = []
+    vertex_parents: dict[str, list[SuperClass]] = {}
 
     wanted: dict[str, list[Field]] = {}
     for vertex in vertices:
@@ -208,6 +218,9 @@ def join(
         )
         if grounded is not None:
             vertex_semantics[vertex.name] = grounded
+        parents = _union(present.subclass_of, vertex.subclass_of)
+        if parents != present.subclass_of:
+            vertex_parents[vertex.name] = parents
         wanted.setdefault(vertex.name, []).extend(vertex.properties)
     for name, fields in vertex_fields.items():
         wanted.setdefault(name, []).extend(fields)
@@ -224,6 +237,7 @@ def join(
 
     new_edges: list[Edge] = []
     edge_semantics: list[SetEdgeSemanticsOp] = []
+    edge_parents: list[EdgeSubpropertyTarget] = []
     edge_additions: list[EdgePropertyAdditions] = []
     edge_retypes: list[EdgeFieldTypes] = []
     wanted_on_edges: dict[tuple[str, str, str | None], list[Field]] = {}
@@ -250,6 +264,16 @@ def join(
                         }
                     ],
                     semantics=grounded,
+                )
+            )
+        refs = _union(present.subproperty_of, edge.subproperty_of)
+        if refs != present.subproperty_of:
+            edge_parents.append(
+                EdgeSubpropertyTarget(
+                    source=edge.source,
+                    target=edge.target,
+                    relation=edge.relation,
+                    subproperty_of=refs,
                 )
             )
         wanted_on_edges.setdefault(edge.edge_id, []).extend(edge.properties)
@@ -303,6 +327,8 @@ def join(
         ops.append(AddVerticesOp(vertices=new_vertices))
     if vertex_semantics:
         ops.append(SetVertexSemanticsOp(semantics=dict(vertex_semantics)))
+    if vertex_parents:
+        ops.append(SetVertexSubclassOfOp(subclass_of=vertex_parents))
     if retypes or edge_retypes:
         ops.append(ChangeFieldTypesOp(vertices=retypes, per_edge=edge_retypes))
     if added_fields:
@@ -310,6 +336,8 @@ def join(
     if new_edges:
         ops.append(AddEdgesOp(edges=new_edges))
     ops += edge_semantics
+    if edge_parents:
+        ops.append(SetEdgeSubpropertyOfOp(edges=edge_parents))
     if edge_additions:
         ops.append(AddEdgePropertiesOp(per_edge=edge_additions))
     if groundings:

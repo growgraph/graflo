@@ -47,7 +47,7 @@ from graflo.architecture.graph_types import (
     EdgeId,
     EdgeType,
 )
-from graflo.architecture.schema.semantics import Semantics
+from graflo.architecture.schema.semantics import Semantics, check_iri
 from graflo.architecture.schema.vertex import (
     Field,
     VertexConfig,
@@ -79,6 +79,53 @@ def _normalize_direct_item(item: str | Field | dict[str, Any]) -> Field:
             raise ValueError(f"Field dict must have 'name' key: {item}")
         return Field.model_validate(item)
     raise TypeError(f"Field must be str, Field, or dict, got {type(item)}")
+
+
+class EdgeRef(ConfigBaseModel):
+    """An edge of the same schema, by its ``(source, target, relation)`` id."""
+
+    source: VertexName = PydanticField(..., description="Source vertex type name.")
+    target: VertexName = PydanticField(..., description="Target vertex type name.")
+    relation: str | None = PydanticField(
+        default=None, description="Relation name; None for a relation-less edge."
+    )
+
+    def edge_id(self) -> EdgeId:
+        return self.source, self.target, self.relation
+
+    @classmethod
+    def of(cls, edge_id: EdgeId) -> EdgeRef:
+        source, target, relation = edge_id
+        return cls(source=source, target=target, relation=relation)
+
+
+class SuperProperty(ConfigBaseModel):
+    """A relation an edge type is a subproperty of (``rdfs:subPropertyOf``).
+
+    Either an edge of the same schema, by id, or a property outside it, by IRI.
+    A logical assertion: every pair the subproperty relates, the parent relates
+    too. Core checks the hierarchy and computes what it entails
+    (:mod:`graflo.architecture.schema.hierarchy`); nothing is inherited.
+
+    Examples:
+        >>> SuperProperty(edge=EdgeRef(source="App", target="CI", relation="depends_on"))
+        >>> SuperProperty(iri="http://www.w3.org/2004/02/skos/core#related")
+    """
+
+    edge: EdgeRef | None = PydanticField(
+        default=None, description="An edge of the same schema."
+    )
+    iri: str | None = PydanticField(
+        default=None, description="Absolute IRI of a property outside the schema."
+    )
+
+    @model_validator(mode="after")
+    def _one_parent(self) -> SuperProperty:
+        if (self.edge is None) == (self.iri is None):
+            raise ValueError("a superproperty names exactly one of `edge` or `iri`")
+        if self.iri is not None:
+            check_iri(self.iri, "superproperty iri")
+        return self
 
 
 class Edge(ConfigBaseModel):
@@ -116,6 +163,14 @@ class Edge(ConfigBaseModel):
     semantics: Semantics | None = PydanticField(
         default=None,
         description="Optional external-vocabulary anchors for this edge type.",
+    )
+    subproperty_of: list[SuperProperty] = PydanticField(
+        default_factory=list,
+        description=(
+            "Relations this edge type is a subproperty of (``rdfs:subPropertyOf``): "
+            "an edge of this schema by id, or an external property by IRI. A "
+            "logical assertion, checked and entailed; nothing is inherited."
+        ),
     )
     directed: bool = PydanticField(
         default=True,

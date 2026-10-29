@@ -23,6 +23,7 @@ from graflo.architecture.schema.database_features import (
     DefaultPropertyValues,
 )
 from graflo.architecture.schema.document import Schema
+from graflo.architecture.schema.hierarchy import Hierarchy
 from graflo.architecture.schema.vertex import VertexConfig
 
 Connectivity = Literal["induced", "induced_prune"]
@@ -91,6 +92,9 @@ def select_induced(
     surviving_vertices = (
         connected & requested if connectivity == "induced_prune" else requested
     )
+    surviving_vertices, surviving_edge_ids = _hierarchy_closure(
+        core, surviving_vertices, surviving_edge_ids
+    )
 
     return SubschemaSelection(
         surviving_vertices=surviving_vertices,
@@ -98,6 +102,25 @@ def select_induced(
         removed_vertices=all_vertices - surviving_vertices,
         removed_edge_ids=all_edge_ids - surviving_edge_ids,
     )
+
+
+def _hierarchy_closure(
+    core: CoreSchema, vertices: set[str], edge_ids: set[EdgeId]
+) -> tuple[set[str], set[EdgeId]]:
+    """Add every local superclass and superproperty of the survivors.
+
+    A parent is part of its subclass's meaning, so a slice without it would
+    name nothing. A parent edge's endpoints subsume its child's, so they are
+    superclasses of survivors and come in the same way.
+    """
+    hierarchy = Hierarchy.of(core)
+    edges = set(edge_ids)
+    for edge_id in edge_ids:
+        edges.update(hierarchy.superproperties(edge_id))
+    nodes = set(vertices) | {v for edge_id in edges for v in edge_id[:2]}
+    for name in list(nodes):
+        nodes.update(hierarchy.superclasses(name))
+    return nodes, edges
 
 
 def project_db_profile(

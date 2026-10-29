@@ -133,12 +133,12 @@ def test_ungrounded_edge_fails():
     assert result.status == "fail"
 
 
-def test_malformed_iri_is_an_error_not_a_warning():
+def test_malformed_iri_is_refused_before_any_profile_runs():
+    """The contract stores absolute IRIs only, so there is nothing to grade."""
     config = _conformant()
     _vertex(config, "Asset")["semantics"] = {"iri": "Entity"}
-    result = _assertion(check_manifest_config(config), "grounded-types")
-    assert result.status == "fail"
-    assert "not an absolute IRI" in result.findings[0].message
+    with pytest.raises(ValueError, match="not an absolute IRI"):
+        check_manifest_config(config)
 
 
 def test_unrecognised_namespace_warns_rather_than_failing():

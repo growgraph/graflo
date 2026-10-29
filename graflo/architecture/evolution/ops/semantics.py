@@ -8,7 +8,9 @@ from pydantic import Field as PydanticField
 from pydantic import model_validator
 
 from graflo.architecture.base import ConfigBaseModel
+from graflo.architecture.schema.edge import SuperProperty
 from graflo.architecture.schema.semantics import FieldSemantics, Semantics
+from graflo.architecture.schema.vertex import SuperClass
 
 from .edges import EdgeSelector, _validate_unique_edge_selectors
 
@@ -32,6 +34,25 @@ class SetVertexSemanticsOp(ConfigBaseModel):
         description=(
             "Per-vertex grounding: ``{vertex_name: Semantics}``. ``None`` clears "
             "the block, which is what makes the op invertible."
+        ),
+        min_length=1,
+    )
+
+
+class SetVertexSubclassOfOp(ConfigBaseModel):
+    """Declare, replace or clear the superclasses of existing vertex types.
+
+    ``subclass_of`` is a logical assertion that the schema checks, but nothing
+    at ingestion or query time reads it, so this op cannot change how anything
+    ingests or stores.
+    """
+
+    op: Literal["set_vertex_subclass_of"] = "set_vertex_subclass_of"
+    subclass_of: dict[str, list[SuperClass]] = PydanticField(
+        ...,
+        description=(
+            "Per-vertex superclasses: ``{vertex_name: [SuperClass, ...]}``. An "
+            "empty list clears them, which is what makes the op invertible."
         ),
         min_length=1,
     )
@@ -85,6 +106,35 @@ class SetEdgeDescriptionsOp(ConfigBaseModel):
     @model_validator(mode="after")
     def _validate_unique_selectors(self) -> SetEdgeDescriptionsOp:
         _validate_unique_edge_selectors(self.edges, kind="set_edge_descriptions")
+        return self
+
+
+class EdgeSubpropertyTarget(EdgeSelector):
+    """One edge triple and the superproperties to put on it."""
+
+    subproperty_of: list[SuperProperty] = PydanticField(
+        default_factory=list,
+        description="The superproperties; an empty list clears them.",
+    )
+
+
+class SetEdgeSubpropertyOfOp(ConfigBaseModel):
+    """Declare, replace or clear the superproperties of existing edges.
+
+    The vertex op's counterpart for ``subproperty_of``: checked by the schema,
+    read by nothing at ingestion or query time.
+    """
+
+    op: Literal["set_edge_subproperty_of"] = "set_edge_subproperty_of"
+    edges: list[EdgeSubpropertyTarget] = PydanticField(
+        ...,
+        description="Edge triples whose superproperties change, each with its list.",
+        min_length=1,
+    )
+
+    @model_validator(mode="after")
+    def _validate_unique_selectors(self) -> SetEdgeSubpropertyOfOp:
+        _validate_unique_edge_selectors(self.edges, kind="set_edge_subproperty_of")
         return self
 
 

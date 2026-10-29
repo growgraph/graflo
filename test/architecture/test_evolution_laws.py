@@ -78,12 +78,14 @@ KINDS = [
     "rename_vertex_properties",
     "change_field_types",
     "set_vertex_descriptions",
+    "set_vertex_subclass_of",
     "add_edges",
     "remove_edges:relation",
     "remove_edges:triple",
     "retarget_edges",
     "rename_relations",
     "set_edge_descriptions",
+    "set_edge_subproperty_of",
     "add_edge_properties",
     "remove_edge_properties",
     "add_edge_properties:edge",
@@ -122,6 +124,12 @@ def manifests(draw: st.DrawFn, min_vertices: int = 1) -> GraphManifest:
         }
         for name in names
     ]
+    # Sometimes a hierarchy, so renames, removals and retargets meet references:
+    # a vertex under an earlier one (acyclic by construction).
+    for index, vertex in enumerate(vertices[1:], start=1):
+        if draw(st.booleans()):
+            parent = draw(st.sampled_from(names[:index]))
+            vertex["subclass_of"] = [{"vertex": parent}]
     triples = draw(
         st.lists(
             st.tuples(
@@ -133,7 +141,7 @@ def manifests(draw: st.DrawFn, min_vertices: int = 1) -> GraphManifest:
             max_size=3,
         )
     )
-    edges = [
+    edges: list[dict[str, Any]] = [
         {
             "source": source,
             "target": target,
@@ -142,6 +150,24 @@ def manifests(draw: st.DrawFn, min_vertices: int = 1) -> GraphManifest:
         }
         for source, target, relation in triples
     ]
+    # And an edge under an earlier one on the same endpoints, which subsume trivially.
+    for index, edge in enumerate(edges):
+        same_ends = [
+            e
+            for e in edges[:index]
+            if (e["source"], e["target"]) == (edge["source"], edge["target"])
+        ]
+        if same_ends and draw(st.booleans()):
+            parent = draw(st.sampled_from(same_ends))
+            edge["subproperty_of"] = [
+                {
+                    "edge": {
+                        "source": parent["source"],
+                        "target": parent["target"],
+                        "relation": parent["relation"],
+                    }
+                }
+            ]
     return GraphManifest.from_dict(
         {
             "schema": {
@@ -215,6 +241,15 @@ def _payloads(manifest: GraphManifest) -> dict[str, st.SearchStrategy[dict[str, 
     out["set_vertex_descriptions"] = st.tuples(
         vertex, st.text("ab", min_size=1, max_size=3)
     ).map(lambda t: {"op": "set_vertex_descriptions", "descriptions": {t[0]: t[1]}})
+    # A local parent (itself included, which is refused), an external one, or none.
+    parent = st.one_of(
+        st.sampled_from(present).map(lambda v: [{"vertex": v}]),
+        st.just([{"iri": "https://example.org/Thing"}]),
+        st.just([]),
+    )
+    out["set_vertex_subclass_of"] = st.tuples(vertex, parent).map(
+        lambda t: {"op": "set_vertex_subclass_of", "subclass_of": {t[0]: t[1]}}
+    )
     out["add_edges"] = st.tuples(vertex, vertex, st.sampled_from(RELATION_POOL)).map(
         lambda t: {
             "op": "add_edges",
@@ -264,6 +299,27 @@ def _payloads(manifest: GraphManifest) -> dict[str, st.SearchStrategy[dict[str, 
                     "target": t[0][1],
                     "relation": t[0][2],
                     "description": t[1],
+                }
+            ],
+        }
+    )
+    # A local parent (itself included, which is refused), an external one, or none.
+    edge_parent = st.one_of(
+        edge.map(
+            lambda e: [{"edge": {"source": e[0], "target": e[1], "relation": e[2]}}]
+        ),
+        st.just([{"iri": "https://example.org/related"}]),
+        st.just([]),
+    )
+    out["set_edge_subproperty_of"] = st.tuples(edge, edge_parent).map(
+        lambda t: {
+            "op": "set_edge_subproperty_of",
+            "edges": [
+                {
+                    "source": t[0][0],
+                    "target": t[0][1],
+                    "relation": t[0][2],
+                    "subproperty_of": t[1],
                 }
             ],
         }
@@ -722,13 +778,37 @@ def test_a_decision_changes_nothing_outside_its_conflict(case) -> None:
             if op.op in _RENAMES
             for slot in op_slots(op)
         }
+        manifests = (base, left, right, all_left, flipped)
+        # Removing a vertex or an edge splices it out of the hierarchy, so it
+        # also reaches what was directly under it.
+        reach |= {
+            merge3._vertex_slot(vertex.name)
+            for manifest in manifests
+            for vertex in _core(manifest).vertex_config.vertices
+            if any(
+                p.vertex is not None and merge3._vertex_slot(p.vertex) in reach
+                for p in vertex.subclass_of
+            )
+        }
         reach |= {
             merge3._relation_slot(edge.relation)
-            for manifest in (base, left, right, all_left, flipped)
+            for manifest in manifests
             for edge in _core(manifest).edge_config.edges
             if edge.relation is not None
             and {merge3._vertex_slot(edge.source), merge3._vertex_slot(edge.target)}
             & reach
+        }
+        reach |= {
+            merge3._relation_slot(edge.relation)
+            for manifest in manifests
+            for edge in _core(manifest).edge_config.edges
+            if edge.relation is not None
+            and any(
+                p.edge is not None
+                and p.edge.relation is not None
+                and merge3._relation_slot(p.edge.relation) in reach
+                for p in edge.subproperty_of
+            )
         }
         moved, _residue = diff_manifests(all_left, flipped)
         for op in moved:
