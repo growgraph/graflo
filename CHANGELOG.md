@@ -57,6 +57,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `conflict`.
 - **`LookupSpec.normalized_fields`** is removed: the `normalized` lane reads the schema's
   `derived: {form: normal}` fields.
+- **`writable=`** (`resolve_records`, `write_record_graphs`) maps each vertex type to its filter; a
+  guarded type the mapping leaves out is link-only when found.
 
 - IRIs in `semantics`, parents, `base_iri` and `namespaces` must be absolute: a non-IRI or a
   prefixed name (`foaf:Agent`, or one using a declared prefix) is refused. A local vertex or edge
