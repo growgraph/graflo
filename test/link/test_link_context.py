@@ -245,6 +245,17 @@ def test_a_stated_less_specific_value_finds_its_entities_compatible(db):
         ("site", "compatible")
     ]
     assert all(support(c) == "propose" for c in by_key.values())
+    assert {h.targets for c in by_key.values() for h in c.lanes} == {2}
+
+
+def test_a_compatible_form_only_one_entity_holds_is_identifying_support(db):
+    (entry,) = _gather(db, [_m("u", "Unit", "the unit", site="Berlin, hall 5")])
+    by_key = {c.key["serial"]: c for c in entry.candidates}
+    # "berlin hall 5" is KP-2's alone; "berlin" is both units'.
+    assert [(h.lane, h.targets) for h in by_key["KP-2"].lanes] == [("compatible", 1)]
+    assert [(h.lane, h.targets) for h in by_key["KP-1"].lanes] == [("compatible", 2)]
+    assert by_key["KP-2"].support.unique_compatible
+    assert (support(by_key["KP-2"]), support(by_key["KP-1"])) == ("accept", "propose")
 
 
 def test_an_alias_naming_one_entity_is_identifying_support(db):
@@ -260,6 +271,7 @@ def test_an_alias_naming_one_entity_is_identifying_support(db):
         (SupportFeatures(identifying_lane=True), "accept"),
         (SupportFeatures(exclusive_agreement=True), "accept"),
         (SupportFeatures(unique_alias=True), "accept"),
+        (SupportFeatures(unique_compatible=True), "accept"),
         (SupportFeatures(identifying_lane=True, conflict=True), "propose"),
         (SupportFeatures(), "propose"),
     ],

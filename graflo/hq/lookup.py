@@ -129,7 +129,9 @@ class LaneHit(ConfigBaseModel):
         lane: How it was found.
         matched: The words or key value of the text it was found from.
         targets: ``alias`` lane: how many vertices the alias reached under the
-            guard. One means the alias names only this vertex in the reader's view.
+            guard; ``compatible`` lane: how many vertices of the type hold the
+            matched form among their keys under the guard. One means the text
+            names only this vertex in the reader's view.
     """
 
     lane: Lane
@@ -405,7 +407,10 @@ def _compatible_lane(
     labels: list[str],
     readable: Readable,
 ) -> list[_Found]:
-    """Vertices one of whose derived keys equals a run of the text."""
+    """Vertices one of whose derived keys equals a run of the text.
+
+    Each hit counts the vertices holding its matched form (``targets``).
+    """
     identity = reader.identity(vertex_type)
     if not identity:
         return []
@@ -415,10 +420,18 @@ def _compatible_lane(
         run_of: dict[str, str] = {}
         for run, normal in _normal_runs(source, runs):
             run_of.setdefault(normal, run)  # runs come longest first
-        for doc in reader.members(vertex_type, field.name, list(run_of), returned):
-            hits = [run_of[k] for k in doc.get(field.name) or [] if k in run_of]
-            if not hits:
-                continue
+        docs = reader.members(vertex_type, field.name, list(run_of), returned)
+        holders: dict[str, set[tuple[tuple[str, str], ...]]] = {}
+        best: list[tuple[dict[str, Any], str]] = []
+        for doc in docs:
+            key = {f: doc.get(f) for f in identity}
+            held = [k for k in doc.get(field.name) or [] if k in run_of]
+            for k in held:
+                holders.setdefault(k, set()).add(_identity_key(key))
+            if held:
+                normal = max(held, key=lambda k: (len(run_of[k]), run_of[k]))
+                best.append((doc, normal))
+        for doc, normal in best:
             found.append(
                 _Found(
                     vertex_type,
@@ -426,7 +439,8 @@ def _compatible_lane(
                     _label(doc, labels),
                     LaneHit(
                         lane="compatible",
-                        matched=max(hits, key=lambda run: (len(run), run)),
+                        matched=run_of[normal],
+                        targets=len(holders[normal]),
                     ),
                 )
             )

@@ -591,6 +591,9 @@ def _features(candidate: EntityCandidate) -> SupportFeatures:
             a.exclusive and a.level == "exact" for a in candidate.attributes
         ),
         unique_alias=any(h.lane == "alias" and h.targets == 1 for h in candidate.lanes),
+        unique_compatible=any(
+            h.lane == "compatible" and h.targets == 1 for h in candidate.lanes
+        ),
         conflict=any(a.level == "conflict" for a in candidate.attributes),
     )
 
@@ -599,15 +602,18 @@ def support(candidate: EntityCandidate) -> Literal["accept", "propose"]:
     """``accept`` when a feature identifies *candidate* and nothing conflicts.
 
     Identifying: a hit in an identifying lane (``key``, ``alternate``,
-    ``exact``, ``normalized``), an exclusive field stated and stored alike, or
-    an alias naming only it in the reader's view. ``compatible`` and
-    ``context`` hits never identify on their own.
+    ``exact``, ``normalized``), an exclusive field stated and stored alike, an
+    alias naming only it in the reader's view, or a ``compatible`` form no
+    other entity of its type holds there. A ``compatible`` form several
+    entities hold, like an alias with several targets, is generic; a
+    ``context`` hit never identifies.
     """
     features = candidate.support
     identified = (
         features.identifying_lane
         or features.exclusive_agreement
         or features.unique_alias
+        or features.unique_compatible
     )
     return "accept" if identified and not features.conflict else "propose"
 

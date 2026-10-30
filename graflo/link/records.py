@@ -241,7 +241,7 @@ class CandidateHit(ConfigBaseModel):
     Each lane carries its own fields and no others: ``relation`` the relation
     and the anchor, ``metadata`` a role, ``context`` its anchor (a record's ref,
     or the role ``subject``) and the level of its label, every other lane what
-    matched, and ``alias`` also how many entities the alias reached.
+    matched, and ``alias`` and ``compatible`` also how many entities that reached.
     """
 
     lane: CandidateLane = Field(
@@ -273,7 +273,9 @@ class CandidateHit(ConfigBaseModel):
     )
     targets: int | None = Field(
         default=None,
-        description="``alias`` lane: how many entities the alias reached in the reader's view.",
+        description="``alias`` lane: how many entities the alias reached in the "
+        "reader's view; ``compatible`` lane: how many entities of the type hold the "
+        "matched form.",
     )
     level: MatchLevel | None = Field(
         default=None,
@@ -288,7 +290,7 @@ class CandidateHit(ConfigBaseModel):
             allowed = [{"role"}]
         elif self.lane == "context":
             allowed = [{"anchor", "level"}, {"role", "level"}]
-        elif self.lane == "alias":
+        elif self.lane in ("alias", "compatible"):
             allowed = [{"matched", "targets"}, {"matched"}]
         else:
             allowed = [{"matched"}]
@@ -338,6 +340,11 @@ class SupportFeatures(ConfigBaseModel):
     unique_alias: bool = Field(
         default=False,
         description="Found by an alias that names only it in the reader's view.",
+    )
+    unique_compatible: bool = Field(
+        default=False,
+        description="Found by a less specific form of one of its values that no "
+        "other entity of its type holds in the reader's view.",
     )
     conflict: bool = Field(
         default=False, description="A stated field is evidence against it."

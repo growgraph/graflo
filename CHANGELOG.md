@@ -57,6 +57,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `conflict`.
 - **`LookupSpec.normalized_fields`** is removed: the `normalized` lane reads the schema's
   `derived: {form: normal}` fields.
+- **`support()`** also accepts a candidate found by a `compatible` form no other entity of its type
+  holds in the reader's view (`SupportFeatures.unique_compatible`); a `compatible` hit carries
+  `targets`, as an alias hit does.
 - **`writable=`** (`resolve_records`, `write_record_graphs`) maps each vertex type to its filter; a
   guarded type the mapping leaves out is link-only when found.
 
