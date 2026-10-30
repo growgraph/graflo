@@ -64,6 +64,12 @@ def fuse_doc_basis(
     """
     if not docs:
         return docs
+    if (
+        type(docs) is list
+        and type(docs[0]) is dict
+        and all(type(doc) is dict for doc in docs)
+    ):
+        return _fuse_dicts(cast(list[dict], docs), index_keys, union_fields)
     if isinstance(docs[0], VertexRep):
         groups: dict[tuple[bool, str | None], list[VertexRep]] = {}
         for rep in docs:
@@ -79,6 +85,62 @@ def fuse_doc_basis(
     return _fuse_group(docs, index_keys, union_fields)
 
 
+def _fuse_dicts(
+    docs: list[dict],
+    index_keys: tuple[str, ...],
+    union_fields: Collection[str],
+) -> list[dict]:
+    """Fuse ordinary dictionaries without per-call closures or rep dispatch.
+
+    Only string key names let us queue empty fragments directly: other keys may
+    raise or have observable hash behaviour even when tested against ``{}``.
+    Keep the fragments until merging, since later key callbacks can fill them.
+    The nonempty observations still use the same key construction and lookup
+    order as the general path, including rejection of unhashable identities.
+    """
+    plain_index_keys = type(index_keys) is tuple and all(
+        type(key) is str for key in index_keys
+    )
+    merged: list[dict] = []
+    positions: dict[tuple, int] = {}
+    pending: list[dict] = []
+    for doc in docs:
+        # A user-defined identity hash can mutate the input list mid-iteration.
+        # Retain per-observation checks, rather than trusting the initial scan.
+        if not isinstance(doc, dict):
+            raise TypeError(f"expected dict, got {type(doc).__name__}")
+        if plain_index_keys and type(doc) is dict and not doc:
+            pending.append(doc)
+            continue
+        if any(key in doc for key in index_keys):
+            index = tuple(sorted((k, v) for k, v in doc.items() if k in index_keys))
+            if pending:
+                target = merged[-1] if merged else doc
+                for fragment in pending:
+                    if type(target) is dict and type(fragment) is dict and not fragment:
+                        continue
+                    _fuse_doc(target, fragment, False, union_fields)
+                pending.clear()
+            if index in positions:
+                _fuse_doc(merged[positions[index]], doc, False, union_fields)
+            else:
+                merged.append(doc.copy())
+                positions[index] = len(merged) - 1
+        else:
+            pending.append(doc)
+    if pending:
+        if merged:
+            target = merged[-1]
+        else:
+            target = {}
+            merged.append(target)
+        for fragment in pending:
+            if type(target) is dict and type(fragment) is dict and not fragment:
+                continue
+            _fuse_doc(target, fragment, False, union_fields)
+    return merged
+
+
 def _union_update(
     target: dict[str, Any], source: dict[str, Any], union_fields: Collection[str]
 ) -> None:
@@ -90,6 +152,66 @@ def _union_update(
             target[key] = list(dict.fromkeys(members))
         else:
             target[key] = value
+
+
+def _get_index_tuple(
+    doc: dict | VertexRep, is_vertexrep: bool, index_keys: tuple[str, ...]
+) -> tuple:
+    """Extract index tuple from a document."""
+    if is_vertexrep:
+        if not isinstance(doc, VertexRep):
+            raise TypeError(f"expected VertexRep, got {type(doc).__name__}")
+        data = doc.vertex
+    else:
+        if not isinstance(doc, dict):
+            raise TypeError(f"expected dict, got {type(doc).__name__}")
+        data = doc
+    return tuple(sorted((k, v) for k, v in data.items() if k in index_keys))
+
+
+def _has_index_keys(
+    doc: dict | VertexRep, is_vertexrep: bool, index_keys: tuple[str, ...]
+) -> bool:
+    """Check if document has any index keys."""
+    if is_vertexrep:
+        if not isinstance(doc, VertexRep):
+            raise TypeError(f"expected VertexRep, got {type(doc).__name__}")
+        return any(k in doc.vertex for k in index_keys)
+    else:
+        if not isinstance(doc, dict):
+            raise TypeError(f"expected dict, got {type(doc).__name__}")
+        return any(k in doc for k in index_keys)
+
+
+def _fuse_doc(
+    target: dict | VertexRep,
+    source: dict | VertexRep,
+    is_vertexrep: bool,
+    union_fields: Collection[str],
+) -> None:
+    """Merge source into target."""
+    if is_vertexrep:
+        if not (isinstance(target, VertexRep) and isinstance(source, VertexRep)):
+            raise TypeError("expected VertexRep for both target and source")
+        _union_update(target.vertex, source.vertex, union_fields)
+    else:
+        if not (isinstance(target, dict) and isinstance(source, dict)):
+            raise TypeError("expected dict for both target and source")
+        _union_update(target, source, union_fields)
+
+
+def _copy_doc(doc: dict | VertexRep, is_vertexrep: bool) -> dict | VertexRep:
+    """Create a copy of a document."""
+    if is_vertexrep:
+        if not isinstance(doc, VertexRep):
+            raise TypeError(f"expected VertexRep, got {type(doc).__name__}")
+        # Copy via the model so observation-level flags (lookup_only) are
+        # carried over rather than silently reset to their defaults.
+        return doc.model_copy(update={"vertex": doc.vertex.copy()})
+    else:
+        if not isinstance(doc, dict):
+            raise TypeError(f"expected dict, got {type(doc).__name__}")
+        return doc.copy()
 
 
 def _fuse_group(
@@ -110,77 +232,35 @@ def _fuse_group(
     # Type: list[dict] if not is_vertexrep, list[VertexRep] if is_vertexrep
     pending_non_ids: list[dict | VertexRep] = []
 
-    def get_index_tuple(doc: dict | VertexRep) -> tuple:
-        """Extract index tuple from a document."""
-        if is_vertexrep:
-            if not isinstance(doc, VertexRep):
-                raise TypeError(f"expected VertexRep, got {type(doc).__name__}")
-            data = doc.vertex
-        else:
-            if not isinstance(doc, dict):
-                raise TypeError(f"expected dict, got {type(doc).__name__}")
-            data = doc
-        return tuple(sorted((k, v) for k, v in data.items() if k in index_keys))
-
-    def has_index_keys(doc: dict | VertexRep) -> bool:
-        """Check if document has any index keys."""
-        if is_vertexrep:
-            if not isinstance(doc, VertexRep):
-                raise TypeError(f"expected VertexRep, got {type(doc).__name__}")
-            return any(k in doc.vertex for k in index_keys)
-        else:
-            if not isinstance(doc, dict):
-                raise TypeError(f"expected dict, got {type(doc).__name__}")
-            return any(k in doc for k in index_keys)
-
-    def fuse_doc(target: dict | VertexRep, source: dict | VertexRep) -> None:
-        """Merge source into target."""
-        if is_vertexrep:
-            if not (isinstance(target, VertexRep) and isinstance(source, VertexRep)):
-                raise TypeError("expected VertexRep for both target and source")
-            _union_update(target.vertex, source.vertex, union_fields)
-        else:
-            if not (isinstance(target, dict) and isinstance(source, dict)):
-                raise TypeError("expected dict for both target and source")
-            _union_update(target, source, union_fields)
-
-    def copy_doc(doc: dict | VertexRep) -> dict | VertexRep:
-        """Create a copy of a document."""
-        if is_vertexrep:
-            if not isinstance(doc, VertexRep):
-                raise TypeError(f"expected VertexRep, got {type(doc).__name__}")
-            # Copy via the model so observation-level flags (lookup_only) are
-            # carried over rather than silently reset to their defaults.
-            return doc.model_copy(update={"vertex": doc.vertex.copy()})
-        else:
-            if not isinstance(doc, dict):
-                raise TypeError(f"expected dict, got {type(doc).__name__}")
-            return doc.copy()
-
     for doc in docs:
-        if has_index_keys(doc):
+        if _has_index_keys(doc, is_vertexrep, index_keys):
             # This is a document with index keys
-            index_tuple = get_index_tuple(doc)
+            index_tuple = _get_index_tuple(doc, is_vertexrep, index_keys)
 
             # First, handle any accumulated non-ID documents
             if pending_non_ids:
                 if merged_docs:
                     # Merge accumulated non-IDs into the last ID doc
                     for pending in pending_non_ids:
-                        fuse_doc(merged_docs[-1], pending)
+                        _fuse_doc(merged_docs[-1], pending, is_vertexrep, union_fields)
                 else:
                     # No previous ID doc, merge pending non-IDs into the current ID doc
                     for pending in pending_non_ids:
-                        fuse_doc(doc, pending)
+                        _fuse_doc(doc, pending, is_vertexrep, union_fields)
                 pending_non_ids.clear()
 
             # Handle the current document with index keys
             if index_tuple in index_to_position:
                 # Merge into existing document at that position
-                fuse_doc(merged_docs[index_to_position[index_tuple]], doc)
+                _fuse_doc(
+                    merged_docs[index_to_position[index_tuple]],
+                    doc,
+                    is_vertexrep,
+                    union_fields,
+                )
             else:
                 # First occurrence of this index tuple, add new document
-                merged_docs.append(copy_doc(doc))
+                merged_docs.append(_copy_doc(doc, is_vertexrep))
                 index_to_position[index_tuple] = len(merged_docs) - 1
         else:
             # This is a document without index keys, accumulate it
@@ -190,7 +270,7 @@ def _fuse_group(
     if pending_non_ids and merged_docs:
         # Merge into last ID doc
         for pending in pending_non_ids:
-            fuse_doc(merged_docs[-1], pending)
+            _fuse_doc(merged_docs[-1], pending, is_vertexrep, union_fields)
     elif pending_non_ids:
         # No documents with index keys: merge all into a single document
         if is_vertexrep:
@@ -203,7 +283,7 @@ def _fuse_group(
         else:
             merged_doc = {}
         for pending in pending_non_ids:
-            fuse_doc(merged_doc, pending)
+            _fuse_doc(merged_doc, pending, is_vertexrep, union_fields)
         merged_docs.append(merged_doc)
 
     # Type narrowing: return type matches input type due to homogeneous list requirement
