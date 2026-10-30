@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **FalkorDB**: the Docker default is 4.22.3; the connector is also checked against 6.0.3.
+
+### Fixed
+
+- **FalkorDB** refuses integer parameters outside the signed 64-bit range before sending them,
+  avoiding silent truncation on 4.x. Server parameter-parsing failures raise `ValueError` on 6.x.
+
 ## [1.24.1]
 
 ### Added

@@ -31,6 +31,7 @@ from urllib.parse import urlparse
 
 from falkordb import FalkorDB
 from falkordb.graph import Graph
+from redis.exceptions import ResponseError
 
 from graflo.architecture.graph_types import EdgeDirection, GraphContainer, Index
 from graflo.architecture.schema import Schema
@@ -74,6 +75,23 @@ from graflo.filter.onto import (
 from graflo.onto import AggregationType, DBType
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_integer_parameters(value: Any) -> None:
+    """Reject integers the server cannot represent, including nested parameters.
+
+    FalkorDB stores signed 64-bit integers. The C engine can silently clamp an
+    overflowing parameter, while the Rust engine refuses it.
+    """
+    if isinstance(value, int):
+        if not -(2**63) <= value < 2**63:
+            raise OverflowError("FalkorDB integers must fit in the signed 64-bit range")
+    elif isinstance(value, dict):
+        for item in value.values():
+            _validate_integer_parameters(item)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            _validate_integer_parameters(item)
 
 
 class FalkordbConnection(Connection):
@@ -145,19 +163,30 @@ class FalkordbConnection(Connection):
 
         Returns:
             QueryResult: FalkorDB result object containing result_set and statistics
+
+        Raises:
+            OverflowError: An integer parameter is outside the signed 64-bit range.
+            ValueError: The server cannot parse a parameter value.
         """
         if self.graph is None:
             raise RuntimeError("Connection is closed")
-        # Pass params as keyword argument if the client supports it, otherwise as positional
-        # Try params keyword first, fall back to positional
-        if kwargs:
-            try:
-                result = self.graph.query(query, params=kwargs)
-            except TypeError:
-                # Fall back to positional argument if params keyword not supported
-                result = self.graph.query(query, kwargs)
-        else:
-            result = self.graph.query(query)
+        _validate_integer_parameters(kwargs)
+        try:
+            if kwargs:
+                try:
+                    result = self.graph.query(query, params=kwargs)
+                except TypeError:
+                    result = self.graph.query(query, kwargs)
+            else:
+                result = self.graph.query(query)
+        except ResponseError as error:
+            # 6.x reports rejected numeric parameters (including subnormal
+            # floats) as a Redis error instead of a Python value error.
+            if str(error).startswith("Failed to parse the value of parameter "):
+                raise ValueError(
+                    f"FalkorDB rejected a query parameter: {error}"
+                ) from error
+            raise
         return result
 
     def close(self):
@@ -819,6 +848,10 @@ class FalkordbConnection(Connection):
             if merge_props
             else [((), list(sanitized_edges))]
         )
+        if not dry:
+            # Refuse an overflowing later group before writing the first one.
+            for _, group in groups:
+                _validate_integer_parameters(group)
         for absent, group in groups:
             if absent:
                 upsert = rel_absent_upsert_clause(

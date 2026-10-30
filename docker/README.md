@@ -158,6 +158,22 @@ config = PostgresConfig.from_docker_env()
 
 FalkorDB is a Redis-based graph database that supports OpenCypher.
 
+The default image is `falkordb/falkordb:v4.22.3` (the C engine). The connector
+suite is also tested locally against `falkordb/falkordb:6.0.3` (the Rust engine).
+To test either release, set `IMAGE_VERSION` in `docker/falkordb/.env`, start the
+service and run `uv run pytest test/db/falkordbs`. Use a separate data volume for
+each engine.
+
+On 6.0.3, large write batches can be much slower than smaller ones even with
+indexes. For ingestion, start with `--batch-size 1000` (the default is 10000)
+and measure your workload.
+
+Integer query parameters must fit in the signed 64-bit range; larger integers
+raise `OverflowError` before a query is sent. The Rust engine also refuses
+subnormal floating-point parameters, such as `1e-308`, which the C engine
+accepts. Server parameter-parsing failures raise `ValueError`; other query
+errors retain their driver exception.
+
 **Programmatic Connection:**
 ```python
 from graflo.connections import FalkordbConfig
