@@ -123,6 +123,8 @@ Types are optional on every target. ArangoDB, Neo4j, Memgraph, FalkorDB and
 the file backend store each value as it arrives. TigerGraph and NebulaGraph
 declare a typed attribute per property and use `STRING` for an untyped one.
 PostgreSQL stores every scalar property as `TEXT` and a `LIST` as an array.
+[Choosing a backend](../backends.md) sets this beside the other backend
+features.
 
 Rules for `LIST`, each checked when the schema loads:
 

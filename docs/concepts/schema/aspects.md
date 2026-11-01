@@ -227,8 +227,8 @@ engine.ingest(manifest=manifest, target_db_config=conn_conf, ingestion_params=pa
 
 What a zone is and which zones a reader opens are not part of the graph; your
 service decides both. Combine several conditions with `conjoin()`. Guards and
-`union` labels are supported on Neo4j and the file backend; other backends
-refuse them. The guard
+`union` labels are supported on Neo4j, FalkorDB and the file backend; other
+backends refuse them. The guard
 names the field as stored, so do not rename `access_zones` in `db_profile`. A
 reserved field cannot be part of an identity.
 

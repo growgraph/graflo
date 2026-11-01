@@ -47,6 +47,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `support(candidate) -> accept | propose`.
 - **Ontology 1.10.0** also declares `gf:FieldMatch`, `gf:fieldMatch`, `gf:matchNormalizer`,
   `gf:matchSplit`, `gf:matchOrder`, `gf:matchExclusive`, `gf:derivedSource` and `gf:derivedForm`.
+- **Choosing a backend** (docs): one page of what GraFlo does on each backend, and what each
+  server's free edition allows.
 
 ### Changed
 
@@ -62,6 +64,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `targets`, as an alias hit does.
 - **`writable=`** (`resolve_records`, `write_record_graphs`) maps each vertex type to its filter; a
   guarded type the mapping leaves out is link-only when found.
+- **`resolve_records`** under a guard: a stated key of a type whose guarded fields merge by union
+  joins an entity the guard hides, instead of staging as `hidden`.
 
 - IRIs in `semantics`, parents, `base_iri` and `namespaces` must be absolute: a non-IRI or a
   prefixed name (`foaf:Agent`, or one using a declared prefix) is refused. A local vertex or edge

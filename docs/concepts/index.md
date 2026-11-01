@@ -130,16 +130,16 @@ a sample of its records lets GraFlo propose identities; see
 ## What GraFlo writes
 
 Every target accepts a manifest ingest and can receive a whole graph moved
-from another database. The file backend keeps a graph on disk as chunked,
-compressed JSON Lines files plus the schema, which is useful for exports and
-for moving a graph between databases.
+from another database. The file backend is a dump, not a database: it keeps a
+graph on disk as chunked, compressed JSON Lines files plus the schema, for
+exports and for moving a graph between databases.
 
 | Target | Stores vertex and edge types as | Can be read back whole |
 |---|---|---|
 | ArangoDB | document and edge collections | yes |
 | Neo4j | labels and relationship types | yes |
 | Memgraph | labels and relationship types | no |
-| FalkorDB | labels and relationship types | no |
+| FalkorDB | labels and relationship types | yes |
 | TigerGraph | vertex and edge types, with native undirected edges and reverse edges | no |
 | NebulaGraph | tags and edge types | no |
 | PostgreSQL | one table per vertex type and one table per edge type | yes |
@@ -152,6 +152,8 @@ A target that can be read back whole is a graph source:
 GraFlo can read the schema of all eight targets. Keep a copy in the file
 backend of a graph you may need to move out of a target that cannot be read
 back. See [graph export and migration](operations/graph_export_migration.md).
+To compare the targets feature by feature, see
+[Choosing a backend](backends.md).
 
 Properties may carry a type: `INT`, `UINT`, `FLOAT`, `DOUBLE`, `BOOL`,
 `STRING`, `DATETIME`, `UUID`, and `LIST` of one of those. Types are optional
@@ -162,6 +164,8 @@ schema. See [supported field types](architecture/core_components.md#supported-fi
 
 The pages are grouped as in the navigation. The [glossary](glossary.md) gives
 each term one short definition and links to the page that explains it.
+[Choosing a backend](backends.md) answers: which database should I use, and
+what does GraFlo do on each one?
 
 ### Architecture
 

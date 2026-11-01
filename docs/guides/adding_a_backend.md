@@ -180,9 +180,11 @@ suites.
 
 ### 5. Document it
 
-Add the backend to the lists in `README.md` and `docs/index.md`, describe its
-index behavior in `docs/concepts/schema/backend_indexes.md`, and write down
-what the backend cannot do. A documented limit is part of what the backend
+Add the backend to the lists in `README.md` and `docs/index.md`, add its rows to
+`docs/concepts/backends.md` (`test/docs/test_backend_matrix.py` checks them
+against the code), describe its index behavior in
+`docs/concepts/schema/backend_indexes.md`, and write down what the backend
+cannot do. A documented limit is part of what the backend
 promises; an undocumented one will be reported as a bug.
 
 ## What you should see

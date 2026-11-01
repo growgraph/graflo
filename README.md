@@ -29,8 +29,8 @@ description in one reviewable file rather than spread across load scripts.
   kind of record becomes vertices and edges. The same manifest loads into
   ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph, PostgreSQL or
   the file backend, and records with the same identity become one vertex.
-  GraFlo also copies an existing graph from Neo4j, ArangoDB or PostgreSQL into
-  another database (`GraphEngine.migrate_graph`).
+  GraFlo also copies an existing graph from Neo4j, ArangoDB, FalkorDB or
+  PostgreSQL into another database (`GraphEngine.migrate_graph`).
 - **Change the description over time, with a recorded history.** Renaming a
   type, combining two types or changing a property type is a typed operation.
   Operations are recorded as commits (`graflo commit`, `log`, `checkout`,

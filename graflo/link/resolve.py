@@ -211,9 +211,11 @@ def resolve_records(
             without read guards. A stated key of a type that is not
             connector-owned is then checked against the graph as well: an entity
             that exists but the guard hides stages the record as ``hidden``
-            (an existence check only; nothing from it is returned). The guard
-            applies only to vertex types that declare every field it names;
-            other types are looked up unguarded.
+            (an existence check only; nothing from it is returned), unless
+            every field the guard names merges by union on its type: the write
+            then adds its own value and so joins the entity. The guard applies
+            only to vertex types that declare every field it names; other types
+            are looked up unguarded.
         writable: With a guard, the entities a write may change, one filter
             per vertex type: an entity found in the graph that the guard shows
             but its type's filter does not is resolved ``link_only`` -- an edge
@@ -234,6 +236,11 @@ def resolve_records(
             return False
         names = {f.name for f in batch.vertex_config[vertex_type].properties}
         return guarded_fields <= names
+
+    def joins(vertex_type: str) -> bool:
+        """Whether a write to *vertex_type* adds its value to every guarded field."""
+        fields = batch.vertex_config[vertex_type].properties
+        return all(f.merge == "union" for f in fields if f.name in guarded_fields)
 
     for key in batch.order:
         batch.contract(batch.records[key].type)  # unknown types fail first
@@ -280,16 +287,21 @@ def resolve_records(
                 batch.staged[key] = ("owned_unmatched", 0)
 
     # Under a guard, a stated key may name an entity the guard hides: that
-    # record stages rather than writing onto, or linking to, what it cannot see.
+    # record stages rather than writing onto, or linking to, what it cannot see,
+    # unless its write joins the entity (see ``joins``).
     if guarded_keyed:
         seen = batch.identify(guarded_keyed, db=db, guard=guard)
-        unseen = [k for k in guarded_keyed if not seen[k].found]
+        unseen = [
+            k
+            for k in guarded_keyed
+            if not seen[k].found and not joins(batch.records[k].type)
+        ]
         exists = batch.identify(unseen, db=db) if unseen else {}
         for key in guarded_keyed:
             identity = dict(seen[key].identity or {})
             if seen[key].found:
                 batch.resolve(key, identity, by="key", found_in="graph")
-            elif exists[key].found:
+            elif key in exists and exists[key].found:
                 batch.staged[key] = ("hidden", 0)
             else:
                 batch.resolve(key, identity, by="key")

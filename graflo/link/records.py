@@ -158,7 +158,8 @@ class StagedRecord(ConfigBaseModel):
             "``owned_unmatched``: a connector-owned entity the graph does not "
             "hold yet. ``keyless_reference``: a keyless type the record only "
             "references. ``hidden``: its key names an entity the resolution's "
-            "guard hides, so it is neither written nor linked."
+            "guard hides, and its write would not add to the guarded fields, so "
+            "it is neither written nor linked."
         )
     )
     matches: int = Field(default=0, description="Entities a lookup found.")

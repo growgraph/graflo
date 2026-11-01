@@ -2,10 +2,11 @@
 
 Which database, graph or space will your data be written to, and who creates
 it? This guide answers both. It shows how GraFlo chooses the name of the
-[namespace](../concepts/glossary.md#namespace) (the ArangoDB or Neo4j
-database, the TigerGraph graph, the NebulaGraph space), how to pin that name,
-and how to run GraFlo against a namespace that an administrator created, with
-no right to create databases yourself.
+[namespace](../concepts/glossary.md#namespace) (the ArangoDB database, the
+TigerGraph graph, the NebulaGraph space), how to pin that name, and how to run
+GraFlo against a namespace that an administrator created, with no right to
+create databases yourself. On Neo4j and Memgraph the name does not decide where
+the data goes; see [Neo4j and Memgraph](#neo4j-and-memgraph).
 
 ## What you need
 
@@ -55,7 +56,7 @@ from graflo import DBType, GraphManifest
 
 manifest = GraphManifest.from_config(FileHandle.load("manifest.yaml"))
 manifest.finish_init()
-print(manifest.require_schema().effective_namespace(DBType.NEO4J))
+print(manifest.require_schema().effective_namespace(DBType.ARANGO))
 ```
 
 On PostgreSQL the namespace is the SQL schema named by the config's
@@ -90,10 +91,10 @@ defines the vertex and edge types in it:
 
 ```python
 from graflo import DBType, GraphEngine
-from graflo.connections import Neo4jConfig
+from graflo.connections import ArangoConfig
 
-engine = GraphEngine(target_db_flavor=DBType.NEO4J)
-target = Neo4jConfig.from_env()
+engine = GraphEngine(target_db_flavor=DBType.ARANGO)
+target = ArangoConfig.from_env()
 
 engine.define_schema(manifest, target)  # create_namespace=True
 engine.ingest(manifest, target)
@@ -137,6 +138,30 @@ manifest. These errors tell you that something does not match:
 
 An empty namespace, such as a TigerGraph graph with no types, is not an
 existing schema: GraFlo defines the types in it.
+
+## Neo4j and Memgraph
+
+GraFlo connects to the server's default database and never selects another, so
+one server holds one schema, on every edition.
+
+- On Neo4j Enterprise, `define_schema` creates a database under the name from
+  step 1 when it is missing, but the graph is still written to the default
+  database.
+- On Neo4j Community, which has one database for your data, `define_schema` logs
+  that it cannot create one and carries on.
+- On Memgraph, the name is only recorded.
+
+What this means when two manifests share a server:
+
+- `define_schema` raises `SchemaExistsError` as soon as the server holds any
+  node, whichever manifest wrote it.
+- `recreate_schema=True` deletes every node on the server, and its uniqueness
+  constraints; on Neo4j, every other index as well.
+- `clear_data=True` deletes only the nodes with the manifest's labels.
+
+To keep two graphs apart, run one server for each. FalkorDB, ArangoDB,
+TigerGraph, NebulaGraph and PostgreSQL keep several graphs on one server under
+their own names.
 
 ## TigerGraph
 

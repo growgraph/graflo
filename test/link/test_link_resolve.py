@@ -281,12 +281,18 @@ def test_write_record_graphs_resolves_then_writes(schema, tmp_path):
         assert len(db.fetch_all_edges("Customer", "Ticket", "RAISED")) == 1
 
 
-def _zoned_schema() -> Schema:
+def _zoned_schema(merge: str = "replace") -> Schema:
     lifted: dict[str, Any] = copy.deepcopy(SCHEMA)
     ticket = lifted["core_schema"]["vertex_config"]["vertices"][1]
     ticket["properties"] = [
         *ticket["properties"],
-        {"name": "access_zones", "type": "LIST", "item_type": "INT", "reserved": True},
+        {
+            "name": "access_zones",
+            "type": "LIST",
+            "item_type": "INT",
+            "reserved": True,
+            "merge": merge,
+        },
     ]
     return Schema.model_validate(lifted)
 
@@ -338,10 +344,10 @@ def test_the_guard_reaches_every_lookup(schema, tmp_path, monkeypatch, guarded_b
     assert seen == [("Ticket", guard), ("Ticket", None), ("Customer", None)]
 
 
-def _zoned_ticket(conf, number, zones):
+def _zoned_ticket(conf, number, zones, merge="replace"):
     asyncio.run(
         write_container(
-            _zoned_schema(),
+            _zoned_schema(merge),
             GraphContainer(vertices={"Ticket": [{"number": number}]}),
             conf,
             stamp={"access_zones": zones},
@@ -384,6 +390,35 @@ def test_a_stated_key_of_a_hidden_entity_stages_as_hidden(tmp_path, guarded_back
     assert _reasons(resolution) == {("chat-1", "t"): "hidden"}
     assert [r.waiting_on for r in resolution.staged.relations] == [["t"]]
     assert "Ticket" not in promote(_zoned_schema(), resolution).vertices
+
+
+def test_a_stated_key_joins_a_hidden_entity_whose_guard_field_merges_by_union(
+    tmp_path, guarded_backend
+):
+    conf = GraFloBackendConfig(output_dir=tmp_path)
+    _zoned_ticket(conf, "HD-9", [2], merge="union")
+    schema = _zoned_schema("union")
+    graph = _g("doc-1", [_m("t", "Ticket", number="HD-9")])
+    guard = _opens(1)
+
+    with ConnectionManager(connection_config=conf) as db:
+        resolution = resolve_records(schema, [graph], db=db, guard=guard)
+    assert not resolution.staged.records
+    assert [item.found_in for item in resolution.resolved] == [None]
+
+    asyncio.run(
+        write_record_graphs(
+            schema,
+            [graph],
+            conf,
+            stamp={"access_zones": [1]},
+            guard=guard,
+            writable={"Ticket": guard},
+        )
+    )
+    with ConnectionManager(connection_config=conf) as db:
+        rows = db.fetch_docs("Ticket", filters=None, limit=10)
+    assert [sorted(row["access_zones"]) for row in rows] == [[1, 2]]
 
 
 def test_a_stated_key_the_guard_shows_or_nobody_holds_resolves(

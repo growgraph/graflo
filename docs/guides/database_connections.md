@@ -10,7 +10,8 @@ that you can point any script or example at your own database.
 
 - GraFlo installed (`pip install graflo`).
 - The address and credentials of a running database, or a directory for the
-  file backend.
+  file backend. To decide which database, see
+  [Choosing a backend](../concepts/backends.md).
 
 ## Steps
 
@@ -31,8 +32,9 @@ Every class is imported from `graflo.connections`.
 
 If you leave the field that names the graph empty, GraFlo uses the manifest's
 `schema.metadata.name`, adjusted to the characters the database accepts; see
-[Graph namespace and schema](graph_namespace_and_schema.md). PostgreSQL is
-different: `database` must name a database that exists, and GraFlo creates the
+[Graph namespace and schema](graph_namespace_and_schema.md). On Neo4j and
+Memgraph, GraFlo always uses the server's default database, so the field does
+not select one. PostgreSQL is different: `database` must name a database that exists, and GraFlo creates the
 tables in the schema `schema_name`, `public` when it is not set. It needs
 PostgreSQL 15 or later, for the unique key on each edge table. An edge table
 created by an earlier version gains that key at schema definition or on its

@@ -47,18 +47,19 @@ and not every backend has both.
 |---|---|---|---|
 | ArangoDB | yes | yes | yes |
 | Neo4j | yes | yes | yes |
+| FalkorDB | yes | yes | yes |
 | PostgreSQL | yes | yes, in the table layout GraFlo writes | yes, as tables |
 | GraFlo file backend | yes | yes | yes |
 | TigerGraph | yes | no | yes |
-| FalkorDB | yes | no | yes |
 | Memgraph | yes | no | yes |
 | NebulaGraph | yes | no | yes |
 
 `infer_schema_from_graph` works on every row. `export_graph` and
 `migrate_graph` need a source that can be read as a graph, so a source in the
-last four rows raises `ValueError` before anything is read. To move a graph
+last three rows raises `ValueError` before anything is read. To move a graph
 out of one of those, build a file backend from the data it was built from
-(see [the file backend](#the-file-backend)) and migrate from there.
+(see [the file backend](#the-file-backend)) and migrate from there. For what
+else each backend supports, see [Choosing a backend](../backends.md).
 
 PostgreSQL is a graph source only when its tables have the layout GraFlo
 writes to a PostgreSQL target (described [below](#what-a-migration-does)).
@@ -72,7 +73,7 @@ from graflo.db.conn import ConnectionCapability
 from graflo.db.manager import ConnectionManager
 
 ConnectionManager.graph_export_flavors()
-# [DBType.ARANGO, DBType.NEO4J, DBType.POSTGRES, DBType.GRAFLO_BACKEND]
+# [DBType.ARANGO, DBType.NEO4J, DBType.FALKORDB, DBType.POSTGRES, DBType.GRAFLO_BACKEND]
 ConnectionManager.flavors_supporting(ConnectionCapability.SCHEMA_INTROSPECTION)
 # all eight
 ```
@@ -81,8 +82,8 @@ ConnectionManager.flavors_supporting(ConnectionCapability.SCHEMA_INTROSPECTION)
 
 `migrate_graph(source, target)` runs these steps in order:
 
-1. Opens one connection to the source and reads its schema. Neo4j and
-   ArangoDB have no schema catalog, so the schema is recovered by sampling
+1. Opens one connection to the source and reads its schema. Neo4j, FalkorDB
+   and ArangoDB have no schema catalog, so the schema is recovered by sampling
    `sample_limit` records per type (default 100); a property that appears in
    none of the sampled records is missed. PostgreSQL reads its catalog and the
    file backend reads its `schema.yaml`; neither samples.
@@ -113,10 +114,11 @@ because they address a vertex by one value.
 
 ## The file backend
 
-The file backend is a directory that holds one graph: its schema and its data
-in compressed chunks. It appears in the backend table above like any database,
-so it can be the target of a migration or an ingest, and the source of another
-migration. It needs no database server.
+The file backend is a directory that holds a dump of one graph: its schema and
+its data in compressed chunks. It can be the target of a migration or an ingest,
+and the source of another migration, and it needs no database server. It is not
+a database to serve a graph from: it has no index and no query language, and
+every read scans the records it reads.
 
 ```text
 artifacts/plant-graph/
@@ -185,8 +187,8 @@ names of its `schema.yaml`.
   reading and writing. `data_limit` bounds a trial run; there is no streaming
   move. The file backend writes chunks as it goes, but the read side still
   reads all records first.
-- Only ArangoDB, Neo4j, PostgreSQL and the file backend can be read as a
-  graph.
+- Only ArangoDB, Neo4j, FalkorDB, PostgreSQL and the file backend can be read
+  as a graph.
 - A sampled schema is a lower bound: it lists what the sample showed. Raise
   `sample_limit` when types have rare properties, or check the result of
   `infer_schema_from_graph` before you migrate.

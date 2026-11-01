@@ -126,7 +126,7 @@ The `db_profile` block of the schema: what the target database needs and the log
 
 ### namespace
 
-The database, graph or space a schema is deployed into: an ArangoDB or Neo4j database, a TigerGraph graph, a NebulaGraph space. It is, in this order, an explicit override from the call or the connection config, `db_profile.target_namespace`, or `schema.metadata.name` rewritten to what the database accepts. See [Graph namespace and schema](../guides/graph_namespace_and_schema.md).
+The database, graph or space a schema is deployed into: an ArangoDB database, a TigerGraph graph, a NebulaGraph space. It is, in this order, an explicit override from the call or the connection config, `db_profile.target_namespace`, or `schema.metadata.name` rewritten to what the database accepts. On Neo4j and Memgraph the name does not select a database: GraFlo uses the server's default one. See [Graph namespace and schema](../guides/graph_namespace_and_schema.md).
 
 ## Ingestion
 
@@ -259,11 +259,11 @@ The database the graph is written to, chosen when you run ingestion by the conne
 
 ### file backend
 
-A target backend that is a directory instead of a database: `schema.yaml`, `INDEX.json`, and gzip JSON Lines chunks under `vertices/` and `edges/`, configured with `GraFloBackendConfig`. It appends every record it receives and does not upsert, so loading the same records twice without recreating the schema stores them twice. See [Graph export and migration](operations/graph_export_migration.md).
+A target backend that is a directory instead of a database: `schema.yaml`, `INDEX.json`, and gzip JSON Lines chunks under `vertices/` and `edges/`, configured with `GraFloBackendConfig`. It is for dumping a graph, not for serving one. It appends every record it receives and does not upsert, so loading the same records twice without recreating the schema stores them twice. See [Graph export and migration](operations/graph_export_migration.md).
 
 ### graph migration
 
-Copying a whole graph, schema and data, from one database to another with `GraphEngine.migrate_graph()`, without a manifest. The source can be Neo4j, ArangoDB, PostgreSQL or the file backend, and the target any of the eight target backends. See [Graph export and migration](operations/graph_export_migration.md).
+Copying a whole graph, schema and data, from one database to another with `GraphEngine.migrate_graph()`, without a manifest. The source can be Neo4j, ArangoDB, FalkorDB, PostgreSQL or the file backend, and the target any of the eight target backends. See [Graph export and migration](operations/graph_export_migration.md).
 
 ## Evolution
 

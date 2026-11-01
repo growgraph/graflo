@@ -82,6 +82,7 @@ nav:
 -   Concepts:
     -   Overview: concepts/index.md
     -   Glossary: concepts/glossary.md
+    -   Choosing a backend: concepts/backends.md
     -   Architecture:
         -   Diagrams: concepts/architecture/diagrams.md
         -   Core components: concepts/architecture/core_components.md

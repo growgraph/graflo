@@ -66,8 +66,8 @@ class GraFloBackendConnection(Connection):
     Writes append; reads fold the appended records by identity
     (:mod:`~graflo.architecture.backend.fold`), so an upsert behaves as on a
     database, ``merge: union`` fields included. Every read therefore scans the
-    whole collection it reads, whatever its ``limit``: this backend suits
-    exports, tests and small graphs, not large ones.
+    whole collection it reads, whatever its ``limit``: this backend holds dumps
+    and serves tests; it is not a database to serve a graph from.
     """
 
     flavor = DBType.GRAFLO_BACKEND
