@@ -85,6 +85,7 @@ Two types and two edges:
 |---|---|---|
 | `<Type> -wasDerivedFrom-> SourceRecord` | — | `prov:wasDerivedFrom` |
 | `SourceRecord -wasAttributedTo-> Agent` | `role` | `prov:wasAttributedTo` |
+| `SourceRecord -mentions-> <Type>` | — | `schema:mentions` |
 
 A `SourceRecord` is the record a fact was read from: a document, a message, an
 API response, a table row. It holds the record's **address and content hash,
@@ -100,6 +101,11 @@ Which types gain `wasDerivedFrom`:
 
 `SourceRecord -wasAttributedTo-> Agent` is added even when nothing else is, so
 the schema can always say who produced a record.
+
+`mentions` says a record names an entity, for the types in the spec's
+`mentions_for`. It answers "which records name this?" in one hop for any type,
+including one whose facts come from elsewhere, such as a ticket named in a
+message.
 
 A source kit can declare its own `SourceRecord` with only the properties it
 fills, plus its own. The lift adds the rest of the table to it, as for any
@@ -249,6 +255,7 @@ The spec declares that. The `state` and `access` aspects require one;
 | `measured` | state | units of existing properties: `{Machine.operating_temp: Cel}` (UCUM; currency as ISO 4217, `USD`) |
 | `retire` | state | `move` (default) or `keep` the properties named in `stateful` |
 | `provenance_for` | provenance | the types that gain `wasDerivedFrom` |
+| `mentions_for` | provenance | the types `SourceRecord` gains `mentions` to |
 | `provenance` | provenance | `false` leaves the aspect out, like not naming it |
 | `access_for` | access | per vertex type, the merge mode of its zones: `{Ticket: replace, Product: union}` |
 | `access_edges` | access | per edge relation, the merge mode of its zones: `{about: union}` |

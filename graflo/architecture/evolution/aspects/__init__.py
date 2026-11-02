@@ -96,8 +96,8 @@ def plan_lift(
         manifest: the manifest to lift, already ``finish_init()``-ed.
         spec: the semantic declarations a planner cannot infer. Required by the
             ``state`` and ``access`` aspects; the ``provenance`` aspect reads
-            only ``provenance_for`` and ``provenance`` from it, the ``access``
-            aspect only ``access_for`` and ``access_edges``.
+            only ``provenance_for``, ``mentions_for`` and ``provenance`` from it,
+            the ``access`` aspect only ``access_for`` and ``access_edges``.
         aspects: which aspects to lift, by name. The ``state`` aspect's
             scaffolds are attached to ``SourceRecord`` when both are named.
         authored: the manifest as written, when available; see
@@ -141,16 +141,22 @@ def plan_lift(
             if schema is not None
             else set()
         )
-        unknown = sorted(set(spec.provenance_for) - existing)
-        if unknown:
-            raise LiftError(
-                f"provenance_for names types the manifest does not have: {unknown}"
-            )
+        for field, names in (
+            ("provenance_for", spec.provenance_for),
+            ("mentions_for", spec.mentions_for),
+        ):
+            unknown = sorted(set(names) - existing)
+            if unknown:
+                raise LiftError(
+                    f"{field} names types the manifest does not have: {unknown}"
+                )
         attach = [
             *sorted(spec.provenance_for),
             *(state.scaffolded if state is not None else []),
         ]
-        _then(plan_provenance(lifted, attach=attach))
+        _then(
+            plan_provenance(lifted, attach=attach, mentions=sorted(spec.mentions_for))
+        )
 
     if ACCESS in chosen:
         _then(plan_access(lifted, vertices=spec.access_for, edges=spec.access_edges))

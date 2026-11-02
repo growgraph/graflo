@@ -5,6 +5,7 @@ stay pure JSON, connector provenance survives, and nesting is described by path
 rather than flattened away at the boundary.
 """
 
+import gzip
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
@@ -523,3 +524,27 @@ def test_a_push_connector_cannot_be_sampled() -> None:
         ResourceSampler().sample_connector(
             PushConnector(kind="push", name="groundings"), resource_name="provenance"
         )
+
+
+def test_a_file_connector_declares_the_format_a_name_does_not_show(
+    sampler: ResourceSampler, tmp_path: Path
+) -> None:
+    from graflo.architecture.contract.bindings import FileConnector
+
+    chunk = tmp_path / "a" / "chunk_0.gz"
+    chunk.parent.mkdir()
+    chunk.write_bytes(gzip.compress(b'{"id": "e1"}\n'))
+
+    sample = sampler.sample_connector(
+        FileConnector(
+            regex=r"^chunk_\d+\.gz$",
+            sub_path=tmp_path,
+            recursive=True,
+            file_type="jsonl",
+            name="events_c",
+        ),
+        resource_name="events",
+    )
+
+    assert sample.connector == "events_c"
+    assert sample.docs == [{"id": "e1"}]

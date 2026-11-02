@@ -181,10 +181,16 @@ def test_in_batch_fusion_keeps_every_member_of_a_union_field() -> None:
 
 
 class _Execute:
+    """Stands in for a connection whose session runs a managed write transaction."""
+
     def __init__(self) -> None:
         self.sent: list[tuple[str, dict[str, Any]]] = []
+        self.conn = self
 
-    def execute(self, query: str, **params: Any) -> Any:
+    def execute_write(self, work: Any) -> Any:
+        return work(self)
+
+    def run(self, query: str, **params: Any) -> Any:
         self.sent.append((query, params))
         return type("R", (), {"consume": lambda self: None})()
 

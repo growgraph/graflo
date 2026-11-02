@@ -110,6 +110,13 @@ class LiftSpec(ConfigBaseModel):
             "observation scaffolds get one regardless."
         ),
     )
+    mentions_for: list[str] = PydanticField(
+        default_factory=list,
+        description=(
+            "Existing types a source record can name: ``SourceRecord`` gains a "
+            "``mentions`` edge to each."
+        ),
+    )
     access_for: dict[str, FieldMerge] = PydanticField(
         default_factory=dict,
         description=(

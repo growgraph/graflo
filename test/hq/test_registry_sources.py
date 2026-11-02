@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gzip
 import logging
 import pathlib
 from collections.abc import Callable
@@ -369,3 +370,92 @@ class TestPushedRecords:
     def test_nothing_pushed_fails_a_strict_build(self) -> None:
         with pytest.raises(ValueError, match="nothing was pushed"):
             self._rows(self._bindings(), {}, strict=True)
+
+
+class TestNestedFiles:
+    """A tree of directories whose files carry no format in their names."""
+
+    @staticmethod
+    def _chunk(path: pathlib.Path, *ids: str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        lines = "".join(f'{{"id": "{id_}"}}\n' for id_ in ids)
+        path.write_bytes(gzip.compress(lines.encode()))
+
+    @pytest.fixture
+    def tree(self, tmp_path: pathlib.Path) -> pathlib.Path:
+        self._chunk(tmp_path / "b" / "chunk_1.gz", "e3")
+        self._chunk(tmp_path / "b" / "chunk_0.gz", "e2")
+        self._chunk(tmp_path / "a" / "chunk_0.gz", "e1")
+        (tmp_path / "notes.json").write_text("{}")
+        (tmp_path / "other.csv.gz").write_bytes(gzip.compress(b"id\n"))
+        return tmp_path
+
+    @staticmethod
+    def _rows(connector: FileConnector, limit_files: int | None = None) -> list[dict]:
+        bindings = Bindings(
+            connectors=[connector.model_copy(update={"resource_name": "events"})]
+        )
+        registry = RegistryBuilder(_schema(), _ingestion_model()).build(
+            bindings, IngestionParams(limit_files=limit_files), strict=True
+        )
+        return [
+            row
+            for source in registry.get_data_sources("events")
+            for batch in source.iter_batches()
+            for row in batch
+        ]
+
+    def test_reads_every_directory_in_path_order(self, tree: pathlib.Path) -> None:
+        rows = self._rows(
+            FileConnector(
+                regex=r"^chunk_\d+\.gz$",
+                sub_path=tree,
+                recursive=True,
+                file_type="jsonl",
+            )
+        )
+        assert rows == [{"id": "e1"}, {"id": "e2"}, {"id": "e3"}]
+
+    def test_the_file_limit_takes_the_first_paths(self, tree: pathlib.Path) -> None:
+        rows = self._rows(
+            FileConnector(
+                regex=r"^chunk_\d+\.gz$",
+                sub_path=tree,
+                recursive=True,
+                file_type="jsonl",
+            ),
+            limit_files=1,
+        )
+        assert rows == [{"id": "e1"}]
+
+    def test_stays_in_the_directory_unless_recursive(self, tree: pathlib.Path) -> None:
+        connector = FileConnector(regex=r"^chunk_\d+\.gz$", sub_path=tree)
+        assert RegistryBuilder.discover_files(tree, connector=connector) == []
+
+    def test_a_declared_type_is_needed_for_a_name_with_no_format(
+        self, tree: pathlib.Path
+    ) -> None:
+        connector = FileConnector(
+            regex=r"^chunk_\d+\.gz$", sub_path=tree, recursive=True
+        )
+        with pytest.raises(ValueError, match="Registry build failed in strict mode"):
+            self._rows(connector)
+
+    def test_an_unknown_file_type_is_refused(self, tree: pathlib.Path) -> None:
+        with pytest.raises(ValueError, match="file_type"):
+            FileConnector(sub_path=tree, file_type="xml")  # ty: ignore[invalid-argument-type]
+
+    def test_recursive_and_file_type_move_the_hash_only_when_set(
+        self, tree: pathlib.Path
+    ) -> None:
+        plain = FileConnector(regex="^a", sub_path=tree)
+        assert (
+            FileConnector(regex="^a", sub_path=tree, recursive=False).hash == plain.hash
+        )
+        assert (
+            FileConnector(regex="^a", sub_path=tree, recursive=True).hash != plain.hash
+        )
+        assert (
+            FileConnector(regex="^a", sub_path=tree, file_type="jsonl").hash
+            != plain.hash
+        )

@@ -108,7 +108,7 @@ by name, so the same resource can read a file today and a table tomorrow.
 
 | Connector | Reads | Manifest inferred from the source | Page |
 |---|---|---|---|
-| `FileConnector` | CSV, TSV, JSON, JSON Lines and Parquet files whose names match a regex under a directory | no | [Ingest CSV files](../examples/csv-two-resources/index.md) (1) |
+| `FileConnector` | CSV, TSV, JSON, JSON Lines and Parquet files whose names match a regex under a directory; `recursive: true` also searches its subdirectories, in path order, and `file_type` names the format when a file name does not show it | no | [Ingest CSV files](../examples/csv-two-resources/index.md) (1) |
 | `TableConnector` | one SQL table, optionally filtered or joined into a view | yes, from primary and foreign keys | [Table filters and views](connectors/table_views.md) |
 | `SparqlConnector` | the instances of one RDF class, from an RDF file (Turtle, RDF/XML, N-Triples, N3, JSON-LD and others) or a SPARQL endpoint | yes, from an OWL or RDFS ontology | [A graph from an ontology and RDF data](../examples/infer-from-rdf/index.md) (10) |
 | `APIConnector` | a REST endpoint, with offset, page or cursor pagination | no | [API connector](connectors/api_connector.md) |

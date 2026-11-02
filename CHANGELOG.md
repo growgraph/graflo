@@ -5,10 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.25.0]
+
+### Fixed
+
+- A `key` or `any_key` step that reaches a null now writes nothing; with a transform inside it
+  used to fail the whole record.
+- Neo4j vertex upserts run in a managed transaction, so a deadlock with a concurrent write is
+  retried instead of stopping the ingest.
 
 ### Added
 
+- **`FileConnector.recursive`** searches the directories under `sub_path`, and
+  **`FileConnector.file_type`** names the format of files whose names don't show it. Matched
+  files are now always read in path order.
 - **Vocabulary layer.** `semantics` gains `label` (`rdfs:label`), `close_match`
   (`skos:closeMatch`) and `broader` (`skos:broader`); schema metadata gains `base_iri`, the
   namespace the schema mints IRIs in, and `namespaces`, its vocabulary prefixes.
@@ -23,9 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keeps.
 - **`set_vertex_subclass_of`** and **`set_edge_subproperty_of`** ops, emitted by
   `diff_manifests` and reversible.
-- **Ontology 1.10.0**: `gf:subclassOf`, `gf:subpropertyOf`, `gf:baseIri`, `gf:NamespaceBinding` (`gf:hasNamespace`,
-  `gf:namespacePrefix`, `gf:namespaceIri`), and `rdfs:label`, `skos:closeMatch`, `skos:broader`
-  on grounded elements.
+- **Ontology 1.10.0**: `gf:subclassOf`, `gf:subpropertyOf`, `gf:baseIri`, `gf:NamespaceBinding`
+  (`gf:hasNamespace`, `gf:namespacePrefix`, `gf:namespaceIri`), `gf:FieldMatch`, `gf:fieldMatch`,
+  `gf:matchNormalizer`, `gf:matchSplit`, `gf:matchOrder`, `gf:matchExclusive`, `gf:derivedSource`
+  and `gf:derivedForm`; `rdfs:label`, `skos:closeMatch` and `skos:broader` on grounded elements.
 - **`notation_fields(vertex)`** and `NOTATION_IRIS` (`graflo.hq.lookup`): the fields grounded as
   a vertex's short code (`skos:notation`, `dcterms:identifier`, `schema:identifier`), beside
   `label_fields`.
@@ -45,8 +56,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`graflo.link`**: lane `context` (neighbours one hop from entities a source resolved by key or
   the `subjects` passed to `gather_candidates`), `EntityCandidate.support` and
   `support(candidate) -> accept | propose`.
-- **Ontology 1.10.0** also declares `gf:FieldMatch`, `gf:fieldMatch`, `gf:matchNormalizer`,
-  `gf:matchSplit`, `gf:matchOrder`, `gf:matchExclusive`, `gf:derivedSource` and `gf:derivedForm`.
+- **Provenance aspect**: `LiftSpec.mentions_for` adds `SourceRecord -mentions-> <Type>`
+  (`schema:mentions`), for the records that name an entity.
 - **Choosing a backend** (docs): one page of what GraFlo does on each backend, and what each
   server's free edition allows.
 
@@ -66,7 +77,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   guarded type the mapping leaves out is link-only when found.
 - **`resolve_records`** under a guard: a stated key of a type whose guarded fields merge by union
   joins an entity the guard hides, instead of staging as `hidden`.
-
 - IRIs in `semantics`, parents, `base_iri` and `namespaces` must be absolute: a non-IRI or a
   prefixed name (`foaf:Agent`, or one using a declared prefix) is refused. A local vertex or edge
   named by IRI as a parent is refused too; write the local reference.

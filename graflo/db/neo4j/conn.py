@@ -623,9 +623,13 @@ class Neo4jConnection(Connection):
         """
             params = {"batch": docs}
         if not dry:
-            # Consumed so the write has committed, and raised any error, before
-            # the call returns; ``run`` alone returns before the commit.
-            self.execute(q, **params).consume()
+            # A managed write transaction, as for edges: a deadlock with a concurrent
+            # write is a transient error the driver retries, and a MERGE is safe to
+            # repeat. It has committed, or raised, before the call returns.
+            query = cast(LiteralString, q)
+            self.conn.execute_write(
+                lambda tx, query=query, params=params: tx.run(query, **params).consume()
+            )
 
     def insert_edges_batch(
         self,

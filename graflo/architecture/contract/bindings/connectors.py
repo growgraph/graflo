@@ -153,6 +153,10 @@ class FileConnector(ResourceConnector):
     Attributes:
         regex: Regular expression pattern for matching filenames
         sub_path: Path to search for matching files (default: "./")
+        recursive: Also search the directories under ``sub_path``. ``regex``
+            still matches the file's name, not its path.
+        file_type: Format of the matched files, for names that do not show it.
+            Left unset, the format comes from the extension.
         time_filter: Refused when set. A file is read whole, so a window
             declared here would not be applied; filter the rows in a pipeline
             step, or bind a :class:`TableConnector`.
@@ -160,7 +164,19 @@ class FileConnector(ResourceConnector):
 
     regex: str | None = None
     sub_path: pathlib.Path = Field(default_factory=lambda: pathlib.Path("./"))
+    recursive: bool = False
+    file_type: Literal["json", "jsonl", "table", "parquet"] | None = None
     time_filter: ColumnTimeFilter | None = None
+
+    def _hash_payload(self) -> dict[str, Any]:
+        payload = super()._hash_payload()
+        # Left out at their defaults, so a connector that does not set them
+        # keeps the hash it is referred to by.
+        if not self.recursive:
+            del payload["recursive"]
+        if self.file_type is None:
+            del payload["file_type"]
+        return payload
 
     @model_validator(mode="after")
     def _validate_file_connector(self) -> Self:

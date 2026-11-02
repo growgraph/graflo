@@ -102,6 +102,39 @@ def test_provenance_for_an_unknown_type_is_refused() -> None:
         )
 
 
+def test_mentions_for_points_source_record_at_each_type() -> None:
+    ops = plan_lift(
+        _manifest(), LiftSpec(mentions_for=["Ticket"]), aspects=["provenance"]
+    )
+    core = apply_evolution(_manifest(), ops).require_schema().core_schema
+    (edge,) = [e for e in core.edge_config.edges if e.relation == "mentions"]
+    assert (edge.source, edge.target) == ("SourceRecord", "Ticket")
+    assert edge.semantics is not None
+    assert edge.semantics.iri == "https://schema.org/mentions"
+    assert not [e for e in core.edge_config.edges if e.relation == "wasDerivedFrom"]
+
+
+def test_mentions_for_an_unknown_type_is_refused() -> None:
+    with pytest.raises(LiftError, match="mentions_for names types.*Nope"):
+        plan_lift(_manifest(), LiftSpec(mentions_for=["Nope"]), aspects=["provenance"])
+
+
+def test_a_type_can_be_both_derived_from_and_mentioned() -> None:
+    spec = LiftSpec(provenance_for=["Ticket"], mentions_for=["Ticket"])
+    ops = plan_lift(_manifest(), spec, aspects=["provenance"])
+    lifted = apply_evolution(_manifest(), ops)
+    triples = {
+        (e.source, e.relation, e.target)
+        for e in lifted.require_schema().core_schema.edge_config.edges
+    }
+    assert {
+        ("Ticket", "wasDerivedFrom", "SourceRecord"),
+        ("SourceRecord", "mentions", "Ticket"),
+    } <= triples
+    again = plan_lift(lifted, spec, aspects=["provenance"])
+    assert again == []
+
+
 def test_a_type_the_aspect_would_mint_and_that_is_keyed_otherwise_is_refused() -> None:
     config = {
         "schema": {

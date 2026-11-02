@@ -20,7 +20,7 @@ import re
 from datetime import date, datetime, time
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from graflo.architecture.contract.bindings.connectors import (
@@ -212,6 +212,7 @@ class ResourceSampler:
         *,
         resource_name: str | None = None,
         connector_name: str | None = None,
+        file_type: Literal["json", "jsonl", "table", "parquet"] | None = None,
     ) -> ResourceSample:
         """Sample a single file, recording the connector that would read it."""
         path = Path(path)
@@ -219,8 +220,11 @@ class ResourceSampler:
             name=connector_name or path.stem,
             regex=f"^{re.escape(path.name)}$",
             sub_path=path.parent,
+            file_type=file_type,
         )
-        data_source = DataSourceFactory.create_file_data_source(path=path)
+        data_source = DataSourceFactory.create_file_data_source(
+            path=path, file_type=file_type
+        )
         docs, truncated = self._read_data_source(data_source)
         return ResourceSample(
             resource_name=resource_name or path.stem,
@@ -387,6 +391,7 @@ class ResourceSampler:
                 files[0],
                 resource_name=resource_name,
                 connector_name=connector.name or resource_name,
+                file_type=connector.file_type,
             )
             return sample
 

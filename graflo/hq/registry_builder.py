@@ -304,16 +304,17 @@ class RegistryBuilder:
             raise ValueError("connector.sub_path is required")
         path = Path(fpath) if isinstance(fpath, str) else fpath
 
-        files = [
+        candidates = path.rglob("*") if connector.recursive else path.iterdir()
+        files = sorted(
             f
-            for f in path.iterdir()
+            for f in candidates
             if f.is_file()
             and (
                 True
                 if connector.regex is None
                 else re.search(connector.regex, f.name) is not None
             )
-        ]
+        )
 
         if limit_files is not None:
             files = files[:limit_files]
@@ -341,7 +342,7 @@ class RegistryBuilder:
         encoding = self.ingestion_model.fetch_resource_config(resource_name).encoding
         for file_path in files:
             file_source = DataSourceFactory.create_file_data_source(
-                path=file_path, encoding=encoding
+                path=file_path, file_type=connector.file_type, encoding=encoding
             )
             registry.register(file_source, resource_name=resource_name)
 

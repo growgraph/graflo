@@ -369,7 +369,7 @@ A vocabulary that every domain needs and none owns, added to a manifest by a lif
 
 ### provenance aspect
 
-The types a lift adds so that a manifest can say where a fact came from: `SourceRecord`, the record a fact was read from (its address and content hash, never its content), and `Agent`, who produced it, linked by `wasDerivedFrom` and `wasAttributedTo` (PROV-O). A type named in the spec's `provenance_for` gains a `wasDerivedFrom` edge; the state and observation types always do. See [Aspects](schema/aspects.md#the-provenance-aspect).
+The types a lift adds so that a manifest can say where a fact came from: `SourceRecord`, the record a fact was read from (its address and content hash, never its content), and `Agent`, who produced it, linked by `wasDerivedFrom` and `wasAttributedTo` (PROV-O). `SourceRecord -mentions-> <Type>` says a record names an entity. A type named in the spec's `provenance_for` gains a `wasDerivedFrom` edge; the state and observation types always do. See [Aspects](schema/aspects.md#the-provenance-aspect).
 
 ### state aspect
 
