@@ -32,11 +32,12 @@ from .merge3 import (
     plot_merge3_preview,
 )
 from .plotter import ManifestPlotter
-from .render import OUTPUT_FORMATS
+from .render import OUTPUT_FORMATS, StackExhausted
 
 __all__ = [
     "OUTPUT_FORMATS",
     "ManifestPlotter",
+    "StackExhausted",
     "build_equivalence_view",
     "build_history_graph",
     "build_merge3_graph",

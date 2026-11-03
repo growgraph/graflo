@@ -127,6 +127,7 @@ nav:
     -   API env wiring: guides/api_env_wiring.md
     -   Finding a key for your data: guides/identity_inference.md
     -   Evolving a manifest: guides/evolving_a_manifest.md
+    -   Drawing a manifest: guides/drawing_a_manifest.md
     -   TigerGraph bulk load: guides/tigergraph_bulk_load.md
     -   Inferring a graph from SQL: guides/sql_schema_inference.md
     -   Adding a database backend: guides/adding_a_backend.md

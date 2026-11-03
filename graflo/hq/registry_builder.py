@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from graflo.architecture.contract.bindings import (
     APIConnector,
@@ -20,6 +20,7 @@ from graflo.architecture.contract.bindings import (
     PushConnector,
     SparqlConnector,
     TableConnector,
+    TemplatedConnector,
 )
 from graflo.architecture.contract.ingestion import IngestionModel
 from graflo.architecture.schema import Schema
@@ -31,6 +32,8 @@ from graflo.connections.provider import (
     PostgresGeneralizedConnConfig,
     SparqlGeneralizedConnConfig,
 )
+from graflo.data_source.base import AbstractDataSource
+from graflo.data_source.enumerated import EnumeratedDataSource, EnumeratedMember
 from graflo.data_source.factory import DataSourceFactory
 from graflo.data_source.registry import DataSourceRegistry
 from graflo.data_source.sql import SQLConfig, SQLDataSource
@@ -39,10 +42,12 @@ from graflo.filter.sql import datetime_range_filter
 if TYPE_CHECKING:
     from graflo.architecture.contract.bindings import Bindings
     from graflo.connections.sources import RestApiConnConfig
-    from graflo.data_source.api import APIConfig, APIDataSource, DependentAPIDataSource
+    from graflo.data_source.api import APIConfig
     from graflo.hq.caster import IngestionParams
 
 logger = logging.getLogger(__name__)
+
+_Templated = TypeVar("_Templated", bound=TemplatedConnector)
 
 
 class RegistryBuilder:
@@ -464,86 +469,14 @@ class RegistryBuilder:
         ingestion_params: IngestionParams,
         connection_provider: ConnectionProvider,
     ) -> None:
-        """Register SPARQL data sources for a resource.
-
-        Handles two modes:
-
-        * **Endpoint mode** (``connector.endpoint_url`` is set): creates a
-          :class:`SparqlEndpointDataSource` that queries the remote SPARQL
-          endpoint.
-        * **File mode** (``connector.rdf_file`` is set): creates an
-          :class:`RdfFileDataSource` that parses a local RDF file.
-        """
-        if not connector.endpoint_url and not connector.rdf_file:
-            raise ValueError("SparqlConnector has neither endpoint_url nor rdf_file")
-
+        """Register the SPARQL data source of *connector* for a resource."""
         try:
-            if connector.endpoint_url:
-                from graflo.data_source.rdf import (
-                    SparqlEndpointDataSource,
-                    SparqlSourceConfig,
-                )
-
-                generalized = (
-                    connection_provider.get_generalized_conn_config(connector)
-                    if hasattr(connection_provider, "get_generalized_conn_config")
-                    else None
-                )
-                if isinstance(generalized, SparqlGeneralizedConnConfig):
-                    cfg = generalized.config
-                    username = cfg.username
-                    password = cfg.password
-                else:
-                    # Legacy fallback: allow older ConnectionProvider implementations.
-                    sparql_auth = connection_provider.get_sparql_auth(
-                        resource_name, connector
-                    )
-                    username = sparql_auth.username if sparql_auth else None
-                    password = sparql_auth.password if sparql_auth else None
-
-                source_config = SparqlSourceConfig(
-                    endpoint_url=connector.endpoint_url,
-                    rdf_class=connector.rdf_class,
-                    graph_uri=connector.graph_uri,
-                    sparql_query=connector.sparql_query,
-                    username=username,
-                    password=password,
-                    page_size=ingestion_params.batch_size,
-                )
-                sparql_source = SparqlEndpointDataSource(
-                    config=source_config,
-                    same_as=connector.same_as,
-                    typed_objects=connector.typed_objects,
-                )
-                registry.register(sparql_source, resource_name=resource_name)
-
-                logger.info(
-                    "Created SPARQL endpoint data source for class <%s> at '%s' "
-                    "mapped to resource '%s'",
-                    connector.rdf_class,
-                    connector.endpoint_url,
-                    resource_name,
-                )
-
-            elif connector.rdf_file:
-                from graflo.data_source.rdf import RdfFileDataSource
-
-                rdf_source = RdfFileDataSource(
-                    path=connector.rdf_file,
-                    rdf_class=connector.rdf_class,
-                    same_as=connector.same_as,
-                    typed_objects=connector.typed_objects,
-                )
-                registry.register(rdf_source, resource_name=resource_name)
-
-                logger.info(
-                    "Created RDF file data source for class <%s> from '%s' "
-                    "mapped to resource '%s'",
-                    connector.rdf_class,
-                    connector.rdf_file,
-                    resource_name,
-                )
-
+            source = self.sparql_source(
+                connector,
+                resource_name=resource_name,
+                page_size=ingestion_params.batch_size,
+                connection_provider=connection_provider,
+            )
         except Exception as e:
             logger.error(
                 "Failed to create data source for SPARQL resource '%s': %s",
@@ -552,6 +485,107 @@ class RegistryBuilder:
                 exc_info=True,
             )
             raise
+        registry.register(source, resource_name=resource_name)
+        logger.info(
+            "Created SPARQL data source for class <%s> (%d request template(s)) "
+            "from '%s' mapped to resource '%s'",
+            connector.rdf_class,
+            len(connector.value_combinations()),
+            connector.endpoint_url or connector.rdf_file,
+            resource_name,
+        )
+
+    @classmethod
+    def sparql_source(
+        cls,
+        connector: SparqlConnector,
+        *,
+        resource_name: str,
+        page_size: int,
+        connection_provider: ConnectionProvider,
+    ) -> AbstractDataSource:
+        """Return the data source that reads *connector*'s instances.
+
+        * **Endpoint mode** (``connector.endpoint_url`` is set): a
+          :class:`SparqlEndpointDataSource` that queries the remote endpoint.
+        * **File mode** (``connector.rdf_file`` is set): an
+          :class:`RdfFileDataSource` that parses a local RDF file.
+
+        A connector with ``values`` becomes one source per value combination,
+        read in order, its rows carrying the values.
+        """
+        if connector.values:
+            return cls._enumerated(
+                connector,
+                lambda one: cls.sparql_source(
+                    one,
+                    resource_name=resource_name,
+                    page_size=page_size,
+                    connection_provider=connection_provider,
+                ),
+            )
+        if connector.endpoint_url:
+            from graflo.data_source.rdf import (
+                SparqlEndpointDataSource,
+                SparqlSourceConfig,
+            )
+
+            generalized = (
+                connection_provider.get_generalized_conn_config(connector)
+                if hasattr(connection_provider, "get_generalized_conn_config")
+                else None
+            )
+            if isinstance(generalized, SparqlGeneralizedConnConfig):
+                cfg = generalized.config
+                username = cfg.username
+                password = cfg.password
+            else:
+                # Legacy fallback: allow older ConnectionProvider implementations.
+                sparql_auth = connection_provider.get_sparql_auth(
+                    resource_name, connector
+                )
+                username = sparql_auth.username if sparql_auth else None
+                password = sparql_auth.password if sparql_auth else None
+
+            return SparqlEndpointDataSource(
+                config=SparqlSourceConfig(
+                    endpoint_url=connector.endpoint_url,
+                    rdf_class=connector.rdf_class,
+                    graph_uri=connector.graph_uri,
+                    sparql_query=connector.sparql_query,
+                    username=username,
+                    password=password,
+                    page_size=page_size,
+                ),
+                same_as=connector.same_as,
+                typed_objects=connector.typed_objects,
+            )
+        if connector.rdf_file:
+            from graflo.data_source.rdf import RdfFileDataSource
+
+            return RdfFileDataSource(
+                path=connector.rdf_file,
+                rdf_class=connector.rdf_class,
+                same_as=connector.same_as,
+                typed_objects=connector.typed_objects,
+            )
+        raise ValueError("SparqlConnector has neither endpoint_url nor rdf_file")
+
+    @staticmethod
+    def _enumerated(
+        connector: _Templated,
+        source_for: Callable[[_Templated], AbstractDataSource],
+    ) -> EnumeratedDataSource:
+        """One source per value combination of *connector*, read in order."""
+        members = [
+            EnumeratedMember(
+                values=values, source=source_for(connector.rendered(values))
+            )
+            for values in connector.value_combinations()
+        ]
+        return EnumeratedDataSource(
+            members=members, source_type=members[0].source.source_type
+        )
 
     @staticmethod
     def api_config(
@@ -597,25 +631,47 @@ class RegistryBuilder:
     def api_source(
         cls,
         connector: APIConnector,
-        bindings: Bindings,
+        bindings: Bindings | None,
         connection_provider: ConnectionProvider,
         *,
         page_size_override: int | None = None,
-    ) -> APIDataSource | DependentAPIDataSource:
+    ) -> AbstractDataSource:
         """Return the data source that fetches *connector*'s records.
 
-        A connector with a ``parent`` becomes one request per parent record. It
-        uses its own ``conn_proxy`` connection when it has one, else its
-        parent's, and takes the parent's request settings it does not set.
+        A connector with ``values`` becomes one source per value combination,
+        read in order, its rows carrying the values. A connector with a
+        ``parent`` becomes one request per parent record; *bindings* name the
+        parent. It uses its own ``conn_proxy`` connection when it has one, else
+        its parent's, and takes the parent's request settings it does not set.
 
         Raises:
             ValueError: No REST API connection is registered for the connector
-                or any of its parents.
+                or any of its parents, or the connector has a parent and no
+                *bindings* are given.
         """
         from graflo.data_source.api import APIDataSource, DependentAPIDataSource
 
-        parent = bindings.get_parent_connector(connector)
-        if parent is None or connector.parent is None:
+        if connector.values:
+            return cls._enumerated(
+                connector,
+                lambda one: cls.api_source(
+                    one,
+                    bindings,
+                    connection_provider,
+                    page_size_override=page_size_override,
+                ),
+            )
+        if connector.parent is not None and bindings is None:
+            raise ValueError(
+                f"API connector '{connector.name or connector.path}' has a parent; "
+                "the bindings that name it are needed"
+            )
+        parent = (
+            None
+            if connector.parent is None or bindings is None
+            else bindings.get_parent_connector(connector)
+        )
+        if parent is None or connector.parent is None or bindings is None:
             return APIDataSource(
                 config=cls.api_config(
                     connector,
@@ -693,9 +749,10 @@ class RegistryBuilder:
         registry.register(api_source, resource_name=resource_name)
 
         logger.info(
-            "Created API data source for path '%s' at '%s' mapped to resource '%s'",
+            "Created API data source for path '%s' (%d request template(s)) "
+            "mapped to resource '%s'",
             connector.path,
-            api_source.config.url,
+            len(connector.value_combinations()),
             resource_name,
         )
 

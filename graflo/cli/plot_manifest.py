@@ -25,6 +25,8 @@ import click
 
 from graflo.plot.plotter import ManifestPlotter
 
+logger = logging.getLogger(__name__)
+
 """
 
 graphviz attributes
@@ -62,7 +64,12 @@ FIGURES = ("vc2vc", "vc2fields", "resources", "source2vc", "source2vc_detailed")
     "--color-vc-by-level",
     is_flag=True,
     default=False,
-    help="Color vc2vc vertices by inferred levels.",
+    help=(
+        "Color vc2vc vertices by inferred level: strongly connected vertex types "
+        "share a level, level 0 (sources) has no incoming edges from other levels, "
+        "each other level is one past "
+        "its deepest predecessor. The legend names each colour."
+    ),
 )
 @click.option(
     "--include-all-vertices/--edges-only-vertices",
@@ -111,7 +118,9 @@ def plot_manifest(
     2. Vertex fields and their relationships
     3. Resource mappings
 
-    The visualizations are saved to the specified output path.
+    The visualizations are saved to the specified output path. Every figure
+    carries a legend of its colours and shapes. A figure that cannot be drawn
+    is reported and the others are still drawn; the command then exits 1.
 
     Args:
         manifest_path: Path to the manifest configuration file
@@ -137,22 +146,35 @@ def plot_manifest(
         output_dpi=output_dpi if output_format.lower() == "png" else None,
     )
     wanted = {name.lower() for name in only} or set(FIGURES)
-    if "vc2vc" in wanted:
-        plotter.plot_vc2vc(
+    figures = {
+        "vc2vc": lambda: plotter.plot_vc2vc(
             prune_leaves=prune_low_degree_nodes,
             group_by_inferred_level=(group_vc_by_level or color_vc_by_level),
             color_by_partition=color_vc_by_level,
             group_by_partition=group_vc_by_level,
             include_all_vertices=include_all_vertices,
+        ),
+        "vc2fields": plotter.plot_vc2fields,
+        "resources": plotter.plot_resources,
+        "source2vc": plotter.plot_source2vc,
+        "source2vc_detailed": plotter.plot_source2vc_detailed,
+    }
+    failed: list[str] = []
+    for name in FIGURES:
+        if name not in wanted:
+            continue
+        try:
+            figures[name]()
+        except RuntimeError as exc:
+            # One figure that cannot be drawn does not cost the others.
+            logger.error("figure %s not drawn: %s", name, exc)
+            failed.append(name)
+    if failed:
+        raise click.ClickException(
+            f"not drawn: {', '.join(failed)}. Leave a figure out with --only, or "
+            "write its DOT source with --output-format dot and lay it out with a "
+            "native Graphviz"
         )
-    if "vc2fields" in wanted:
-        plotter.plot_vc2fields()
-    if "resources" in wanted:
-        plotter.plot_resources()
-    if "source2vc" in wanted:
-        plotter.plot_source2vc()
-    if "source2vc_detailed" in wanted:
-        plotter.plot_source2vc_detailed()
 
 
 if __name__ == "__main__":

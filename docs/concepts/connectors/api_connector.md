@@ -346,7 +346,22 @@ connectors:
       Accept: application/json
 ```
 
-Every request of this connector carries `status=open&plant=north`. Requests have no body: `params` go in the query string whatever the `method`.
+Every request of this connector carries `status=open&plant=north`. `params` go in the query string whatever the `method`.
+
+### Request body
+
+`body` sends a body with every request: a mapping as JSON, a string as written. A `GET` connector cannot have one. Set the `Content-Type` of a string body in `headers`.
+
+```yaml
+connectors:
+  - name: open_work_orders
+    path: /api/work-orders/search
+    method: POST
+    body:
+      filter: {status: open, plant: north}
+```
+
+A body can hold variables like `path` and `params`; see [One connector, many values](#one-connector-many-values).
 
 ## Timeouts, retries and TLS
 
@@ -423,7 +438,7 @@ ingestion_model:
         - edge: {source_role: src, target_role: tgt, relation_field: _rel}
 ```
 
-A record `{"source": "TMP-12", "target": "SN-4471"}` from the first connector becomes a `sensor`, a `machine` and an `installed_on` edge between them. The two connectors share their path, resource, label and pagination through a template, described next.
+A record `{"source": "TMP-12", "target": "SN-4471"}` from the first connector becomes a `sensor`, a `machine` and an `installed_on` edge between them. The two connectors share their path, resource, label and pagination through a template, described next. Connectors that differ only in a value they send can also be one connector; see [One connector, many values](#one-connector-many-values).
 
 `row_annotations` works on API and Kafka connectors. File, table and SPARQL connectors reject a non-empty value.
 
@@ -437,9 +452,90 @@ The example above declares its shared settings once, under `connector_templates`
 
 Templates are expanded when the bindings are loaded. A `conn_proxy` at the top level of `bindings` is the label for every connector that has no `connector_connection` row.
 
+## One connector, many values
+
+Many APIs return one kind of record per request and take the kind as a request value: `/objects?class=person`. Declare one connector with `values`, and mark where each value goes with `{name}`:
+
+```yaml
+connectors:
+  - name: objects
+    path: /objects
+    params: {class: "{cls}"}
+    values: {cls: [person, organization, place]}
+    resource_name: objects
+```
+
+```yaml
+resources:
+  - name: objects
+    pipeline:
+      - vertex_router: {type_field: cls, from: {id: id}}
+```
+
+- GraFlo makes one paginated request per value, in the order listed. With several variables it makes one request per combination, the last variable varying fastest.
+- Every record carries the value it was fetched with, here `cls`, unless it has a field of that name.
+- The resource decides what a record becomes. Here the router sends each record to the class its `cls` names. When the API's names differ from the schema's, a `type_map` on the router translates them.
+- It stays one connector: one name, one hash, one watermark, which is the largest over all its requests. A run `limit` counts records over all requests.
+- `values` combine with `parent`: each value is filled in first, then one request is made per parent record. A variable cannot be both a value and a parent field, nor a `row_annotations` key.
+
+The relations example under [Row annotations](#row-annotations) becomes one connector. The routers map each kind of link to its two classes:
+
+```yaml
+connectors:
+  - name: relations
+    path: /api/relations
+    params: {kind: "{kind}"}
+    values: {kind: [installed_on, part_of]}
+    resource_name: relations
+```
+
+```yaml
+pipeline:
+  - vertex_router:
+      type_field: kind
+      role: src
+      from: {id: source}
+      type_map: {installed_on: sensor, part_of: machine}
+      type_map_only: true
+  - vertex_router:
+      type_field: kind
+      role: tgt
+      from: {id: target}
+      type_map: {installed_on: machine, part_of: production_line}
+      type_map_only: true
+  - edge: {source_role: src, target_role: tgt, relation_field: kind}
+```
+
+### Where variables go
+
+| Connector | Every `{name}` must be declared | Only declared names are filled |
+|---|---|---|
+| API | `path`, `params` | `body` |
+| SPARQL | `rdf_class`, `graph_uri` | `sparql_query` |
+
+In a body or a query, braces are syntax: JSON, GraphQL and SPARQL all use them. A `{name}` that is not declared is sent as written, and a declared name is filled wherever it appears. In `path`, `params`, `rdf_class` and `graph_uri`, an undeclared `{name}` is refused when the bindings load.
+
+- A value placed in `path` is percent-encoded.
+- A param or JSON body value that is exactly `"{name}"` keeps the value's type, so `top: "{top}"` with `top: [10]` sends the number `10`.
+- Every declared variable must be used somewhere.
+
+A SPARQL connector reads one class per value the same way:
+
+```yaml
+connectors:
+  - name: things
+    endpoint_url: https://example.org/sparql
+    rdf_class: "http://example.org/onto#{cls}"
+    values: {cls: [Person, Organization]}
+```
+
+### Removing a class
+
+When an evolution removes a class, through `remove_vertices` or `project_manifest`, GraFlo routes each value through the routers of the connector's resources. A value whose records went only to removed classes is dropped from `values`, and a connector left without values is dropped. A connector whose `row_annotations` fix a router's field is dropped the same way. A value that reached no class before is kept, and so is a connector whose router field an earlier transform may rewrite.
+
 ## One request per parent record
 
-Some endpoints need a value from another endpoint's records: the messages of each channel, the comments of each issue. Give the connector a `parent`: the name of another API connector in the same bindings, and the `fields` to read from each of its records. Each field fills `{field}` in the child's `path` and string `params`:
+Some endpoints need a value from another endpoint's records: the messages of each channel, the comments of each issue. Give the connector a `parent`: the name of another API connector in the same bindings, and the `fields` to read from each of its records. Each field fills `{field}` in the child's `path`, `params` and `body`:
 
 ```yaml
 connectors:
@@ -460,8 +556,8 @@ connectors:
 - GraFlo pages through `channels`, then makes one paginated `messages` request per channel record.
 - Every child record carries the fields it was fetched with (here `channel`), unless it already has a field of that name, so a message can be linked to its channel.
 - A parent record that lacks one of the fields is skipped. To fetch the replies of threaded messages only, read `thread_ts` from `messages`: messages without it get no request.
-- A value placed in the path is percent-encoded. A param that is exactly `"{field}"` keeps the value's type.
-- Every `{name}` in `path` and `params` must be declared in `fields`. The parent must be an API connector, and parents cannot form a cycle; anything else is refused when the bindings load.
+- Fields fill templates by the rules in [Where variables go](#where-variables-go).
+- Every `{name}` in `path` and `params` must be declared in `fields` or `values`. The parent must be an API connector, and parents cannot form a cycle; anything else is refused when the bindings load.
 - Without its own `conn_proxy` mapping, the child uses its parent's connection. It also takes the parent's `headers`, `timeout`, `retries` and TLS settings unless it sets them.
 - Parents chain: `replies` can name `messages`, which names `channels`.
 - The parent is fetched again for each child connector that names it, so a resource bound to the parent and one bound to the child read the parent twice.

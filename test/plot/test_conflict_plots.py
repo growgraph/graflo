@@ -465,12 +465,13 @@ def test_a_missing_plot_extra_says_what_to_install(monkeypatch, tmp_path):
 
 
 def test_a_runtime_that_cannot_load_says_what_to_install(monkeypatch, tmp_path):
-    wasi_graphviz = pytest.importorskip("wasi_graphviz")
+    pytest.importorskip("wasi_graphviz")
+    from graflo.plot import render
 
     def _boom(*args, **kwargs):
         raise OSError("Error loading shared library libgcc_s.so.1: No such file")
 
-    monkeypatch.setattr(wasi_graphviz, "render", _boom)
+    monkeypatch.setattr(render, "_backend", _boom)
 
     with pytest.raises(RuntimeError) as caught:
         plot_merge_preview(_preview(), tmp_path / "preview.svg")

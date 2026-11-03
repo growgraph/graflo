@@ -10,6 +10,11 @@ SVG (``svglib`` + ``reportlab``) and PNG rasterised from the PDF
 (``pypdfium2``). PDF and PNG text uses the Liberation fonts shipped in
 ``graflo/plot/fonts``, which are metric-compatible with the Helvetica, Times
 and Courier metrics Graphviz sizes nodes by, so text fits the boxes drawn for it.
+
+Graphviz's layout recurses as deep as the graph, and the WebAssembly stack is
+bounded, so a large enough graph cannot be laid out here: :func:`draw` raises a
+:class:`RuntimeError` saying so, and the DOT source (format ``dot``) can still
+be written and laid out with a native Graphviz.
 """
 
 from __future__ import annotations
@@ -18,6 +23,8 @@ import io
 import os
 import re
 import sys
+import threading
+from collections.abc import Callable
 from functools import cache
 from importlib import resources
 from pathlib import Path
@@ -46,6 +53,20 @@ _WASMTIME_UNLOADABLE = (
     "the WebAssembly runtime cannot load: {cause}. On Alpine install `libgcc` "
     "(`apk add libgcc`)"
 )
+_STACK_EXHAUSTED = (
+    "Graphviz ran out of stack laying out {graph}: it is too large for the "
+    "bundled WebAssembly Graphviz. Write the DOT source instead (format `dot`) "
+    "and lay it out with a native Graphviz"
+)
+
+#: Stack the Graphviz guest may use. wasmtime's default is far smaller; this is
+#: the most it accepts, since it may not exceed wasmtime's async stack size.
+_WASM_STACK_BYTES = 2 * 1024 * 1024
+#: OS stack of the thread a render runs on, so the wasm stack above fits in it
+#: whatever the caller's thread stack is (musl threads get 128 KiB).
+_RENDER_THREAD_STACK_BYTES = 16 * 1024 * 1024
+#: One render at a time: the cached Graphviz instance is not reentrant.
+_RENDER_LOCK = threading.Lock()
 
 #: Liberation faces shipped with graflo, by the family Graphviz writes.
 _FONT_FILES: dict[str, dict[str, str]] = {
@@ -146,25 +167,82 @@ def to_dot(graph: nx.Graph) -> DotGraph:
     return DotGraph.from_networkx(graph)
 
 
+class StackExhausted(RuntimeError):
+    """Graphviz's layout recursed deeper than the WebAssembly stack allows."""
+
+
 def render_svg(source: str, *, prog: str = "dot") -> bytes:
     """Lay out and draw DOT *source* as SVG.
 
     Raises:
         RuntimeError: The ``plot`` extra is missing, the WebAssembly runtime
-            cannot load, or Graphviz rejected the graph.
+            cannot load, Graphviz rejected the graph, or the graph is too large
+            to lay out.
     """
     try:
-        from wasi_graphviz import RenderError, render
+        from wasi_graphviz import RenderError
+        from wasmtime import Trap
     except ImportError as exc:
         raise RuntimeError(_missing(exc)) from exc
     try:
-        return render(source, format="svg", engine=prog, backend="wasmtime")
+        with _RENDER_LOCK:
+            return _on_render_thread(
+                lambda: _backend().render(source, format="svg", engine=prog)
+            )
     except ImportError as exc:
         raise RuntimeError(_missing(exc)) from exc
     except OSError as exc:
         raise RuntimeError(_WASMTIME_UNLOADABLE.format(cause=exc)) from exc
     except RenderError as exc:
         raise RuntimeError(f"Graphviz could not draw the graph: {exc}") from exc
+    except Trap as exc:
+        # The trapped instance is unwound mid-call; the next render gets a fresh one.
+        _backend.cache_clear()
+        raise StackExhausted(_STACK_EXHAUSTED.format(graph="the graph")) from exc
+
+
+@cache
+def _backend() -> Any:
+    """The wasi-graphviz backend, on an engine with :data:`_WASM_STACK_BYTES`."""
+    import wasmtime
+    from wasi_graphviz._constants import PACKAGE_WASM_PATH
+    from wasi_graphviz.backends.wasmtime_backend import WasmtimeBackend
+
+    class _Backend(WasmtimeBackend):
+        # The parent builds its engine with default config and offers no hook,
+        # so this mirrors its __init__ with a configured engine.
+        def __init__(self) -> None:
+            config = wasmtime.Config()
+            config.max_wasm_stack = _WASM_STACK_BYTES
+            self.wasm_path = PACKAGE_WASM_PATH
+            self._engine = wasmtime.Engine(config)
+            self._module = wasmtime.Module.from_file(self._engine, str(self.wasm_path))
+            self._session = self._create_session()
+
+    return _Backend()
+
+
+def _on_render_thread(work: Callable[[], bytes]) -> bytes:
+    """Run *work* on a fresh thread with :data:`_RENDER_THREAD_STACK_BYTES` of stack."""
+    result: list[bytes] = []
+    error: list[BaseException] = []
+
+    def run() -> None:
+        try:
+            result.append(work())
+        except BaseException as exc:  # re-raised on the caller's thread
+            error.append(exc)
+
+    previous = threading.stack_size(_RENDER_THREAD_STACK_BYTES)
+    try:
+        thread = threading.Thread(target=run, name="graflo-graphviz")
+        thread.start()
+    finally:
+        threading.stack_size(previous)
+    thread.join()
+    if error:
+        raise error[0]
+    return result[0]
 
 
 def svg_to_pdf(svg: bytes) -> bytes:
@@ -221,6 +299,7 @@ def draw(
 
     Raises:
         RuntimeError: Rendering is unavailable or failed; the message says why.
+            :class:`StackExhausted` when the graph is too large to lay out.
         ValueError: The format is not one this can write.
     """
     out = Path(path)
@@ -231,7 +310,11 @@ def draw(
         # The source, not a rendering: no layout to run.
         out.write_text(source, encoding="utf-8")
         return out
-    svg = render_svg(source, prog=prog)
+    try:
+        svg = render_svg(source, prog=prog)
+    except StackExhausted as exc:
+        size = f"a graph of {len(dot.nodes)} nodes and {len(dot.edges)} edges"
+        raise StackExhausted(_STACK_EXHAUSTED.format(graph=size)) from exc
     if chosen == "svg":
         out.write_bytes(svg)
         return out
@@ -288,6 +371,7 @@ def _font_map() -> Any:
 __all__ = [
     "DEFAULT_DPI",
     "OUTPUT_FORMATS",
+    "StackExhausted",
     "draw",
     "header_band",
     "pdf_to_png",

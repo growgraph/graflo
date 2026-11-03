@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 from graflo.architecture.contract.ingestion import IngestionModel
 from graflo.architecture.contract.ingestion.resource import (
+    route_discriminator,
     router_reach,
     step_produces_vertices,
 )
@@ -188,6 +189,191 @@ def _prune_ingestion_for_removed_vertices(
         )
 
 
+def _transform_writes(step: Mapping[str, Any]) -> set[str] | None:
+    """Fields a normalized transform step may write; ``None`` when it does not say."""
+    writes: set[str] = set()
+    rename = step.get("rename")
+    if isinstance(rename, dict):
+        writes |= {name for name in rename.values() if isinstance(name, str)}
+    call = step.get("call")
+    if isinstance(call, dict):
+        output = call.get("output")
+        if isinstance(output, str):
+            writes.add(output)
+        elif isinstance(output, list):
+            writes |= {name for name in output if isinstance(name, str)}
+        else:
+            return None
+    return writes
+
+
+def _row_reach(
+    pipeline: Sequence[Any], constants: Mapping[str, Any], declared: Collection[str]
+) -> set[str]:
+    """Classes *pipeline* can produce from a row carrying *constants*.
+
+    A top-level ``vertex_router`` whose ``type_field`` the constants fix routes
+    that value the way the runtime does, unless an earlier transform may
+    rewrite the field. Every other producing step, at any level, counts with
+    all it can produce.
+    """
+    reach: set[str] = set()
+
+    def everything(level: Any) -> None:
+        if not isinstance(level, list):
+            return
+        for item in level:
+            if not isinstance(item, dict):
+                continue
+            step = normalize_actor_step(dict(item))
+            reach.update(step_produces_vertices(step, known_vertices=declared))
+            if step.get("type") == "descend":
+                everything(step.get("pipeline"))
+
+    rewritten: set[str] | None = set()
+    for item in pipeline:
+        if not isinstance(item, dict):
+            continue
+        step = normalize_actor_step(dict(item))
+        kind = step.get("type")
+        field = step.get("type_field")
+        if kind == "transform":
+            writes = _transform_writes(step)
+            rewritten = (
+                None if writes is None or rewritten is None else rewritten | writes
+            )
+            continue
+        if (
+            kind == "vertex_router"
+            and isinstance(field, str)
+            and isinstance(constants.get(field), str | int | float | bool)
+            and rewritten is not None
+            and field not in rewritten
+        ):
+            vertex = route_discriminator(step, constants[field], declared)
+            if vertex is not None:
+                reach.add(vertex)
+            continue
+        everything([step])
+    return reach
+
+
+def prune_connectors_for_removed_vertices(
+    manifest: GraphManifest, removed: set[str], *, declared: Collection[str]
+) -> None:
+    """Drop what the bindings fetch only for classes in *removed*, in place.
+
+    Runs before the resources are trimmed. Each request a connector makes puts
+    constants on its rows (:meth:`ResourceConnector.row_constants`); routed
+    through the pipeline of every resource the connector is bound to, they
+    reach some classes of *declared*. A request is dead when it reached some
+    class and every class it reached, in every bound resource, is removed. An
+    enumerated connector loses each value all of whose requests are dead, and
+    is dropped when a variable has no value left; any other connector is
+    dropped when its request is dead. A connector bound to no resource, or
+    named as another connector's parent, is left alone.
+    """
+    from graflo.architecture.contract.bindings import (
+        APIConnector,
+        Bindings,
+        TemplatedConnector,
+    )
+    from graflo.architecture.contract.bindings.core import ResourceConnectorBinding
+
+    bindings = manifest.bindings
+    ingestion = manifest.ingestion_model
+    if bindings is None or ingestion is None or not removed:
+        return
+    pipelines = {resource.name: resource.pipeline for resource in ingestion.resources}
+    rows = [
+        ResourceConnectorBinding.model_validate(row) if isinstance(row, dict) else row
+        for row in bindings.resource_connector
+    ]
+    bound: dict[str, set[str]] = {}
+    for connector in bindings.connectors:
+        if connector.resource_name is not None:
+            bound.setdefault(connector.hash, set()).add(connector.resource_name)
+    for row in rows:
+        for connector_hash in bindings.resolve_connector_refs_to_hashes(
+            [row.connector]
+        ):
+            bound.setdefault(connector_hash, set()).add(row.resource)
+    parents = {
+        parent.hash
+        for connector in bindings.connectors
+        if isinstance(connector, APIConnector)
+        and (parent := bindings.get_parent_connector(connector)) is not None
+    }
+
+    def dead(constants: Mapping[str, Any], resources: set[str]) -> bool:
+        reaches = [
+            _row_reach(pipelines[name], constants, declared)
+            for name in resources
+            if name in pipelines
+        ]
+        return bool(reaches) and all(reach and reach <= removed for reach in reaches)
+
+    dropped: set[str] = set()
+    replaced: dict[str, Any] = {}
+    for connector in bindings.connectors:
+        resources = bound.get(connector.hash)
+        if not resources or connector.hash in parents:
+            continue
+        if not isinstance(connector, TemplatedConnector) or not connector.values:
+            if all(dead(c, resources) for c in connector.row_constants()):
+                dropped.add(connector.hash)
+            continue
+        combinations = connector.row_constants()
+        kept: dict[str, list[Any]] = {}
+        for name, items in connector.values.items():
+            kept[name] = [
+                item
+                for item in items
+                if not all(
+                    dead(c, resources)
+                    for c in combinations
+                    if type(c[name]) is type(item) and c[name] == item
+                )
+            ]
+        if any(not items for items in kept.values()):
+            dropped.add(connector.hash)
+        elif kept != connector.values:
+            payload = connector.to_dict(skip_defaults=False)
+            payload["values"] = kept
+            replaced[connector.hash] = type(connector).model_validate(payload)
+
+    if not dropped and not replaced:
+        return
+
+    def ref(reference: str) -> str | None:
+        """*reference* as it should read now; ``None`` when its connector is gone."""
+        hashes = bindings.resolve_connector_refs_to_hashes([reference])
+        if hashes & dropped:
+            return None
+        for old_hash in hashes:
+            if old_hash in replaced and reference == old_hash:
+                return replaced[old_hash].hash
+        return reference
+
+    data = bindings.to_dict(skip_defaults=False)
+    data["connectors"] = [
+        (replaced.get(c.hash) or c).to_dict(skip_defaults=False)
+        for c in bindings.connectors
+        if c.hash not in dropped
+    ]
+    data["resource_connector"] = [
+        {**row.to_dict(), "connector": new}
+        for row in rows
+        if (new := ref(row.connector)) is not None
+    ]
+    data["connector_connection"] = [
+        {**row.to_dict(), "connector": new}
+        for row in bindings.connector_connection_bindings
+        if (new := ref(row.connector)) is not None
+    ]
+    manifest.bindings = Bindings.model_validate(data)
+
+
 def prune_bindings_for_resources(manifest: GraphManifest, surviving: set[str]) -> None:
     """Drop the bindings that served only resources outside *surviving*, in place.
 
@@ -341,10 +527,14 @@ def apply_remove_vertices(manifest: GraphManifest, op: RemoveVerticesOp) -> None
     schema.db_profile = _revalidate_db_profile(schema.db_profile)
 
     if manifest.ingestion_model is not None:
+        surviving_vertices = set(core.vertex_config.vertex_set)
+        prune_connectors_for_removed_vertices(
+            manifest, removed, declared=surviving_vertices | removed
+        )
         _prune_ingestion_for_removed_vertices(
             manifest.ingestion_model,
             removed,
-            surviving=set(core.vertex_config.vertex_set),
+            surviving=surviving_vertices,
         )
         manifest.ingestion_model = IngestionModel.model_validate(
             manifest.ingestion_model.to_dict(skip_defaults=False)

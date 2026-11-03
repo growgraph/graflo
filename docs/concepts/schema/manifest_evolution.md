@@ -47,7 +47,7 @@ does, and whether it can be [undone](#undoing-ops).
 | Op | What it does | Undo |
 |---|---|---|
 | `add_vertices` | Adds vertex types, given as full definitions. Refuses a name that exists. | yes |
-| `remove_vertices` | Removes vertex types, the edges that touch them, and the pipeline steps, profile entries and bindings that refer only to them. A vertex router keeps routing the surviving types. | only when nothing else was removed with it; remove the edges first |
+| `remove_vertices` | Removes vertex types, the edges that touch them, and the pipeline steps, profile entries and bindings that refer only to them. A vertex router keeps routing the surviving types, and a connector request whose records the router sent only to removed types is dropped. | only when nothing else was removed with it; remove the edges first |
 | `rename_vertices` | Renames vertex types everywhere they are named. The map must not send two names to one. | yes |
 | `merge_vertices` | Merges `sources` into one type `into`: edges are redirected, and properties are combined by name. Refuses two different types or units for one property. | no |
 
@@ -448,7 +448,9 @@ With `keep_vertices` alone, the listed types are kept together with the edges
 among them, and a listed type left with no edge is dropped. `keep_edges` lists
 exact `(source, target, relation)` edges to keep. `keep_resources` narrows the
 resources too, and connectors left serving no resource are removed with their
-`connector_connection` entries.
+`connector_connection` entries. A connector that fixes a router's field, by
+`values` or `row_annotations`, loses the requests whose records went only to
+removed types.
 
 A resource whose pipeline names both kept and removed types is trimmed to the
 kept part and keeps reading its source; the projection logs a warning naming

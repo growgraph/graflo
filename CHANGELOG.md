@@ -11,11 +11,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - A `key` or `any_key` step that reaches a null now writes nothing; with a transform inside it
   used to fail the whole record.
+- `to_yaml` and `to_yaml_str` write a manifest that has edges; they used to raise on the edge
+  type, after emptying the target file.
 - Neo4j vertex upserts run in a managed transaction, so a deadlock with a concurrent write is
   retried instead of stopping the ingest.
+- Plot rendering gives Graphviz a larger WebAssembly stack, so larger schemas draw. A graph
+  still too large to lay out raises `StackExhausted` (a `RuntimeError`) naming its size,
+  instead of a raw `wasm trap: call stack exhausted`.
+- `plot-manifest` draws the remaining figures when one cannot be drawn, then exits 1 naming it.
+- `remove_vertices` and `project_manifest` drop a connector, or a value of its `values`,
+  whose records a router sent only to removed classes; such connectors used to survive with
+  their shared resource.
 
 ### Added
 
+- **`values`** on API and SPARQL connectors: one request per value, filled into `{name}`
+  placeholders, each record carrying the value it was fetched with.
+- **`APIConnector.body`**: a JSON or text request body, with `{name}` placeholders filled from
+  `values` or `parent.fields`; other braces in it are sent as written.
+- Every `plot-manifest` figure carries a legend of its colours and shapes; a colour means the
+  same thing in every figure, and level colours (`--color-vc-by-level`) are named per level and
+  never reuse a type colour. New guide: *Drawing a manifest*.
 - **`FileConnector.recursive`** searches the directories under `sub_path`, and
   **`FileConnector.file_type`** names the format of files whose names don't show it. Matched
   files are now always read in path order.
@@ -63,6 +79,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- An undeclared `{name}` in an API connector's `path` or `params` is refused when the bindings
+  load; without a `parent` it used to be sent as written.
 - **Access aspect**: `LiftSpec.access_edges` maps each relation to the merge mode of its zones
   (`{about: union}`), as `access_for` does for vertex types; the list form is refused.
 - **`graflo.link`** is stable. `AttributeCheck` is `{field, level, exclusive}`; `verdict`,

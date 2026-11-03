@@ -1,6 +1,7 @@
 {
     "canon": "graflo/canon@5",
     "defaults": {
+        "APIConnector.body": null,
         "APIConnector.hash": "",
         "APIConnector.headers": {},
         "APIConnector.method": "GET",
@@ -21,6 +22,7 @@
         ],
         "APIConnector.row_annotations": {},
         "APIConnector.timeout": null,
+        "APIConnector.values": null,
         "APIConnector.verify": true,
         "APIConnector.watermark": null,
         "ApiResponseStructure.auto_detect": false,
@@ -294,6 +296,7 @@
         "SparqlConnector.same_as": "collapse",
         "SparqlConnector.sparql_query": null,
         "SparqlConnector.typed_objects": [],
+        "SparqlConnector.values": null,
         "StagingProxyBinding.conn_proxy": "<required>",
         "StagingProxyBinding.name": "<required>",
         "SuperClass.iri": null,

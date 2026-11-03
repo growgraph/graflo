@@ -19,7 +19,7 @@ Example:
 
 import logging
 import os
-from itertools import product
+from itertools import pairwise, product
 from pathlib import Path
 
 import networkx as nx
@@ -39,19 +39,22 @@ from graflo.architecture.schema.context.graph import SchemaGraph
 from graflo.architecture.schema.document import Schema
 from graflo.architecture.schema.edge import Edge
 from graflo.onto import BaseEnum
+from graflo.plot.dot import DotGraph
 from graflo.plot.render import draw, to_dot
 
 logger = logging.getLogger(__name__)
 
+#: Fills for vertex groups (``--color-vc-by-level`` or an explicit partition).
+#: None of them is a node-type colour, so a grouped figure never reads as typed.
 partition_color_palette = [
-    "#BEDFC8",
-    "#B7D1DF",
-    "#DDD0E5",
-    "#FFE5B4",
-    "#EBA59E",
-    "#E4E1D7",
-    "#C7CEEA",
-    "#D5E8D4",
+    "#FBE3A0",
+    "#A8DADC",
+    "#F4B6C2",
+    "#C9E4A6",
+    "#FFC8A2",
+    "#B5C7F2",
+    "#E0C3A8",
+    "#D6B4E8",
 ]
 
 
@@ -80,13 +83,18 @@ class AuxNodeType(BaseEnum):
     VERTEX_BLANK = "vertex_blank"
 
 
-# Color palette for node fill colors
+#: Fill colours. Each has one meaning across every figure: green is a vertex
+#: type (and the actor that makes one), blue a resource, red an identity
+#: field, violet any other field, stone a transform, periwinkle an edge actor,
+#: peach a vertex router.
 fillcolor_palette = {
     "violet": "#DDD0E5",
     "green": "#BEDFC8",
     "blue": "#B7D1DF",
     "red": "#EBA59E",
     "peach": "#FFE5B4",
+    "stone": "#E4E1D7",
+    "periwinkle": "#C7CEEA",
 }
 
 # Mapping of node types to shapes
@@ -107,18 +115,41 @@ NODE_COLOR_BY_TYPE = {
     AuxNodeType.VERTEX_BLANK: "white",
     AuxNodeType.VERTEX: fillcolor_palette["green"],
     AuxNodeType.INDEX: "orange",
-    AuxNodeType.TRANSFORM: "grey",
+    AuxNodeType.TRANSFORM: fillcolor_palette["stone"],
     AuxNodeType.FIELD: fillcolor_palette["violet"],
+}
+
+#: What each node type is called in a figure's legend.
+NODE_LEGEND_BY_TYPE = {
+    AuxNodeType.VERTEX: "vertex type",
+    AuxNodeType.VERTEX_BLANK: "blank vertex",
+    AuxNodeType.RESOURCE: "resource",
+    AuxNodeType.FIELD_DEFINITION: "identity field",
+    AuxNodeType.FIELD: "field",
+    AuxNodeType.INDEX: "index",
+    AuxNodeType.TRANSFORM: "transform",
 }
 
 # Mapping of actor classes to colors
 map_class2color = {
-    DescendActor: fillcolor_palette["green"],
-    VertexActor: "orange",
-    EdgeActor: fillcolor_palette["violet"],
-    TransformActor: fillcolor_palette["blue"],
+    DescendActor: "white",
+    VertexActor: fillcolor_palette["green"],
+    EdgeActor: fillcolor_palette["periwinkle"],
+    TransformActor: fillcolor_palette["stone"],
     VertexRouterActor: fillcolor_palette["peach"],
 }
+
+#: What each actor class is called in a resource figure's legend.
+ACTOR_LEGEND_BY_CLASS = {
+    DescendActor: "descend",
+    VertexActor: "vertex",
+    EdgeActor: "edge",
+    TransformActor: "transform",
+    VertexRouterActor: "vertex router",
+}
+
+#: Border of every actor node in a resource figure.
+ACTOR_BORDER = "brown"
 
 # Edge style mapping
 EDGE_STYLE_BY_SOURCE_TYPE = {AuxNodeType.VERTEX: "solid"}
@@ -127,6 +158,62 @@ EDGE_STYLE_BY_SOURCE_TYPE = {AuxNodeType.VERTEX: "solid"}
 map_type2shape = NODE_SHAPE_BY_TYPE
 map_type2color = NODE_COLOR_BY_TYPE
 edge_status = EDGE_STYLE_BY_SOURCE_TYPE
+
+
+def add_legend(dot: DotGraph, entries: list[tuple[str, dict[str, str]]]) -> None:
+    """Draw a boxed key in *dot*: one sample node per ``(meaning, node attributes)``.
+
+    Add it after any :meth:`~graflo.plot.dot.DotGraph.unflatten`, which would
+    otherwise treat the samples as leaves of the figure.
+    """
+    if not entries:
+        return
+    ids = []
+    for index, (meaning, attrs) in enumerate(entries):
+        node = f"legend__{index}"
+        dot.add_node(node, **attrs, label=meaning, fontsize="10")
+        ids.append(node)
+    # Invisible edges stack the samples instead of spreading them along a rank.
+    for tail, head in pairwise(ids):
+        dot.add_edge(tail, head, style="invis")
+    dot.add_subgraph(
+        ids,
+        name="cluster_legend",
+        label="legend",
+        style="dashed",
+        color="grey50",
+        fontsize="10",
+    )
+
+
+def type_legend(graph: nx.Graph) -> list[tuple[str, dict[str, str]]]:
+    """Legend entries for the node types present in *graph*, in a fixed order."""
+    present = {props.get("type") for _, props in graph.nodes(data=True)}
+    return [
+        (
+            meaning,
+            {
+                "shape": NODE_SHAPE_BY_TYPE[node_type],
+                "style": "filled",
+                "color": NODE_COLOR_BY_TYPE[node_type],
+                "fillcolor": NODE_COLOR_BY_TYPE[node_type],
+            },
+        )
+        for node_type, meaning in NODE_LEGEND_BY_TYPE.items()
+        if node_type in present
+    ]
+
+
+_LEVEL_PREFIX = "level_"
+
+
+def _group_order(group: str) -> tuple[int, str]:
+    """Inferred levels in numeric order, then any other group by name."""
+    if group.startswith(_LEVEL_PREFIX):
+        number = group.removeprefix(_LEVEL_PREFIX)
+        if number.isdigit():
+            return (int(number), "")
+    return (1 << 30, group)
 
 
 def get_auxnode_id(ntype: AuxNodeType, label=False, vfield=False, **kwargs):
@@ -261,7 +348,7 @@ def assemble_tree(
     for n, props in nodes.items():
         nodes[n]["fillcolor"] = map_class2color[props["class"]]
         nodes[n]["style"] = "filled"
-        nodes[n]["color"] = "brown"
+        nodes[n]["color"] = ACTOR_BORDER
 
     edges = [(ha, hb) for ha, hb, _, _ in edges]
     g.add_edges_from(edges)
@@ -269,6 +356,22 @@ def assemble_tree(
 
     if fig_path is not None:
         ag = to_dot(g)
+        present = {props["class"] for props in nodes.values()}
+        add_legend(
+            ag,
+            [
+                (
+                    meaning,
+                    {
+                        "style": "filled",
+                        "fillcolor": map_class2color[cls],
+                        "color": ACTOR_BORDER,
+                    },
+                )
+                for cls, meaning in ACTOR_LEGEND_BY_CLASS.items()
+                if cls in present
+            ],
+        )
         draw(ag, fig_path, output_format=output_format, dpi=output_dpi)
         return None
     else:
@@ -465,6 +568,7 @@ class ManifestPlotter:
             updates: dict[str, object] = {
                 "shape": shape,
                 "color": color,
+                "fillcolor": color,
                 "style": "filled",
             }
             if force_labels and "label" in props:
@@ -593,6 +697,42 @@ class ManifestPlotter:
             color_map[key] = partition_color_palette[idx % len(partition_color_palette)]
         return color_map
 
+    @staticmethod
+    def _partition_legend(
+        graph: nx.MultiDiGraph | nx.DiGraph,
+        partition_by_vertex: dict[str, str],
+        partition_color_map: dict[str, str],
+    ) -> list[tuple[str, dict[str, str]]]:
+        """Legend entries for the vertex groups drawn in *graph*, by group name."""
+        groups = {
+            partition_by_vertex[vertex]
+            for node_id in graph.nodes()
+            if isinstance(node_id, str)
+            and node_id.startswith(f"{AuxNodeType.VERTEX}:")
+            and (vertex := node_id.split(":", maxsplit=1)[1]) in partition_by_vertex
+        }
+        entries = []
+        for group in sorted(groups, key=_group_order):
+            if group not in partition_color_map:
+                continue
+            meaning = group
+            if group == f"{_LEVEL_PREFIX}0":
+                meaning = "level 0 (sources)"
+            elif group.startswith(_LEVEL_PREFIX):
+                meaning = f"level {group.removeprefix(_LEVEL_PREFIX)}"
+            entries.append(
+                (
+                    meaning,
+                    {
+                        "shape": NODE_SHAPE_BY_TYPE[AuxNodeType.VERTEX],
+                        "style": "filled",
+                        "color": NODE_COLOR_BY_TYPE[AuxNodeType.VERTEX],
+                        "fillcolor": partition_color_map[group],
+                    },
+                )
+            )
+        return entries
+
     def _infer_vertex_levels(self, edges: list[tuple[str, str]]) -> dict[str, int]:
         """Infer robust DAG-like levels by collapsing SCCs then layering the DAG."""
         graph = nx.DiGraph()
@@ -691,6 +831,7 @@ class ManifestPlotter:
             index_subgraph.graph_attr["label"] = "definition"
 
         ag = ag.unflatten(levels=5, fans=True, chain=3)
+        add_legend(ag, type_legend(g))
         self._draw(ag, self._versioned_stem(f"{self.prefix}_vc2fields"))
 
     def plot_resources(self):
@@ -751,6 +892,7 @@ class ManifestPlotter:
             ag.add_subgraph(resource_nodes, name="cluster_resources", rank="same")
         if vertex_nodes:
             ag.add_subgraph(vertex_nodes, name="cluster_vertices", rank="same")
+        add_legend(ag, type_legend(g))
 
         self._draw(ag, self._versioned_stem(f"{self.prefix}_source2vc"))
 
@@ -792,6 +934,7 @@ class ManifestPlotter:
 
             ag = to_dot(g)
             ag.graph_attr["rankdir"] = "LR"
+            add_legend(ag, type_legend(g))
             self._draw(
                 ag,
                 self._versioned_stem(f"{self.name}.resource2vc-{resource.name}"),
@@ -888,7 +1031,10 @@ class ManifestPlotter:
         if group_by_inferred_level:
             inferred_levels = self._infer_vertex_levels(edge_pairs)
             effective_partition.update(
-                {vertex: f"level_{level}" for vertex, level in inferred_levels.items()}
+                {
+                    vertex: f"{_LEVEL_PREFIX}{level}"
+                    for vertex, level in inferred_levels.items()
+                }
             )
 
         for v in sorted(all_vertices):
@@ -935,5 +1081,10 @@ class ManifestPlotter:
         ag = to_dot(g)
         if group_by_partition and effective_partition:
             self._add_partition_subgraphs(ag, g, effective_partition)
+        if partition_color_map:
+            legend = self._partition_legend(g, effective_partition, partition_color_map)
+        else:
+            legend = type_legend(g)
+        add_legend(ag, legend)
 
         self._draw(ag, self._versioned_stem(f"{self.prefix}_vc2vc"))

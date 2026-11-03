@@ -8,10 +8,8 @@ from contract fields plus runtime credentials from a connection provider.
 from __future__ import annotations
 
 import logging
-import re
 from collections.abc import Iterator
 from typing import Any
-from urllib.parse import quote
 
 import requests
 from pydantic import Field, PrivateAttr
@@ -21,7 +19,11 @@ from urllib3.util.retry import Retry
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.contract.bindings import PaginationConfig, WatermarkConfig
-from graflo.architecture.contract.bindings.connectors import TEMPLATE_VARIABLE
+from graflo.architecture.contract.bindings.connectors import (
+    render_body,
+    render_param,
+    render_text,
+)
 from graflo.connections.sources import ApiAuth
 from graflo.data_source.api_response import (
     ResolvedApiResponse,
@@ -35,7 +37,11 @@ from graflo.data_source.api_response import (
     next_offset_value,
     update_carried_params,
 )
-from graflo.data_source.base import AbstractDataSource, DataSourceType
+from graflo.data_source.base import (
+    AbstractDataSource,
+    DataSourceType,
+    later_watermark,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +58,7 @@ class APIConfig(ConfigBaseModel):
     headers: dict[str, str] = Field(default_factory=dict)
     auth: ApiAuth | None = None
     params: dict[str, Any] = Field(default_factory=dict)
+    body: dict[str, Any] | str | None = None
     timeout: float | None = None
     retries: int = 0
     retry_backoff_factor: float = 0.1
@@ -62,27 +69,6 @@ class APIConfig(ConfigBaseModel):
     pagination: PaginationConfig | None = None
     row_annotations: dict[str, Any] = Field(default_factory=dict)
     watermark: WatermarkConfig | None = None
-
-
-def _as_number(value: object) -> float | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str):
-        try:
-            return float(value)
-        except ValueError:
-            return None
-    return None
-
-
-def _later(candidate: object, current: object) -> bool:
-    """True when *candidate* is past *current* as a watermark."""
-    a, b = _as_number(candidate), _as_number(current)
-    if a is not None and b is not None:
-        return a > b
-    return str(candidate) > str(current)
 
 
 class APIDataSource(AbstractDataSource):
@@ -111,7 +97,7 @@ class APIDataSource(AbstractDataSource):
         value = get_at_path(row, mark.field)
         if value is None or isinstance(value, (dict, list)):
             return
-        if self._high_water is None or _later(value, self._high_water):
+        if self._high_water is None or later_watermark(value, self._high_water):
             self._high_water = value
 
     def _create_session(self) -> requests.Session:
@@ -192,10 +178,13 @@ class APIDataSource(AbstractDataSource):
 
                 # A failed page raises: stopping here would hand the caller a
                 # truncated stream that looks complete.
+                body = self.config.body
                 response = session.request(
                     method=self.config.method,
                     url=self.config.url,
                     params=params,
+                    json=body if isinstance(body, dict) else None,
+                    data=body if isinstance(body, str) else None,
                     timeout=self.config.timeout,
                     verify=self.config.verify,
                 )
@@ -276,34 +265,16 @@ class APIDataSource(AbstractDataSource):
             session.close()
 
 
-def _render(template: str, values: dict[str, Any], *, quote_values: bool) -> str:
-    def substitute(match: re.Match[str]) -> str:
-        value = str(values[match.group(1)])
-        return quote(value, safe="") if quote_values else value
-
-    return TEMPLATE_VARIABLE.sub(substitute, template)
-
-
-def _render_param(value: Any, values: dict[str, Any]) -> Any:
-    """A param that is exactly ``{variable}`` keeps the value's type."""
-    if not isinstance(value, str):
-        return value
-    whole = TEMPLATE_VARIABLE.fullmatch(value)
-    if whole is not None:
-        return values[whole.group(1)]
-    return _render(value, values, quote_values=False)
-
-
 class DependentAPIDataSource(AbstractDataSource):
     """One request per record of a parent source, its rows carrying the variables.
 
     For each parent record, the variables declared in *fields* are read by dot
     path; a record missing any of them is skipped. They fill ``{variable}`` in
-    the child's URL (percent-encoded) and string params, and every child row
+    the child's URL (percent-encoded), params and body, and every child row
     carries them as fields unless the row has a field of the same name.
     """
 
-    parent: APIDataSource | DependentAPIDataSource
+    parent: AbstractDataSource
     config: APIConfig
     fields: dict[str, str]
     source_type: DataSourceType = DataSourceType.API
@@ -324,12 +295,14 @@ class DependentAPIDataSource(AbstractDataSource):
         return values
 
     def _request_for(self, values: dict[str, Any]) -> APIConfig:
-        params = {
-            key: _render_param(value, values)
-            for key, value in self.config.params.items()
-        }
-        url = _render(self.config.url, values, quote_values=True)
-        return self.config.model_copy(update={"url": url, "params": params})
+        body = self.config.body
+        return self.config.model_copy(
+            update={
+                "url": render_text(self.config.url, values, quote_values=True),
+                "params": render_param(self.config.params, values),
+                "body": None if body is None else render_body(body, values),
+            }
+        )
 
     def iter_batches(
         self, batch_size: int = 1000, limit: int | None = None
@@ -351,6 +324,6 @@ class DependentAPIDataSource(AbstractDataSource):
                     yield rows
                 mark = child.high_water
                 if mark is not None and (
-                    self._high_water is None or _later(mark, self._high_water)
+                    self._high_water is None or later_watermark(mark, self._high_water)
                 ):
                     self._high_water = mark

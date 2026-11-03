@@ -422,8 +422,6 @@ class ResourceSampler:
             )
 
         if isinstance(connector, APIConnector):
-            from graflo.data_source.api import APIDataSource, DependentAPIDataSource
-
             if connection_provider is None:
                 raise ValueError(
                     f"Sampling APIConnector for resource '{resource_name}' requires "
@@ -435,14 +433,8 @@ class ResourceSampler:
                     f"the bindings that name its parent '{connector.parent.connector}'"
                 )
             try:
-                source: APIDataSource | DependentAPIDataSource = (
-                    RegistryBuilder.api_source(connector, bindings, connection_provider)
-                    if bindings is not None
-                    else APIDataSource(
-                        config=RegistryBuilder.api_config(
-                            connector, connection_provider
-                        )
-                    )
+                source = RegistryBuilder.api_source(
+                    connector, bindings, connection_provider
                 )
             except ValueError as exc:
                 raise ValueError(
