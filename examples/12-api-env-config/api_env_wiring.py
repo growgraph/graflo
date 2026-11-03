@@ -11,19 +11,21 @@ the variables listed in the README, then run it from this directory:
 from suthing import FileHandle
 
 from graflo import GraphManifest
-from graflo.connections import ApiGeneralizedConnConfig, InMemoryConnectionProvider
+from graflo.connections import (
+    InMemoryConnectionProvider,
+    RestApiConnConfig,
+    connector_config,
+)
 
 manifest = GraphManifest.from_config(FileHandle.load("manifest_apis.yaml"))
 manifest.finish_init()
 bindings = manifest.require_bindings()
 
-provider = InMemoryConnectionProvider()
-provider.register_all_api_configs_from_env(bindings=bindings)
+# One config per label in the bindings, read from {LABEL}_BASE_URL, {LABEL}_TOKEN, ...
+provider = InMemoryConnectionProvider.from_env(bindings)
 
 for connector in bindings.connectors:
-    resolved = provider.get_generalized_conn_config(connector)
-    assert isinstance(resolved, ApiGeneralizedConnConfig)
-    api = resolved.config
+    api = connector_config(connector, bindings, provider, RestApiConnConfig)
     auth_type = api.auth.auth_type if api.auth is not None else "none"
     print(
         f"{connector.name}: {api.base_url}{connector.path} "

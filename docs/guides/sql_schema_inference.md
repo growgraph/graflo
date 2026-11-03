@@ -237,14 +237,9 @@ The engine from step 1 keeps the PostgreSQL settings. In a new session,
 give them to the ingestion yourself, for the label the bindings use:
 
 ```python
-from graflo.connections import InMemoryConnectionProvider, PostgresGeneralizedConnConfig
+from graflo.connections import InMemoryConnectionProvider
 
-provider = InMemoryConnectionProvider()
-provider.bind_single_config_for_bindings(
-    bindings=manifest.require_bindings(),
-    conn_proxy="postgres_source",
-    config=PostgresGeneralizedConnConfig(config=PostgresConfig.from_env()),
-)
+provider = InMemoryConnectionProvider({"postgres_source": PostgresConfig.from_env()})
 engine = GraphEngine(target_db_flavor=DBType.NEO4J)
 engine.define_and_ingest(
     manifest=manifest,

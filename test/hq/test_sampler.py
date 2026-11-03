@@ -355,16 +355,12 @@ def test_bindings_sample_each_table_through_its_own_connection(
     table connector was skipped with a log line and only files survived."""
     from graflo.connections.provider import (
         InMemoryConnectionProvider,
-        PostgresGeneralizedConnConfig,
     )
 
     bindings = _table_bindings()
     provider = InMemoryConnectionProvider()
     for proxy in ("crm", "shop"):
-        provider.register_generalized_config(
-            conn_proxy=proxy, config=PostgresGeneralizedConnConfig(config=_pg(proxy))
-        )
-    provider.bind_from_bindings(bindings=bindings)
+        provider.register(proxy, _pg(proxy))
 
     seen: dict[str, str | None] = {}
 
@@ -466,24 +462,15 @@ def test_a_table_connector_carries_what_the_table_declares(
     assert sample.total_estimate == 1200
 
 
-def _api_provider(base_url: str, connector):
-    from graflo.connections.provider import (
-        ApiGeneralizedConnConfig,
-        InMemoryConnectionProvider,
-    )
+def _api_provider(base_url: str):
+    from graflo.connections.provider import InMemoryConnectionProvider
     from graflo.connections.sources import RestApiConnConfig
 
-    provider = InMemoryConnectionProvider()
-    provider.register_generalized_config(
-        conn_proxy="tracker",
-        config=ApiGeneralizedConnConfig(config=RestApiConnConfig(base_url=base_url)),
-    )
-    provider.bind_connector_to_conn_proxy(connector=connector, conn_proxy="tracker")
-    return provider
+    return InMemoryConnectionProvider({"tracker": RestApiConnConfig(base_url=base_url)})
 
 
 def test_an_api_connector_is_sampled_through_its_connection() -> None:
-    from graflo.architecture.contract.bindings import APIConnector
+    from graflo.architecture.contract.bindings import APIConnector, Bindings
     from test.sources.test_api_source import _Server
 
     issues = [{"key": f"SUP-{i}", "fields": {"summary": f"s{i}"}} for i in range(5)]
@@ -496,10 +483,15 @@ def test_an_api_connector_is_sampled_through_its_connection() -> None:
             path="/items",
             pagination={"response": {"records_path": "issues"}},
         )
+        bindings = Bindings(
+            connectors=[connector],
+            connector_connection=[{"connector": "issues", "conn_proxy": "tracker"}],
+        )
         sample = ResourceSampler(max_docs=3).sample_connector(
             connector,
             resource_name="issues",
-            connection_provider=_api_provider(base, connector),
+            connection_provider=_api_provider(base),
+            bindings=bindings,
         )
     finally:
         server.stop()

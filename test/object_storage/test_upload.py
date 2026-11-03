@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from graflo.connections.provider import S3GeneralizedConnConfig
+from graflo.connections.sources import S3ConnConfig
 from graflo.object_storage.upload import upload_staged_csvs
 
 
@@ -13,7 +13,7 @@ def test_upload_staged_csvs_paths_and_urls(tmp_path: Path) -> None:
     f1 = tmp_path / "a.csv"
     f1.write_text("x", encoding="utf-8")
 
-    s3_cfg = S3GeneralizedConnConfig(
+    s3_cfg = S3ConnConfig(
         bucket=None,
         region="us-east-1",
         endpoint_url="http://127.0.0.1:9000",
@@ -24,7 +24,7 @@ def test_upload_staged_csvs_paths_and_urls(tmp_path: Path) -> None:
     mock_client = MagicMock()
 
     with patch(
-        "graflo.object_storage.upload.boto3_s3_client_from_generalized",
+        "graflo.object_storage.upload.boto3_s3_client",
         return_value=mock_client,
     ):
         urls = upload_staged_csvs(

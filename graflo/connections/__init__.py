@@ -7,7 +7,10 @@ This package is the single home for *how to reach things*:
 - :mod:`graflo.connections.graflo_backend` — config for the on-disk GraFlo backend.
 - :mod:`graflo.connections.mapping` — ``DBType`` → config-class mapping.
 - :mod:`graflo.connections.sources` — runtime *source* connection models
-  (REST API, Kafka, SPARQL, S3 credentials).
+  (REST API, Kafka, S3 credentials) and ``ConnConfig``, the union a
+  ``conn_proxy`` label resolves to.
+- :mod:`graflo.connections.env` — the ``conn_proxy`` → ``{PREFIX}<FIELD>``
+  environment-variable rule.
 - :mod:`graflo.connections.provider` — ``ConnectionProvider`` protocol resolving
   ``conn_proxy`` labels to runtime configs (keeps YAML manifests secret-free).
 
@@ -43,53 +46,50 @@ _EXPORTS: dict[str, str] = {
     "get_config_class": "graflo.connections.mapping",
     # sources — runtime source connection models
     "ApiAuth": "graflo.connections.sources",
-    "ApiGeneralizedConnConfig": "graflo.connections.sources",
-    "GeneralizedConnConfig": "graflo.connections.sources",
+    "ConnConfig": "graflo.connections.sources",
     "KafkaConnConfig": "graflo.connections.sources",
-    "KafkaGeneralizedConnConfig": "graflo.connections.sources",
     "KafkaSecurityProtocol": "graflo.connections.sources",
-    "PostgresGeneralizedConnConfig": "graflo.connections.sources",
     "RestApiConnConfig": "graflo.connections.sources",
-    "S3GeneralizedConnConfig": "graflo.connections.sources",
+    "S3ConnConfig": "graflo.connections.sources",
     "SparqlAuth": "graflo.connections.sources",
-    "SparqlGeneralizedConnConfig": "graflo.connections.sources",
+    # env — the conn_proxy → environment-variable naming rule
+    "proxy_env_prefix": "graflo.connections.env",
     # provider — runtime resolution (imports the contract; lazy on purpose)
     "ConnectionProvider": "graflo.connections.provider",
     "EmptyConnectionProvider": "graflo.connections.provider",
     "InMemoryConnectionProvider": "graflo.connections.provider",
+    "connector_config": "graflo.connections.provider",
 }
 
 __all__ = [
     "DB_TYPE_MAPPING",
     "TARGET_DATABASES",
     "ApiAuth",
-    "ApiGeneralizedConnConfig",
     "ArangoConfig",
+    "ConnConfig",
     "ConnectionProvider",
     "DBConfig",
     "EmptyConnectionProvider",
     "FalkordbConfig",
-    "GeneralizedConnConfig",
     "GraFloBackendConfig",
     "GraphDBConfig",
     "InMemoryConnectionProvider",
     "KafkaConnConfig",
-    "KafkaGeneralizedConnConfig",
     "KafkaSecurityProtocol",
     "MemgraphConfig",
     "NebulaConfig",
     "Neo4jConfig",
     "PostgresConfig",
-    "PostgresGeneralizedConnConfig",
     "RestApiConnConfig",
-    "S3GeneralizedConnConfig",
+    "S3ConnConfig",
     "SparqlAuth",
     "SparqlEndpointConfig",
-    "SparqlGeneralizedConnConfig",
     "TigergraphBulkLoadConfig",
     "TigergraphBulkLoadJobOptions",
     "TigergraphConfig",
+    "connector_config",
     "get_config_class",
+    "proxy_env_prefix",
 ]
 
 

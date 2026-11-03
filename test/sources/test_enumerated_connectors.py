@@ -20,7 +20,6 @@ from graflo.architecture.contract.bindings import (
     SparqlConnector,
 )
 from graflo.connections.provider import (
-    ApiGeneralizedConnConfig,
     InMemoryConnectionProvider,
 )
 from graflo.connections.sources import RestApiConnConfig
@@ -119,13 +118,10 @@ def _source(server: _Server, *connectors: dict[str, Any], name: str = "objects")
         }
     )
     provider = InMemoryConnectionProvider()
-    provider.register_generalized_config(
-        conn_proxy="api",
-        config=ApiGeneralizedConnConfig(
-            config=RestApiConnConfig(base_url=server.base_url)
-        ),
+    provider.register(
+        "api",
+        RestApiConnConfig(base_url=server.base_url),
     )
-    provider.bind_from_bindings(bindings=bindings)
     connector = next(c for c in bindings.connectors if c.name == name)
     assert isinstance(connector, APIConnector)
     return RegistryBuilder.api_source(connector, bindings, provider), (
@@ -382,12 +378,24 @@ class TestApiRuntime:
         )
         assert [doc["cls"] for doc in sample.docs] == ["person", "person", "org"]
 
-    def test_sampling_needs_no_bindings_without_a_parent(self, api: _Server) -> None:
-        _, (connector, _, provider) = _source(api, OBJECTS_CONNECTOR)
+    def test_sampling_resolves_the_connection_through_the_bindings(
+        self, api: _Server
+    ) -> None:
+        _, (connector, bindings, provider) = _source(api, OBJECTS_CONNECTOR)
         sample = ResourceSampler(max_docs=10).sample_connector(
-            connector, resource_name="objects", connection_provider=provider
+            connector,
+            resource_name="objects",
+            connection_provider=provider,
+            bindings=bindings,
         )
         assert len(sample.docs) == 4
+
+    def test_sampling_without_bindings_says_so(self, api: _Server) -> None:
+        _, (connector, _, provider) = _source(api, OBJECTS_CONNECTOR)
+        with pytest.raises(ValueError, match="the bindings that name it"):
+            ResourceSampler(max_docs=10).sample_connector(
+                connector, resource_name="objects", connection_provider=provider
+            )
 
 
 EX = "http://example.org/"
@@ -424,6 +432,7 @@ def endpoint(monkeypatch: pytest.MonkeyPatch) -> _Endpoint:
 def _sparql_rows(connector: SparqlConnector) -> list[dict]:
     source = RegistryBuilder.sparql_source(
         connector,
+        Bindings(connectors=[connector]),
         resource_name="things",
         page_size=100,
         connection_provider=InMemoryConnectionProvider(),
@@ -520,11 +529,10 @@ def _routed_manifest(base_url: str):
     )
     manifest.finish_init()
     provider = InMemoryConnectionProvider()
-    provider.register_generalized_config(
-        conn_proxy="api",
-        config=ApiGeneralizedConnConfig(config=RestApiConnConfig(base_url=base_url)),
+    provider.register(
+        "api",
+        RestApiConnConfig(base_url=base_url),
     )
-    provider.bind_from_bindings(bindings=manifest.require_bindings())
     return manifest, provider
 
 
@@ -571,7 +579,6 @@ def test_a_projected_manifest_asks_only_for_what_it_may_still_route(
         [ProjectManifestOp(keep_vertices=["person", "org"])],
         bump_version=False,
     )
-    provider.bind_from_bindings(bindings=projected.require_bindings())
     registry = RegistryBuilder(
         projected.require_schema(), projected.require_ingestion_model()
     ).build(projected.require_bindings(), IngestionParams(), provider, strict=True)

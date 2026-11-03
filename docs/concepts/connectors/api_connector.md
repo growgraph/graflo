@@ -63,8 +63,7 @@ manifest.finish_init()
 bindings = manifest.require_bindings()
 
 # Reads MAINTENANCE_API_BASE_URL and MAINTENANCE_API_TOKEN
-provider = InMemoryConnectionProvider()
-provider.register_all_api_configs_from_env(bindings=bindings)
+provider = InMemoryConnectionProvider.from_env(bindings)
 
 target = GraFloBackendConfig(output_dir=Path("artifacts/work-orders"))
 engine = GraphEngine(target_db_flavor=target.connection_type)
@@ -84,7 +83,7 @@ At run time a [connection provider](../glossary.md#connection-provider) maps eac
 
 ### From environment variables
 
-`register_all_api_configs_from_env` finds every label that an API connector uses, reads the variables for each label, and binds each connector to its label. The variable prefix is the label in upper case, with `-` replaced by `_`, followed by `_`: the label `maintenance_api` reads `MAINTENANCE_API_*`, and `sensor-feed` reads `SENSOR_FEED_*`.
+`InMemoryConnectionProvider.from_env(bindings)` finds every label the bindings use and reads the variables for each; for a label of API connectors it builds a `RestApiConnConfig`. The variable prefix is the label in upper case, with `-` replaced by `_`, followed by `_`: the label `maintenance_api` reads `MAINTENANCE_API_*`, and `sensor-feed` reads `SENSOR_FEED_*`. Labels of table, SPARQL and Kafka connectors in the same bindings are loaded by the same call.
 
 | Variable | Required | Meaning |
 |---|---|---|
@@ -95,53 +94,40 @@ At run time a [connection provider](../glossary.md#connection-provider) maps eac
 | `{PREFIX}HEADER_NAME` | no, default `Authorization` | Header that carries the token or key |
 | `{PREFIX}PREFIX` | no, default `Bearer` | Word written before the token (`bearer` only) |
 
-A missing `{PREFIX}BASE_URL`, or an `AUTH_TYPE` other than these four, raises a `ValueError` that names the variable. With none of `TOKEN`, `USERNAME` and `PASSWORD` set, the API is taken to need no authentication and the requests carry no credential header.
+A missing `{PREFIX}BASE_URL`, or an `AUTH_TYPE` other than these four, raises a `ValueError` that names the variable; every label with a problem is listed in that one error. With none of `TOKEN`, `USERNAME` and `PASSWORD` set, the API is taken to need no authentication and the requests carry no credential header.
 
 When your variables do not follow the label, map the label to the prefix you use:
 
 ```python
-provider.register_all_api_configs_from_env(
-    bindings=bindings,
+provider = InMemoryConnectionProvider.from_env(
+    bindings,
     env_prefix_map={"maintenance_api": "PLANT_MAINTENANCE_"},
 )
 ```
 
-To register a single label, call `register_api_config_from_env`. It does not bind the connectors, so call `bind_from_bindings` after it:
-
-```python
-provider.register_api_config_from_env(conn_proxy="maintenance_api")
-provider.bind_from_bindings(bindings=bindings)
-```
+To load a single label, call `RestApiConnConfig.from_env("MAINTENANCE_API_")` and register the result as below.
 
 ### In Python
 
 Register a `RestApiConnConfig` yourself when the values come from somewhere else, such as a secret store, or when the API needs no authentication:
 
 ```python
-from graflo.connections import (
-    ApiAuth,
-    ApiGeneralizedConnConfig,
-    InMemoryConnectionProvider,
-    RestApiConnConfig,
-)
+from graflo.connections import ApiAuth, InMemoryConnectionProvider, RestApiConnConfig
 
-provider = InMemoryConnectionProvider()
-provider.register_generalized_config(
-    conn_proxy="maintenance_api",
-    config=ApiGeneralizedConnConfig(
-        config=RestApiConnConfig(
+provider = InMemoryConnectionProvider(
+    {
+        "maintenance_api": RestApiConnConfig(
             base_url="https://maintenance.example.com",
             auth=ApiAuth(
                 auth_type="api_key", token="your-key", header_name="X-Api-Key"
             ),
             default_headers={"Accept": "application/json"},
         )
-    ),
+    }
 )
-provider.bind_from_bindings(bindings=bindings)
 ```
 
-`bind_from_bindings` attaches each connector to the label that its `connector_connection` row names. Leave out `auth` for an API without authentication.
+The provider maps labels to configs only; which connector uses which label is read from the `connector_connection` rows when the run starts. Leave out `auth` for an API without authentication.
 
 ### Authentication types
 

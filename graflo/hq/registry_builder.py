@@ -24,14 +24,13 @@ from graflo.architecture.contract.bindings import (
 )
 from graflo.architecture.contract.ingestion import IngestionModel
 from graflo.architecture.schema import Schema
+from graflo.connections.onto import PostgresConfig, SparqlEndpointConfig
 from graflo.connections.provider import (
-    ApiGeneralizedConnConfig,
     ConnectionProvider,
     EmptyConnectionProvider,
-    KafkaGeneralizedConnConfig,
-    PostgresGeneralizedConnConfig,
-    SparqlGeneralizedConnConfig,
+    connector_config,
 )
+from graflo.connections.sources import KafkaConnConfig, RestApiConnConfig
 from graflo.data_source.base import AbstractDataSource
 from graflo.data_source.enumerated import EnumeratedDataSource, EnumeratedMember
 from graflo.data_source.factory import DataSourceFactory
@@ -41,7 +40,6 @@ from graflo.filter.sql import datetime_range_filter
 
 if TYPE_CHECKING:
     from graflo.architecture.contract.bindings import Bindings
-    from graflo.connections.sources import RestApiConnConfig
     from graflo.data_source.api import APIConfig
     from graflo.hq.caster import IngestionParams
 
@@ -239,6 +237,7 @@ class RegistryBuilder:
                             registry,
                             resource_name,
                             connector,
+                            bindings,
                             provider,
                         )
                     except Exception as e:
@@ -376,26 +375,9 @@ class RegistryBuilder:
         """
         from graflo.hq.auto_join import enrich_edge_connector_with_joins
 
-        generalized = (
-            connection_provider.get_generalized_conn_config(connector)
-            if hasattr(connection_provider, "get_generalized_conn_config")
-            else None
+        postgres_config = connector_config(
+            connector, bindings, connection_provider, PostgresConfig
         )
-        postgres_config = (
-            generalized.config
-            if isinstance(generalized, PostgresGeneralizedConnConfig)
-            else None
-        )
-        if postgres_config is None:
-            # Legacy fallback: allow older ConnectionProvider implementations.
-            postgres_config = connection_provider.get_postgres_config(
-                resource_name, connector
-            )
-        if postgres_config is None:
-            raise ValueError(
-                f"no PostgreSQL connection configuration for table "
-                f"'{connector.table_name}'"
-            )
 
         table_name = connector.table_name
         schema_name = connector.schema_name
@@ -473,6 +455,7 @@ class RegistryBuilder:
         try:
             source = self.sparql_source(
                 connector,
+                bindings,
                 resource_name=resource_name,
                 page_size=ingestion_params.batch_size,
                 connection_provider=connection_provider,
@@ -499,6 +482,7 @@ class RegistryBuilder:
     def sparql_source(
         cls,
         connector: SparqlConnector,
+        bindings: Bindings,
         *,
         resource_name: str,
         page_size: int,
@@ -519,6 +503,7 @@ class RegistryBuilder:
                 connector,
                 lambda one: cls.sparql_source(
                     one,
+                    bindings,
                     resource_name=resource_name,
                     page_size=page_size,
                     connection_provider=connection_provider,
@@ -530,22 +515,15 @@ class RegistryBuilder:
                 SparqlSourceConfig,
             )
 
-            generalized = (
-                connection_provider.get_generalized_conn_config(connector)
-                if hasattr(connection_provider, "get_generalized_conn_config")
-                else None
-            )
-            if isinstance(generalized, SparqlGeneralizedConnConfig):
-                cfg = generalized.config
+            # A public endpoint needs no conn_proxy; a declared one must resolve.
+            username: str | None = None
+            password: str | None = None
+            if bindings.get_conn_proxy_for_connector(connector) is not None:
+                cfg = connector_config(
+                    connector, bindings, connection_provider, SparqlEndpointConfig
+                )
                 username = cfg.username
                 password = cfg.password
-            else:
-                # Legacy fallback: allow older ConnectionProvider implementations.
-                sparql_auth = connection_provider.get_sparql_auth(
-                    resource_name, connector
-                )
-                username = sparql_auth.username if sparql_auth else None
-                password = sparql_auth.password if sparql_auth else None
 
             return SparqlEndpointDataSource(
                 config=SparqlSourceConfig(
@@ -590,6 +568,7 @@ class RegistryBuilder:
     @staticmethod
     def api_config(
         connector: APIConnector,
+        bindings: Bindings,
         connection_provider: ConnectionProvider,
         *,
         page_size_override: int | None = None,
@@ -599,17 +578,9 @@ class RegistryBuilder:
         Raises:
             ValueError: No REST API connection is registered for the connector.
         """
-        generalized = (
-            connection_provider.get_generalized_conn_config(connector)
-            if hasattr(connection_provider, "get_generalized_conn_config")
-            else None
+        runtime = connector_config(
+            connector, bindings, connection_provider, RestApiConnConfig
         )
-        if not isinstance(generalized, ApiGeneralizedConnConfig):
-            raise ValueError(
-                "no REST API connection configuration is registered for the "
-                "connector's conn_proxy"
-            )
-        runtime = generalized.config
         return connector.build_api_config(
             base_url=runtime.base_url,
             auth=runtime.auth,
@@ -631,7 +602,7 @@ class RegistryBuilder:
     def api_source(
         cls,
         connector: APIConnector,
-        bindings: Bindings | None,
+        bindings: Bindings,
         connection_provider: ConnectionProvider,
         *,
         page_size_override: int | None = None,
@@ -646,8 +617,7 @@ class RegistryBuilder:
 
         Raises:
             ValueError: No REST API connection is registered for the connector
-                or any of its parents, or the connector has a parent and no
-                *bindings* are given.
+                or any of its parents.
         """
         from graflo.data_source.api import APIDataSource, DependentAPIDataSource
 
@@ -661,20 +631,16 @@ class RegistryBuilder:
                     page_size_override=page_size_override,
                 ),
             )
-        if connector.parent is not None and bindings is None:
-            raise ValueError(
-                f"API connector '{connector.name or connector.path}' has a parent; "
-                "the bindings that name it are needed"
-            )
         parent = (
             None
-            if connector.parent is None or bindings is None
+            if connector.parent is None
             else bindings.get_parent_connector(connector)
         )
-        if parent is None or connector.parent is None or bindings is None:
+        if parent is None or connector.parent is None:
             return APIDataSource(
                 config=cls.api_config(
                     connector,
+                    bindings,
                     connection_provider,
                     page_size_override=page_size_override,
                 )
@@ -706,20 +672,17 @@ class RegistryBuilder:
         bindings: Bindings,
         connection_provider: ConnectionProvider,
     ) -> RestApiConnConfig:
-        """The REST connection of *connector*, else of its nearest parent with one."""
+        """The REST connection of *connector*, else of its nearest parent with a ``conn_proxy``."""
         current: APIConnector | None = connector
         while current is not None:
-            generalized = (
-                connection_provider.get_generalized_conn_config(current)
-                if hasattr(connection_provider, "get_generalized_conn_config")
-                else None
-            )
-            if isinstance(generalized, ApiGeneralizedConnConfig):
-                return generalized.config
+            if bindings.get_conn_proxy_for_connector(current) is not None:
+                return connector_config(
+                    current, bindings, connection_provider, RestApiConnConfig
+                )
             current = bindings.get_parent_connector(current)
         raise ValueError(
-            "no REST API connection configuration is registered for the "
-            "connector's conn_proxy or any of its parents'"
+            f"API connector {connector.name or connector.path!r} and its parents "
+            "have no conn_proxy"
         )
 
     def _register_api_sources(
@@ -786,23 +749,17 @@ class RegistryBuilder:
         registry: DataSourceRegistry,
         resource_name: str,
         connector: KafkaConnector,
+        bindings: Bindings,
         connection_provider: ConnectionProvider,
     ) -> None:
         """Register Kafka topic data sources for a resource."""
-        generalized = (
-            connection_provider.get_generalized_conn_config(connector)
-            if hasattr(connection_provider, "get_generalized_conn_config")
-            else None
+        kafka_conn = connector_config(
+            connector, bindings, connection_provider, KafkaConnConfig
         )
-        if not isinstance(generalized, KafkaGeneralizedConnConfig):
-            raise ValueError(
-                "no Kafka connection configuration is registered for the "
-                "connector's conn_proxy"
-            )
 
         from graflo.data_source.kafka import KafkaDataSource
 
-        kafka_config = connector.build_kafka_config(conn=generalized.config)
+        kafka_config = connector.build_kafka_config(conn=kafka_conn)
         kafka_source = KafkaDataSource(config=kafka_config)
         registry.register(kafka_source, resource_name=resource_name)
 

@@ -208,7 +208,7 @@ class ConnectorConnectionBinding(ConfigBaseModel):
 
     This is a non-secret contract block: manifests store proxy names only.
     At runtime, the :class:`~graflo.connections.provider.ConnectionProvider`
-    resolves each ``conn_proxy`` to a concrete generalized config holding
+    resolves each ``conn_proxy`` to a concrete config holding
     credentials/secrets.
     """
 
@@ -219,7 +219,7 @@ class ConnectorConnectionBinding(ConfigBaseModel):
 class StagingProxyBinding(ConfigBaseModel):
     """Named staging profile -> runtime connection-proxy (e.g. S3 credentials).
 
-    Used by TigerGraph bulk ingest to resolve ``S3GeneralizedConnConfig`` without
+    Used by TigerGraph bulk ingest to resolve an ``S3ConnConfig`` without
     putting secrets in the manifest.
     """
 
@@ -601,6 +601,18 @@ class BindingsConfig(ConfigBaseModel):
     def get_conn_proxy_for_connector(self, connector: AnyConnector) -> str | None:
         """Return the mapped runtime proxy name for a given connector."""
         return self._connector_to_conn_proxy.get(connector.hash)
+
+    def conn_proxies(self) -> dict[str, list[AnyConnector]]:
+        """Every ``conn_proxy`` label in use, with the connectors that name it.
+
+        Labels come in sorted order; connectors in declaration order.
+        """
+        by_proxy: dict[str, list[AnyConnector]] = {}
+        for connector in self.connectors:
+            proxy = self._connector_to_conn_proxy.get(connector.hash)
+            if proxy is not None:
+                by_proxy.setdefault(proxy, []).append(connector)
+        return dict(sorted(by_proxy.items()))
 
     def resolve_connector_refs_to_hashes(self, connector_refs: list[str]) -> set[str]:
         """Resolve connector names or hashes to canonical connector hashes."""

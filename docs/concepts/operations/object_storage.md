@@ -57,11 +57,7 @@ from graflo.object_storage import MinioConfig
 
 minio = MinioConfig.from_docker_env()
 
-provider = InMemoryConnectionProvider()
-provider.register_generalized_config(
-    conn_proxy="minio_bulk",
-    config=minio.to_s3_generalized_conn_config(),
-)
+provider = InMemoryConnectionProvider({"minio_bulk": minio.to_s3_conn_config()})
 
 conn_conf = TigergraphConfig.from_env()
 conn_conf.bulk_load = TigergraphBulkLoadConfig(
@@ -95,11 +91,11 @@ not used with `ConnectionManager`.
 `MinioConfig.from_docker_env()` reads the settings of the MinIO container
 shipped under `docker/minio` (`MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`,
 `MINIO_API_PORT`, `MINIO_STAGING_BUCKET`, `MINIO_LOADER_ENDPOINT` and a few
-alternatives). `to_s3_generalized_conn_config()` turns it into the
-`S3GeneralizedConnConfig` that a connection provider stores; you can also
-build an `S3GeneralizedConnConfig` directly with `bucket`, `region`,
-`endpoint_url`, `aws_access_key_id`, `aws_secret_access_key` and
-`loader_endpoint_url`.
+alternatives). `to_s3_conn_config()` turns it into the `S3ConnConfig` that a
+connection provider stores; you can also build an `S3ConnConfig` directly with
+`bucket`, `region`, `endpoint_url`, `aws_access_key_id`,
+`aws_secret_access_key` and `loader_endpoint_url`, or read those from
+`{PREFIX}BUCKET`, `{PREFIX}REGION`, … with `S3ConnConfig.from_env(prefix)`.
 
 `graflo.object_storage` also exports the helpers the bulk load uses:
 
@@ -107,7 +103,7 @@ build an `S3GeneralizedConnConfig` directly with `bucket`, `region`,
 |---|---|
 | `ensure_staging_bucket_for_config(config)` | Creates the config's bucket if it does not exist; raises with a hint when the endpoint cannot be reached |
 | `ensure_bucket_exists(client, bucket)` | The same for any boto3 client |
-| `boto3_s3_client_from_minio(config)`, `boto3_s3_client_from_generalized(config)` | Build a boto3 S3 client from either config |
+| `boto3_s3_client_from_minio(config)`, `boto3_s3_client(config)` | Build a boto3 S3 client from a `MinioConfig` or an `S3ConnConfig` |
 | `upload_staged_csvs(...)` | Uploads files under `<key prefix>/<session id>/` and returns their `s3://` URLs |
 
 Calling `ensure_staging_bucket_for_config` before an ingest turns a MinIO that

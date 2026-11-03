@@ -16,7 +16,7 @@ from graflo.connections.onto import (
     TigergraphBulkLoadConfig,
     TigergraphBulkLoadJobOptions,
 )
-from graflo.connections.provider import S3GeneralizedConnConfig
+from graflo.connections.sources import S3ConnConfig
 from graflo.db.tigergraph.bulk_csv import vertex_column_order
 from graflo.db.tigergraph.bulk_gsql import build_create_and_run_loading_job
 from graflo.onto import DBType
@@ -126,7 +126,7 @@ def test_build_loading_job_s3_adds_data_source_and_prefixed_filenames(
     )
     s3_uri = "s3://mybucket/prefix/sess/company.csv"
     path_for = {f"v:{phys}": s3_uri}
-    s3_cfg = S3GeneralizedConnConfig(
+    s3_cfg = S3ConnConfig(
         bucket="mybucket",
         region="us-east-1",
         endpoint_url="http://127.0.0.1:9003",

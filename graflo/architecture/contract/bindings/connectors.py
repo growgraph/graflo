@@ -1096,7 +1096,7 @@ class APIConnector(TemplatedConnector):
 
     Declares the non-secret access pattern (path, method, pagination). Runtime
     ``base_url`` and credentials are supplied via ``connector_connection`` ->
-    ``conn_proxy`` -> :class:`~graflo.connections.provider.ApiGeneralizedConnConfig`.
+    ``conn_proxy`` -> :class:`~graflo.connections.sources.RestApiConnConfig`.
 
     ``path`` and ``params`` are address templates and ``body`` a query text
     (see :class:`TemplatedConnector`); their variables come from ``values``
@@ -1284,7 +1284,7 @@ class KafkaConnector(ResourceConnector):
     Declares the non-secret access pattern (topics, consumer group, decode
     options). Runtime bootstrap servers and credentials are supplied via
     ``connector_connection`` -> ``conn_proxy`` ->
-    :class:`~graflo.connections.provider.KafkaGeneralizedConnConfig`.
+    :class:`~graflo.connections.sources.KafkaConnConfig`.
 
     Attributes:
         topics: Topic names to subscribe to.

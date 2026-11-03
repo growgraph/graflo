@@ -38,10 +38,7 @@ from graflo.architecture.onto_sample import (
     SourceSample,
 )
 from graflo.connections.onto import PostgresConfig
-from graflo.connections.provider import (
-    ConnectionProvider,
-    PostgresGeneralizedConnConfig,
-)
+from graflo.connections.provider import ConnectionProvider, connector_config
 from graflo.data_source.factory import DataSourceFactory
 from graflo.hq.registry_builder import RegistryBuilder
 
@@ -49,13 +46,12 @@ logger = logging.getLogger(__name__)
 
 
 def _provider_postgres_config(
-    provider: ConnectionProvider, resource_name: str, connector: TableConnector
+    provider: ConnectionProvider, bindings: Bindings, connector: TableConnector
 ) -> PostgresConfig | None:
-    """The PostgreSQL config *provider* holds for *connector*, as ingestion resolves it."""
-    generalized = provider.get_generalized_conn_config(connector)
-    if isinstance(generalized, PostgresGeneralizedConnConfig):
-        return generalized.config
-    return provider.get_postgres_config(resource_name, connector)
+    """The PostgreSQL config of *connector*'s ``conn_proxy``; ``None`` without one."""
+    if bindings.get_conn_proxy_for_connector(connector) is None:
+        return None
+    return connector_config(connector, bindings, provider, PostgresConfig)
 
 
 #: Values longer than this are clipped and the sample marked ``truncated``.
@@ -374,9 +370,9 @@ class ResourceSampler:
     ) -> ResourceSample:
         """Sample one resource through *connector*.
 
-        A table connector needs *config*; an API connector needs a
-        *connection_provider* that resolves its ``conn_proxy``, and, when it
-        has a ``parent``, the *bindings* that name the parent.
+        A table connector needs *config*; an API connector needs the
+        *bindings* that name its ``conn_proxy`` (and its parent, when it has
+        one) and a *connection_provider* that resolves it.
         """
         if isinstance(connector, FileConnector):
             files = RegistryBuilder.discover_files(
@@ -422,15 +418,10 @@ class ResourceSampler:
             )
 
         if isinstance(connector, APIConnector):
-            if connection_provider is None:
+            if connection_provider is None or bindings is None:
                 raise ValueError(
                     f"Sampling APIConnector for resource '{resource_name}' requires "
-                    "a REST API connection"
-                )
-            if connector.parent is not None and bindings is None:
-                raise ValueError(
-                    f"Sampling APIConnector for resource '{resource_name}' requires "
-                    f"the bindings that name its parent '{connector.parent.connector}'"
+                    "a REST API connection and the bindings that name it"
                 )
             try:
                 source = RegistryBuilder.api_source(
@@ -522,17 +513,17 @@ class ResourceSampler:
                 logger.warning("Skipping resource '%s': %s", resource, reason)
                 skipped.append(f"{resource}: {reason}")
                 continue
-            resource_config = config
-            if connection_provider is not None and isinstance(
-                connector, TableConnector
-            ):
-                resource_config = (
-                    _provider_postgres_config(
-                        connection_provider, str(resource), connector
-                    )
-                    or config
-                )
             try:
+                resource_config = config
+                if connection_provider is not None and isinstance(
+                    connector, TableConnector
+                ):
+                    resource_config = (
+                        _provider_postgres_config(
+                            connection_provider, bindings, connector
+                        )
+                        or config
+                    )
                 samples.append(
                     self.sample_connector(
                         connector,

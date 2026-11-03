@@ -66,8 +66,8 @@ def _ingestion_model(**resource: object) -> IngestionModel:
 
 def _provider() -> InMemoryConnectionProvider:
     return InMemoryConnectionProvider(
-        postgres_by_resource={
-            "events": PostgresConfig(
+        {
+            "events_db": PostgresConfig(
                 uri="postgresql://localhost:5432", database="db", username="u"
             )
         }
@@ -78,6 +78,7 @@ def _query(connector: TableConnector, params: IngestionParams) -> str:
     bindings = Bindings(
         connectors=[connector],
         resource_connector=[{"resource": "events", "connector": "events"}],
+        connector_connection=[{"connector": "events", "conn_proxy": "events_db"}],
     )
     registry = RegistryBuilder(_schema(), _ingestion_model()).build(
         bindings, params, _provider(), strict=True
@@ -225,15 +226,15 @@ Connector = (
 UNBUILDABLE: list[tuple[Callable[[], Connector], str]] = [
     (
         lambda: APIConnector(path="/events", resource_name="events"),
-        "no REST API connection configuration",
+        "has no conn_proxy; a RestApiConnConfig is needed",
     ),
     (
         lambda: KafkaConnector(topics=["events"], group_id="g", resource_name="events"),
-        "no Kafka connection configuration",
+        "has no conn_proxy; a KafkaConnConfig is needed",
     ),
     (
         lambda: TableConnector(table_name="events", resource_name="events"),
-        "no PostgreSQL connection configuration",
+        "has no conn_proxy; a PostgresConfig is needed",
     ),
     (
         lambda: SparqlConnector(

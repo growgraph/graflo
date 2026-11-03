@@ -1,15 +1,17 @@
-"""Runtime connection/config resolution for source connectors.
+"""Runtime resolution of ``conn_proxy`` labels to connection configs.
 
-This module defines a connector-centric runtime indirection:
-``Bindings (contract) -> conn_proxy name -> GeneralizedConnConfig (runtime)``.
+Manifests stay secret-free: a connector names a ``conn_proxy`` label in its
+bindings, and a :class:`ConnectionProvider` maps each label to a
+:data:`~graflo.connections.sources.ConnConfig` at run time. Which connector
+uses which label is read from the bindings at lookup, never copied into the
+provider.
 """
 
 from __future__ import annotations
 
 import os
-from typing import Protocol
-
-from pydantic import BaseModel, Field
+from collections.abc import Mapping
+from typing import Protocol, TypeVar
 
 from graflo.architecture.contract.bindings import (
     APIConnector,
@@ -19,59 +21,60 @@ from graflo.architecture.contract.bindings import (
     SparqlConnector,
     TableConnector,
 )
+from graflo.architecture.contract.bindings.core import AnyConnector
+from graflo.connections.env import proxy_env_prefix
 from graflo.connections.onto import DBConfig, PostgresConfig, SparqlEndpointConfig
 from graflo.connections.sources import (
     ApiAuth,
-    ApiGeneralizedConnConfig,
-    GeneralizedConnConfig,
+    ConnConfig,
     KafkaConnConfig,
-    KafkaGeneralizedConnConfig,
-    PostgresGeneralizedConnConfig,
     RestApiConnConfig,
-    S3GeneralizedConnConfig,
+    S3ConnConfig,
     SparqlAuth,
-    SparqlGeneralizedConnConfig,
 )
 
 __all__ = [
     "ApiAuth",
-    "ApiGeneralizedConnConfig",
+    "ConnConfig",
     "ConnectionProvider",
     "EmptyConnectionProvider",
-    "GeneralizedConnConfig",
     "InMemoryConnectionProvider",
     "KafkaConnConfig",
-    "KafkaGeneralizedConnConfig",
-    "PostgresGeneralizedConnConfig",
     "RestApiConnConfig",
-    "S3GeneralizedConnConfig",
+    "S3ConnConfig",
     "SparqlAuth",
-    "SparqlGeneralizedConnConfig",
+    "connector_config",
     "proxy_env_prefix",
     "resolve_db_secrets_from_env",
     "resolve_secrets_from_env",
 ]
 
+_D = TypeVar("_D", bound=DBConfig)
+_T = TypeVar(
+    "_T", PostgresConfig, SparqlEndpointConfig, RestApiConnConfig, KafkaConnConfig
+)
 
-def _proxy_to_env_prefix(conn_proxy: str) -> str:
-    """Map a ``conn_proxy`` label to an environment-variable prefix."""
-    return conn_proxy.upper().replace("-", "_") + "_"
+#: The config type each kind of proxied connector needs.
+_CONFIG_TYPE_BY_CONNECTOR: tuple[tuple[type[ResourceConnector], type], ...] = (
+    (TableConnector, PostgresConfig),
+    (SparqlConnector, SparqlEndpointConfig),
+    (APIConnector, RestApiConnConfig),
+    (KafkaConnector, KafkaConnConfig),
+)
 
 
-def proxy_env_prefix(conn_proxy: str) -> str:
-    """Public form of the ``conn_proxy`` → environment-variable prefix convention.
-
-    ``user_service`` → ``USER_SERVICE_``. Every env-backed resolution in this
-    module derives its prefix from this function unless one is passed explicitly.
-    """
-    return _proxy_to_env_prefix(conn_proxy)
+def _config_type_for(connector: ResourceConnector) -> type | None:
+    for connector_type, config_type in _CONFIG_TYPE_BY_CONNECTOR:
+        if isinstance(connector, connector_type):
+            return config_type
+    return None
 
 
 def resolve_db_secrets_from_env(
-    config: DBConfig,
+    config: _D,
     conn_proxy: str,
     env_prefix: str | None = None,
-) -> DBConfig:
+) -> _D:
     """Fill a stored database config's missing username and password from the environment.
 
     The same rule as :func:`resolve_secrets_from_env`, for any database config,
@@ -82,7 +85,7 @@ def resolve_db_secrets_from_env(
         A copy of *config* with missing credentials filled, or *config* itself
         when nothing was filled.
     """
-    prefix = env_prefix if env_prefix is not None else _proxy_to_env_prefix(conn_proxy)
+    prefix = env_prefix if env_prefix is not None else proxy_env_prefix(conn_proxy)
     update = {
         field: value
         for field in ("username", "password")
@@ -93,347 +96,166 @@ def resolve_db_secrets_from_env(
 
 
 def resolve_secrets_from_env(
-    config: GeneralizedConnConfig,
+    config: ConnConfig,
     conn_proxy: str,
     env_prefix: str | None = None,
-) -> GeneralizedConnConfig:
-    """Fill a stored source config's missing credentials from the environment.
+) -> ConnConfig:
+    """Fill a stored config's missing credentials from the environment.
 
-    A registry stores source connections without secrets; the secret behind a
+    A registry stores connections without secrets; the secret behind a
     ``conn_proxy`` label arrives at run time. This reads
-    ``{prefix}USERNAME`` / ``{prefix}PASSWORD`` for database and SPARQL sources,
-    plus ``{prefix}TOKEN`` for REST API sources, where *prefix* defaults to
+    ``{prefix}USERNAME`` / ``{prefix}PASSWORD`` for database and SPARQL configs,
+    plus ``{prefix}TOKEN`` for REST API configs, where *prefix* defaults to
     :func:`proxy_env_prefix`. A value already present on *config* is kept: the
     environment fills gaps and never overrides a stored setting.
 
-    Configs of other kinds (Kafka, S3) are returned unchanged.
-
-    Args:
-        config: Generalized config as resolved from storage.
-        conn_proxy: The label the config is registered under.
-        env_prefix: Explicit prefix overriding the proxy-derived one.
+    Kafka and S3 configs are returned unchanged.
 
     Returns:
         A copy of *config* with missing credentials filled, or *config* itself
         when nothing was filled.
     """
-    prefix = env_prefix if env_prefix is not None else _proxy_to_env_prefix(conn_proxy)
+    prefix = env_prefix if env_prefix is not None else proxy_env_prefix(conn_proxy)
 
-    def _env(name: str) -> str | None:
-        return os.environ.get(f"{prefix}{name}") or None
+    if isinstance(config, (PostgresConfig, SparqlEndpointConfig)):
+        return resolve_db_secrets_from_env(config, conn_proxy, prefix)
 
-    if isinstance(config, (PostgresGeneralizedConnConfig, SparqlGeneralizedConnConfig)):
-        filled = resolve_db_secrets_from_env(config.config, conn_proxy, prefix)
-        if filled is config.config:
-            return config
-        return config.model_copy(update={"config": filled})
-
-    if isinstance(config, ApiGeneralizedConnConfig):
-        inner = config.config
-        auth = inner.auth or ApiAuth()
+    if isinstance(config, RestApiConnConfig):
+        auth = config.auth or ApiAuth()
         update = {
             field: value
-            for field, value in (
-                ("token", _env("TOKEN")),
-                ("username", _env("USERNAME")),
-                ("password", _env("PASSWORD")),
-            )
-            if value is not None and getattr(auth, field) is None
+            for field in ("token", "username", "password")
+            if (value := os.environ.get(f"{prefix}{field.upper()}") or None) is not None
+            and getattr(auth, field) is None
         }
         if not update:
             return config
-        return config.model_copy(
-            update={
-                "config": inner.model_copy(
-                    update={"auth": auth.model_copy(update=update)}
-                )
-            }
-        )
+        return config.model_copy(update={"auth": auth.model_copy(update=update)})
 
     return config
 
 
 class ConnectionProvider(Protocol):
-    """Resolve runtime source connection/auth configuration.
+    """Resolve a ``conn_proxy`` label to its runtime connection config."""
 
-    New connector-centric resolution (preferred):
-    - :meth:`get_generalized_conn_config` takes a connector and returns the
-      generalized runtime config.
-
-    Legacy helpers (kept for backwards compatibility):
-    - :meth:`get_postgres_config`
-    - :meth:`get_sparql_auth`
-    """
-
-    def get_generalized_conn_config(
-        self, connector: ResourceConnector
-    ) -> GeneralizedConnConfig | None:
-        """Return generalized runtime config for a connector."""
-
-    def get_postgres_config(
-        self, resource_name: str, connector: TableConnector
-    ) -> PostgresConfig | None:
-        """Return source DB config for a SQL table resource (legacy)."""
-
-    def get_sparql_auth(
-        self, resource_name: str, connector: SparqlConnector
-    ) -> SparqlAuth | None:
-        """Return source auth payload for a SPARQL resource (legacy)."""
-
-    def get_generalized_config_by_proxy(
-        self, conn_proxy: str
-    ) -> GeneralizedConnConfig | None:
-        """Resolve a non-secret proxy name to runtime config (S3, etc.)."""
+    def get_config(self, conn_proxy: str) -> ConnConfig | None:
+        """The config registered under *conn_proxy*, or ``None``."""
+        ...
 
 
 class EmptyConnectionProvider:
-    """No-op provider when no source credentials/config are configured."""
+    """A provider with no configs: every label resolves to ``None``."""
 
-    def get_generalized_conn_config(
-        self, connector: ResourceConnector
-    ) -> GeneralizedConnConfig | None:
-        return None
-
-    def get_postgres_config(
-        self, resource_name: str, connector: TableConnector
-    ) -> PostgresConfig | None:
-        return None
-
-    def get_sparql_auth(
-        self, resource_name: str, connector: SparqlConnector
-    ) -> SparqlAuth | None:
-        return None
-
-    def get_generalized_config_by_proxy(
-        self, conn_proxy: str
-    ) -> GeneralizedConnConfig | None:
+    def get_config(self, conn_proxy: str) -> ConnConfig | None:
         return None
 
 
-class InMemoryConnectionProvider(BaseModel):
-    """Simple in-memory provider for proxy-based generalized configs.
+class InMemoryConnectionProvider:
+    """``conn_proxy`` label → config, held in memory.
 
-    Supports two wiring modes:
-    - New: ``proxy_by_connector_hash`` + ``configs_by_proxy``
-    - Legacy: per-resource maps (``postgres_by_resource`` / ``sparql_by_resource``)
+    Build it from a mapping, ``InMemoryConnectionProvider({"shop_db": cfg})``,
+    or from the environment with :meth:`from_env`.
     """
 
-    configs_by_proxy: dict[str, GeneralizedConnConfig] = Field(default_factory=dict)
-    proxy_by_connector_hash: dict[str, str] = Field(default_factory=dict)
+    def __init__(self, configs: Mapping[str, ConnConfig] | None = None) -> None:
+        self.configs: dict[str, ConnConfig] = dict(configs or {})
 
-    postgres_by_resource: dict[str, PostgresConfig] = Field(default_factory=dict)
-    sparql_by_resource: dict[str, SparqlEndpointConfig] = Field(default_factory=dict)
-    sparql_by_endpoint: dict[str, SparqlEndpointConfig] = Field(default_factory=dict)
-    default_sparql: SparqlEndpointConfig | None = None
+    def register(self, conn_proxy: str, config: ConnConfig) -> None:
+        """Register (or replace) the config of *conn_proxy*."""
+        self.configs[conn_proxy] = config
 
-    def register_generalized_config(
-        self, *, conn_proxy: str, config: GeneralizedConnConfig
-    ) -> None:
-        self.configs_by_proxy[conn_proxy] = config
+    def get_config(self, conn_proxy: str) -> ConnConfig | None:
+        return self.configs.get(conn_proxy)
 
-    def bind_connector_to_conn_proxy(
-        self, *, connector: ResourceConnector, conn_proxy: str
-    ) -> None:
-        self.proxy_by_connector_hash[connector.hash] = conn_proxy
-
-    def bind_from_bindings(self, *, bindings: Bindings) -> None:
-        """Populate ``proxy_by_connector_hash`` from the contract bindings."""
-        for connector in bindings.connectors:
-            proxy = bindings.get_conn_proxy_for_connector(connector)
-            if proxy is not None:
-                self.proxy_by_connector_hash[connector.hash] = proxy
-
-    def bind_single_config_for_bindings(
-        self,
-        *,
+    @classmethod
+    def from_env(
+        cls,
         bindings: Bindings,
-        conn_proxy: str,
-        config: GeneralizedConnConfig,
-    ) -> None:
-        """Bind one generalized config to all connectors in bindings.
+        *,
+        env_prefix_map: dict[str, str] | None = None,
+    ) -> InMemoryConnectionProvider:
+        """One config per ``conn_proxy`` the bindings use, read from the environment.
 
-        This is intended for the common case where a single source DB
-        (or single generalized API endpoint) supplies all SQL/SPARQL connectors
-        in the manifest.
+        The config type follows the connectors that name the label: table →
+        :class:`PostgresConfig`, SPARQL → :class:`SparqlEndpointConfig`, REST
+        API → :class:`RestApiConnConfig`, Kafka → :class:`KafkaConnConfig`.
+        Each reads ``{PREFIX}<FIELD>``, *PREFIX* from :func:`proxy_env_prefix`
+        unless *env_prefix_map* names one for the label. Labels named only by
+        file or push connectors are skipped.
 
         Raises:
-            ValueError: if bindings use multiple different ``conn_proxy`` labels.
-        """
-        used_proxies: set[str] = set()
-        for connector in bindings.connectors:
-            proxy = bindings.get_conn_proxy_for_connector(connector)
-            if proxy is not None:
-                used_proxies.add(proxy)
-
-        if not used_proxies:
-            raise ValueError(
-                "No connector_connection mappings found in bindings; "
-                "expected connector -> conn_proxy rows."
-            )
-
-        if used_proxies != {conn_proxy}:
-            used = ", ".join(sorted(used_proxies))
-            raise ValueError(
-                f"Expected all connector_connection mappings to use conn_proxy='{conn_proxy}', "
-                f"but found proxies: {used}. For multi-proxy setups, bind explicitly "
-                "with register_generalized_config(...) and bind_from_bindings(...)."
-            )
-
-        self.register_generalized_config(conn_proxy=conn_proxy, config=config)
-        self.bind_from_bindings(bindings=bindings)
-
-    def register_api_config_from_env(
-        self,
-        *,
-        conn_proxy: str,
-        env_prefix: str | None = None,
-    ) -> None:
-        """Register REST API runtime config for *conn_proxy* from environment variables.
-
-        *env_prefix* defaults to a proxy-derived prefix (e.g. ``user_service`` →
-        ``USER_SERVICE_``), reading ``{prefix}BASE_URL`` and optional auth vars.
-        """
-        prefix = (
-            env_prefix if env_prefix is not None else _proxy_to_env_prefix(conn_proxy)
-        )
-        runtime = RestApiConnConfig.from_env(env_prefix=prefix)
-        self.register_generalized_config(
-            conn_proxy=conn_proxy,
-            config=ApiGeneralizedConnConfig(config=runtime),
-        )
-
-    def register_all_api_configs_from_env(
-        self,
-        *,
-        bindings: Bindings,
-        env_prefix_map: dict[str, str] | None = None,
-    ) -> None:
-        """Register env-backed API configs for all API ``conn_proxy`` labels in *bindings*.
-
-        Discovers unique ``conn_proxy`` values attached to :class:`APIConnector`
-        instances, loads each via :meth:`register_api_config_from_env`, then binds
-        all connectors from *bindings*.
-
-        Args:
-            bindings: Manifest bindings with ``connector_connection`` rows.
-            env_prefix_map: Optional per-proxy env prefix overrides.
+            ValueError: A label is named by connectors needing different config
+                types, or a label's required variables are missing — every
+                such label is listed in one error.
         """
         prefix_map = env_prefix_map or {}
-        api_proxies: set[str] = set()
-        for connector in bindings.connectors:
-            if not isinstance(connector, APIConnector):
+        configs: dict[str, ConnConfig] = {}
+        problems: list[str] = []
+        for proxy, connectors in bindings.conn_proxies().items():
+            needed = {t for c in connectors if (t := _config_type_for(c)) is not None}
+            if not needed:
                 continue
-            proxy = bindings.get_conn_proxy_for_connector(connector)
-            if proxy is not None:
-                api_proxies.add(proxy)
-
-        if not api_proxies:
-            raise ValueError(
-                "No API connector_connection mappings found in bindings; "
-                "expected at least one APIConnector with a conn_proxy."
-            )
-
-        for conn_proxy in sorted(api_proxies):
-            self.register_api_config_from_env(
-                conn_proxy=conn_proxy,
-                env_prefix=prefix_map.get(conn_proxy),
-            )
-        self.bind_from_bindings(bindings=bindings)
-
-    def register_kafka_config_from_env(
-        self,
-        *,
-        conn_proxy: str,
-        env_prefix: str | None = None,
-    ) -> None:
-        """Register Kafka runtime config for *conn_proxy* from environment variables.
-
-        *env_prefix* defaults to a proxy-derived prefix (e.g. ``kafka_local`` →
-        ``KAFKA_LOCAL_``), reading ``{prefix}BOOTSTRAP_SERVERS`` and optional auth vars.
-        """
-        prefix = (
-            env_prefix if env_prefix is not None else _proxy_to_env_prefix(conn_proxy)
-        )
-        runtime = KafkaConnConfig.from_env(env_prefix=prefix)
-        self.register_generalized_config(
-            conn_proxy=conn_proxy,
-            config=KafkaGeneralizedConnConfig(config=runtime),
-        )
-
-    def register_all_kafka_configs_from_env(
-        self,
-        *,
-        bindings: Bindings,
-        env_prefix_map: dict[str, str] | None = None,
-    ) -> None:
-        """Register env-backed Kafka configs for all Kafka ``conn_proxy`` labels.
-
-        Discovers unique ``conn_proxy`` values attached to :class:`KafkaConnector`
-        instances, loads each via :meth:`register_kafka_config_from_env`, then binds
-        all connectors from *bindings*.
-        """
-        prefix_map = env_prefix_map or {}
-        kafka_proxies: set[str] = set()
-        for connector in bindings.connectors:
-            if not isinstance(connector, KafkaConnector):
+            if len(needed) > 1:
+                kinds = ", ".join(sorted(t.__name__ for t in needed))
+                problems.append(f"{proxy!r} is used by connectors needing {kinds}")
                 continue
-            proxy = bindings.get_conn_proxy_for_connector(connector)
-            if proxy is not None:
-                kafka_proxies.add(proxy)
-
-        if not kafka_proxies:
+            config_type = needed.pop()
+            prefix = prefix_map.get(proxy, proxy_env_prefix(proxy))
+            try:
+                config = _load_from_env(config_type, proxy, prefix)
+            except ValueError as exc:
+                problems.append(f"{proxy!r}: {exc}")
+                continue
+            configs[proxy] = config
+        if problems:
             raise ValueError(
-                "No Kafka connector_connection mappings found in bindings; "
-                "expected at least one KafkaConnector with a conn_proxy."
+                "Cannot load connection configs from the environment: "
+                + "; ".join(problems)
             )
+        return cls(configs)
 
-        for conn_proxy in sorted(kafka_proxies):
-            self.register_kafka_config_from_env(
-                conn_proxy=conn_proxy,
-                env_prefix=prefix_map.get(conn_proxy),
-            )
-        self.bind_from_bindings(bindings=bindings)
 
-    def get_generalized_conn_config(
-        self, connector: ResourceConnector
-    ) -> GeneralizedConnConfig | None:
-        proxy = self.proxy_by_connector_hash.get(connector.hash)
-        if proxy is None:
-            return None
-        return self.configs_by_proxy.get(proxy)
+def _load_from_env(config_type: type, proxy: str, prefix: str) -> ConnConfig:
+    if config_type is RestApiConnConfig:
+        return RestApiConnConfig.from_env(env_prefix=prefix)
+    if config_type is KafkaConnConfig:
+        return KafkaConnConfig.from_env(env_prefix=prefix)
+    if config_type is PostgresConfig:
+        config = PostgresConfig.from_proxy_env(proxy, env_prefix=prefix)
+        if config.uri is None:
+            raise ValueError(f"environment variable {prefix}URI is required")
+        return config
+    return SparqlEndpointConfig.from_proxy_env(proxy, env_prefix=prefix)
 
-    def get_generalized_config_by_proxy(
-        self, conn_proxy: str
-    ) -> GeneralizedConnConfig | None:
-        return self.configs_by_proxy.get(conn_proxy)
 
-    def register_s3_config(
-        self, *, conn_proxy: str, config: S3GeneralizedConnConfig
-    ) -> None:
-        """Store S3 staging credentials/config under *conn_proxy*."""
-        self.configs_by_proxy[conn_proxy] = config
+def connector_config(
+    connector: AnyConnector,
+    bindings: Bindings,
+    provider: ConnectionProvider,
+    expected: type[_T],
+) -> _T:
+    """The config of *connector*'s ``conn_proxy``, checked to be an *expected*.
 
-    def get_postgres_config(
-        self, resource_name: str, connector: TableConnector
-    ) -> PostgresConfig | None:
-        generalized = self.get_generalized_conn_config(connector)
-        if isinstance(generalized, PostgresGeneralizedConnConfig):
-            return generalized.config
-        return self.postgres_by_resource.get(resource_name)
-
-    def get_sparql_auth(
-        self, resource_name: str, connector: SparqlConnector
-    ) -> SparqlAuth | None:
-        generalized = self.get_generalized_conn_config(connector)
-        if isinstance(generalized, SparqlGeneralizedConnConfig):
-            cfg = generalized.config
-            return SparqlAuth(username=cfg.username, password=cfg.password)
-
-        cfg = self.sparql_by_resource.get(resource_name)
-        if cfg is None and connector.endpoint_url:
-            cfg = self.sparql_by_endpoint.get(connector.endpoint_url)
-        if cfg is None:
-            cfg = self.default_sparql
-        if cfg is None:
-            return None
-        return SparqlAuth(username=cfg.username, password=cfg.password)
+    Raises:
+        ValueError: The connector has no ``conn_proxy``, nothing is registered
+            under it, or what is registered is another kind of config.
+    """
+    label = connector.name or connector.hash
+    proxy = bindings.get_conn_proxy_for_connector(connector)
+    if proxy is None:
+        raise ValueError(
+            f"connector {label!r} has no conn_proxy; "
+            f"a {expected.__name__} is needed to read it"
+        )
+    config = provider.get_config(proxy)
+    if config is None:
+        raise ValueError(
+            f"no connection configuration is registered for conn_proxy "
+            f"{proxy!r} (connector {label!r})"
+        )
+    if not isinstance(config, expected):
+        raise ValueError(
+            f"conn_proxy {proxy!r} (connector {label!r}) holds a "
+            f"{type(config).__name__}; a {expected.__name__} is needed"
+        )
+    return config

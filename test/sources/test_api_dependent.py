@@ -17,7 +17,6 @@ from graflo.architecture.contract.bindings import (
     FileConnector,
 )
 from graflo.connections.provider import (
-    ApiGeneralizedConnConfig,
     InMemoryConnectionProvider,
 )
 from graflo.connections.sources import RestApiConnConfig
@@ -138,11 +137,10 @@ def _bindings(*connectors: dict[str, Any]) -> Bindings:
 
 def _provider(base_url: str, bindings: Bindings) -> InMemoryConnectionProvider:
     provider = InMemoryConnectionProvider()
-    provider.register_generalized_config(
-        conn_proxy="slack",
-        config=ApiGeneralizedConnConfig(config=RestApiConnConfig(base_url=base_url)),
+    provider.register(
+        "slack",
+        RestApiConnConfig(base_url=base_url),
     )
-    provider.bind_from_bindings(bindings=bindings)
     return provider
 
 
@@ -297,11 +295,9 @@ class TestRuntime:
                 }
             )
             provider = _provider(slack.base_url, bindings)
-            provider.register_generalized_config(
-                conn_proxy="mirror",
-                config=ApiGeneralizedConnConfig(
-                    config=RestApiConnConfig(base_url=other.base_url)
-                ),
+            provider.register(
+                "mirror",
+                RestApiConnConfig(base_url=other.base_url),
             )
             source = RegistryBuilder.api_source(
                 _connector(bindings, "history"), bindings, provider

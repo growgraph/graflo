@@ -69,12 +69,9 @@ The fields of each kind are described in [Table filters and views](table_views.m
 - **A patch with no key besides `connector` changes nothing.**
 - **`connector` takes a name or a hash.** A reference that matches no connector raises a `ValueError`.
 
-## Patch before you connect
+## Refer to connectors by name
 
-GraFlo identifies each connector by a hash of its fields: all of them except `name` and `resource_name`. The bindings pair resources and [connection proxies](../glossary.md#connection-proxy) with connectors by that hash, so a patch that changes a field changes the hash. `apply_connector_update` moves those pairings from the old connector to the new one. Anything else that recorded the old hash does not follow, which gives two rules:
-
-- **Patch before you build the connection provider.** `InMemoryConnectionProvider` records the hash of each connector when you bind configs to it, with `bind_single_config_for_bindings`, `bind_from_bindings` or the helpers that read configs from environment variables. A provider built before the patch has no config for the patched connector. For a table, API or Kafka connector, the run then fails before anything is read, with a `ValueError` that names the connector. With `IngestionParams(strict_registry=False)` the connector is skipped with a warning instead, and its resource reads nothing from it.
-- **Refer to connectors by name.** A hash written in `IngestionParams.connectors` or in a later patch names the old connector and stops resolving once the connector is patched.
+GraFlo identifies each connector by a hash of its fields: all of them except `name` and `resource_name`. The bindings pair resources and [connection proxies](../glossary.md#connection-proxy) with connectors by that hash, so a patch that changes a field changes the hash. `apply_connector_update` moves those pairings from the old connector to the new one, and a [connection provider](../glossary.md#connection-provider) holds configs by label only, so one built before the patch still serves the patched connector. A hash you wrote down yourself does not follow: a hash in `IngestionParams.connectors` or in a later patch names the old connector and stops resolving once the connector is patched. Refer to connectors by name.
 
 ## Patches from a file
 

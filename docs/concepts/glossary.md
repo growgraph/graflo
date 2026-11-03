@@ -251,7 +251,7 @@ See [the connection proxy example (11)](../examples/connection-proxy/index.md).
 
 ### connection provider
 
-The runtime object that turns each connection proxy into a real connection config. `InMemoryConnectionProvider` holds configs you register in Python, and reads API and Kafka configs from environment variables prefixed with the upper-cased proxy label (`PLANT_API_BASE_URL` for `plant_api`). See [API env wiring](../guides/api_env_wiring.md).
+The runtime object that turns each connection proxy into a real connection config. `InMemoryConnectionProvider` maps labels to configs, `InMemoryConnectionProvider({"plant_api": ...})`, or reads every label the bindings use from environment variables prefixed with the upper-cased label (`PLANT_API_BASE_URL` for `plant_api`) with `InMemoryConnectionProvider.from_env(bindings)`. Which connector uses which label stays in the bindings. See [API env wiring](../guides/api_env_wiring.md).
 
 ### target backend
 

@@ -13,6 +13,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 if TYPE_CHECKING:
     from graflo.architecture.contract.bindings import Bindings
 
+from graflo.connections.env import proxy_env_prefix
 from graflo.onto import DBType
 
 logger = logging.getLogger(__name__)
@@ -90,7 +91,7 @@ class TigergraphBulkLoadConfig(BaseModel):
     to per-type CSV files under ``staging_dir``, then runs one loading job per ingest
     session at finalize time.
 
-    S3 staging uses :class:`S3GeneralizedConnConfig` registered under
+    S3 staging uses :class:`~graflo.connections.sources.S3ConnConfig` registered under
     ``s3_conn_proxy`` or under the name resolved via manifest
     :class:`StagingProxyBinding` and ``s3_staging_name``.
     """
@@ -122,7 +123,7 @@ class TigergraphBulkLoadConfig(BaseModel):
     )
     s3_bucket: str | None = Field(
         default=None,
-        description="Target bucket for staged objects (may override S3GeneralizedConnConfig.bucket).",
+        description="Target bucket for staged objects (may override S3ConnConfig.bucket).",
     )
     s3_key_prefix: str = Field(
         default="graflo-bulk",
@@ -596,6 +597,29 @@ class DBConfig(BaseSettings, abc.ABC):
         )
         temp_class = type(
             f"{cls.__name__}WithPrefix", (cls,), {"model_config": model_config}
+        )
+        return cast(Self, temp_class())
+
+    @classmethod
+    def from_proxy_env(cls, conn_proxy: str, env_prefix: str | None = None) -> Self:
+        """Load the config registered under *conn_proxy* from the environment.
+
+        Reads ``{prefix}<FIELD>`` with no backend segment — ``shop_db`` reads
+        ``SHOP_DB_URI``, ``SHOP_DB_USERNAME``, ``SHOP_DB_PASSWORD``, … — the
+        rule every ``conn_proxy`` config follows.
+
+        Args:
+            conn_proxy: The label the manifest bindings use.
+            env_prefix: Explicit prefix; defaults to
+                :func:`~graflo.connections.env.proxy_env_prefix` of *conn_proxy*.
+        """
+        prefix = env_prefix if env_prefix is not None else proxy_env_prefix(conn_proxy)
+        model_config = SettingsConfigDict(
+            env_prefix=prefix,
+            case_sensitive=cls.model_config.get("case_sensitive", False),
+        )
+        temp_class = type(
+            f"{cls.__name__}FromProxy", (cls,), {"model_config": model_config}
         )
         return cast(Self, temp_class())
 

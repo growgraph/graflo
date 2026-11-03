@@ -79,6 +79,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Connection provider is a `conn_proxy` → config map.** `InMemoryConnectionProvider({"shop_db":
+  PostgresConfig(...), "crm_api": RestApiConnConfig(...)})`; which connector uses which label is
+  read from the bindings at run time, so a provider built before a connector patch still serves it.
+  `ConnectionProvider.get_config(conn_proxy)` replaces the connector-keyed lookups.
+- `InMemoryConnectionProvider.from_env(bindings)` loads every label the bindings use, of any
+  kind, from `{LABEL}_<FIELD>` variables; `DBConfig.from_proxy_env(conn_proxy)` and
+  `S3ConnConfig.from_env(prefix)` follow the same rule.
+- The `*GeneralizedConnConfig` wrappers are gone: a provider holds `PostgresConfig`,
+  `SparqlEndpointConfig`, `RestApiConnConfig`, `KafkaConnConfig` or `S3ConnConfig` (renamed from
+  `S3GeneralizedConnConfig`) directly, typed `ConnConfig`.
+- Removed: `register_generalized_config`, `bind_from_bindings`, `bind_single_config_for_bindings`,
+  `bind_connector_to_conn_proxy` on the provider, the `register_*_from_env` helpers,
+  `get_postgres_config`, `get_sparql_auth`, the per-resource maps;
+  `to_s3_generalized_conn_config` → `to_s3_conn_config`, `boto3_s3_client_from_generalized` →
+  `boto3_s3_client`. `RegistryBuilder.api_source`, `api_config` and `sparql_source` take the
+  bindings.
 - An undeclared `{name}` in an API connector's `path` or `params` is refused when the bindings
   load; without a `parent` it used to be sent as written.
 - **Access aspect**: `LiftSpec.access_edges` maps each relation to the merge mode of its zones

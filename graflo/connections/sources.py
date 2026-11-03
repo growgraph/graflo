@@ -103,24 +103,9 @@ class RestApiConnConfig(BaseModel):
         return cls(base_url=cast(str, base_url), auth=auth)
 
 
-class PostgresGeneralizedConnConfig(BaseModel):
-    """Generalized runtime config variant for SQL/Postgres connections."""
-
-    kind: Literal["postgres"] = "postgres"
-    config: PostgresConfig
-
-
-class SparqlGeneralizedConnConfig(BaseModel):
-    """Generalized runtime config variant for SPARQL endpoint connections."""
-
-    kind: Literal["sparql"] = "sparql"
-    config: SparqlEndpointConfig
-
-
-class S3GeneralizedConnConfig(BaseModel):
+class S3ConnConfig(BaseModel):
     """Runtime credentials and defaults for S3 staging (TigerGraph bulk ingest)."""
 
-    kind: Literal["s3"] = "s3"
     bucket: str | None = Field(
         default=None,
         description="Default bucket when TigergraphBulkLoadConfig.s3_bucket is unset.",
@@ -140,12 +125,22 @@ class S3GeneralizedConnConfig(BaseModel):
         ),
     )
 
+    @classmethod
+    def from_env(cls, env_prefix: str) -> S3ConnConfig:
+        """Load S3 staging config from ``{env_prefix}<FIELD>`` variables.
 
-class ApiGeneralizedConnConfig(BaseModel):
-    """Generalized runtime config variant for REST API connections."""
-
-    kind: Literal["rest_api"] = "rest_api"
-    config: RestApiConnConfig
+        Reads ``BUCKET``, ``REGION``, ``AWS_ACCESS_KEY_ID``,
+        ``AWS_SECRET_ACCESS_KEY``, ``ENDPOINT_URL`` and ``LOADER_ENDPOINT_URL``;
+        all are optional.
+        """
+        return cls(
+            **{
+                name: value
+                for name in cls.model_fields
+                if (value := os.environ.get(f"{env_prefix}{name.upper()}") or None)
+                is not None
+            }
+        )
 
 
 KafkaSecurityProtocol = Literal["PLAINTEXT", "SASL_PLAINTEXT", "SASL_SSL", "SSL"]
@@ -217,17 +212,11 @@ class KafkaConnConfig(BaseModel):
         return cfg
 
 
-class KafkaGeneralizedConnConfig(BaseModel):
-    """Generalized runtime config variant for Kafka connections."""
-
-    kind: Literal["kafka"] = "kafka"
-    config: KafkaConnConfig
-
-
-GeneralizedConnConfig = (
-    PostgresGeneralizedConnConfig
-    | SparqlGeneralizedConnConfig
-    | S3GeneralizedConnConfig
-    | ApiGeneralizedConnConfig
-    | KafkaGeneralizedConnConfig
+ConnConfig = (
+    PostgresConfig
+    | SparqlEndpointConfig
+    | RestApiConnConfig
+    | KafkaConnConfig
+    | S3ConnConfig
 )
+"""A runtime connection a ``conn_proxy`` label resolves to."""

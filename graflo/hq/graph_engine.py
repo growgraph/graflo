@@ -25,7 +25,6 @@ from graflo.connections.provider import (
     ConnectionProvider,
     EmptyConnectionProvider,
     InMemoryConnectionProvider,
-    SparqlGeneralizedConnConfig,
 )
 from graflo.data_source.registry import DataSourceRegistry
 from graflo.db.conn import ConnectionCapability
@@ -620,25 +619,17 @@ class GraphEngine:
             graph_uri=graph_uri,
         )
 
+        provider: ConnectionProvider
         if sparql_config:
             conn_proxy = "sparql_source"
-            provider = InMemoryConnectionProvider()
-            provider.register_generalized_config(
-                conn_proxy=conn_proxy,
-                config=SparqlGeneralizedConnConfig(config=sparql_config),
-            )
-            provider.default_sparql = sparql_config
+            provider = InMemoryConnectionProvider({conn_proxy: sparql_config})
 
             # Wire all SPARQL connectors to the same credential proxy.
             from graflo.architecture.contract.bindings import SparqlConnector
 
             for connector in bindings.connectors:
-                if not isinstance(connector, SparqlConnector):
-                    continue
-                bindings.bind_connector_to_conn_proxy(connector, conn_proxy)
-                provider.bind_connector_to_conn_proxy(
-                    connector=connector, conn_proxy=conn_proxy
-                )
+                if isinstance(connector, SparqlConnector):
+                    bindings.bind_connector_to_conn_proxy(connector, conn_proxy)
         else:
             provider = EmptyConnectionProvider()
         self.connection_provider = provider

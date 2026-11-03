@@ -21,7 +21,7 @@ from graflo.onto import DBType
 if TYPE_CHECKING:
     from graflo.connections.provider import (
         ConnectionProvider,
-        S3GeneralizedConnConfig,
+        S3ConnConfig,
     )
     from graflo.db.tigergraph.conn import TigerGraphConnection
 
@@ -102,18 +102,18 @@ def bulk_load_finalize(
     path_for_gsql: dict[str, str] = {k: str(v.resolve()) for k, v in staged.items()}
     proxy = bulk_cfg.resolve_s3_conn_proxy(bindings)
     bucket = bulk_cfg.s3_bucket
-    tigergraph_s3_loader: S3GeneralizedConnConfig | None = None
+    tigergraph_s3_loader: S3ConnConfig | None = None
     if proxy and connection_provider is not None:
-        from graflo.connections.provider import S3GeneralizedConnConfig
+        from graflo.connections.sources import S3ConnConfig
 
-        gen = connection_provider.get_generalized_config_by_proxy(proxy)
-        if isinstance(gen, S3GeneralizedConnConfig):
+        gen = connection_provider.get_config(proxy)
+        if isinstance(gen, S3ConnConfig):
             tigergraph_s3_loader = gen
             resolved_bucket = bucket or gen.bucket
             if not resolved_bucket:
                 raise ValueError(
                     "S3 bulk staging requires TigergraphBulkLoadConfig.s3_bucket "
-                    "or S3GeneralizedConnConfig.bucket"
+                    "or S3ConnConfig.bucket"
                 )
             path_for_gsql = upload_staged_csvs(
                 staged_files=staged,

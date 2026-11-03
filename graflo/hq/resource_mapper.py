@@ -12,10 +12,7 @@ from graflo.architecture.contract.bindings import (
     TableConnector,
 )
 from graflo.architecture.onto_sql import SchemaIntrospectionResult
-from graflo.connections.provider import (
-    InMemoryConnectionProvider,
-    PostgresGeneralizedConnConfig,
-)
+from graflo.connections.provider import InMemoryConnectionProvider
 from graflo.db.postgres.conn import PostgresConnection
 from graflo.filter.select import SelectSpec
 
@@ -71,7 +68,7 @@ class ResourceMapper:
         Returns:
             Tuple of:
                 - Bindings object with TableConnector instances for all tables
-                - InMemoryConnectionProvider containing connector->PostgresConfig mappings
+                - InMemoryConnectionProvider holding the PostgresConfig under ``postgres_source``
         """
         introspection_result = conn.introspect_schema(
             schema_name=schema_name,
@@ -98,12 +95,8 @@ class ResourceMapper:
         bindings = Bindings()
         effective_schema = schema_name or introspection_result.schema_name
 
-        provider = InMemoryConnectionProvider()
         conn_proxy = "postgres_source"
-        provider.register_generalized_config(
-            conn_proxy=conn_proxy,
-            config=PostgresGeneralizedConnConfig(config=conn.config),
-        )
+        provider = InMemoryConnectionProvider({conn_proxy: conn.config})
 
         date_cols = datetime_columns or {}
         type_lookup = type_lookup_overrides or {}
@@ -122,10 +115,6 @@ class ResourceMapper:
             bindings.add_connector(table_connector)
             bindings.bind_resource(table_name, table_connector)
             bindings.bind_connector_to_conn_proxy(table_connector, conn_proxy)
-            provider.bind_connector_to_conn_proxy(
-                connector=table_connector, conn_proxy=conn_proxy
-            )
-            provider.postgres_by_resource[table_name] = conn.config
 
         # Add bindings for edge tables
         for table_info in introspection_result.edge_tables:
@@ -146,10 +135,6 @@ class ResourceMapper:
             bindings.add_connector(table_connector)
             bindings.bind_resource(table_name, table_connector)
             bindings.bind_connector_to_conn_proxy(table_connector, conn_proxy)
-            provider.bind_connector_to_conn_proxy(
-                connector=table_connector, conn_proxy=conn_proxy
-            )
-            provider.postgres_by_resource[table_name] = conn.config
 
         return bindings, provider
 

@@ -2,17 +2,35 @@ from __future__ import annotations
 
 import pytest
 
-from graflo.architecture.contract.bindings import APIConnector, Bindings, TableConnector
-from graflo.connections.onto import Neo4jConfig, PostgresConfig
+from graflo.architecture.contract.bindings import (
+    APIConnector,
+    Bindings,
+    ConnectorUpdate,
+    FileConnector,
+    KafkaConnector,
+    SparqlConnector,
+    TableConnector,
+)
+from graflo.connections.onto import Neo4jConfig, PostgresConfig, SparqlEndpointConfig
 from graflo.connections.provider import (
     ApiAuth,
-    ApiGeneralizedConnConfig,
+    EmptyConnectionProvider,
     InMemoryConnectionProvider,
-    PostgresGeneralizedConnConfig,
+    KafkaConnConfig,
     RestApiConnConfig,
+    S3ConnConfig,
+    connector_config,
     proxy_env_prefix,
     resolve_db_secrets_from_env,
     resolve_secrets_from_env,
+)
+
+PG = PostgresConfig(
+    uri="postgresql://localhost:5432/db",
+    username="u",
+    password="p",
+    database="db",
+    schema_name="public",
 )
 
 
@@ -61,179 +79,6 @@ def test_bindings_connector_connection_conflicting_proxies_raises() -> None:
         )
 
 
-def test_provider_resolves_connector_based_config_for_multiple_resources() -> None:
-    connector = TableConnector(table_name="t1", schema_name="public", name="c1")
-    pg_cfg = PostgresConfig(
-        uri="postgresql://localhost:5432/db",
-        username="u",
-        password="p",
-        database="db",
-        schema_name="public",
-    )
-
-    provider = InMemoryConnectionProvider()
-    provider.register_generalized_config(
-        conn_proxy="postgres_source",
-        config=PostgresGeneralizedConnConfig(config=pg_cfg),
-    )
-    provider.bind_connector_to_conn_proxy(
-        connector=connector, conn_proxy="postgres_source"
-    )
-
-    cfg1 = provider.get_postgres_config(resource_name="r1", connector=connector)
-    cfg2 = provider.get_postgres_config(resource_name="r2", connector=connector)
-
-    assert cfg1 is not None
-    assert cfg2 is not None
-    assert cfg1.uri == pg_cfg.uri
-    assert cfg2.uri == pg_cfg.uri
-
-
-def test_provider_bind_from_bindings_supports_connector_hash() -> None:
-    connector = TableConnector(
-        table_name="t1",
-        schema_name="public",
-        resource_name="people",
-    )
-    pg_cfg = PostgresConfig(
-        uri="postgresql://localhost:5432/db",
-        username="u",
-        password="p",
-        database="db",
-        schema_name="public",
-    )
-
-    bindings = Bindings(
-        connectors=[connector],
-        connector_connection=[{"connector": connector.hash, "conn_proxy": "pg"}],
-    )
-
-    provider = InMemoryConnectionProvider()
-    provider.register_generalized_config(
-        conn_proxy="pg",
-        config=PostgresGeneralizedConnConfig(config=pg_cfg),
-    )
-    provider.bind_from_bindings(bindings=bindings)
-
-    cfg = provider.get_postgres_config(resource_name="r1", connector=connector)
-    assert cfg is not None
-    assert cfg.uri == pg_cfg.uri
-
-
-def test_provider_bind_from_bindings_resolves_by_connector_name() -> None:
-    connector = TableConnector(table_name="t1", schema_name="public", name="c1")
-    pg_cfg = PostgresConfig(
-        uri="postgresql://localhost:5432/db",
-        username="u",
-        password="p",
-        database="db",
-        schema_name="public",
-    )
-
-    bindings = Bindings(
-        connectors=[connector],
-        connector_connection=[{"connector": "c1", "conn_proxy": "pg"}],
-    )
-
-    provider = InMemoryConnectionProvider()
-    provider.register_generalized_config(
-        conn_proxy="pg",
-        config=PostgresGeneralizedConnConfig(config=pg_cfg),
-    )
-    provider.bind_from_bindings(bindings=bindings)
-
-    cfg = provider.get_postgres_config(resource_name="r1", connector=connector)
-    assert cfg is not None
-    assert cfg.uri == pg_cfg.uri
-
-
-def test_provider_bind_from_bindings_resolves_by_connector_hash() -> None:
-    connector = TableConnector(table_name="t1", schema_name="public", name="c1")
-    pg_cfg = PostgresConfig(
-        uri="postgresql://localhost:5432/db",
-        username="u",
-        password="p",
-        database="db",
-        schema_name="public",
-    )
-
-    bindings = Bindings(
-        connectors=[connector],
-        connector_connection=[{"connector": connector.hash, "conn_proxy": "pg"}],
-    )
-
-    provider = InMemoryConnectionProvider()
-    provider.register_generalized_config(
-        conn_proxy="pg",
-        config=PostgresGeneralizedConnConfig(config=pg_cfg),
-    )
-    provider.bind_from_bindings(bindings=bindings)
-
-    cfg = provider.get_postgres_config(resource_name="r1", connector=connector)
-    assert cfg is not None
-    assert cfg.uri == pg_cfg.uri
-
-
-def test_bind_single_config_for_bindings_binds_and_validates() -> None:
-    connector = TableConnector(
-        table_name="t1",
-        schema_name="public",
-        resource_name="people",
-    )
-    pg_cfg = PostgresConfig(
-        uri="postgresql://localhost:5432/db",
-        username="u",
-        password="p",
-        database="db",
-        schema_name="public",
-    )
-
-    bindings = Bindings(
-        connectors=[connector],
-        connector_connection=[{"connector": connector.hash, "conn_proxy": "pg"}],
-    )
-
-    provider = InMemoryConnectionProvider()
-    provider.bind_single_config_for_bindings(
-        bindings=bindings,
-        conn_proxy="pg",
-        config=PostgresGeneralizedConnConfig(config=pg_cfg),
-    )
-
-    cfg = provider.get_postgres_config(resource_name="r1", connector=connector)
-    assert cfg is not None
-    assert cfg.uri == pg_cfg.uri
-
-    # Mismatch between helper conn_proxy and manifest conn_proxy should fail fast.
-    bindings_mismatch = Bindings(
-        connectors=[
-            TableConnector(
-                table_name="t1",
-                schema_name="public",
-                name="c_people",
-                resource_name="people",
-            ),
-            TableConnector(
-                table_name="t2",
-                schema_name="public",
-                name="c_products",
-                resource_name="products",
-            ),
-        ],
-        connector_connection=[
-            {"connector": "c_people", "conn_proxy": "pg"},
-            {"connector": "c_products", "conn_proxy": "pg2"},
-        ],
-    )
-    provider_mismatch = InMemoryConnectionProvider()
-    with pytest.raises(ValueError, match="Expected all connector_connection mappings"):
-        provider_mismatch.bind_single_config_for_bindings(
-            bindings=bindings_mismatch,
-            conn_proxy="pg",
-            config=PostgresGeneralizedConnConfig(config=pg_cfg),
-        )
-
-
 def test_bindings_generated_shape_supports_proxy_resolution() -> None:
     """Match infer_manifest-style bindings: connector names + conn_proxy mapping."""
     connector = TableConnector(table_name="users", schema_name="public")
@@ -248,222 +93,269 @@ def test_bindings_generated_shape_supports_proxy_resolution() -> None:
     assert bindings.get_conn_proxy_for_connector(resolved[0]) == "postgres_source"
 
 
-def test_api_connector_conn_proxy_resolution() -> None:
-    connector = APIConnector(name="users_api", path="/api/users")
+def test_provider_maps_labels_to_configs() -> None:
+    api = RestApiConnConfig(base_url="https://api.example.com")
+    provider = InMemoryConnectionProvider({"pg": PG, "api": api})
+
+    assert provider.get_config("pg") is PG
+    assert provider.get_config("api") is api
+    assert provider.get_config("missing") is None
+    assert EmptyConnectionProvider().get_config("pg") is None
+
+    s3 = S3ConnConfig(bucket="staging")
+    provider.register("s3", s3)
+    assert provider.get_config("s3") is s3
+
+
+def test_connector_config_resolves_through_the_bindings() -> None:
+    table = TableConnector(table_name="t1", schema_name="public", name="c1")
+    api = APIConnector(name="users_api", path="/api/users")
+    rest = RestApiConnConfig(base_url="https://users.example.com")
     bindings = Bindings(
-        connectors=[connector],
-        connector_connection=[{"connector": "users_api", "conn_proxy": "api_source"}],
-    )
-    assert bindings.get_conn_proxy_for_connector(connector) == "api_source"
-
-    provider = InMemoryConnectionProvider()
-    provider.register_generalized_config(
-        conn_proxy="api_source",
-        config=ApiGeneralizedConnConfig(
-            config=RestApiConnConfig(base_url="https://api.example.com")
-        ),
-    )
-    provider.bind_connector_to_conn_proxy(connector=connector, conn_proxy="api_source")
-    cfg = provider.get_generalized_conn_config(connector)
-    assert isinstance(cfg, ApiGeneralizedConnConfig)
-    assert cfg.config.base_url == "https://api.example.com"
-
-
-def test_register_api_config_from_env_bearer(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("USER_SERVICE_BASE_URL", "https://users.example.com")
-    monkeypatch.setenv("USER_SERVICE_AUTH_TYPE", "bearer")
-    monkeypatch.setenv("USER_SERVICE_TOKEN", "secret-token")
-
-    provider = InMemoryConnectionProvider()
-    provider.register_api_config_from_env(conn_proxy="user_service")
-
-    cfg = provider.get_generalized_config_by_proxy("user_service")
-    assert isinstance(cfg, ApiGeneralizedConnConfig)
-    assert cfg.config.base_url == "https://users.example.com"
-    assert cfg.config.auth is not None
-    assert cfg.config.auth.auth_type == "bearer"
-    assert cfg.config.auth.token == "secret-token"
-
-
-def test_register_api_config_from_env_basic(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("USER_SERVICE_BASE_URL", "https://users.example.com")
-    monkeypatch.setenv("USER_SERVICE_AUTH_TYPE", "basic")
-    monkeypatch.setenv("USER_SERVICE_USERNAME", "alice")
-    monkeypatch.setenv("USER_SERVICE_PASSWORD", "s3cret")
-
-    provider = InMemoryConnectionProvider()
-    provider.register_api_config_from_env(conn_proxy="user_service")
-
-    cfg = provider.get_generalized_config_by_proxy("user_service")
-    assert isinstance(cfg, ApiGeneralizedConnConfig)
-    assert cfg.config.auth is not None
-    assert cfg.config.auth.auth_type == "basic"
-    assert cfg.config.auth.username == "alice"
-    assert cfg.config.auth.password == "s3cret"
-
-
-def test_register_api_config_from_env_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("ORDER_SERVICE_BASE_URL", "https://orders.example.com")
-    monkeypatch.setenv("ORDER_SERVICE_AUTH_TYPE", "api_key")
-    monkeypatch.setenv("ORDER_SERVICE_TOKEN", "key-123")
-    monkeypatch.setenv("ORDER_SERVICE_HEADER_NAME", "X-Api-Key")
-
-    provider = InMemoryConnectionProvider()
-    provider.register_api_config_from_env(conn_proxy="order_service")
-
-    cfg = provider.get_generalized_config_by_proxy("order_service")
-    assert isinstance(cfg, ApiGeneralizedConnConfig)
-    assert cfg.config.auth is not None
-    assert cfg.config.auth.auth_type == "api_key"
-    assert cfg.config.auth.token == "key-123"
-    assert cfg.config.auth.header_name == "X-Api-Key"
-
-
-def test_register_api_config_from_env_custom_prefix(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("REST_API_BASE_URL", "https://api.example.com")
-    monkeypatch.setenv("REST_API_AUTH_TYPE", "bearer")
-    monkeypatch.setenv("REST_API_TOKEN", "override-token")
-
-    provider = InMemoryConnectionProvider()
-    provider.register_api_config_from_env(
-        conn_proxy="user_service",
-        env_prefix="REST_API_",
-    )
-
-    cfg = provider.get_generalized_config_by_proxy("user_service")
-    assert isinstance(cfg, ApiGeneralizedConnConfig)
-    assert cfg.config.base_url == "https://api.example.com"
-    assert cfg.config.auth is not None
-    assert cfg.config.auth.token == "override-token"
-
-
-def test_register_api_config_from_env_token_defaults_to_bearer(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("USER_SERVICE_BASE_URL", "https://users.example.com")
-    monkeypatch.setenv("USER_SERVICE_TOKEN", "secret-token")
-
-    provider = InMemoryConnectionProvider()
-    provider.register_api_config_from_env(conn_proxy="user_service")
-
-    cfg = provider.get_generalized_config_by_proxy("user_service")
-    assert isinstance(cfg, ApiGeneralizedConnConfig)
-    assert cfg.config.auth is not None
-    assert cfg.config.auth.auth_type == "bearer"
-    assert cfg.config.auth.token == "secret-token"
-
-
-def test_register_api_config_from_env_missing_base_url(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.delenv("USER_SERVICE_BASE_URL", raising=False)
-
-    provider = InMemoryConnectionProvider()
-    with pytest.raises(ValueError, match="USER_SERVICE_BASE_URL"):
-        provider.register_api_config_from_env(conn_proxy="user_service")
-
-
-def test_register_all_api_configs_from_env_multi_proxy(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("USER_SERVICE_BASE_URL", "https://users.example.com")
-    monkeypatch.setenv("USER_SERVICE_AUTH_TYPE", "bearer")
-    monkeypatch.setenv("USER_SERVICE_TOKEN", "user-token")
-    monkeypatch.setenv("ORDER_SERVICE_BASE_URL", "https://orders.example.com")
-    monkeypatch.setenv("ORDER_SERVICE_AUTH_TYPE", "bearer")
-    monkeypatch.setenv("ORDER_SERVICE_TOKEN", "order-token")
-
-    users_connector = APIConnector(name="users_api", path="/api/users")
-    orders_connector = APIConnector(name="orders_api", path="/api/orders")
-    bindings = Bindings(
-        connectors=[users_connector, orders_connector],
+        connectors=[table, api],
         connector_connection=[
+            {"connector": "c1", "conn_proxy": "pg"},
             {"connector": "users_api", "conn_proxy": "user_service"},
-            {"connector": "orders_api", "conn_proxy": "order_service"},
+        ],
+    )
+    provider = InMemoryConnectionProvider({"pg": PG, "user_service": rest})
+
+    assert connector_config(table, bindings, provider, PostgresConfig) is PG
+    assert connector_config(api, bindings, provider, RestApiConnConfig) is rest
+
+
+def test_connector_config_follows_a_patched_connector() -> None:
+    """The provider holds no connector hashes, so a patch after building it is seen."""
+    table = TableConnector(table_name="t1", schema_name="public", name="c1")
+    bindings = Bindings(
+        connectors=[table],
+        connector_connection=[{"connector": "c1", "conn_proxy": "pg"}],
+    )
+    provider = InMemoryConnectionProvider({"pg": PG})
+
+    bindings.apply_connector_update(
+        ConnectorUpdate.model_validate({"connector": "c1", "table_name": "t2"})
+    )
+    patched = bindings.connectors[0]
+
+    assert patched.hash != table.hash
+    assert connector_config(patched, bindings, provider, PostgresConfig) is PG
+
+
+def test_connector_config_errors_name_connector_and_proxy() -> None:
+    table = TableConnector(table_name="t1", schema_name="public", name="c1")
+    unbound = TableConnector(table_name="t2", schema_name="public", name="c2")
+    bindings = Bindings(
+        connectors=[table, unbound],
+        connector_connection=[{"connector": "c1", "conn_proxy": "pg"}],
+    )
+
+    with pytest.raises(ValueError, match="'c2' has no conn_proxy"):
+        connector_config(
+            unbound, bindings, InMemoryConnectionProvider(), PostgresConfig
+        )
+    with pytest.raises(ValueError, match="registered for conn_proxy 'pg'"):
+        connector_config(table, bindings, InMemoryConnectionProvider(), PostgresConfig)
+    wrong = InMemoryConnectionProvider({"pg": RestApiConnConfig(base_url="http://x")})
+    with pytest.raises(ValueError, match="holds a RestApiConnConfig; a PostgresConfig"):
+        connector_config(table, bindings, wrong, PostgresConfig)
+
+
+def test_conn_proxies_groups_connectors_by_label() -> None:
+    a = TableConnector(table_name="a", schema_name="public", name="a")
+    b = TableConnector(table_name="b", schema_name="public", name="b")
+    api = APIConnector(name="api", path="/x")
+    files = FileConnector(regex=r".*\.csv", name="files")
+    bindings = Bindings(
+        connectors=[a, b, api, files],
+        connector_connection=[
+            {"connector": "b", "conn_proxy": "pg"},
+            {"connector": "a", "conn_proxy": "pg"},
+            {"connector": "api", "conn_proxy": "api"},
         ],
     )
 
-    provider = InMemoryConnectionProvider()
-    provider.register_all_api_configs_from_env(bindings=bindings)
+    proxies = bindings.conn_proxies()
 
-    users_cfg = provider.get_generalized_conn_config(users_connector)
-    orders_cfg = provider.get_generalized_conn_config(orders_connector)
-    assert isinstance(users_cfg, ApiGeneralizedConnConfig)
-    assert isinstance(orders_cfg, ApiGeneralizedConnConfig)
-    assert users_cfg.config.base_url == "https://users.example.com"
-    assert users_cfg.config.auth is not None
-    assert users_cfg.config.auth.token == "user-token"
-    assert orders_cfg.config.base_url == "https://orders.example.com"
-    assert orders_cfg.config.auth is not None
-    assert orders_cfg.config.auth.token == "order-token"
+    assert list(proxies) == ["api", "pg"]
+    assert [c.name for c in proxies["pg"]] == ["a", "b"]
 
 
-def test_register_all_api_configs_from_env_prefix_map(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("USERS_API_BASE_URL", "https://users.example.com")
-    monkeypatch.setenv("USERS_API_AUTH_TYPE", "bearer")
-    monkeypatch.setenv("USERS_API_TOKEN", "mapped-token")
-    monkeypatch.setenv("ORDER_SERVICE_BASE_URL", "https://orders.example.com")
-
-    users_connector = APIConnector(name="users_api", path="/api/users")
-    orders_connector = APIConnector(name="orders_api", path="/api/orders")
-    bindings = Bindings(
-        connectors=[users_connector, orders_connector],
+def _mixed_bindings() -> Bindings:
+    return Bindings(
+        connectors=[
+            TableConnector(table_name="users", schema_name="public", name="users"),
+            APIConnector(name="orders_api", path="/api/orders"),
+            KafkaConnector(name="events", topics=["events"], group_id="g"),
+            SparqlConnector(
+                name="labels",
+                rdf_class="http://example.org/Label",
+                endpoint_url="http://localhost:3030/ds/sparql",
+            ),
+        ],
         connector_connection=[
-            {"connector": "users_api", "conn_proxy": "user_service"},
-            {"connector": "orders_api", "conn_proxy": "order_service"},
+            {"connector": "users", "conn_proxy": "shop_db"},
+            {"connector": "orders_api", "conn_proxy": "billing-api"},
+            {"connector": "events", "conn_proxy": "kafka_local"},
+            {"connector": "labels", "conn_proxy": "kb"},
         ],
     )
 
-    provider = InMemoryConnectionProvider()
-    provider.register_all_api_configs_from_env(
-        bindings=bindings,
-        env_prefix_map={"user_service": "USERS_API_"},
+
+def test_from_env_loads_every_proxy_by_its_connector_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SHOP_DB_URI", "postgresql://db.example.com:5432")
+    monkeypatch.setenv("SHOP_DB_USERNAME", "shop")
+    monkeypatch.setenv("SHOP_DB_PASSWORD", "s3cret")
+    monkeypatch.setenv("SHOP_DB_DATABASE", "shop")
+    monkeypatch.setenv("BILLING_API_BASE_URL", "https://billing.example.com")
+    monkeypatch.setenv("BILLING_API_TOKEN", "t0ken")
+    monkeypatch.setenv("KAFKA_LOCAL_BOOTSTRAP_SERVERS", "localhost:9092")
+    monkeypatch.setenv("KB_USERNAME", "reader")
+
+    provider = InMemoryConnectionProvider.from_env(_mixed_bindings())
+
+    db = provider.get_config("shop_db")
+    assert isinstance(db, PostgresConfig)
+    assert (db.username, db.password, db.database) == ("shop", "s3cret", "shop")
+    assert db.uri is not None and db.uri.startswith("postgresql://db.example.com")
+    api = provider.get_config("billing-api")
+    assert isinstance(api, RestApiConnConfig)
+    assert api.base_url == "https://billing.example.com"
+    assert api.auth is not None and api.auth.token == "t0ken"
+    kafka = provider.get_config("kafka_local")
+    assert isinstance(kafka, KafkaConnConfig)
+    assert kafka.bootstrap_servers == "localhost:9092"
+    sparql = provider.get_config("kb")
+    assert isinstance(sparql, SparqlEndpointConfig)
+    assert sparql.username == "reader"
+
+
+def test_from_env_reports_every_missing_proxy_at_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name in (
+        "SHOP_DB_URI",
+        "BILLING_API_BASE_URL",
+        "KAFKA_LOCAL_BOOTSTRAP_SERVERS",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    with pytest.raises(ValueError) as excinfo:
+        InMemoryConnectionProvider.from_env(_mixed_bindings())
+
+    message = str(excinfo.value)
+    assert "SHOP_DB_URI" in message
+    assert "BILLING_API_BASE_URL" in message
+    assert "KAFKA_LOCAL_BOOTSTRAP_SERVERS" in message
+
+
+def test_from_env_prefix_map_overrides_the_derived_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("BILLING_PROD_BASE_URL", "https://billing.example.com")
+    monkeypatch.delenv("BILLING_API_BASE_URL", raising=False)
+    bindings = Bindings(
+        connectors=[APIConnector(name="orders_api", path="/api/orders")],
+        connector_connection=[{"connector": "orders_api", "conn_proxy": "billing-api"}],
     )
 
-    users_cfg = provider.get_generalized_conn_config(users_connector)
-    orders_cfg = provider.get_generalized_conn_config(orders_connector)
-    assert isinstance(users_cfg, ApiGeneralizedConnConfig)
-    assert isinstance(orders_cfg, ApiGeneralizedConnConfig)
-    assert users_cfg.config.base_url == "https://users.example.com"
-    assert users_cfg.config.auth is not None
-    assert users_cfg.config.auth.token == "mapped-token"
-    assert orders_cfg.config.base_url == "https://orders.example.com"
+    provider = InMemoryConnectionProvider.from_env(
+        bindings, env_prefix_map={"billing-api": "BILLING_PROD_"}
+    )
+
+    api = provider.get_config("billing-api")
+    assert isinstance(api, RestApiConnConfig)
+    assert api.base_url == "https://billing.example.com"
     # No credential in the environment: the API is open, not bearer with no token.
-    assert orders_cfg.config.auth is None
+    assert api.auth is None
 
 
-def test_register_all_api_configs_from_env_skips_non_api_connectors(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("API_SOURCE_BASE_URL", "https://api.example.com")
-
-    api_connector = APIConnector(name="users_api", path="/api/users")
-    table_connector = TableConnector(
-        table_name="users",
-        schema_name="public",
-        name="users_table",
-    )
+def test_from_env_refuses_a_label_shared_by_different_kinds() -> None:
     bindings = Bindings(
-        connectors=[api_connector, table_connector],
+        connectors=[
+            TableConnector(table_name="t", schema_name="public", name="t"),
+            APIConnector(name="api", path="/x"),
+        ],
         connector_connection=[
-            {"connector": "users_api", "conn_proxy": "api_source"},
-            {"connector": "users_table", "conn_proxy": "postgres_source"},
+            {"connector": "t", "conn_proxy": "shared"},
+            {"connector": "api", "conn_proxy": "shared"},
         ],
     )
 
-    provider = InMemoryConnectionProvider()
-    provider.register_all_api_configs_from_env(bindings=bindings)
+    with pytest.raises(ValueError, match="'shared' is used by connectors needing"):
+        InMemoryConnectionProvider.from_env(bindings)
 
-    api_cfg = provider.get_generalized_conn_config(api_connector)
-    table_cfg = provider.get_generalized_conn_config(table_connector)
-    assert isinstance(api_cfg, ApiGeneralizedConnConfig)
-    assert api_cfg.config.base_url == "https://api.example.com"
-    assert table_cfg is None
-    assert provider.get_generalized_config_by_proxy("postgres_source") is None
+
+def test_from_env_skips_labels_named_only_by_file_connectors() -> None:
+    bindings = Bindings(
+        connectors=[FileConnector(regex=r".*\.csv", name="files")],
+        connector_connection=[{"connector": "files", "conn_proxy": "lake"}],
+    )
+
+    assert InMemoryConnectionProvider.from_env(bindings).get_config("lake") is None
+
+
+@pytest.mark.parametrize(
+    ("auth_type", "env", "expected"),
+    [
+        ("bearer", {"TOKEN": "secret-token"}, {"token": "secret-token"}),
+        (
+            "basic",
+            {"USERNAME": "alice", "PASSWORD": "s3cret"},
+            {"username": "alice", "password": "s3cret"},
+        ),
+        (
+            "api_key",
+            {"TOKEN": "key-123", "HEADER_NAME": "X-Api-Key"},
+            {"token": "key-123", "header_name": "X-Api-Key"},
+        ),
+    ],
+)
+def test_rest_api_from_env_reads_each_auth_type(
+    monkeypatch: pytest.MonkeyPatch,
+    auth_type: str,
+    env: dict[str, str],
+    expected: dict[str, str],
+) -> None:
+    monkeypatch.setenv("USER_SERVICE_BASE_URL", "https://users.example.com")
+    monkeypatch.setenv("USER_SERVICE_AUTH_TYPE", auth_type)
+    for key, value in env.items():
+        monkeypatch.setenv(f"USER_SERVICE_{key}", value)
+
+    cfg = RestApiConnConfig.from_env(env_prefix="USER_SERVICE_")
+
+    assert cfg.auth is not None
+    assert cfg.auth.auth_type == auth_type
+    for key, value in expected.items():
+        assert getattr(cfg.auth, key) == value
+
+
+def test_db_config_from_proxy_env_reads_no_backend_segment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SHOP_DB_URI", "postgresql://localhost:5432")
+    monkeypatch.setenv("SHOP_DB_SCHEMA_NAME", "sales")
+    monkeypatch.setenv("SHOP_DB_POSTGRES_URI", "postgresql://wrong:5432")
+
+    cfg = PostgresConfig.from_proxy_env("shop_db")
+
+    assert cfg.uri is not None and cfg.uri.startswith("postgresql://localhost")
+    assert cfg.schema_name == "sales"
+    assert isinstance(cfg, PostgresConfig)
+    explicit = PostgresConfig.from_proxy_env("shop_db", env_prefix="SHOP_DB_POSTGRES_")
+    assert explicit.uri is not None and "wrong" in explicit.uri
+
+
+def test_s3_conn_config_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("STAGING_BUCKET", "bulk")
+    monkeypatch.setenv("STAGING_AWS_ACCESS_KEY_ID", "key")
+    monkeypatch.delenv("STAGING_REGION", raising=False)
+
+    cfg = S3ConnConfig.from_env("STAGING_")
+
+    assert (cfg.bucket, cfg.aws_access_key_id, cfg.region) == ("bulk", "key", None)
 
 
 def test_proxy_env_prefix_uppercases_and_normalises_dashes() -> None:
@@ -474,32 +366,30 @@ def test_resolve_secrets_from_env_fills_api_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("SENSOR_FEED_TOKEN", "t0ken")
-    stored = ApiGeneralizedConnConfig(
-        config=RestApiConnConfig(
-            base_url="http://localhost:8811", auth=ApiAuth(auth_type="bearer")
-        )
+    stored = RestApiConnConfig(
+        base_url="http://localhost:8811", auth=ApiAuth(auth_type="bearer")
     )
 
     resolved = resolve_secrets_from_env(stored, "sensor_feed")
 
-    assert isinstance(resolved, ApiGeneralizedConnConfig)
-    assert resolved.config.auth is not None
-    assert resolved.config.auth.token == "t0ken"
-    assert resolved.config.auth.auth_type == "bearer"
-    assert stored.config.auth is not None and stored.config.auth.token is None
+    assert isinstance(resolved, RestApiConnConfig)
+    assert resolved.auth is not None
+    assert resolved.auth.token == "t0ken"
+    assert resolved.auth.auth_type == "bearer"
+    assert stored.auth is not None and stored.auth.token is None
 
 
 def test_resolve_secrets_from_env_creates_auth_when_absent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("API_SOURCE_TOKEN", "t0ken")
-    stored = ApiGeneralizedConnConfig(config=RestApiConnConfig(base_url="http://x"))
+    stored = RestApiConnConfig(base_url="http://x")
 
     resolved = resolve_secrets_from_env(stored, "api_source")
 
-    assert isinstance(resolved, ApiGeneralizedConnConfig)
-    assert resolved.config.auth is not None
-    assert resolved.config.auth.token == "t0ken"
+    assert isinstance(resolved, RestApiConnConfig)
+    assert resolved.auth is not None
+    assert resolved.auth.token == "t0ken"
 
 
 def test_resolve_secrets_from_env_fills_postgres_credentials(
@@ -509,25 +399,21 @@ def test_resolve_secrets_from_env_fills_postgres_credentials(
     monkeypatch.delenv("POSTGRES_PASSWORD", raising=False)
     monkeypatch.setenv("MAINTENANCE_DB_USERNAME", "maintenance")
     monkeypatch.setenv("MAINTENANCE_DB_PASSWORD", "secret")
-    stored = PostgresGeneralizedConnConfig(
-        config=PostgresConfig(uri="postgresql://localhost:55432", database="mx")
-    )
+    stored = PostgresConfig(uri="postgresql://localhost:55432", database="mx")
 
     resolved = resolve_secrets_from_env(stored, "maintenance_db")
 
-    assert isinstance(resolved, PostgresGeneralizedConnConfig)
-    assert resolved.config.username == "maintenance"
-    assert resolved.config.password == "secret"
-    assert resolved.config.database == "mx"
+    assert isinstance(resolved, PostgresConfig)
+    assert resolved.username == "maintenance"
+    assert resolved.password == "secret"
+    assert resolved.database == "mx"
 
 
 def test_resolve_secrets_from_env_keeps_stored_values(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("API_SOURCE_TOKEN", "from-env")
-    stored = ApiGeneralizedConnConfig(
-        config=RestApiConnConfig(base_url="http://x", auth=ApiAuth(token="stored"))
-    )
+    stored = RestApiConnConfig(base_url="http://x", auth=ApiAuth(token="stored"))
 
     assert resolve_secrets_from_env(stored, "api_source") is stored
 
@@ -536,13 +422,13 @@ def test_resolve_secrets_from_env_honours_explicit_prefix(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("OTHER_TOKEN", "t0ken")
-    stored = ApiGeneralizedConnConfig(config=RestApiConnConfig(base_url="http://x"))
+    stored = RestApiConnConfig(base_url="http://x")
 
     resolved = resolve_secrets_from_env(stored, "api_source", env_prefix="OTHER_")
 
-    assert isinstance(resolved, ApiGeneralizedConnConfig)
-    assert resolved.config.auth is not None
-    assert resolved.config.auth.token == "t0ken"
+    assert isinstance(resolved, RestApiConnConfig)
+    assert resolved.auth is not None
+    assert resolved.auth.token == "t0ken"
 
 
 def test_a_graph_target_takes_its_missing_credentials_from_env(

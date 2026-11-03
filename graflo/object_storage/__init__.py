@@ -16,7 +16,7 @@ from graflo.object_storage.config import (
     parse_dotenv_file,
 )
 from graflo.object_storage.s3_client import (
-    boto3_s3_client_from_generalized,
+    boto3_s3_client,
     boto3_s3_client_from_minio,
 )
 from graflo.object_storage.upload import upload_staged_csvs
@@ -24,7 +24,7 @@ from graflo.object_storage.upload import upload_staged_csvs
 __all__ = [
     "MinioConfig",
     "S3EndpointConfig",
-    "boto3_s3_client_from_generalized",
+    "boto3_s3_client",
     "boto3_s3_client_from_minio",
     "ensure_bucket_exists",
     "ensure_staging_bucket_for_config",
