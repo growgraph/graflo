@@ -74,6 +74,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `support(candidate) -> accept | propose`.
 - **Provenance aspect**: `LiftSpec.mentions_for` adds `SourceRecord -mentions-> <Type>`
   (`schema:mentions`), for the records that name an entity.
+- **`SourceSample.combine({prefix: sample, …})`** merges samples from several sources; with two
+  or more, resource, connector and foreign-key target names are prefixed `<prefix>_`.
 - **Choosing a backend** (docs): one page of what GraFlo does on each backend, and what each
   server's free edition allows.
 

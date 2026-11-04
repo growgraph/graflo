@@ -10,7 +10,7 @@ model. Two ideas, deliberately kept apart:
   boundary, so a hierarchical response survives intact.
 * **Profiling** describes those documents. :func:`profile_sample` derives the
   flat, path-keyed, typed view (:class:`ResourceProfile`) used for prompting,
-  studio previews and identity inference.
+  previews and identity inference.
 
 :attr:`ResourceSample.connector` records *where* the documents came from. That
 relation is what later becomes a resource plus its ``resource_connector``
@@ -21,7 +21,7 @@ provenance cannot be turned back into an ingestion model.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from datetime import date, datetime, time
 from typing import Any
 
@@ -119,6 +119,61 @@ class SourceSample(ConfigBaseModel):
                 "keying by name would drop all but the last."
             )
         return self
+
+    @classmethod
+    def combine(cls, by_prefix: Mapping[str, SourceSample]) -> SourceSample:
+        """Merge samples from several sources into one.
+
+        One entry is returned unchanged. With two or more, every resource name,
+        connector name and foreign-key target is prefixed ``<prefix>_``, so tables
+        of the same name in different sources stay apart and declared references
+        still point at the right resource. Samples keep their order, source by
+        source. ``source_name`` lists the prefixes.
+
+        Raises:
+            ValueError: *by_prefix* is empty, or the prefixed names still collide.
+        """
+        if not by_prefix:
+            raise ValueError("SourceSample.combine needs at least one sample")
+        if len(by_prefix) == 1:
+            return next(iter(by_prefix.values()))
+
+        def named(prefix: str, name: str) -> str:
+            return f"{prefix}_{name}"
+
+        samples: list[ResourceSample] = []
+        descriptions: list[str] = []
+        for prefix, source in by_prefix.items():
+            if source.description:
+                descriptions.append(f"{prefix}: {source.description}")
+            for sample in source.samples:
+                samples.append(
+                    sample.model_copy(
+                        update={
+                            "resource_name": named(prefix, sample.resource_name),
+                            "connector": (
+                                named(prefix, sample.connector)
+                                if sample.connector is not None
+                                else None
+                            ),
+                            "foreign_keys": [
+                                hint.model_copy(
+                                    update={
+                                        "references_resource": named(
+                                            prefix, hint.references_resource
+                                        )
+                                    }
+                                )
+                                for hint in sample.foreign_keys
+                            ],
+                        }
+                    )
+                )
+        return cls(
+            source_name=", ".join(by_prefix),
+            description="; ".join(descriptions) or None,
+            samples=samples,
+        )
 
     @property
     def samples_by_resource(self) -> dict[str, list[dict[str, Any]]]:
