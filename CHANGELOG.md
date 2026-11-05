@@ -99,6 +99,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or more, resource, connector and foreign-key target names are prefixed `<prefix>_`.
 - **Choosing a backend** (docs): one page of what GraFlo does on each backend, and what each
   server's free edition allows.
+- **Lift commits**: `graflo lift -m LABEL` records a lift as a `lift` commit carrying a
+  `LiftRecipe` (aspects, their versions, the spec), and stamps the written manifest with it.
+- `build_lift_recipe`, `build_lift_commit`, `lift_recipe_of`, `plan_relift` (plan a recorded lift
+  again) and `recipe_drift` (aspects whose version moved); `Aspect.version`.
 
 ### Changed
 
@@ -151,6 +155,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   named by IRI as a parent is refused too; write the local reference.
 - **Provenance aspect**: `Agent.label` is grounded in `rdfs:label`; a lift adds the grounding to
   an existing `Agent` that has none.
+- `MergeRecipeRef` is `RecipeRef` and its `kind` is required; `Commit.merge_recipe`,
+  `Provenance.merge_recipe` and `stamp_provenance(merge_recipe=)` are `recipe`. A stored commit
+  under the old key still loads; in a manifest, rename `metadata.provenance.merge_recipe` to
+  `recipe`.
+- A commit's recipe must match its kind (a merge recipe on `merge`/`merge3`, a lift recipe on a
+  single-parent `lift`); any other commit carries none.
 
 ## [1.24.1]
 

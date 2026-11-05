@@ -502,9 +502,28 @@ def _commit_to_dict(commit: Commit) -> dict[str, Any]:
 
 
 def _commit_from_dict(payload: dict[str, Any]) -> Commit:
-    data = dict(payload)
+    data = _recorded_recipe(dict(payload))
     data["ops"] = ops_from_dicts(list(data.get("ops", [])))
     return Commit.model_validate(data)
+
+
+def _recorded_recipe(data: dict[str, Any]) -> dict[str, Any]:
+    """A stored commit's recipe under the current key, with its kind stated.
+
+    A recorded commit is history and cannot be edited, so one written under
+    ``merge_recipe`` -- whose ``kind`` was left out when it was ``merge3`` --
+    is translated rather than refused.
+    """
+    recorded = data.pop("merge_recipe", None)
+    if recorded is not None and "recipe" not in data:
+        recipe = dict(recorded)
+        payload = recipe.get("payload")
+        recipe.setdefault(
+            "kind",
+            payload.get("kind", "merge3") if isinstance(payload, dict) else "merge3",
+        )
+        data["recipe"] = recipe
+    return data
 
 
 __all__ = [

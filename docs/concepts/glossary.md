@@ -322,7 +322,7 @@ A place in a manifest that an op changes, such as the type of one property of on
 
 ### commit
 
-A recorded change set with the content hash before and after it, its parent commits, a kind (`root`, `edit`, `merge`, `merge3` or `revert`) and an id derived from its content. Commits are stored one YAML file each under `.graflo/commits` and handled with `graflo commit`, `log`, `checkout`, `verify`, `revert` and `stamp`. See [Version control](schema/versioning.md#commits).
+A recorded change set with the content hash before and after it, its parent commits, a kind (`root`, `edit`, `merge`, `merge3`, `revert` or `lift`) and an id derived from its content. Commits are stored one YAML file each under `.graflo/commits` and handled with `graflo commit`, `log`, `checkout`, `verify`, `revert` and `stamp`. See [Version control](schema/versioning.md#commits).
 
 ### live drift
 

@@ -137,6 +137,8 @@ _MERGE_EXPORTS = frozenset(
 
 _MERGE_COMMIT_EXPORTS = frozenset({"build_merge_commit", "find_commit_by_tree"})
 
+_LIFT_COMMIT_EXPORTS = frozenset({"build_lift_commit", "lift_recipe_of"})
+
 _NAMING_GRAPH_EXPORTS = frozenset(
     {
         "MergeNamingError",
@@ -304,7 +306,8 @@ _COMMIT_EXPORTS = frozenset(
         "COMMIT_KINDS",
         "Commit",
         "CommitError",
-        "MergeRecipeRef",
+        "RECIPE_KINDS",
+        "RecipeRef",
         "build_commit",
         "build_root_commit",
         "compute_root_commit_id",
@@ -366,6 +369,7 @@ __all__ = [
     "INGESTION_REWRITING_OPS",
     "IRREVERSIBLE",
     "LIST_ORDER",
+    "RECIPE_KINDS",
     "AddEdgeIndexesOp",
     "AddEdgePropertiesOp",
     "AddEdgesOp",
@@ -440,7 +444,6 @@ __all__ = [
     "MergeNamingError",
     "MergeNamingIncompleteError",
     "MergeRecipe",
-    "MergeRecipeRef",
     "MergeRenames",
     "MergeReport",
     "MergeResult",
@@ -453,6 +456,7 @@ __all__ = [
     "PinnedReference",
     "ProjectManifestOp",
     "PropertyEquivalence",
+    "RecipeRef",
     "RelationCluster",
     "RelationEquivalence",
     "RelationRow",
@@ -544,6 +548,7 @@ __all__ = [
     "apply_set_vertex_semantics",
     "apply_set_vertex_subclass_of",
     "build_commit",
+    "build_lift_commit",
     "build_merge_commit",
     "build_merge_recipe",
     "build_multi_parent_commit",
@@ -578,6 +583,7 @@ __all__ = [
     "irreversible_reason",
     "is_reversible",
     "keep_both",
+    "lift_recipe_of",
     "manifest_hash",
     "merge_manifests",
     "merge_manifests_with_report",
@@ -628,6 +634,10 @@ def __getattr__(name: str) -> Any:
         from . import merge_commit as merge_commit_mod
 
         return getattr(merge_commit_mod, name)
+    if name in _LIFT_COMMIT_EXPORTS:
+        from . import lift_commit as lift_commit_mod
+
+        return getattr(lift_commit_mod, name)
     if name in _INGESTION_APPLY_EXPORTS:
         from . import ingestion as ingestion_mod
 

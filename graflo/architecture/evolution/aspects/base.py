@@ -29,11 +29,15 @@ class Aspect(ConfigBaseModel):
         description: One line, for listings.
         needs_spec: Whether planning it needs declarations only a
             :class:`~graflo.architecture.evolution.aspects.spec.LiftSpec` carries.
+        version: Bumped when the vocabulary, or what the planner emits for a
+            given spec, changes. A recorded lift names it, so a re-lift can
+            tell which aspects moved since.
     """
 
     name: str = PydanticField(..., min_length=1)
     description: str
     needs_spec: bool
+    version: int = PydanticField(..., ge=1)
 
 
 __all__ = ["Aspect", "LiftError"]

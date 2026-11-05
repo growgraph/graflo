@@ -558,7 +558,7 @@ def _record(
         canon=CANON_VERSION,
         commit=entry.id,
         parents=parents,
-        merge_recipe=recipe.content_hash(),
+        recipe=recipe.content_hash(),
     )
     return entry
 

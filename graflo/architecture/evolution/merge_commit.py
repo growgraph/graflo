@@ -21,7 +21,7 @@ from typing import Any
 
 from graflo.architecture.contract.manifest import GraphManifest
 
-from .commit import Commit, CommitError, MergeRecipeRef, build_multi_parent_commit
+from .commit import Commit, CommitError, RecipeRef, build_multi_parent_commit
 from .hashing import manifest_hash
 from .history import History
 from .merge3 import MergeRecipe
@@ -192,7 +192,7 @@ def build_merge_commit(
         label=label,
         created_at=created_at,
         notes=notes,
-        merge_recipe=MergeRecipeRef(
+        recipe=RecipeRef(
             hash=recipe.content_hash(), kind=recipe.kind, payload=recipe.to_dict()
         ),
         lead_ops=left_relabel_ops(left, right, recipe) if right is not None else None,

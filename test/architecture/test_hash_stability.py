@@ -1,8 +1,9 @@
 """Persisted content hashes must not drift.
 
-Commit ids, root ids, merge-recipe addresses and connector ids are written to
-disk and compared across runs, so the canonical JSON they hash (sorted keys,
-compact separators, ASCII-escaped) and the digest must stay byte-identical.
+Commit ids, root ids, merge- and lift-recipe addresses and connector ids are
+written to disk and compared across runs, so the canonical JSON they hash
+(sorted keys, compact separators, ASCII-escaped) and the digest must stay
+byte-identical.
 These values were computed before the hashing moved to ``suthing.stable_hash``;
 a failure here means stored ids would no longer match.
 """
@@ -11,6 +12,7 @@ from __future__ import annotations
 
 from graflo.architecture.contract.bindings.connectors import FileConnector
 from graflo.architecture.evolution import hashing
+from graflo.architecture.evolution.aspects.recipe import LiftRecipe
 from graflo.architecture.evolution.commit import (
     compute_commit_id,
     compute_root_commit_id,
@@ -53,4 +55,18 @@ def test_merge_recipe_content_hash_is_unchanged():
     assert (
         recipe.content_hash()
         == "1410dea992378213097878d0ce1f98da03c519b550baa2c538fab25d67b7f0d7"
+    )
+
+
+def test_lift_recipe_content_hash_is_unchanged():
+    recipe = LiftRecipe(
+        base="b",
+        aspects=["provenance"],
+        versions={"provenance": 1},
+        spec={"provenance_for": ["Ticket"]},
+        graflo_version="0.0.0",
+    )
+    assert (
+        recipe.content_hash()
+        == "0ae56094d531e6fe6f6b1ade9f8b6f0b6cb5dba910576d4ddd062c9ddfccdc8c"
     )

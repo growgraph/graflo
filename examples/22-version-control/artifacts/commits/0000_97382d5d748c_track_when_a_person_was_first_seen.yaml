@@ -4,8 +4,8 @@ ops:
         person:
         -   created_at
     op: add_vertex_properties
-tree_before: 6fb36128d4ac1f8cfb2a5c1a08c6a913be99995d43e6fd22784a1415f9991263
-tree: b44c7b3f9b308732d42aca170f2664c5458874618563ee8d2655433320288cac
+tree_before: d624e9530f729c149bc8e4a29a2260420ff3316b711ec03d0d35e067e052b5b9
+tree: ceb0b9104f5103ae76534e723c1029efe836c9ac7c8239d46bfbc9b7c3798150
 label: track when a person was first seen
 created_at: '2026-01-01T00:00:00+00:00'
 parents: []

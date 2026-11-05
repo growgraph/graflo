@@ -27,7 +27,7 @@ from graflo.architecture.evolution import (
     FileCommitStore,
     History,
     MergeRecipe,
-    MergeRecipeRef,
+    RecipeRef,
     apply_evolution,
     build_multi_parent_commit,
     build_recipe,
@@ -66,8 +66,8 @@ def _print_merged(merged: GraphManifest, how: str) -> None:
 def _stored_recipe(store: Path) -> MergeRecipe:
     """The decision recorded in the merge commit of the stored history."""
     for commit in FileCommitStore(store).load().commits:
-        if commit.merge_recipe is not None:
-            return MergeRecipe.model_validate(commit.merge_recipe.payload)
+        if commit.recipe is not None:
+            return MergeRecipe.model_validate(commit.recipe.payload)
     raise click.ClickException(
         "no merge commit is stored yet; run merge_branches.py without flags first"
     )
@@ -190,7 +190,7 @@ def main(plot_dir: Path | None, take: str, advance_left: bool, store: Path) -> N
         parents=[left_commit.id, right_commit.id],
         label=f"merge {right_commit.short()} into {left_commit.short()}",
         created_at=STAMP,
-        merge_recipe=MergeRecipeRef(
+        recipe=RecipeRef(
             hash=recipe.content_hash(), kind=recipe.kind, payload=recipe.to_dict()
         ),
     )

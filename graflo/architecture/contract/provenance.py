@@ -108,7 +108,7 @@ def stamp_provenance(
     canon: str,
     commit: str | None = None,
     parents: list[str] | None = None,
-    merge_recipe: str | None = None,
+    recipe: str | None = None,
 ) -> Provenance:
     """Write a :class:`Provenance` block onto *target*, in place.
 
@@ -122,7 +122,8 @@ def stamp_provenance(
         canon: Canonicalization version that produced *content_hash*.
         commit: Id of the commit producing this state.
         parents: Parent commit ids, in position order.
-        merge_recipe: Content hash of the merge recipe, merges only.
+        recipe: Content hash of the recorded recipe, on merge and lift
+            commits only.
 
     Returns:
         The provenance block that was written.
@@ -141,7 +142,7 @@ def stamp_provenance(
         canon=canon,
         commit=commit,
         parents=list(parents or []),
-        merge_recipe=merge_recipe,
+        recipe=recipe,
     )
 
     metadata = getattr(target, "metadata", None)

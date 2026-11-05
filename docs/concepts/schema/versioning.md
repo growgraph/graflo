@@ -99,7 +99,7 @@ metadata:
         canon: graflo/canon@5
         parents: [a3f9c21e4b70, 9e11d02c55aa]
         commit: c4d1e9a2b3f0
-        merge_recipe: "…"
+        recipe: "…"
 ```
 
 Provenance is never part of the content hash. Content identity must not depend
@@ -125,8 +125,10 @@ restored = checkout(base, history)  # replays, verifying every tree
 as_of_first = checkout(base, history, first.id)
 ```
 
-A `Commit` carries its ops, its parents (none for a root, one for an edit, two
-or more for a merge) and the content hash before and after it. `build_commit`
+A `Commit` carries its ops, its parents (none for a root, one for an edit or a
+lift, two or more for a merge) and the content hash before and after it. Its
+`kind` says what produced it: `root`, `edit`, `merge`, `merge3`, `revert` or
+`lift`. `build_commit`
 applies the ops rather than trusting them, so both hashes describe a change
 that actually happened, and it refuses a change set that leaves the manifest
 unchanged, since such a commit would record nothing.
@@ -345,7 +347,12 @@ that says so. Because
 the commit is a diff, every block the union changes needs an op; `set_bindings`
 and `set_db_profile` cover the bindings and the database profile.
 
-## Tracked merges
+## Tracked merges and lifts
+
+A merge, merge3 or lift commit carries a recipe (`Commit.recipe`): the
+declaration that produced it, with its content hash, which a replay reads.
+`metadata.provenance.recipe` points at it from a stamped manifest. A commit of
+another kind carries none, and a recipe of the wrong kind is refused.
 
 A `MergeRecipe` records how a three-way merge was resolved. It is
 content-addressed, with its resolutions hashed in slot order:
@@ -365,6 +372,10 @@ A recorded resolution whose slot no longer conflicts is reported as unused and
 never applied: applying an old decision to a slot nobody contests any more
 would undo someone's later change without anyone noticing.
 
+A `LiftRecipe` records a lift: the aspects, the version of each, and the spec.
+`plan_relift` plans it again on a manifest that has changed since; see
+[Recording a lift](aspects.md#recording-a-lift).
+
 ## CLI
 
 ```bash
@@ -376,6 +387,7 @@ graflo merge3 <left> <right> --base base.yaml --take left
 graflo revert <commit> --base base.yaml
 graflo stamp manifest.yaml --commit <commit>
 graflo merge A.yaml B.yaml -o AB.yaml -m "join"   # a union, recorded as a two-parent commit
+graflo lift A.yaml --spec lift.yaml -o lifted.yaml -m "lift"   # recorded as a lift commit
 ```
 
 `graflo commit` derives the ops from two manifests with `diff_manifests` and

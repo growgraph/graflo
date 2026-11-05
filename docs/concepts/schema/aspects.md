@@ -48,7 +48,8 @@ undo, blockers = invert_ops(ops, manifest=manifest)
 The plan lists everything it adds before anything it removes: groundings,
 directions and units first, then the state types, then the provenance types,
 and last the removal of properties that moved onto a state type. `ASPECTS`
-lists the aspects by name.
+lists the aspects by name, each with a `version` that moves when its
+vocabulary or what it plans changes.
 
 A lift changes the **schema only**. Nothing fills the new types until a
 resource does; see [Filling the provenance types](#filling-the-provenance-types).
@@ -71,6 +72,51 @@ only its missing parts:
 Lifting twice is the same as lifting once. Composing manifests that each carry
 part of the vocabulary and then lifting gives the same schema as lifting each
 one and then composing them.
+
+## Recording a lift
+
+What a lift adds looks the same as vocabulary declared by hand, so a lifted
+manifest cannot show which aspects produced it. Record the lift in a commit
+store to keep that:
+
+```bash
+graflo lift manifest.yaml --spec lift.yaml -o lifted.yaml -m "lift aspects"
+```
+
+`-m` records a commit of kind `lift` whose one parent is the commit holding
+`manifest.yaml`. The manifest must already be in the store (`--store`, default
+`.graflo/commits`), or the command exits 2. The commit holds the planned ops and
+a lift recipe: the aspects in the order named, the version of each, the spec
+without its defaults, and the graflo version. The written manifest names the
+commit and the recipe in `metadata.provenance`. Lifting a manifest that already
+carries the aspects records nothing.
+
+From Python:
+
+```python
+from graflo.architecture.evolution.aspects import build_lift_recipe, plan_lift
+from graflo.architecture.evolution.lift_commit import build_lift_commit
+
+ops = plan_lift(manifest, spec, aspects=["provenance"])
+recipe = build_lift_recipe(manifest, spec, aspects=["provenance"])
+commit = build_lift_commit(manifest, ops, parent=parent_id, recipe=recipe)
+```
+
+To retract a lift, revert its commit with `graflo revert`. To lift again after
+the manifest has changed or an aspect's version has moved, plan from the
+recorded recipe:
+
+```python
+from graflo.architecture.evolution.aspects import plan_relift, recipe_drift
+from graflo.architecture.evolution.lift_commit import lift_recipe_of
+
+recipe = lift_recipe_of(commit)
+recipe_drift(recipe)  # aspects whose version moved: {"provenance": (1, 2)}
+ops = plan_relift(recipe, manifest)
+```
+
+The record says what was lifted and how. Whether a manifest carries an aspect
+is still read from its schema.
 
 ## The provenance aspect
 

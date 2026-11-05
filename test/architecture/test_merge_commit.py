@@ -90,13 +90,13 @@ class TestTheCommit:
             left, _compose(left, right), parents=["a" * 12, "b" * 12], recipe=recipe
         )
 
-        assert entry.merge_recipe is not None
-        assert entry.merge_recipe.kind == "merge"
-        assert entry.merge_recipe.payload["name_conflict"] == "prefix_right"
+        assert entry.recipe is not None
+        assert entry.recipe.kind == "merge"
+        assert entry.recipe.payload["name_conflict"] == "prefix_right"
         # No merge base -- the absence is the signal, and it is what
         # distinguishes merge from a three-way merge. A recorded base would
         # send a re-merge looking for a common ancestor there is none of.
-        assert "base" not in entry.merge_recipe.payload
+        assert "base" not in entry.recipe.payload
 
     def test_a_compose_carrying_bindings_is_recordable(self) -> None:
         """The case that could not be recorded before ``set_bindings`` existed.
@@ -357,7 +357,7 @@ class TestStampingDoesNotMoveTheContentAddress:
             canon="graflo/canon@2",
             commit="c" * 12,
             parents=["a" * 12, "b" * 12],
-            merge_recipe="d" * 64,
+            recipe="d" * 64,
         )
 
         assert manifest_hash(merged) == before

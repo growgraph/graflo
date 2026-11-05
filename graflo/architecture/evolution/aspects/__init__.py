@@ -18,6 +18,8 @@ Three ship today:
 
 The output is an op list, so the conversion is replayable, invertible and
 reviewable through the machinery every other manifest change already uses.
+A :class:`~graflo.architecture.evolution.aspects.recipe.LiftRecipe` records
+what was asked of a lift, so that it can be planned again (:func:`plan_relift`).
 """
 
 from __future__ import annotations
@@ -31,6 +33,13 @@ from ..ops import ManifestOp
 from .access.plan import plan_access
 from .base import Aspect, LiftError
 from .provenance.plan import plan_provenance
+from .recipe import (
+    LiftRecipe,
+    build_lift_recipe,
+    plan_relift,
+    recipe_drift,
+    recorded_spec,
+)
 from .spec import EdgeGrounding, Grounding, LiftSpec
 from .state.plan import StatePlan, plan_state
 
@@ -46,6 +55,7 @@ ASPECTS: dict[str, Aspect] = {
             "where a fact came from and who produced it (PROV-O)."
         ),
         needs_spec=False,
+        version=1,
     ),
     STATE: Aspect(
         name=STATE,
@@ -55,6 +65,7 @@ ASPECTS: dict[str, Aspect] = {
             "(PROV-O, SOSA, QUDT)."
         ),
         needs_spec=True,
+        version=1,
     ),
     ACCESS: Aspect(
         name=ACCESS,
@@ -63,6 +74,7 @@ ASPECTS: dict[str, Aspect] = {
             "writer stamps and a read guard checks."
         ),
         needs_spec=True,
+        version=1,
     ),
 }
 
@@ -176,11 +188,16 @@ __all__ = [
     "EdgeGrounding",
     "Grounding",
     "LiftError",
+    "LiftRecipe",
     "LiftSpec",
     "StatePlan",
+    "build_lift_recipe",
     "plan_access",
     "plan_lift",
     "plan_provenance",
+    "plan_relift",
     "plan_state",
+    "recipe_drift",
+    "recorded_spec",
     "resolve_aspects",
 ]

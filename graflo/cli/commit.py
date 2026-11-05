@@ -456,7 +456,7 @@ def merge3_cmd(
         content_hash=manifest_hash(merged),
         canon=CANON_VERSION,
         parents=[left_commit.id, right_commit.id],
-        merge_recipe=recipe.content_hash(),
+        recipe=recipe.content_hash(),
     )
     _write(merged, output_path)
 
@@ -464,7 +464,7 @@ def merge3_cmd(
         click.echo("(dry run -- not stored)")
         return
 
-    from graflo.architecture.evolution.commit import MergeRecipeRef
+    from graflo.architecture.evolution.commit import RecipeRef
 
     try:
         entry = build_multi_parent_commit(
@@ -473,7 +473,7 @@ def merge3_cmd(
             parents=[left_commit.id, right_commit.id],
             label=label or f"merge {right_commit.short()} into {left_commit.short()}",
             created_at=datetime.now(UTC).isoformat(),
-            merge_recipe=MergeRecipeRef(
+            recipe=RecipeRef(
                 hash=recipe.content_hash(), kind=recipe.kind, payload=recipe.to_dict()
             ),
         )
