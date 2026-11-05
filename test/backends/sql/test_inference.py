@@ -93,6 +93,29 @@ class _ConstraintNameOrdered:
         ]
 
 
+class _CatalogSchema(_ConstraintNameOrdered):
+    """A provider whose catalog says which schema each table is in."""
+
+    def get_tables(self, schema_name: str | None = None) -> list[dict[str, Any]]:
+        return [{"table_name": name, "table_schema": "shop"} for name in self._columns]
+
+    def get_table_row_count_estimate(
+        self, table_name: str, schema_name: str | None = None
+    ) -> int | None:
+        return None
+
+    def get_table_sample_rows(
+        self, table_name: str, schema_name: str | None = None, limit: int = 5
+    ) -> list[dict[str, Any]]:
+        return []
+
+
+def test_raw_tables_name_the_schema_the_catalog_lists_them_in() -> None:
+    """Introspected without a schema named, a table still says where it is."""
+    result = introspect_schema(cast(Any, _CatalogSchema()), include_raw_tables=True)
+    assert {t.schema_name for t in result.raw_tables} == {"shop"}
+
+
 def test_the_edge_source_is_the_first_declared_foreign_key() -> None:
     (edge,) = detect_edge_tables(cast(Any, _ConstraintNameOrdered()))
     assert (edge.source_table, edge.target_table) == ("users", "products")

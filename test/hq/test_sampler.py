@@ -74,11 +74,10 @@ def test_sample_files_records_connector_provenance(file_sample):
         assert sample.connector == sample.resource_name
 
 
-def test_a_file_with_no_rows_is_a_candidate_that_samples_empty(sampler):
-    """Discovery goes by extension: a .txt note is a table file with no rows."""
+def test_a_text_file_is_not_taken_for_a_table():
+    """Discovery goes by extension, and ``.txt`` does not say a file is a table."""
     names = {r.name for r in discover(FilesConnConfig(root=str(SOURCE_DIR))).resources}
-    assert names == {"customers", "orders", "api_orders", "NOTES"}
-    assert sample_one(sampler, SOURCE_DIR / "NOTES.txt").docs == []
+    assert names == {"customers", "orders", "api_orders"}
 
 
 def test_sample_files_keeps_documents_verbatim(file_sample):

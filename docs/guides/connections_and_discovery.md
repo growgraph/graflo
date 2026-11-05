@@ -14,7 +14,7 @@ you can sample and ingest.
 | `database` | `DBConfig` subclass, by `db_type` | `postgres`, `sparql`, `graphdb` | `postgres` and the graph databases | tables (`TableConnector`), or classes with instances (`SparqlConnector`) |
 | `api` | `RestApiConnConfig` | yes | no | nothing: endpoints come from the models that bind them |
 | `stream` | `KafkaConnConfig` | yes | no | topics (`KafkaConnector`), internal `__` topics left out |
-| `files` | `FilesConnConfig` | yes | no | files whose extension says how to read them (`FileConnector`) |
+| `files` | `FilesConnConfig` | yes | no | files whose extension says how to read them, a numbered run as one (`FileConnector`) |
 
 `roles(conn)` returns `source`, `target` or both. A graph database is only
 written to; discovery refuses it.
@@ -74,8 +74,19 @@ sample = engine.sample_resources(
 
 Each `DiscoveredResource` holds a resource name, unique within the discovery,
 and the connector that reads it. A table also carries its columns, keys,
-comment and row estimate; a SPARQL class its instance count; a file its size.
-`limit` caps how many are listed, and `truncated` says more exist.
+comment and row estimate; a SPARQL class its instance count; files their
+count and total size. `limit` caps how many are listed, and `truncated` says
+more exist.
+
+Files are candidates when their extension says how to read them: `.json`,
+`.jsonl`, `.csv`, `.tsv` and `.parquet`, compressed or not. Files in
+one directory whose names differ only in runs of digits are one candidate:
+`part-0001.csv` and `part-0002.csv` become a connector with
+`regex: ^part\-\d+\.csv$`, so files that arrive later are read too. A file
+alone keeps a regex of its exact name. To read other files, write the
+`FileConnector` yourself, with any `regex`, and `file_type` where the name does
+not show the format; `graflo.data_source.files.list_files(files, connector)`
+lists what it matches.
 
 `Discovery.bindings(conn_proxy, names)` turns a pick into a bindings block:
 one resource per name, read by its connector, wired to `conn_proxy`. Sample it

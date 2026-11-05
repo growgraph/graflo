@@ -126,6 +126,65 @@ class TestFiles:
 
         assert [r.name for r in found.resources] == ["a_events"]
 
+    def test_a_numbered_run_of_s3_files_is_one_candidate(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        run = FakeS3(
+            {
+                "raw/events/part-0001.jsonl": b'{"id": 1}\n',
+                "raw/events/part-0002.jsonl": b'{"id": 2}\n',
+                "raw/events/schema.json": b'{"id": "s"}',
+                "other/events/part-0003.jsonl": b'{"id": 3}\n',
+            }
+        )
+        from graflo.object_storage import s3_client
+
+        monkeypatch.setattr(s3_client, "boto3_s3_client", lambda cfg: run)
+
+        found = discover(S3_FILES)
+
+        assert [r.name for r in found.resources] == ["events_part", "events_schema"]
+        events = found.resources[0]
+        assert isinstance(events.connector, FileConnector)
+        assert events.connector.regex == r"^part\-\d+\.jsonl$"
+        assert (events.file_count, events.size_bytes) == (2, 20)
+
+        bindings = found.bindings("lake", ["events_part"])
+        sample = ResourceSampler(max_docs=10).sample_bindings(
+            bindings, connection_provider=InMemoryConnectionProvider({"lake": S3_FILES})
+        )
+        assert [doc["id"] for doc in sample.samples[0].docs] == [1]
+        (connector,) = bindings.connectors
+        assert isinstance(connector, FileConnector)
+        sources = RegistryBuilder.file_sources(
+            connector, bindings, InMemoryConnectionProvider({"lake": S3_FILES})
+        )
+        assert [s.key for s in sources if isinstance(s, S3ObjectDataSource)] == [
+            "raw/events/part-0001.jsonl",
+            "raw/events/part-0002.jsonl",
+        ]
+
+    def test_a_numbered_run_of_local_files_is_one_candidate(
+        self, tmp_path: Path
+    ) -> None:
+        for day in ("2026-11-04", "2026-11-05"):
+            (tmp_path / f"orders-{day}.csv").write_text("id\n1\n")
+        (tmp_path / "2026.csv").write_text("id\n1\n")
+        (tmp_path / "notes.txt").write_text("not a table")
+
+        found = discover(FilesConnConfig(root=str(tmp_path)))
+
+        assert [(r.name, r.file_count) for r in found.resources] == [
+            ("2026", 1),
+            ("orders", 2),
+        ]
+        regexes = [
+            r.connector.regex
+            for r in found.resources
+            if isinstance(r.connector, FileConnector)
+        ]
+        assert regexes == [r"^2026\.csv$", r"^orders\-\d+\-\d+\-\d+\.csv$"]
+
     def test_the_limit_marks_the_listing_truncated(self, s3: FakeS3) -> None:
         found = discover(S3_FILES, limit=1)
         assert len(found.resources) == 1 and found.truncated
@@ -166,6 +225,27 @@ def test_postgres_tables_are_candidates_with_what_they_declare(monkeypatch) -> N
         ("user_id", False, True),
     ]
     assert orders.foreign_keys[0].references_resource == "users"
+
+
+def test_a_table_in_no_named_schema_reads_the_connection_default(monkeypatch) -> None:
+    """An empty schema in introspection is no schema, not a schema called ''."""
+    from graflo.hq.graph_engine import GraphEngine
+
+    table = RawTableInfo(
+        name="orders", schema_name="", columns=[], primary_key=[], foreign_keys=[]
+    )
+    monkeypatch.setattr(
+        GraphEngine,
+        "introspect",
+        lambda self, conn, **kw: SchemaIntrospectionResult(
+            vertex_tables=[], edge_tables=[], raw_tables=[table], schema_name=""
+        ),
+    )
+
+    (orders,) = discover(PostgresConfig(uri="postgresql://h/db")).resources
+
+    assert isinstance(orders.connector, TableConnector)
+    assert orders.connector.schema_name is None
 
 
 def test_sparql_classes_are_candidates_by_local_name(monkeypatch) -> None:

@@ -5,6 +5,11 @@ a database, the classes of a SPARQL endpoint, the topics of a Kafka cluster,
 the files under a files connection. A pick of them becomes a bindings block
 (:meth:`Discovery.bindings`), sampled and ingested like any other.
 
+Files in one directory whose names differ only in runs of digits
+(``part-0001.csv``, ``part-0002.csv``) are one candidate, read by a connector
+whose ``regex`` lets those runs vary; a local directory and an S3 prefix are
+listed alike.
+
 A REST API cannot list its own endpoints, so its discovery is empty: its
 connectors come from the models that bind them.
 """
@@ -13,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Iterable
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -68,7 +74,8 @@ class DiscoveredResource(ConfigBaseModel):
         name: Resource name the pick is sampled under; unique in its discovery.
         connector: The connector that reads it; its ``name`` is ``name``.
         row_estimate: Approximate rows (tables) or instances (SPARQL classes).
-        size_bytes: Size of a file.
+        size_bytes: Total size of the files a file connector matches.
+        file_count: Files a file connector matches.
         description: What the source says the thing is (a table comment).
         columns, primary_key, foreign_keys: What a table declares.
     """
@@ -77,6 +84,7 @@ class DiscoveredResource(ConfigBaseModel):
     connector: AnyConnector
     row_estimate: int | None = None
     size_bytes: int | None = None
+    file_count: int | None = None
     description: str | None = None
     columns: list[DiscoveredColumn] = Field(default_factory=list)
     primary_key: list[str] = Field(default_factory=list)
@@ -99,8 +107,7 @@ class Discovery(ConfigBaseModel):
     def bindings(self, conn_proxy: str, names: list[str] | None = None) -> Bindings:
         """A bindings block reading the picked candidates through *conn_proxy*.
 
-        Each pick becomes a resource of its own name, read by its connector,
-        which is wired to *conn_proxy*.
+        See :func:`bindings_for`.
 
         Raises:
             ValueError: A name in *names* is not a candidate.
@@ -110,18 +117,31 @@ class Discovery(ConfigBaseModel):
         unknown = [name for name in wanted if name not in by_name]
         if unknown:
             raise ValueError(f"not discovered here: {', '.join(unknown)}")
-        picked = [by_name[name] for name in wanted]
-        return Bindings(
-            connectors=[resource.connector for resource in picked],
-            resource_connector=[
-                {"resource": resource.name, "connector": resource.name}
-                for resource in picked
-            ],
-            connector_connection=[
-                {"connector": resource.name, "conn_proxy": conn_proxy}
-                for resource in picked
-            ],
-        )
+        return bindings_for(conn_proxy, [by_name[name] for name in wanted])
+
+
+def bindings_for(conn_proxy: str, resources: Iterable[DiscoveredResource]) -> Bindings:
+    """A bindings block reading *resources* through the connection *conn_proxy* names.
+
+    Each resource is read by its connector, renamed to the resource's name so
+    connector names are unique when resource names are, and wired to
+    *conn_proxy*.
+    """
+    picked = list(resources)
+    return Bindings(
+        connectors=[
+            resource.connector.model_copy(update={"name": resource.name})
+            for resource in picked
+        ],
+        resource_connector=[
+            {"resource": resource.name, "connector": resource.name}
+            for resource in picked
+        ],
+        connector_connection=[
+            {"connector": resource.name, "conn_proxy": conn_proxy}
+            for resource in picked
+        ],
+    )
 
 
 _UNSAFE = re.compile(r"[^0-9A-Za-z_]+")
@@ -174,7 +194,9 @@ def _discover_postgres(conn: PostgresConfig, limit: int) -> Discovery:
             DiscoveredResource(
                 name=name,
                 connector=TableConnector(
-                    name=name, table_name=table.name, schema_name=table.schema_name
+                    name=name,
+                    table_name=table.name,
+                    schema_name=table.schema_name or None,
                 ),
                 row_estimate=(
                     table.row_count_estimate
@@ -298,31 +320,48 @@ def _readable(path: str) -> bool:
     return True
 
 
-def _discover_files(conn: FilesConnConfig, limit: int) -> Discovery:
-    from graflo.data_source.files import walk
+_DIGITS = re.compile(r"\d+")
 
-    entries = [entry for entry in walk(conn) if _readable(entry.relative)]
+
+def _name_pattern(name: str) -> str:
+    """The regex a file's name stands for when each run of digits may vary."""
+    return "^" + r"\d+".join(re.escape(part) for part in _DIGITS.split(name)) + "$"
+
+
+def _discover_files(conn: FilesConnConfig, limit: int) -> Discovery:
+    from graflo.data_source.files import FileEntry, walk
+
+    groups: dict[tuple[str, str], list[FileEntry]] = {}
+    for entry in walk(conn):
+        if _readable(entry.relative):
+            path = PurePosixPath(entry.relative)
+            groups.setdefault((str(path.parent), _name_pattern(path.name)), []).append(
+                entry
+            )
     taken: set[str] = set()
     resources = []
-    for entry in entries[:limit]:
-        path = PurePosixPath(entry.relative)
-        stem = path.name.split(".", 1)[0]
-        name = _resource_name(str(path.with_name(stem)), taken)
+    for (parent, pattern), members in list(groups.items())[:limit]:
+        first = PurePosixPath(members[0].relative)
+        stem = first.name.split(".", 1)[0]
+        if len(members) > 1:
+            stem = _DIGITS.sub("", stem)
+        else:
+            pattern = f"^{re.escape(first.name)}$"
+        raw = "/".join(part for part in (parent, stem) if part and part != ".")
+        name = _resource_name(raw, taken)
+        sizes = [member.size for member in members]
         resources.append(
             DiscoveredResource(
                 name=name,
-                connector=FileConnector(
-                    name=name,
-                    regex=f"^{re.escape(path.name)}$",
-                    sub_path=str(path.parent),
-                ),
-                size_bytes=entry.size,
+                connector=FileConnector(name=name, regex=pattern, sub_path=parent),
+                size_bytes=None if None in sizes else sum(s or 0 for s in sizes),
+                file_count=len(members),
             )
         )
     return Discovery(
         kind=ConnectionKind.FILES,
         resources=resources,
-        truncated=len(entries) > limit,
+        truncated=len(groups) > limit,
     )
 
 
@@ -331,6 +370,7 @@ __all__ = [
     "DiscoveredColumn",
     "DiscoveredResource",
     "Discovery",
+    "bindings_for",
     "discover",
     "kafka_topics",
     "sparql_select",

@@ -649,7 +649,7 @@ def build_raw_tables(
         raw_tables.append(
             RawTableInfo(
                 name=table_name,
-                schema_name=schema_name or "",
+                schema_name=table_info.get("table_schema") or schema_name or "",
                 description=table_info.get("description") or "",
                 columns=column_infos,
                 primary_key=pk_columns,

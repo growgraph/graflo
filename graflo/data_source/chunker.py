@@ -508,7 +508,7 @@ class ChunkerFactory:
             return ChunkerType.JSON
         elif base_suffix == ".jsonl":
             return ChunkerType.JSONL
-        elif base_suffix in (".csv", ".tsv", ".txt"):
+        elif base_suffix in (".csv", ".tsv"):
             return ChunkerType.TABLE
         elif base_suffix == ".parquet":
             return ChunkerType.PARQUET

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A PostgreSQL table introspected without a schema named records the schema the catalog
+  lists it in; a sample that fails to read a table no longer leaves the connection in an
+  aborted transaction.
 - `connection_type` reports the right flavour for a config built by `from_env` or
   `from_proxy_env`, and for `GraphDBConfig` (new `DBType.GRAPHDB`); these used to report
   `arango`.
@@ -36,7 +39,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `FileConnector` wired to one reads `sub_path` relative to its root, for sampling and ingest.
 - **Discovery**: `GraphEngine.discover(connection)` lists what a connection offers as
   connectors (PostgreSQL tables, SPARQL classes, Kafka topics, files);
-  `Discovery.bindings()` turns a pick into a bindings block.
+  `Discovery.bindings()` (or `bindings_for(conn_proxy, resources)`) turns a pick into a
+  bindings block. Files in one directory whose names differ only in digits are one candidate,
+  read by a `regex`, locally and on S3 alike.
 - Sampling reads SPARQL and Kafka connectors too; a Kafka sample uses a consumer group of its
   own and commits nothing.
 - A SPARQL connector without `endpoint_url` reads the endpoint of its connection.
@@ -96,6 +101,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   server's free edition allows.
 
 ### Changed
+
+- A `.txt` file is no longer guessed to be a table; set `file_type: table` on its
+  `FileConnector`.
 
 - `GraphEngine.sample_resources(bindings, connection_provider=...)` is the only way to sample;
   the PostgreSQL-config and file-path forms are gone, as are `ResourceSampler.sample_file`,
