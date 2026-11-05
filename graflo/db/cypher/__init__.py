@@ -12,6 +12,8 @@ from graflo.db.cypher.rel_merge import (
     rel_absent_upsert_clause,
     rel_merge_props_map_from_row_index,
     rel_merge_props_map_from_row_props,
+    rel_union_rows,
+    rel_upsert_clause,
 )
 from graflo.db.cypher.traversal import cypher_neighbors_query
 
@@ -26,4 +28,6 @@ __all__ = [
     "rel_absent_upsert_clause",
     "rel_merge_props_map_from_row_index",
     "rel_merge_props_map_from_row_props",
+    "rel_union_rows",
+    "rel_upsert_clause",
 ]

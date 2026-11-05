@@ -69,6 +69,18 @@ export SENSOR_FEED_HEADER_NAME=X-API-Key
 export SENSOR_FEED_TOKEN=...
 ```
 
+The same rule covers every kind of source. The connectors that use a label
+decide which variables it reads:
+
+| Connectors using the label | Variables | Required |
+|---|---|---|
+| API | the table above | `BASE_URL` |
+| Table (PostgreSQL) | `{PREFIX}URI`, `{PREFIX}USERNAME`, `{PREFIX}PASSWORD`, `{PREFIX}DATABASE`, `{PREFIX}SCHEMA_NAME` | `URI` |
+| SPARQL | `{PREFIX}USERNAME`, `{PREFIX}PASSWORD` (the endpoint is on the connector) | none |
+| Kafka | `{PREFIX}BOOTSTRAP_SERVERS`, `{PREFIX}SECURITY_PROTOCOL`, `{PREFIX}SASL_*`, `{PREFIX}CLIENT_ID` | `BOOTSTRAP_SERVERS` |
+
+A label used by connectors of two kinds is refused.
+
 ### 3. Load the variables and ingest
 
 ```python
@@ -80,8 +92,7 @@ from graflo.connections import ArangoConfig, InMemoryConnectionProvider
 manifest = GraphManifest.from_config(FileHandle.load("manifest.yaml"))
 manifest.finish_init()
 
-provider = InMemoryConnectionProvider()
-provider.register_all_api_configs_from_env(bindings=manifest.require_bindings())
+provider = InMemoryConnectionProvider.from_env(manifest.require_bindings())
 
 conn_conf = ArangoConfig.from_env()
 engine = GraphEngine(target_db_flavor=conn_conf.connection_type)
@@ -93,9 +104,9 @@ engine.define_and_ingest(
 )
 ```
 
-`register_all_api_configs_from_env` finds every label used by an API
-connector, reads that label's variables, and ties each connector to its
-label. The provider then hands the address and credentials to the ingest.
+`InMemoryConnectionProvider.from_env` finds every label the bindings use and
+reads that label's variables. During the ingest each connector looks up its
+label in the bindings and takes the address and credentials from the provider.
 
 ### 4. Use other variable names, if you must
 
@@ -103,8 +114,8 @@ When the variables already exist under other names, map a label to its
 prefix:
 
 ```python
-provider.register_all_api_configs_from_env(
-    bindings=manifest.require_bindings(),
+provider = InMemoryConnectionProvider.from_env(
+    manifest.require_bindings(),
     env_prefix_map={"maintenance_api": "WORK_ORDERS_"},
 )
 ```
@@ -118,9 +129,11 @@ To check the wiring without contacting any API, print what each connector
 resolved to:
 
 ```python
+from graflo.connections import RestApiConnConfig, connector_config
+
 bindings = manifest.require_bindings()
 for connector in bindings.connectors:
-    api = provider.get_generalized_conn_config(connector).config
+    api = connector_config(connector, bindings, provider, RestApiConnConfig)
     print(connector.name, api.base_url + connector.path)
 ```
 
@@ -129,9 +142,10 @@ work_orders_api https://maintenance.example.com/api/work-orders
 readings_api https://sensors.example.com/api/readings
 ```
 
-Problems show up as a `ValueError` from `register_all_api_configs_from_env`:
-a missing `BASE_URL` names the variable, an unknown `AUTH_TYPE` lists the
-valid ones, and bindings with no API connector tied to a label are refused.
+Problems show up as one `ValueError` from `from_env` that lists every label
+at fault: a missing `BASE_URL` names the variable, an unknown `AUTH_TYPE`
+lists the valid ones, and a label shared by connectors of different kinds is
+named.
 
 ## What to read next
 

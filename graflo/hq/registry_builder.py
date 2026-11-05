@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from graflo.architecture.contract.bindings import (
     APIConnector,
@@ -20,17 +20,24 @@ from graflo.architecture.contract.bindings import (
     PushConnector,
     SparqlConnector,
     TableConnector,
+    TemplatedConnector,
 )
 from graflo.architecture.contract.ingestion import IngestionModel
+from graflo.architecture.graph_types import EncodingType
 from graflo.architecture.schema import Schema
+from graflo.connections.onto import PostgresConfig, SparqlEndpointConfig
 from graflo.connections.provider import (
-    ApiGeneralizedConnConfig,
     ConnectionProvider,
     EmptyConnectionProvider,
-    KafkaGeneralizedConnConfig,
-    PostgresGeneralizedConnConfig,
-    SparqlGeneralizedConnConfig,
+    connector_config,
 )
+from graflo.connections.sources import (
+    FilesConnConfig,
+    KafkaConnConfig,
+    RestApiConnConfig,
+)
+from graflo.data_source.base import AbstractDataSource
+from graflo.data_source.enumerated import EnumeratedDataSource, EnumeratedMember
 from graflo.data_source.factory import DataSourceFactory
 from graflo.data_source.registry import DataSourceRegistry
 from graflo.data_source.sql import SQLConfig, SQLDataSource
@@ -38,11 +45,12 @@ from graflo.filter.sql import datetime_range_filter
 
 if TYPE_CHECKING:
     from graflo.architecture.contract.bindings import Bindings
-    from graflo.connections.sources import RestApiConnConfig
-    from graflo.data_source.api import APIConfig, APIDataSource, DependentAPIDataSource
+    from graflo.data_source.api import APIConfig
     from graflo.hq.caster import IngestionParams
 
 logger = logging.getLogger(__name__)
+
+_Templated = TypeVar("_Templated", bound=TemplatedConnector)
 
 
 class RegistryBuilder:
@@ -128,7 +136,12 @@ class RegistryBuilder:
                         continue
                     try:
                         self._register_file_sources(
-                            registry, resource_name, connector, ingestion_params
+                            registry,
+                            resource_name,
+                            connector,
+                            bindings,
+                            ingestion_params,
+                            provider,
                         )
                     except Exception as e:
                         msg = (
@@ -234,6 +247,7 @@ class RegistryBuilder:
                             registry,
                             resource_name,
                             connector,
+                            bindings,
                             provider,
                         )
                     except Exception as e:
@@ -304,16 +318,17 @@ class RegistryBuilder:
             raise ValueError("connector.sub_path is required")
         path = Path(fpath) if isinstance(fpath, str) else fpath
 
-        files = [
+        candidates = path.rglob("*") if connector.recursive else path.iterdir()
+        files = sorted(
             f
-            for f in path.iterdir()
+            for f in candidates
             if f.is_file()
             and (
                 True
                 if connector.regex is None
                 else re.search(connector.regex, f.name) is not None
             )
-        ]
+        )
 
         if limit_files is not None:
             files = files[:limit_files]
@@ -325,25 +340,62 @@ class RegistryBuilder:
         registry: DataSourceRegistry,
         resource_name: str,
         connector: FileConnector,
+        bindings: Bindings,
         ingestion_params: IngestionParams,
+        connection_provider: ConnectionProvider,
     ) -> None:
-        if connector.sub_path is None:
-            raise ValueError(
-                f"FileConnector for resource '{resource_name}' has no sub_path"
-            )
-
-        path_obj = connector.sub_path.expanduser()
-        files = self.discover_files(
-            path_obj, limit_files=ingestion_params.limit_files, connector=connector
-        )
-        logger.info(f"For resource name {resource_name} {len(files)} files were found")
-
         encoding = self.ingestion_model.fetch_resource_config(resource_name).encoding
-        for file_path in files:
-            file_source = DataSourceFactory.create_file_data_source(
-                path=file_path, encoding=encoding
-            )
+        sources = self.file_sources(
+            connector,
+            bindings,
+            connection_provider,
+            limit_files=ingestion_params.limit_files,
+            encoding=encoding,
+        )
+        logger.info(
+            "For resource name %s %d files were found", resource_name, len(sources)
+        )
+        for file_source in sources:
             registry.register(file_source, resource_name=resource_name)
+
+    @classmethod
+    def file_sources(
+        cls,
+        connector: FileConnector,
+        bindings: Bindings,
+        connection_provider: ConnectionProvider,
+        *,
+        limit_files: int | None = None,
+        encoding: EncodingType = EncodingType.UTF_8,
+    ) -> list[AbstractDataSource]:
+        """One data source per file *connector* matches.
+
+        With a ``conn_proxy`` the files are found under that files connection's
+        root, a local directory or an S3 prefix; without one, under the local
+        ``sub_path``.
+        """
+        if bindings.get_conn_proxy_for_connector(connector) is None:
+            return [
+                DataSourceFactory.create_file_data_source(
+                    path=path, file_type=connector.file_type, encoding=encoding
+                )
+                for path in cls.discover_files(
+                    connector.sub_path.expanduser(),
+                    connector=connector,
+                    limit_files=limit_files,
+                )
+            ]
+        from graflo.data_source.files import file_data_source, list_files
+
+        files = connector_config(
+            connector, bindings, connection_provider, FilesConnConfig
+        )
+        return [
+            file_data_source(
+                files, relative, file_type=connector.file_type, encoding=encoding
+            )
+            for relative in list_files(files, connector, limit=limit_files)
+        ]
 
     # ------------------------------------------------------------------
     # SQL / table sources
@@ -370,26 +422,9 @@ class RegistryBuilder:
         """
         from graflo.hq.auto_join import enrich_edge_connector_with_joins
 
-        generalized = (
-            connection_provider.get_generalized_conn_config(connector)
-            if hasattr(connection_provider, "get_generalized_conn_config")
-            else None
+        postgres_config = connector_config(
+            connector, bindings, connection_provider, PostgresConfig
         )
-        postgres_config = (
-            generalized.config
-            if isinstance(generalized, PostgresGeneralizedConnConfig)
-            else None
-        )
-        if postgres_config is None:
-            # Legacy fallback: allow older ConnectionProvider implementations.
-            postgres_config = connection_provider.get_postgres_config(
-                resource_name, connector
-            )
-        if postgres_config is None:
-            raise ValueError(
-                f"no PostgreSQL connection configuration for table "
-                f"'{connector.table_name}'"
-            )
 
         table_name = connector.table_name
         schema_name = connector.schema_name
@@ -463,86 +498,15 @@ class RegistryBuilder:
         ingestion_params: IngestionParams,
         connection_provider: ConnectionProvider,
     ) -> None:
-        """Register SPARQL data sources for a resource.
-
-        Handles two modes:
-
-        * **Endpoint mode** (``connector.endpoint_url`` is set): creates a
-          :class:`SparqlEndpointDataSource` that queries the remote SPARQL
-          endpoint.
-        * **File mode** (``connector.rdf_file`` is set): creates an
-          :class:`RdfFileDataSource` that parses a local RDF file.
-        """
-        if not connector.endpoint_url and not connector.rdf_file:
-            raise ValueError("SparqlConnector has neither endpoint_url nor rdf_file")
-
+        """Register the SPARQL data source of *connector* for a resource."""
         try:
-            if connector.endpoint_url:
-                from graflo.data_source.rdf import (
-                    SparqlEndpointDataSource,
-                    SparqlSourceConfig,
-                )
-
-                generalized = (
-                    connection_provider.get_generalized_conn_config(connector)
-                    if hasattr(connection_provider, "get_generalized_conn_config")
-                    else None
-                )
-                if isinstance(generalized, SparqlGeneralizedConnConfig):
-                    cfg = generalized.config
-                    username = cfg.username
-                    password = cfg.password
-                else:
-                    # Legacy fallback: allow older ConnectionProvider implementations.
-                    sparql_auth = connection_provider.get_sparql_auth(
-                        resource_name, connector
-                    )
-                    username = sparql_auth.username if sparql_auth else None
-                    password = sparql_auth.password if sparql_auth else None
-
-                source_config = SparqlSourceConfig(
-                    endpoint_url=connector.endpoint_url,
-                    rdf_class=connector.rdf_class,
-                    graph_uri=connector.graph_uri,
-                    sparql_query=connector.sparql_query,
-                    username=username,
-                    password=password,
-                    page_size=ingestion_params.batch_size,
-                )
-                sparql_source = SparqlEndpointDataSource(
-                    config=source_config,
-                    same_as=connector.same_as,
-                    typed_objects=connector.typed_objects,
-                )
-                registry.register(sparql_source, resource_name=resource_name)
-
-                logger.info(
-                    "Created SPARQL endpoint data source for class <%s> at '%s' "
-                    "mapped to resource '%s'",
-                    connector.rdf_class,
-                    connector.endpoint_url,
-                    resource_name,
-                )
-
-            elif connector.rdf_file:
-                from graflo.data_source.rdf import RdfFileDataSource
-
-                rdf_source = RdfFileDataSource(
-                    path=connector.rdf_file,
-                    rdf_class=connector.rdf_class,
-                    same_as=connector.same_as,
-                    typed_objects=connector.typed_objects,
-                )
-                registry.register(rdf_source, resource_name=resource_name)
-
-                logger.info(
-                    "Created RDF file data source for class <%s> from '%s' "
-                    "mapped to resource '%s'",
-                    connector.rdf_class,
-                    connector.rdf_file,
-                    resource_name,
-                )
-
+            source = self.sparql_source(
+                connector,
+                bindings,
+                resource_name=resource_name,
+                page_size=ingestion_params.batch_size,
+                connection_provider=connection_provider,
+            )
         except Exception as e:
             logger.error(
                 "Failed to create data source for SPARQL resource '%s': %s",
@@ -551,10 +515,113 @@ class RegistryBuilder:
                 exc_info=True,
             )
             raise
+        registry.register(source, resource_name=resource_name)
+        logger.info(
+            "Created SPARQL data source for class <%s> (%d request template(s)) "
+            "from '%s' mapped to resource '%s'",
+            connector.rdf_class,
+            len(connector.value_combinations()),
+            connector.endpoint_url or connector.rdf_file,
+            resource_name,
+        )
+
+    @classmethod
+    def sparql_source(
+        cls,
+        connector: SparqlConnector,
+        bindings: Bindings,
+        *,
+        resource_name: str,
+        page_size: int,
+        connection_provider: ConnectionProvider,
+    ) -> AbstractDataSource:
+        """Return the data source that reads *connector*'s instances.
+
+        * **Endpoint mode** (``connector.endpoint_url`` is set, or its
+          ``conn_proxy`` names a SPARQL endpoint): a
+          :class:`SparqlEndpointDataSource` that queries the remote endpoint.
+        * **File mode** (``connector.rdf_file`` is set): an
+          :class:`RdfFileDataSource` that parses a local RDF file.
+
+        A connector with ``values`` becomes one source per value combination,
+        read in order, its rows carrying the values.
+        """
+        if connector.values:
+            return cls._enumerated(
+                connector,
+                lambda one: cls.sparql_source(
+                    one,
+                    bindings,
+                    resource_name=resource_name,
+                    page_size=page_size,
+                    connection_provider=connection_provider,
+                ),
+            )
+        # A public endpoint needs no conn_proxy; a declared one must resolve, and
+        # gives the endpoint when the connector does not name one.
+        endpoint_url = connector.endpoint_url
+        username: str | None = None
+        password: str | None = None
+        if bindings.get_conn_proxy_for_connector(connector) is not None:
+            cfg = connector_config(
+                connector, bindings, connection_provider, SparqlEndpointConfig
+            )
+            username = cfg.username
+            password = cfg.password
+            endpoint_url = endpoint_url or cfg.query_endpoint
+        if endpoint_url:
+            from graflo.data_source.rdf import (
+                SparqlEndpointDataSource,
+                SparqlSourceConfig,
+            )
+
+            return SparqlEndpointDataSource(
+                config=SparqlSourceConfig(
+                    endpoint_url=endpoint_url,
+                    rdf_class=connector.rdf_class,
+                    graph_uri=connector.graph_uri,
+                    sparql_query=connector.sparql_query,
+                    username=username,
+                    password=password,
+                    page_size=page_size,
+                ),
+                same_as=connector.same_as,
+                typed_objects=connector.typed_objects,
+            )
+        if connector.rdf_file:
+            from graflo.data_source.rdf import RdfFileDataSource
+
+            return RdfFileDataSource(
+                path=connector.rdf_file,
+                rdf_class=connector.rdf_class,
+                same_as=connector.same_as,
+                typed_objects=connector.typed_objects,
+            )
+        raise ValueError(
+            "SparqlConnector has no endpoint_url, no rdf_file and no conn_proxy "
+            "naming a SPARQL endpoint"
+        )
+
+    @staticmethod
+    def _enumerated(
+        connector: _Templated,
+        source_for: Callable[[_Templated], AbstractDataSource],
+    ) -> EnumeratedDataSource:
+        """One source per value combination of *connector*, read in order."""
+        members = [
+            EnumeratedMember(
+                values=values, source=source_for(connector.rendered(values))
+            )
+            for values in connector.value_combinations()
+        ]
+        return EnumeratedDataSource(
+            members=members, source_type=members[0].source.source_type
+        )
 
     @staticmethod
     def api_config(
         connector: APIConnector,
+        bindings: Bindings,
         connection_provider: ConnectionProvider,
         *,
         page_size_override: int | None = None,
@@ -564,17 +631,9 @@ class RegistryBuilder:
         Raises:
             ValueError: No REST API connection is registered for the connector.
         """
-        generalized = (
-            connection_provider.get_generalized_conn_config(connector)
-            if hasattr(connection_provider, "get_generalized_conn_config")
-            else None
+        runtime = connector_config(
+            connector, bindings, connection_provider, RestApiConnConfig
         )
-        if not isinstance(generalized, ApiGeneralizedConnConfig):
-            raise ValueError(
-                "no REST API connection configuration is registered for the "
-                "connector's conn_proxy"
-            )
-        runtime = generalized.config
         return connector.build_api_config(
             base_url=runtime.base_url,
             auth=runtime.auth,
@@ -600,12 +659,14 @@ class RegistryBuilder:
         connection_provider: ConnectionProvider,
         *,
         page_size_override: int | None = None,
-    ) -> APIDataSource | DependentAPIDataSource:
+    ) -> AbstractDataSource:
         """Return the data source that fetches *connector*'s records.
 
-        A connector with a ``parent`` becomes one request per parent record. It
-        uses its own ``conn_proxy`` connection when it has one, else its
-        parent's, and takes the parent's request settings it does not set.
+        A connector with ``values`` becomes one source per value combination,
+        read in order, its rows carrying the values. A connector with a
+        ``parent`` becomes one request per parent record; *bindings* name the
+        parent. It uses its own ``conn_proxy`` connection when it has one, else
+        its parent's, and takes the parent's request settings it does not set.
 
         Raises:
             ValueError: No REST API connection is registered for the connector
@@ -613,11 +674,26 @@ class RegistryBuilder:
         """
         from graflo.data_source.api import APIDataSource, DependentAPIDataSource
 
-        parent = bindings.get_parent_connector(connector)
+        if connector.values:
+            return cls._enumerated(
+                connector,
+                lambda one: cls.api_source(
+                    one,
+                    bindings,
+                    connection_provider,
+                    page_size_override=page_size_override,
+                ),
+            )
+        parent = (
+            None
+            if connector.parent is None
+            else bindings.get_parent_connector(connector)
+        )
         if parent is None or connector.parent is None:
             return APIDataSource(
                 config=cls.api_config(
                     connector,
+                    bindings,
                     connection_provider,
                     page_size_override=page_size_override,
                 )
@@ -649,20 +725,17 @@ class RegistryBuilder:
         bindings: Bindings,
         connection_provider: ConnectionProvider,
     ) -> RestApiConnConfig:
-        """The REST connection of *connector*, else of its nearest parent with one."""
+        """The REST connection of *connector*, else of its nearest parent with a ``conn_proxy``."""
         current: APIConnector | None = connector
         while current is not None:
-            generalized = (
-                connection_provider.get_generalized_conn_config(current)
-                if hasattr(connection_provider, "get_generalized_conn_config")
-                else None
-            )
-            if isinstance(generalized, ApiGeneralizedConnConfig):
-                return generalized.config
+            if bindings.get_conn_proxy_for_connector(current) is not None:
+                return connector_config(
+                    current, bindings, connection_provider, RestApiConnConfig
+                )
             current = bindings.get_parent_connector(current)
         raise ValueError(
-            "no REST API connection configuration is registered for the "
-            "connector's conn_proxy or any of its parents'"
+            f"API connector {connector.name or connector.path!r} and its parents "
+            "have no conn_proxy"
         )
 
     def _register_api_sources(
@@ -692,9 +765,10 @@ class RegistryBuilder:
         registry.register(api_source, resource_name=resource_name)
 
         logger.info(
-            "Created API data source for path '%s' at '%s' mapped to resource '%s'",
+            "Created API data source for path '%s' (%d request template(s)) "
+            "mapped to resource '%s'",
             connector.path,
-            api_source.config.url,
+            len(connector.value_combinations()),
             resource_name,
         )
 
@@ -728,23 +802,17 @@ class RegistryBuilder:
         registry: DataSourceRegistry,
         resource_name: str,
         connector: KafkaConnector,
+        bindings: Bindings,
         connection_provider: ConnectionProvider,
     ) -> None:
         """Register Kafka topic data sources for a resource."""
-        generalized = (
-            connection_provider.get_generalized_conn_config(connector)
-            if hasattr(connection_provider, "get_generalized_conn_config")
-            else None
+        kafka_conn = connector_config(
+            connector, bindings, connection_provider, KafkaConnConfig
         )
-        if not isinstance(generalized, KafkaGeneralizedConnConfig):
-            raise ValueError(
-                "no Kafka connection configuration is registered for the "
-                "connector's conn_proxy"
-            )
 
         from graflo.data_source.kafka import KafkaDataSource
 
-        kafka_config = connector.build_kafka_config(conn=generalized.config)
+        kafka_config = connector.build_kafka_config(conn=kafka_conn)
         kafka_source = KafkaDataSource(config=kafka_config)
         registry.register(kafka_source, resource_name=resource_name)
 

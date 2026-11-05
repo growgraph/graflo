@@ -90,7 +90,11 @@ record or through `from`. The
 ```
 
 `description` and `semantics` document the type for people and for
-[cards](../schema/cards.md).
+[cards](../schema/cards.md). `subclass_of` lists its superclasses, a vertex of
+the same schema (`{vertex: Party}`) or an external class (`{iri: …}`); an edge's
+`subproperty_of` does the same for relations. Both are checked logical
+assertions, and nothing is inherited. See
+[class and relation hierarchies](../schema/ontology.md).
 
 ### Supported field types
 
@@ -119,6 +123,8 @@ Types are optional on every target. ArangoDB, Neo4j, Memgraph, FalkorDB and
 the file backend store each value as it arrives. TigerGraph and NebulaGraph
 declare a typed attribute per property and use `STRING` for an untyped one.
 PostgreSQL stores every scalar property as `TEXT` and a `LIST` as an array.
+[Choosing a backend](../backends.md) sets this beside the other backend
+features.
 
 Rules for `LIST`, each checked when the schema loads:
 

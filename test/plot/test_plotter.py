@@ -15,7 +15,14 @@ from graflo.architecture.schema.context.graph import SchemaGraph
 from graflo.architecture.schema.edge import Edge
 from graflo.plot import plotter as plotter_module
 from graflo.plot.dot import DotGraph
-from graflo.plot.plotter import ManifestPlotter, assemble_tree, fillcolor_palette
+from graflo.plot.plotter import (
+    NODE_COLOR_BY_TYPE,
+    AuxNodeType,
+    ManifestPlotter,
+    assemble_tree,
+    fillcolor_palette,
+    partition_color_palette,
+)
 
 
 class _EdgeConfigStub:
@@ -72,7 +79,7 @@ def _capture(monkeypatch) -> _Capture:
         return captured.dot
 
     def _draw(dot, path, **kwargs):
-        captured.draws.append({"path": str(Path(path)), **kwargs})
+        captured.draws.append({"path": str(Path(path)), "dot": dot, **kwargs})
         return Path(path)
 
     monkeypatch.setattr(plotter_module, "to_dot", _to_dot)
@@ -259,4 +266,113 @@ def test_assemble_tree_styles_router_actor_classes():
     graph = assemble_tree(cast(ActorWrapper, actor_wrapper_stub))
 
     assert graph.nodes["root"]["fillcolor"] == fillcolor_palette["peach"]
-    assert graph.nodes["dynamic_edge"]["fillcolor"] == fillcolor_palette["violet"]
+    assert graph.nodes["dynamic_edge"]["fillcolor"] == fillcolor_palette["periwinkle"]
+
+
+# ── legends ─────────────────────────────────────────────────────────────────
+
+
+def _legend(dot: DotGraph) -> list[tuple[str, dict[str, str]]]:
+    """The legend's entries as ``(label, node attributes)``, top to bottom."""
+    (legend,) = [sg for sg in dot.subgraphs if sg.name == "cluster_legend"]
+    return [(dot.nodes[node]["label"], dot.nodes[node]) for node in legend.nodes]
+
+
+def _chain_plotter(monkeypatch) -> ManifestPlotter:
+    edges = [
+        Edge.from_dict({"source": "a", "target": "b"}),
+        Edge.from_dict({"source": "b", "target": "c"}),
+    ]
+    plotter = _build_plotter(
+        configured_edges={edge.edge_id: edge for edge in edges},
+        vertex_set={"a", "b", "c"},
+    )
+    monkeypatch.setattr(plotter, "_discover_edges_from_resources", lambda: ({}, {}, {}))
+    return plotter
+
+
+def test_plain_vc2vc_legend_names_the_one_vertex_colour(monkeypatch):
+    plotter = _chain_plotter(monkeypatch)
+    captured = _capture(monkeypatch)
+
+    plotter.plot_vc2vc()
+
+    entries = _legend(captured.draws[0]["dot"])
+    assert [label for label, _ in entries] == ["vertex type"]
+    assert entries[0][1]["fillcolor"] == NODE_COLOR_BY_TYPE[AuxNodeType.VERTEX]
+    fills = {captured.graph.nodes[n]["fillcolor"] for n in captured.graph.nodes}
+    assert fills == {NODE_COLOR_BY_TYPE[AuxNodeType.VERTEX]}
+
+
+def test_vc2vc_coloured_by_level_has_a_legend_entry_per_level(monkeypatch):
+    plotter = _chain_plotter(monkeypatch)
+    captured = _capture(monkeypatch)
+
+    plotter.plot_vc2vc(group_by_inferred_level=True, color_by_partition=True)
+
+    entries = _legend(captured.draws[0]["dot"])
+    assert [label for label, _ in entries] == [
+        "level 0 (sources)",
+        "level 1",
+        "level 2",
+    ]
+    graph = captured.graph
+    for vertex, (_, attrs) in zip(("a", "b", "c"), entries):
+        assert graph.nodes[f"vertex:{vertex}"]["fillcolor"] == attrs["fillcolor"]
+
+
+def test_group_colours_never_reuse_a_node_type_colour():
+    assert not set(partition_color_palette) & set(NODE_COLOR_BY_TYPE.values())
+
+
+def test_vc2vc_partition_legend_lists_only_drawn_groups(monkeypatch):
+    plotter = _chain_plotter(monkeypatch)
+    captured = _capture(monkeypatch)
+
+    plotter.plot_vc2vc(
+        partition={"a": "left", "b": "left", "c": "right", "ghost": "unused"},
+        color_by_partition=True,
+    )
+
+    labels = [label for label, _ in _legend(captured.draws[0]["dot"])]
+    assert labels == ["left", "right"]
+
+
+def test_vc2fields_legend_keys_identity_and_other_fields(monkeypatch):
+    plotter = _build_plotter(
+        configured_edges={},
+        vertex_set={"a"},
+        identity_by_vertex={"a": ["id"]},
+        property_names_by_vertex={"a": ["id", "name"]},
+    )
+    captured = _capture(monkeypatch)
+
+    plotter.plot_vc2fields()
+
+    dot = captured.draws[0]["dot"]
+    entries = dict(_legend(dot))
+    assert list(entries) == ["vertex type", "identity field", "field"]
+    assert entries["identity field"]["shape"] == "trapezium"
+    assert entries["field"]["shape"] == "octagon"
+    # unflatten ran before the legend was added, so no layout edge reaches it
+    legend_nodes = {n for n in dot.nodes if n.startswith("legend__")}
+    for tail, head, _ in dot.edges:
+        assert (tail in legend_nodes) == (head in legend_nodes)
+
+
+def test_resource_tree_legend_lists_the_actor_classes_present(monkeypatch, tmp_path):
+    router_edge = (
+        "root",
+        "dynamic_edge",
+        {"class": VertexRouterActor},
+        {"class": EdgeActor},
+    )
+    captured = _capture(monkeypatch)
+
+    assemble_tree(
+        cast(ActorWrapper, _ActorWrapperStub([router_edge])), tmp_path / "tree.pdf"
+    )
+
+    entries = dict(_legend(captured.draws[0]["dot"]))
+    assert list(entries) == ["edge", "vertex router"]
+    assert entries["edge"]["fillcolor"] == fillcolor_palette["periwinkle"]

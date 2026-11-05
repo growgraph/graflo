@@ -5,10 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from graflo.object_storage.s3_client import boto3_s3_client_from_generalized
+from graflo.object_storage.s3_client import boto3_s3_client
 
 if TYPE_CHECKING:
-    from graflo.connections.provider import S3GeneralizedConnConfig
+    from graflo.connections.sources import S3ConnConfig
 
 
 def upload_staged_csvs(
@@ -17,10 +17,10 @@ def upload_staged_csvs(
     bucket: str,
     key_prefix: str,
     session_id: str,
-    s3_cfg: S3GeneralizedConnConfig,
+    s3_cfg: S3ConnConfig,
 ) -> dict[str, str]:
     """Upload files and return manifest key -> ``s3://bucket/key`` for GSQL."""
-    client = boto3_s3_client_from_generalized(s3_cfg)
+    client = boto3_s3_client(s3_cfg)
     base = "/".join(p.strip("/") for p in (key_prefix, session_id) if p)
     urls: dict[str, str] = {}
     for label, path in staged_files.items():

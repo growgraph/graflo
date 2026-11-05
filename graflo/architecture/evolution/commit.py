@@ -23,6 +23,10 @@ case and neither does the store. The declarative record of *how* the merge was
 resolved rides alongside as a :class:`MergeRecipe`, which is what a re-merge
 reads. Interleaving two sides' ops within one commit is deliberately not
 expressible, and is not needed.
+
+A lift commit records the aspects a manifest was lifted with the same way: its
+ops are the planned lift, and a ``LiftRecipe`` -- the aspects, their versions
+and the spec -- rides alongside for a re-lift to read.
 """
 
 from __future__ import annotations
@@ -50,10 +54,20 @@ COMMIT_ID_LENGTH = 12
 #: What produced a commit. ``root`` names a tree that nothing derived it from;
 #: ``edit`` is an ordinary change set; ``merge3`` reconciles two descendants of
 #: a common ancestor; ``merge`` joins unrelated lineages by declared
-#: equivalence; ``revert`` undoes an earlier commit.
+#: equivalence; ``revert`` undoes an earlier commit; ``lift`` adds the
+#: vocabulary of one or more aspects.
 CommitKind = str
 
-COMMIT_KINDS: frozenset[str] = frozenset({"root", "edit", "merge", "merge3", "revert"})
+COMMIT_KINDS: frozenset[str] = frozenset(
+    {"root", "edit", "merge", "merge3", "revert", "lift"}
+)
+
+#: The commit kinds that carry a recipe, each with the recipe kind it carries.
+RECIPE_KINDS: dict[str, frozenset[str]] = {
+    "merge": frozenset({"merge"}),
+    "merge3": frozenset({"merge3"}),
+    "lift": frozenset({"lift"}),
+}
 
 _SLUG_STRIP = re.compile(r"[^a-z0-9]+")
 
@@ -110,7 +124,8 @@ class Commit(ConfigBaseModel):
         ..., description="Content hash of the manifest this commit produces."
     )
     kind: str = PydanticField(
-        default="edit", description="One of root / edit / merge / merge3 / revert."
+        default="edit",
+        description="One of root / edit / merge / merge3 / revert / lift.",
     )
     label: str | None = PydanticField(
         default=None, description="Short human-readable name."
@@ -121,11 +136,41 @@ class Commit(ConfigBaseModel):
     reversible: bool = PydanticField(
         default=True, description="Whether every op in this commit has a total inverse."
     )
-    merge_recipe: MergeRecipeRef | None = PydanticField(
+    recipe: RecipeRef | None = PydanticField(
         default=None,
-        description="How a merge was resolved; present on merge/merge3 commits.",
+        description=(
+            "The declaration that produced this commit, for a replay to read: "
+            "how a merge or merge3 was resolved, or what a lift added."
+        ),
     )
     notes: str | None = None
+
+    @model_validator(mode="after")
+    def _a_recipe_matches_its_commit(self) -> Commit:
+        """A recipe is read by its commit's kind, so the two must agree.
+
+        A re-merge parses a merge recipe and a re-lift a lift recipe; a recipe
+        of the other flavour on the commit would fail there instead of here.
+        A lift adds to one manifest, so it has exactly one parent.
+        """
+        if self.recipe is not None:
+            allowed = RECIPE_KINDS.get(self.kind)
+            if allowed is None:
+                raise ValueError(
+                    f"commit '{self.id}' is a {self.kind} commit, which carries "
+                    "no recipe"
+                )
+            if self.recipe.kind not in allowed:
+                raise ValueError(
+                    f"commit '{self.id}' is a {self.kind} commit but carries a "
+                    f"{self.recipe.kind} recipe"
+                )
+        if self.kind == "lift" and len(self.parents) != 1:
+            raise ValueError(
+                f"lift commit '{self.id}' has {len(self.parents)} parents; a lift "
+                "adds to one manifest, so it has exactly one"
+            )
+        return self
 
     @model_validator(mode="after")
     def _only_a_root_may_derive_nothing(self) -> Commit:
@@ -184,22 +229,21 @@ class Commit(ConfigBaseModel):
         return self.id[:8]
 
 
-class MergeRecipeRef(ConfigBaseModel):
-    """A pointer to the recorded merge recipe, plus its content hash.
+class RecipeRef(ConfigBaseModel):
+    """A recorded recipe, stored inline on its commit, plus its content hash.
 
-    The recipe model itself lives in ``merge3`` (L4, same layer) and is stored
-    inline on the commit. This indirection keeps ``commit.py`` importable
-    without pulling the merge machinery in, which matters because the store and
-    the history DAG only ever need the *hash*.
+    The recipe models live beside the machinery that replays them --
+    ``MergeRecipe`` in ``merge3``, ``LiftRecipe`` in ``aspects.recipe`` -- and
+    are kept here as a serialized payload. That keeps ``commit.py`` importable
+    without either, which matters because the store and the history DAG only
+    ever need the *hash*.
     """
 
     hash: str = PydanticField(..., description="Content hash of the recipe.")
-    kind: str = PydanticField(
-        default="merge3", description="Recipe flavour: merge3 or merge."
-    )
+    kind: str = PydanticField(..., description="Recipe flavour: merge3, merge or lift.")
     payload: dict[str, Any] = PydanticField(
         default_factory=dict,
-        description="The serialized recipe, as produced by MergeRecipe.to_dict().",
+        description="The serialized recipe, as produced by its ``to_dict()``.",
     )
 
 
@@ -275,7 +319,7 @@ def build_commit(
     label: str | None = None,
     created_at: str | None = None,
     notes: str | None = None,
-    merge_recipe: MergeRecipeRef | None = None,
+    recipe: RecipeRef | None = None,
 ) -> Commit:
     """Apply *ops* to *base* and record the result as a :class:`Commit`.
 
@@ -288,11 +332,11 @@ def build_commit(
         base: The first parent's manifest state.
         ops: The change set to apply.
         parents: Parent commit ids, first parent first.
-        kind: One of ``edit``, ``merge``, ``merge3``, ``revert``.
+        kind: One of ``edit``, ``merge``, ``merge3``, ``revert``, ``lift``.
         label: Short human-readable name.
         created_at: ISO-8601 timestamp.
         notes: Free-form annotation.
-        merge_recipe: Recorded resolution, on merge and merge3 commits.
+        recipe: The recorded declaration, on merge, merge3 and lift commits.
 
     Raises:
         CommitError: The change set is empty, is a no-op, or *kind* is unknown.
@@ -330,7 +374,7 @@ def build_commit(
         label=label,
         created_at=created_at,
         reversible=all(irreversible_reason(op) is None for op in ops),
-        merge_recipe=merge_recipe,
+        recipe=recipe,
         notes=notes,
     )
 
@@ -344,7 +388,7 @@ def build_multi_parent_commit(
     label: str | None = None,
     created_at: str | None = None,
     notes: str | None = None,
-    merge_recipe: MergeRecipeRef | None = None,
+    recipe: RecipeRef | None = None,
     lead_ops: list[Any] | None = None,
 ) -> Commit:
     """Record a merge as the diff from its **first parent** to *merged*.
@@ -365,7 +409,7 @@ def build_multi_parent_commit(
         label: Short human-readable name.
         created_at: ISO-8601 timestamp.
         notes: Free-form annotation.
-        merge_recipe: The recorded resolution, so a re-merge can replay it.
+        recipe: The recorded resolution, so a re-merge can replay it.
         lead_ops: Ops the merge itself applied to the first parent, recorded
             ahead of the derived diff. A merge relabels each side before the
             union -- renames, and folds of several classes into one -- and a
@@ -425,7 +469,7 @@ def build_multi_parent_commit(
         label=label,
         created_at=created_at,
         notes=notes,
-        merge_recipe=merge_recipe,
+        recipe=recipe,
     )
 
 
@@ -494,10 +538,11 @@ def build_revert_commit(
 __all__ = [
     "COMMIT_ID_LENGTH",
     "COMMIT_KINDS",
+    "RECIPE_KINDS",
     "Commit",
     "CommitError",
     "CommitKind",
-    "MergeRecipeRef",
+    "RecipeRef",
     "build_commit",
     "build_multi_parent_commit",
     "build_revert_commit",

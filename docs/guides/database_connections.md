@@ -10,7 +10,8 @@ that you can point any script or example at your own database.
 
 - GraFlo installed (`pip install graflo`).
 - The address and credentials of a running database, or a directory for the
-  file backend.
+  file backend. To decide which database, see
+  [Choosing a backend](../concepts/backends.md).
 
 ## Steps
 
@@ -31,8 +32,9 @@ Every class is imported from `graflo.connections`.
 
 If you leave the field that names the graph empty, GraFlo uses the manifest's
 `schema.metadata.name`, adjusted to the characters the database accepts; see
-[Graph namespace and schema](graph_namespace_and_schema.md). PostgreSQL is
-different: `database` must name a database that exists, and GraFlo creates the
+[Graph namespace and schema](graph_namespace_and_schema.md). On Neo4j and
+Memgraph, GraFlo always uses the server's default database, so the field does
+not select one. PostgreSQL is different: `database` must name a database that exists, and GraFlo creates the
 tables in the schema `schema_name`, `public` when it is not set. It needs
 PostgreSQL 15 or later, for the unique key on each edge table. An edge table
 created by an earlier version gains that key at schema definition or on its
@@ -116,7 +118,8 @@ fills the address, credentials and database from one connection string.
 `graflo migrate-schema apply --db-config-path db.yaml` read the database from
 a file. `db_type` picks the class: `arango`, `neo4j`, `tigergraph`,
 `falkordb`, `memgraph`, `nebula`, `postgres` or `graflo_backend`. The other
-keys are the fields of that class.
+keys are the fields of that class. Every config writes its `db_type` back, with
+`kind: database`, when dumped.
 
 ```yaml
 db_type: neo4j
@@ -179,10 +182,12 @@ environment.
 
 ## Databases you read from
 
-A PostgreSQL database, a SPARQL endpoint, a REST API or a Kafka topic that
-records come from is not configured this way. The manifest names it by a label
-(`conn_proxy`), and at run time you register the settings for that label with
-a connection provider, so the manifest never holds a password. The
+A PostgreSQL database, a SPARQL endpoint, a REST API, a Kafka cluster or a
+directory or S3 prefix that records come from is not configured this way. The
+manifest names it by a label (`conn_proxy`), and at run time you register the
+settings for that label with a connection provider, so the manifest never
+holds a password. [Connections and discovery](connections_and_discovery.md)
+lists every kind and how to find what each one offers to read. The
 [connection proxy example (11)](../examples/connection-proxy/index.md) shows
 it for PostgreSQL, and the
 [API environment example (12)](../examples/api-env-config/index.md) for REST

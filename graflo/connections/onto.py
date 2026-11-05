@@ -13,6 +13,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 if TYPE_CHECKING:
     from graflo.architecture.contract.bindings import Bindings
 
+from graflo.connections.env import proxy_env_prefix
 from graflo.onto import DBType
 
 logger = logging.getLogger(__name__)
@@ -23,20 +24,13 @@ _DOCKER_ROOT = Path(__file__).resolve().parents[2] / "docker"
 # Type variable for DBConfig subclasses
 T = TypeVar("T", bound="DBConfig")
 
-# Databases that can be used as sources (INPUT)
+#: Databases a connector reads rows from: tables (``TableConnector``) and
+#: SPARQL classes (``SparqlConnector``). A graph target that can describe its own
+#: schema declares ``ConnectionCapability.SCHEMA_INTROSPECTION`` instead.
 SOURCE_DATABASES: set[DBType] = {
-    DBType.ARANGO,  # Graph DBs can be sources
-    DBType.NEO4J,  # Graph DBs can be sources
-    DBType.TIGERGRAPH,  # Graph DBs can be sources
-    DBType.FALKORDB,  # Graph DBs can be sources
-    DBType.MEMGRAPH,  # Graph DBs can be sources
-    DBType.NEBULA,  # Graph DBs can be sources
-    DBType.GRAFLO_BACKEND,
-    DBType.POSTGRES,  # SQL DBs
-    DBType.MYSQL,
-    DBType.MONGODB,
-    DBType.SQLITE,
-    DBType.SPARQL,  # RDF / SPARQL endpoints
+    DBType.POSTGRES,
+    DBType.SPARQL,
+    DBType.GRAPHDB,
 }
 
 # Databases that can be used as targets (OUTPUT)
@@ -90,9 +84,10 @@ class TigergraphBulkLoadConfig(BaseModel):
     to per-type CSV files under ``staging_dir``, then runs one loading job per ingest
     session at finalize time.
 
-    S3 staging uses :class:`S3GeneralizedConnConfig` registered under
-    ``s3_conn_proxy`` or under the name resolved via manifest
-    :class:`StagingProxyBinding` and ``s3_staging_name``.
+    S3 staging uses a :class:`~graflo.connections.sources.FilesConnConfig` with an
+    ``s3://`` root, registered under ``s3_conn_proxy`` or under the name resolved
+    via manifest :class:`StagingProxyBinding` and ``s3_staging_name``. Its root
+    prefix comes before ``s3_key_prefix``.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -118,11 +113,11 @@ class TigergraphBulkLoadConfig(BaseModel):
     )
     s3_conn_proxy: str | None = Field(
         default=None,
-        description="Runtime connection-provider key for S3 credentials (non-secret).",
+        description="conn_proxy of the files connection (s3:// root) staged objects go to.",
     )
     s3_bucket: str | None = Field(
         default=None,
-        description="Target bucket for staged objects (may override S3GeneralizedConnConfig.bucket).",
+        description="Target bucket for staged objects; overrides the files connection's bucket.",
     )
     s3_key_prefix: str = Field(
         default="graflo-bulk",
@@ -168,7 +163,14 @@ class DBConfig(BaseSettings, abc.ABC):
     )
     alias: str | None = Field(
         default=None,
-        description="Human-friendly display label for studio and registry views.",
+        description="Human-friendly display label.",
+    )
+    kind: Literal["database"] = Field(
+        default="database",
+        description="Connection kind; see :data:`graflo.connections.Connection`.",
+    )
+    db_type: DBType = Field(
+        description="Database flavour. Each config class fixes its own value."
     )
 
     @model_validator(mode="before")
@@ -431,25 +433,16 @@ class DBConfig(BaseSettings, abc.ABC):
 
     @property
     def connection_type(self) -> "DBType":
-        """Get database type from class."""
-        # Map class to DBType - need to import here to avoid circular import
-        from .mapping import DB_TYPE_MAPPING
-
-        # Reverse lookup: find DBType for this class
-        for db_type, config_class in DB_TYPE_MAPPING.items():
-            if type(self) is config_class:
-                return db_type
-
-        # Fallback (shouldn't happen)
-        return DBType.ARANGO
+        """The database flavour (:attr:`db_type`)."""
+        return self.db_type
 
     def can_be_source(self) -> bool:
-        """Check if this database type can be used as a source."""
-        return self.connection_type in SOURCE_DATABASES
+        """Whether a connector reads rows from this database (:data:`SOURCE_DATABASES`)."""
+        return self.db_type in SOURCE_DATABASES
 
     def can_be_target(self) -> bool:
-        """Check if this database type can be used as a target."""
-        return self.connection_type in TARGET_DATABASES
+        """Whether a graph is written to this database (:data:`TARGET_DATABASES`)."""
+        return self.db_type in TARGET_DATABASES
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "DBConfig":
@@ -505,7 +498,7 @@ class DBConfig(BaseSettings, abc.ABC):
         from .mapping import get_config_class
 
         config_class = get_config_class(conn_type)
-        return config_class(**config_data)
+        return config_class(**config_data, db_type=conn_type)
 
     @classmethod
     def from_docker_env(cls, docker_dir: str | Path | None = None) -> "DBConfig":
@@ -599,6 +592,29 @@ class DBConfig(BaseSettings, abc.ABC):
         )
         return cast(Self, temp_class())
 
+    @classmethod
+    def from_proxy_env(cls, conn_proxy: str, env_prefix: str | None = None) -> Self:
+        """Load the config registered under *conn_proxy* from the environment.
+
+        Reads ``{prefix}<FIELD>`` with no backend segment — ``shop_db`` reads
+        ``SHOP_DB_URI``, ``SHOP_DB_USERNAME``, ``SHOP_DB_PASSWORD``, … — the
+        rule every ``conn_proxy`` config follows.
+
+        Args:
+            conn_proxy: The label the manifest bindings use.
+            env_prefix: Explicit prefix; defaults to
+                :func:`~graflo.connections.env.proxy_env_prefix` of *conn_proxy*.
+        """
+        prefix = env_prefix if env_prefix is not None else proxy_env_prefix(conn_proxy)
+        model_config = SettingsConfigDict(
+            env_prefix=prefix,
+            case_sensitive=cls.model_config.get("case_sensitive", False),
+        )
+        temp_class = type(
+            f"{cls.__name__}FromProxy", (cls,), {"model_config": model_config}
+        )
+        return cast(Self, temp_class())
+
 
 class ArangoConfig(DBConfig):
     """Configuration for ArangoDB connections."""
@@ -607,6 +623,8 @@ class ArangoConfig(DBConfig):
         env_prefix="ARANGO_",
         case_sensitive=False,
     )
+
+    db_type: Literal[DBType.ARANGO] = DBType.ARANGO  # ty: ignore[invalid-mutable-override]
 
     def _get_default_port(self) -> int:
         """Get default ArangoDB port."""
@@ -709,6 +727,8 @@ class Neo4jConfig(DBConfig):
         env_prefix="NEO4J_",
         case_sensitive=False,
     )
+
+    db_type: Literal[DBType.NEO4J] = DBType.NEO4J  # ty: ignore[invalid-mutable-override]
 
     bolt_port: int | None = Field(default=None, description="Neo4j bolt protocol port")
 
@@ -826,6 +846,8 @@ class TigergraphConfig(DBConfig):
         env_prefix="TIGERGRAPH_",
         case_sensitive=False,
     )
+
+    db_type: Literal[DBType.TIGERGRAPH] = DBType.TIGERGRAPH  # ty: ignore[invalid-mutable-override]
 
     gs_port: int | None = Field(
         default=None, description="TigerGraph GSQL port (standard: 14240 for TG 4+)"
@@ -990,6 +1012,8 @@ class FalkordbConfig(DBConfig):
         case_sensitive=False,
     )
 
+    db_type: Literal[DBType.FALKORDB] = DBType.FALKORDB  # ty: ignore[invalid-mutable-override]
+
     def _get_default_port(self) -> int:
         """Get default FalkorDB/Redis port."""
         return 6379
@@ -1071,6 +1095,8 @@ class MemgraphConfig(DBConfig):
         case_sensitive=False,
     )
 
+    db_type: Literal[DBType.MEMGRAPH] = DBType.MEMGRAPH  # ty: ignore[invalid-mutable-override]
+
     def _get_default_port(self) -> int:
         """Get default Memgraph Bolt port."""
         return 7687
@@ -1148,6 +1174,8 @@ class NebulaConfig(DBConfig):
         env_prefix="NEBULA_",
         case_sensitive=False,
     )
+
+    db_type: Literal[DBType.NEBULA] = DBType.NEBULA  # ty: ignore[invalid-mutable-override]
 
     version: str = Field(
         default="3",
@@ -1255,6 +1283,8 @@ class PostgresConfig(DBConfig):
         env_prefix="POSTGRES_",
         case_sensitive=False,
     )
+
+    db_type: Literal[DBType.POSTGRES] = DBType.POSTGRES  # ty: ignore[invalid-mutable-override]
 
     def _get_default_port(self) -> int:
         """Get default PostgreSQL port."""
@@ -1426,6 +1456,8 @@ class SparqlEndpointConfig(DBConfig):
         case_sensitive=False,
     )
 
+    db_type: Literal[DBType.SPARQL] = DBType.SPARQL  # ty: ignore[invalid-mutable-override]
+
     dataset: str | None = Field(
         default=None,
         description="Dataset / repository name on the SPARQL server. "
@@ -1560,6 +1592,8 @@ class GraphDBConfig(SparqlEndpointConfig):
         env_prefix="GRAPHDB_",
         case_sensitive=False,
     )
+
+    db_type: Literal[DBType.GRAPHDB] = DBType.GRAPHDB  # ty: ignore[invalid-attribute-override]
 
     def _get_default_port(self) -> int:
         """Default GraphDB HTTP port."""

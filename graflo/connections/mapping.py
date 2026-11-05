@@ -5,6 +5,7 @@ from .onto import (
     ArangoConfig,
     DBConfig,
     FalkordbConfig,
+    GraphDBConfig,
     MemgraphConfig,
     NebulaConfig,
     Neo4jConfig,
@@ -23,6 +24,7 @@ DB_TYPE_MAPPING: dict[DBType, type[DBConfig]] = {
     DBType.NEBULA: NebulaConfig,
     DBType.POSTGRES: PostgresConfig,
     DBType.SPARQL: SparqlEndpointConfig,
+    DBType.GRAPHDB: GraphDBConfig,
     DBType.GRAFLO_BACKEND: GraFloBackendConfig,
 }
 
@@ -40,6 +42,9 @@ def get_config_class(db_type: DBType) -> type[DBConfig]:
         The corresponding DBConfig subclass
 
     Raises:
-        KeyError: If the db_type is not in the mapping
+        ValueError: If no config class serves *db_type*.
     """
-    return DB_TYPE_MAPPING[db_type]
+    config_class = DB_TYPE_MAPPING.get(db_type)
+    if config_class is None:
+        raise ValueError(f"no connection config serves database type {db_type.value!r}")
+    return config_class

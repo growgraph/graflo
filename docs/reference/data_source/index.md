@@ -112,9 +112,9 @@ See **[API connector](../../concepts/connectors/api_connector.md)** for loop beh
 
 ### ApiAuth / RestApiConnConfig
 
-Runtime **`base_url`** and credentials (`bearer`, `basic`, `digest`, `api_key`) in **`graflo.connections.provider`**, registered on a **`ConnectionProvider`**.
+Runtime **`base_url`** and credentials (`bearer`, `basic`, `digest`, `api_key`) in **`graflo.connections.sources`**, registered on a **`ConnectionProvider`** under a `conn_proxy` label.
 
-**Env wiring** — map each `conn_proxy` to env vars (`maintenance_api` → `MAINTENANCE_API_BASE_URL`, `MAINTENANCE_API_AUTH_TYPE`, …) and call **`register_all_api_configs_from_env(bindings)`** or **`register_api_config_from_env(conn_proxy)`**. See **[API connector](../../concepts/connectors/api_connector.md)** and **[Example 12](../../examples/api-env-config/index.md)**.
+**Env wiring** — each `conn_proxy` reads env vars with its prefix (`maintenance_api` → `MAINTENANCE_API_BASE_URL`, `MAINTENANCE_API_AUTH_TYPE`, …): **`InMemoryConnectionProvider.from_env(bindings)`** for every label, **`RestApiConnConfig.from_env(prefix)`** for one. See **[API connector](../../concepts/connectors/api_connector.md)** and **[Example 12](../../examples/api-env-config/index.md)**.
 
 ## Kafka Data Sources
 
@@ -133,11 +133,11 @@ Manifest contract for finite-batch topic consumption:
 
 Runtime consumer (`confluent-kafka`). Built by **`RegistryBuilder`** from **`KafkaConnector`** + **`KafkaConnConfig`**; not constructed from sidecar CLI configs.
 
-### KafkaConnConfig / KafkaGeneralizedConnConfig
+### KafkaConnConfig
 
 Runtime **`bootstrap_servers`** and optional SASL/SSL settings in **`graflo.connections.sources`**, registered on a **`ConnectionProvider`**.
 
-**Env wiring** — map each `conn_proxy` to env vars (`kafka_local` → `KAFKA_LOCAL_BOOTSTRAP_SERVERS`, …) and call **`register_all_kafka_configs_from_env(bindings)`** or **`register_kafka_config_from_env(conn_proxy)`**.
+**Env wiring** — each `conn_proxy` reads env vars with its prefix (`kafka_local` → `KAFKA_LOCAL_BOOTSTRAP_SERVERS`, …): **`InMemoryConnectionProvider.from_env(bindings)`** for every label, **`KafkaConnConfig.from_env(prefix)`** for one.
 
 Local broker fixture: **`docker/kafka`** (`localhost:9092`). Live tests: `uv run pytest test -m kafka --run-kafka`.
 
@@ -209,11 +209,10 @@ bindings = Bindings(
 )
 
 # export API_SOURCE_BASE_URL, API_SOURCE_AUTH_TYPE=bearer, API_SOURCE_TOKEN=...
-provider = InMemoryConnectionProvider()
-provider.register_all_api_configs_from_env(bindings=bindings)
+provider = InMemoryConnectionProvider.from_env(bindings)
 ```
 
-Manual registration remains available via **`register_generalized_config`** + **`RestApiConnConfig`** / **`ApiAuth`** — see [API connector](../../concepts/connectors/api_connector.md).
+To register in code, pass a mapping: **`InMemoryConnectionProvider({"api_source": RestApiConnConfig(...)})`** — see [API connector](../../concepts/connectors/api_connector.md).
 
 ### SQL Data Source
 

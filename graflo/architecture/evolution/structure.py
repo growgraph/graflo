@@ -11,6 +11,7 @@ import logging
 
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.graph_types import EdgeId
+from graflo.architecture.schema.hierarchy import rewrite_edge_refs
 
 from .ops import AddEdgesOp, AddVerticesOp, RetargetEdgesOp
 
@@ -146,7 +147,11 @@ def apply_retarget_edges(manifest: GraphManifest, op: RetargetEdgesOp) -> None:
     # model validator. Mutating an edge's endpoints in place leaves it keyed on the
     # pre-retarget id, which the Schema-level spec check then reads as a dangling
     # reference. Reassigning the list re-runs the validator and rebuilds the index.
-    edge_config.edges = list(edge_config.edges)
+    # A superproperty names its edge by id, so it follows the retarget too.
+    edge_config.edges = rewrite_edge_refs(
+        edge_config.edges,
+        edge_map={entry.edge_id(): entry.retargeted_edge_id() for entry in op.edges},
+    )
 
     schema.db_profile = _revalidated_profile(schema)
     schema.finish_init()

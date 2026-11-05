@@ -55,8 +55,15 @@ SCHEMA: dict[str, Any] = {
                     "name": "Product",
                     "properties": [
                         "sku",
-                        {"name": "name", "semantics": NAME},
-                        "name_norm",
+                        {
+                            "name": "name",
+                            "semantics": NAME,
+                            "match": {"normalizer": "label_v1"},
+                        },
+                        {
+                            "name": "name_norm",
+                            "derived": {"source": "name", "form": "normal"},
+                        },
                     ],
                     "identity": ["sku"],
                 },
@@ -187,8 +194,8 @@ def _lanes(candidate: EntityCandidate) -> list[str]:
     return [hit.lane for hit in candidate.lanes]
 
 
-def _attributes(candidate: EntityCandidate) -> list[tuple[str, str, str]]:
-    return [(a.field, a.verdict, a.compare) for a in candidate.attributes]
+def _attributes(candidate: EntityCandidate) -> list[tuple[str, str, bool]]:
+    return [(a.field, a.level, a.exclusive) for a in candidate.attributes]
 
 
 def test_a_stated_label_finds_its_entity_exactly(db):
@@ -198,7 +205,7 @@ def test_a_stated_label_finds_its_entity_exactly(db):
     (candidate,) = entry.candidates
     assert candidate.label == "Ann Lee"
     assert candidate.lanes[0].matched == "Ann Lee"
-    assert _attributes(candidate) == [("name", "agree", "literal")]
+    assert _attributes(candidate) == [("name", "exact", False)]
 
 
 def test_an_alias_leads_to_what_it_names(db):
@@ -215,7 +222,9 @@ def test_a_stated_relation_to_a_resolved_anchor_gives_the_linked_entities(db):
     (entry,) = _gather(db, [graph])
     assert _found(entry) == [("ACC-2", "relation")]
     (candidate,) = entry.candidates
-    (hit,) = candidate.lanes
+    # The resolved ticket is also a context anchor, which reaches the same customer.
+    assert _lanes(candidate) == ["relation", "context"]
+    hit = candidate.lanes[0]
     assert (hit.relation, hit.anchor, hit.matched) == ("RAISED", "t", None)
     assert candidate.label == "Ann Lee"
 
@@ -270,7 +279,7 @@ def test_one_candidate_per_entity_with_every_lane_best_first(db):
     (entry,) = _gather(db, [graph])
     (candidate,) = entry.candidates
     assert candidate.key == {"account": "ACC-2"}
-    assert _lanes(candidate) == ["exact", "relation"]
+    assert _lanes(candidate) == ["exact", "relation", "context"]
 
 
 def test_the_cap_counts_entities_not_lanes(db):
@@ -306,12 +315,12 @@ def test_a_dropped_candidate_never_takes_the_place_of_a_kept_one(db):
     assert not entry.truncated
 
 
-def test_a_non_key_contradiction_is_shown_not_dropped(db):
+def test_a_non_key_difference_is_shown_not_dropped(db):
     graph = _g("m1", [_m("p", "Product", "Pump X1", name="Pump X2")])
     (entry,) = _gather(db, [graph])
     (candidate,) = entry.candidates
     assert candidate.key == {"sku": "P-200"}
-    assert _attributes(candidate) == [("name", "contradict", "literal")]
+    assert _attributes(candidate) == [("name", "differs", False)]
 
 
 def test_nothing_stored_is_unknown(db):
@@ -323,8 +332,8 @@ def test_nothing_stored_is_unknown(db):
     (candidate,) = entry.candidates
     assert candidate.key == {"account": "ACC-2"}
     assert _attributes(candidate) == [
-        ("name", "agree", "literal"),
-        ("email", "unknown", "literal"),
+        ("name", "exact", False),
+        ("email", "unknown", True),
     ]
 
 
@@ -345,22 +354,22 @@ def test_a_batch_alternate_matches_literally():
     resolution = resolve_records(schema, graphs)
     (entry,) = gather_candidates(schema, resolution)
     assert sorted(_found(entry)) == [("ACC-8", "alternate"), ("ACC-9", "alternate")]
-    assert all(
-        _attributes(c) == [("email", "unknown", "literal")] for c in entry.candidates
-    )
+    assert all(_attributes(c) == [("email", "unknown", True)] for c in entry.candidates)
 
 
-def test_a_normalized_field_compares_in_normal_form(db):
-    spec = SPEC.model_copy(update={"normalized_fields": {"Product": ["name_norm"]}})
-    graph = _g(
-        "m1", [_m("p", "Product", "Pump X1", name="Pump X1", name_norm="PUMP-x1")]
-    )
-    (entry,) = _gather(db, [graph], spec=spec)
+def test_a_field_with_a_normalizer_compares_in_normal_form(db):
+    graph = _g("m1", [_m("p", "Product", "Pump X1", name="PUMP-x1")])
+    (entry,) = _gather(db, [graph])
     (candidate,) = entry.candidates
-    assert _attributes(candidate) == [
-        ("name", "agree", "literal"),
-        ("name_norm", "agree", "normalized"),
-    ]
+    assert _attributes(candidate) == [("name", "exact", False)]
+
+
+def test_a_stated_derived_field_is_never_compared(db):
+    # Core computes name_norm from name; what a record states for it is dropped.
+    graph = _g("m1", [_m("p", "Product", "Pump X1", name="Pump X1", name_norm="x")])
+    (entry,) = _gather(db, [graph])
+    (candidate,) = entry.candidates
+    assert _attributes(candidate) == [("name", "exact", False)]
 
 
 def test_a_field_the_caller_refuses_is_never_compared(db):
@@ -368,16 +377,14 @@ def test_a_field_the_caller_refuses_is_never_compared(db):
     graph = _g("m1", [_m("c", "Customer", "Jo Park", name="Jo Park", email="zz@x.com")])
     (entry,) = _gather(db, [graph], comparable=lambda _type, field: field != "email")
     assert sorted(_found(entry)) == [("ACC-1", "exact"), ("ACC-6", "exact")]
-    assert all(
-        _attributes(c) == [("name", "agree", "literal")] for c in entry.candidates
-    )
+    assert all(_attributes(c) == [("name", "exact", False)] for c in entry.candidates)
 
 
 def test_a_reserved_field_is_never_compared(zoned):
     graph = _g("m1", [_m("c", "Customer", "Ann Lee", name="Ann Lee", access_zones=[2])])
     (entry,) = _gather(zoned, [graph], schema=_zoned_schema())
     (candidate,) = entry.candidates
-    assert _attributes(candidate) == [("name", "agree", "literal")]
+    assert _attributes(candidate) == [("name", "exact", False)]
 
 
 @pytest.mark.parametrize(
@@ -467,7 +474,8 @@ def _comment(quote: str, relations=()) -> RecordGraph:
 def test_the_key_lane_offers_a_ticket_another_record_names(db):
     (entry,) = _gather(db, [_comment("a duplicate of HD-4411")], spec=KEYS)
     assert entry.record.ref == "v1"
-    assert _found(entry) == [("HD-4411", "key")]
+    # HD-9 is a neighbour of the resolved HD-4411, offered by the context lane.
+    assert _found(entry) == [("HD-4411", "key"), ("HD-9", "context")]
 
 
 def test_the_key_lane_never_offers_the_entity_of_a_related_record(db):
@@ -480,9 +488,9 @@ def test_the_key_lane_never_offers_the_entity_of_a_related_record(db):
 
 def test_the_label_lane_never_offers_the_entity_of_a_related_record(db):
     (offered,) = _gather(db, [_comment("Pump leak")])
-    assert _found(offered) == [("HD-4411", "exact")]
+    assert _found(offered) == [("HD-4411", "exact"), ("HD-9", "context")]
     (entry,) = _gather(db, [_comment("Pump leak", [(DUPLICATES, "v2", "v1")])])
-    assert entry.candidates == []
+    assert _found(entry) == [("HD-9", "context")]
 
 
 def test_the_alias_lane_never_offers_the_entity_of_a_related_record(db):
@@ -577,7 +585,8 @@ def test_the_guard_reaches_the_relation_path(zoned, monkeypatch):
         [(RAISED, "c", "t")],
     )
     _gather(zoned, [graph], schema=_zoned_schema(), guard=guard)
-    assert [kw["guard"] for kw in seen] == [guard]
+    # The relation lane, then the context lane around the resolved ticket.
+    assert [kw["guard"] for kw in seen] == [guard, guard]
     assert seen[0]["edge_types"] == ["RAISED"]
 
 

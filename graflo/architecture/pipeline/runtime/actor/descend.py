@@ -132,23 +132,24 @@ class DescendActor(Actor):
             an.finish_init(init_ctx)
 
     def _expand_document(self, doc: dict | list) -> list[tuple[str | None, Any]]:
+        """The values this step runs on; a null holds nothing to run on."""
         if self.key is not None:
             if isinstance(doc, dict) and self.key in doc:
                 items = doc[self.key]
                 aux = items if isinstance(items, list) else [items]
-                return [(self.key, item) for item in aux]
+                return [(self.key, item) for item in aux if item is not None]
             return []
         elif self.any_key:
             if isinstance(doc, dict):
                 result = []
                 for key, items in doc.items():
                     aux = items if isinstance(items, list) else [items]
-                    result.extend([(key, item) for item in aux])
+                    result.extend([(key, item) for item in aux if item is not None])
                 return result
             return []
         else:
             if isinstance(doc, list):
-                return [(None, item) for item in doc]
+                return [(None, item) for item in doc if item is not None]
             return [(None, doc)]
 
     def __call__(self, ctx: Any, lindex: Any, *nargs: Any, **kwargs: Any) -> Any:

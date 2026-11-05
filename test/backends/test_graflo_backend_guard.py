@@ -49,7 +49,7 @@ def _zones(merge: str) -> Field:
     )
 
 
-def _schema() -> Schema:
+def _schema(edge_zones: str = "replace") -> Schema:
     return Schema(
         metadata=GraphMetadata(name="access_guard"),
         core_schema=CoreSchema(
@@ -72,7 +72,7 @@ def _schema() -> Schema:
                         source="Node",
                         target="Node",
                         relation="next",
-                        properties=[Field(name="weight"), _zones("replace")],
+                        properties=[Field(name="weight"), _zones(edge_zones)],
                     )
                 ]
             ),
@@ -224,6 +224,25 @@ def test_an_edge_written_twice_is_one_edge(conf, diamond):
     assert ab[0][2]["weight"] == 2
     assert ab[0][2]["access_zones"] == [HIDDEN]
     assert sorted(_edges(found)) == [("a", "b"), ("a", "h")]
+
+
+def test_a_union_edge_written_twice_holds_both_writers_zones(conf):
+    schema = _schema(edge_zones="union")
+    with ConnectionManager(connection_config=conf) as db:
+        db.init_db(schema, recreate_schema=True)
+    _write(conf, schema, _keys("a", "b"), [("a", "b", {"weight": 1})], OPEN)
+    _write(conf, schema, [], [("a", "b", {"weight": 2})], HIDDEN)
+
+    with ConnectionManager(connection_config=conf) as db:
+        rows = db.fetch_all_edges("Node", "Node", "next")
+        found = db.graph_neighbors(
+            "Node", "a", hops=1, schema=schema, guard=zones_guard({OPEN})
+        )
+
+    ((_, _, props),) = rows
+    assert props["weight"] == 2
+    assert props["access_zones"] == [OPEN, HIDDEN]
+    assert _edges(found) == {("a", "b")}
 
 
 def test_a_connection_sees_what_another_published_after_its_first_read(conf, diamond):

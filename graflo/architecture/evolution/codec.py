@@ -63,11 +63,13 @@ from .ops import (
     SetEdgeDescriptionsOp,
     SetEdgeDirectedOp,
     SetEdgeSemanticsOp,
+    SetEdgeSubpropertyOfOp,
     SetFieldSemanticsOp,
     SetInverseEmissionOp,
     SetNativeInversesOp,
     SetVertexDescriptionsOp,
     SetVertexSemanticsOp,
+    SetVertexSubclassOfOp,
 )
 
 #: Every op that can appear in a revision: the full vocabulary except the
@@ -94,8 +96,10 @@ RevisionOp = Annotated[
     | SetDbProfileOp
     | SetEdgeDirectedOp
     | SetVertexSemanticsOp
+    | SetVertexSubclassOfOp
     | SetVertexDescriptionsOp
     | SetEdgeDescriptionsOp
+    | SetEdgeSubpropertyOfOp
     | SetEdgeSemanticsOp
     | SetFieldSemanticsOp
     | MergeVerticesOp

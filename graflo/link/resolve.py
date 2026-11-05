@@ -195,7 +195,7 @@ def resolve_records(
     db: Any | None = None,
     owned: frozenset[str] = frozenset(),
     guard: FilterExpression | None = None,
-    writable: FilterExpression | None = None,
+    writable: Mapping[str, FilterExpression] | None = None,
 ) -> Resolution:
     """Identify the records of *graphs* by their keys, against *db* when given.
 
@@ -211,15 +211,18 @@ def resolve_records(
             without read guards. A stated key of a type that is not
             connector-owned is then checked against the graph as well: an entity
             that exists but the guard hides stages the record as ``hidden``
-            (an existence check only; nothing from it is returned). The guard
-            applies only to vertex types that declare every field it names;
-            other types are looked up unguarded.
-        writable: With a guard, the entities a write may change: an entity
-            found in the graph that the guard shows but *writable* does not is
-            resolved ``link_only`` -- an edge endpoint whose properties the
-            write leaves alone, like a connector-owned one. On a type that does
-            not declare every field *writable* names, such an entity is
-            ``link_only``.
+            (an existence check only; nothing from it is returned), unless
+            every field the guard names merges by union on its type: the write
+            then adds its own value and so joins the entity. The guard applies
+            only to vertex types that declare every field it names; other types
+            are looked up unguarded.
+        writable: With a guard, the entities a write may change, one filter
+            per vertex type: an entity found in the graph that the guard shows
+            but its type's filter does not is resolved ``link_only`` -- an edge
+            endpoint whose properties the write leaves alone, like a
+            connector-owned one. So is such an entity of a guarded type the
+            mapping leaves out, or of one that does not declare every field its
+            filter names.
 
     Raises:
         ValueError: A record names an unknown vertex type.
@@ -233,6 +236,11 @@ def resolve_records(
             return False
         names = {f.name for f in batch.vertex_config[vertex_type].properties}
         return guarded_fields <= names
+
+    def joins(vertex_type: str) -> bool:
+        """Whether a write to *vertex_type* adds its value to every guarded field."""
+        fields = batch.vertex_config[vertex_type].properties
+        return all(f.merge == "union" for f in fields if f.name in guarded_fields)
 
     for key in batch.order:
         batch.contract(batch.records[key].type)  # unknown types fail first
@@ -279,16 +287,21 @@ def resolve_records(
                 batch.staged[key] = ("owned_unmatched", 0)
 
     # Under a guard, a stated key may name an entity the guard hides: that
-    # record stages rather than writing onto, or linking to, what it cannot see.
+    # record stages rather than writing onto, or linking to, what it cannot see,
+    # unless its write joins the entity (see ``joins``).
     if guarded_keyed:
         seen = batch.identify(guarded_keyed, db=db, guard=guard)
-        unseen = [k for k in guarded_keyed if not seen[k].found]
+        unseen = [
+            k
+            for k in guarded_keyed
+            if not seen[k].found and not joins(batch.records[k].type)
+        ]
         exists = batch.identify(unseen, db=db) if unseen else {}
         for key in guarded_keyed:
             identity = dict(seen[key].identity or {})
             if seen[key].found:
                 batch.resolve(key, identity, by="key", found_in="graph")
-            elif exists[key].found:
+            elif key in exists and exists[key].found:
                 batch.staged[key] = ("hidden", 0)
             else:
                 batch.resolve(key, identity, by="key")
@@ -401,7 +414,7 @@ def _mark_link_only(
     batch: _Batch,
     db: Any,
     guard: FilterExpression,
-    writable: FilterExpression,
+    writable: Mapping[str, FilterExpression],
     covered: Callable[[str], bool],
 ) -> None:
     """Mark entities found in the graph that the write may not change.
@@ -409,7 +422,6 @@ def _mark_link_only(
     Every record of such an entity becomes link-only, including records the
     batch resolved to it, so no other record's properties are written onto it.
     """
-    changeable = conjoin(guard, writable)
     checked = [
         (item.source_id, item.ref)
         for item in resolved
@@ -417,15 +429,17 @@ def _mark_link_only(
     ]
     if not checked:
         return
+    by_type: dict[str, list[_Key]] = {}
+    for key in checked:
+        by_type.setdefault(batch.records[key].type, []).append(key)
+    found: dict[_Key, Identity] = {}
+    for vertex_type, keys in by_type.items():
+        allowed = writable.get(vertex_type)
+        names = {f.name for f in batch.vertex_config[vertex_type].properties}
+        if allowed is None or not allowed.fields() <= names:
+            continue
+        found.update(batch.identify(keys, db=db, guard=conjoin(guard, allowed)))
     frozen: set[tuple[str, tuple]] = set()
-    names = writable.fields()
-    declares = [
-        k
-        for k in checked
-        if names
-        <= {f.name for f in batch.vertex_config[batch.records[k].type].properties}
-    ]
-    found = batch.identify(declares, db=db, guard=changeable) if declares else {}
     for key in checked:
         item = batch.resolved[key]
         again = found.get(key)
@@ -497,7 +511,7 @@ async def write_record_graphs(
     recreate_schema: bool = False,
     stamp: Mapping[str, Any] | None = None,
     guard: FilterExpression | None = None,
-    writable: FilterExpression | None = None,
+    writable: Mapping[str, FilterExpression] | None = None,
 ) -> tuple[Resolution, ContainerWriteReport]:
     """Resolve *graphs* against the target, then write what resolved.
 

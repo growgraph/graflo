@@ -8,6 +8,10 @@ only to show them -- applies them and writes the result.
 ``--emit-ops`` is the point of doing this through Operations at all: the plan is
 a document you can read, diff and check in before anything is applied.
 
+``-m LABEL`` records the lift in a commit store as a ``lift`` commit carrying
+its recipe (the aspects, their versions and the spec), and stamps the written
+manifest with it. The input manifest must already be a tree in that store.
+
 The written manifest states its declarations explicitly (see
 ``graflo.cli.io.DECLARED_KEYS``). Without that, ``directed: true`` would be
 dropped as a default and the very declaration the lift just made would be
@@ -20,6 +24,7 @@ from pathlib import Path
 
 import click
 
+from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.evolution.apply import apply_evolution
 from graflo.architecture.evolution.aspects import (
     ASPECTS,
@@ -30,7 +35,11 @@ from graflo.architecture.evolution.aspects import (
     resolve_aspects,
 )
 from graflo.architecture.evolution.codec import ops_to_yaml_str
+from graflo.architecture.evolution.commit import Commit
+from graflo.architecture.evolution.hashing import manifest_hash
+from graflo.architecture.evolution.ops import ManifestOp
 from graflo.architecture.profile import check_manifest_config
+from graflo.cli._store import append_entry, store_option
 from graflo.cli.io import (
     DECLARED_KEYS,
     dump_manifest,
@@ -111,6 +120,18 @@ class _LiftSetupError(click.ClickException):
     show_default=True,
     help="Profile to check the result against.",
 )
+@store_option
+@click.option(
+    "-m",
+    "--label",
+    "record_label",
+    default=None,
+    help=(
+        "Record the lift in the store as a `lift` commit under this label. The "
+        "manifest must already be in the history; without this the verb writes "
+        "only the manifest."
+    ),
+)
 def lift(
     manifest: Path,
     spec_path: Path | None,
@@ -119,6 +140,8 @@ def lift(
     dry_run: bool,
     do_check: bool,
     profile_name: str,
+    store: Path,
+    record_label: str | None,
     aspects: tuple[str, ...] = DEFAULT_ASPECTS,
 ) -> None:
     """Lift MANIFEST with the named aspects.
@@ -192,7 +215,85 @@ def lift(
     if dry_run:
         click.echo("dry run: nothing written")
         return
+
+    entry: Commit | None = None
+    if record_label is not None:
+        # A lift of a manifest that already carries the aspects may still plan
+        # ops (declarations it restates); what decides is whether it changed.
+        if manifest_hash(lifted) != manifest_hash(source):
+            # Recorded before the manifest is written, so the file on disk
+            # carries its own lineage.
+            entry = _record(
+                source, lifted, ops, spec, [a.name for a in chosen], store, record_label
+            )
+        else:
+            click.echo(
+                f"nothing to record: {manifest} is already lifted with "
+                f"{', '.join(a.name for a in chosen)}"
+            )
     dump_manifest(lifted, output, declare=DECLARED_KEYS)
+    if entry is not None:
+        click.echo(f"commit: {entry.id}")
+        append_entry(store, entry)
+
+
+def _record(
+    source: GraphManifest,
+    lifted: GraphManifest,
+    ops: list[ManifestOp],
+    spec: LiftSpec,
+    aspects: list[str],
+    store: Path,
+    label: str,
+) -> Commit:
+    """Build the lift commit, stamping *lifted* with its own lineage.
+
+    The input is resolved to a commit by content address, as ``graflo merge``
+    resolves its sides: a manifest that is in no history cannot be named as a
+    parent.
+    """
+    from datetime import UTC, datetime
+
+    from graflo.architecture.contract.provenance import stamp_provenance
+    from graflo.architecture.evolution.aspects.recipe import build_lift_recipe
+    from graflo.architecture.evolution.canonicalize import CANON_VERSION
+    from graflo.architecture.evolution.commit import CommitError
+    from graflo.architecture.evolution.history import FileCommitStore
+    from graflo.architecture.evolution.lift_commit import build_lift_commit
+    from graflo.architecture.evolution.merge_commit import find_commit_by_tree
+
+    parent = find_commit_by_tree(FileCommitStore(store).load(), source)
+    if parent is None:
+        raise _LiftSetupError(
+            f"the manifest is not in {store}, so it cannot be named as a parent. "
+            "Record that lineage first, or drop -m to write the lifted manifest "
+            "without recording it."
+        )
+
+    recipe = build_lift_recipe(source, spec, aspects=aspects)
+    try:
+        entry = build_lift_commit(
+            source,
+            ops,
+            parent=parent.id,
+            recipe=recipe,
+            label=label,
+            created_at=datetime.now(UTC).isoformat(),
+        )
+    except CommitError as exc:
+        raise _LiftSetupError(str(exc)) from exc
+
+    # Stamped after the commit is built, so the artifact can name it; the
+    # stamp is outside the content hash, so it cannot move the recorded tree.
+    stamp_provenance(
+        lifted,
+        content_hash=manifest_hash(lifted),
+        canon=CANON_VERSION,
+        commit=entry.id,
+        parents=[parent.id],
+        recipe=recipe.content_hash(),
+    )
+    return entry
 
 
 __all__ = ["lift"]

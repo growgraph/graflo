@@ -89,6 +89,8 @@ LIST_ORDER: dict[tuple[str, str], ListOrder] = {
     # and read by iterating all of them -- no precedence. Each inner key keeps
     # its own order, which the sort does not touch.
     ("Edge", "identities"): SORTED,
+    # A value is split on every separator, so their order changes no part.
+    ("FieldParts", "split"): SORTED,
     # ── Identity ────────────────────────────────────────────────────────────
     # `Vertex.identity` order is load-bearing: a backend's `vertex_address`
     # resolves an endpoint through the *first* identity field present, a
@@ -120,8 +122,15 @@ LIST_ORDER: dict[tuple[str, str], ListOrder] = {
     # ── Semantics: sets of external terms ───────────────────────────────────
     ("Semantics", "exact_match"): SORTED,
     ("Semantics", "synonyms"): SORTED,
+    ("Semantics", "close_match"): SORTED,
+    ("Semantics", "broader"): SORTED,
     ("FieldSemantics", "exact_match"): SORTED,
     ("FieldSemantics", "synonyms"): SORTED,
+    ("FieldSemantics", "close_match"): SORTED,
+    ("FieldSemantics", "broader"): SORTED,
+    # Sets of parents: rdfs:subClassOf and rdfs:subPropertyOf have no order.
+    ("Vertex", "subclass_of"): SORTED,
+    ("Edge", "subproperty_of"): SORTED,
     # ── Ingestion ───────────────────────────────────────────────────────────
     # Registries, resolved by name.
     ("IngestionModel", "resources"): SORTED,

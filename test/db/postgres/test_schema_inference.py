@@ -10,7 +10,8 @@ This module tests the schema inference capabilities, including:
 from unittest.mock import patch
 
 from graflo.architecture.contract.manifest import GraphManifest
-from graflo.connections.provider import InMemoryConnectionProvider
+from graflo.connections.onto import PostgresConfig
+from graflo.connections.provider import InMemoryConnectionProvider, connector_config
 from graflo.hq.graph_engine import GraphEngine
 from graflo.hq.resource_mapper import ResourceMapper
 from graflo.onto import DBType
@@ -165,8 +166,12 @@ def test_infer_schema_from_postgres(conn_conf, load_mock_schema):
     )
     _assert_full_bindings_contract(manifest)
     assert isinstance(engine.connection_provider, InMemoryConnectionProvider)
-    assert "users" in engine.connection_provider.postgres_by_resource
-    assert "products" in engine.connection_provider.postgres_by_resource
+    bindings = manifest.require_bindings()
+    for resource in ("users", "products"):
+        (connector,) = bindings.get_connectors_for_resource(resource)
+        connector_config(
+            connector, bindings, engine.connection_provider, PostgresConfig
+        )
 
     # Verify resource actors
     users_resource = next(r for r in ingestion_model.resources if r.name == "users")

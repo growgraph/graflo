@@ -17,7 +17,6 @@ from graflo.connections import (
     ArangoConfig,
     InMemoryConnectionProvider,
     PostgresConfig,
-    PostgresGeneralizedConnConfig,
 )
 from graflo.db.postgres.util import load_schema_from_sql_file
 from graflo.hq import GraphEngine, IngestionParams
@@ -37,12 +36,7 @@ load_schema_from_sql_file(
 )
 
 # Give the label "shop_db" its connection settings.
-provider = InMemoryConnectionProvider()
-provider.bind_single_config_for_bindings(
-    bindings=manifest.require_bindings(),
-    conn_proxy="shop_db",
-    config=PostgresGeneralizedConnConfig(config=postgres_conf),
-)
+provider = InMemoryConnectionProvider({"shop_db": postgres_conf})
 
 conn_conf = ArangoConfig.from_docker_env()
 engine = GraphEngine(target_db_flavor=conn_conf.connection_type)

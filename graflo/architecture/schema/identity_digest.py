@@ -20,6 +20,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from graflo.architecture.graph_types.transform import VertexRep
+from graflo.architecture.schema.derive import complete_derived, derive_fields
 from graflo.architecture.schema.identity_funnel import (
     BRANCH_PAYLOAD_KEY,
     IdentityFunnel,
@@ -46,6 +47,34 @@ def compute_hash_identity(doc: dict[str, Any], source_fields: list[str]) -> str:
     """
     payload = {field: doc.get(field) for field in source_fields}
     return _digest(payload)
+
+
+def compute_derived_hash_identity(
+    doc: Mapping[str, Any], source_fields: list[str], normalizers: dict[str, str]
+) -> str:
+    """Digest of *source_fields* when some are derived, naming their normalizers.
+
+    The payload is ``{field: value, ..., "normalizers": {field: name}}``, so a new
+    normalizer version gives new ids. Kept apart from
+    :func:`compute_hash_identity`, whose payload is frozen.
+    """
+    payload: dict[str, Any] = {field: doc.get(field) for field in source_fields}
+    payload["normalizers"] = dict(sorted(normalizers.items()))
+    return _digest(payload)
+
+
+def _derived_normalizers(vertex: Vertex, source_fields: list[str]) -> dict[str, str]:
+    """The normalizer behind each derived field among *source_fields*."""
+    by_name = {f.name: f for f in vertex.properties}
+    out: dict[str, str] = {}
+    for name in source_fields:
+        field = by_name.get(name)
+        if field is None or field.derived is None:
+            continue
+        match = by_name[field.derived.source].match
+        if match is not None and match.normalizer is not None:
+            out[name] = match.normalizer
+    return out
 
 
 def compute_funnel_identity(
@@ -83,8 +112,13 @@ def compute_vertex_identity(doc: Mapping[str, Any], vertex: Vertex) -> str | Non
     source_fields = vertex.hash_identity_properties
     if not source_fields:
         return None
+    normalizers = _derived_normalizers(vertex, source_fields)
+    if normalizers:
+        doc = complete_derived(vertex, doc)
     if all(_identity_value_is_empty(doc.get(field)) for field in source_fields):
         return None
+    if normalizers:
+        return compute_derived_hash_identity(doc, source_fields, normalizers)
     return compute_hash_identity(dict(doc), source_fields)
 
 
@@ -94,8 +128,11 @@ def ensure_digest_identity_on_doc(
     """Fill an empty *field* on *doc* with its digest identity, in place.
 
     Idempotent: a document that already carries a value is left untouched, so
-    the writer-side safety net cannot overwrite an assemble-time key.
+    the writer-side safety net cannot overwrite an assemble-time key. Derived
+    fields are set first (:func:`~graflo.architecture.schema.derive.derive_fields`),
+    so identity is known before edges are built.
     """
+    derive_fields(vertex, doc)
     if not _identity_value_is_empty(doc.get(field)):
         return
     generated = compute_vertex_identity(doc, vertex)

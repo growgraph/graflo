@@ -65,6 +65,7 @@ Python, and PDF and PNG text uses fonts shipped with graflo, so it works the
 same on a desktop and in a slim container image. Those fonts cover Latin, Greek
 and Cyrillic; other scripts show in SVG, which leaves text to the viewer's fonts.
 On Alpine, install `libgcc` (`apk add libgcc`) for the WebAssembly runtime.
+[Drawing a manifest](../guides/drawing_a_manifest.md) explains the figures.
 
 ## Check the installation
 

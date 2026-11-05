@@ -50,8 +50,7 @@ manifest.finish_init()
 bindings = manifest.require_bindings()
 
 # Reads SENSOR_FEED_BOOTSTRAP_SERVERS and the optional SENSOR_FEED_* variables
-provider = InMemoryConnectionProvider()
-provider.register_all_kafka_configs_from_env(bindings=bindings)
+provider = InMemoryConnectionProvider.from_env(bindings)
 
 target = GraFloBackendConfig(output_dir=Path("artifacts/readings"))
 engine = GraphEngine(target_db_flavor=target.connection_type)
@@ -170,7 +169,7 @@ Delivery is at least once. A batch that was read and not written, because the ru
 
 ## Broker address and credentials
 
-At run time a [connection provider](../glossary.md#connection-provider) maps each `conn_proxy` label to a `KafkaConnConfig`. `register_all_kafka_configs_from_env` finds every label that a Kafka connector uses, reads the variables for each label, and binds each connector to its label. The variable prefix is the label in upper case, with `-` replaced by `_`, followed by `_`: the label `sensor_feed` reads `SENSOR_FEED_*`.
+At run time a [connection provider](../glossary.md#connection-provider) maps each `conn_proxy` label to a `KafkaConnConfig`. `InMemoryConnectionProvider.from_env(bindings)` finds every label the bindings use and reads the variables for each; for a label of Kafka connectors it builds a `KafkaConnConfig`. The variable prefix is the label in upper case, with `-` replaced by `_`, followed by `_`: the label `sensor_feed` reads `SENSOR_FEED_*`.
 
 | Variable | Required | Meaning |
 |---|---|---|
@@ -180,31 +179,24 @@ At run time a [connection provider](../glossary.md#connection-provider) maps eac
 | `{PREFIX}SASL_USERNAME`, `{PREFIX}SASL_PASSWORD` | with SASL | User name and password |
 | `{PREFIX}CLIENT_ID` | no | Client id that the broker sees |
 
-A missing `{PREFIX}BOOTSTRAP_SERVERS`, or a `SECURITY_PROTOCOL` other than these four, raises a `ValueError` that names the variable. As with API connectors, `env_prefix_map` maps a label to a different prefix, and `register_kafka_config_from_env(conn_proxy=...)` registers a single label and needs a `bind_from_bindings` call after it.
+A missing `{PREFIX}BOOTSTRAP_SERVERS`, or a `SECURITY_PROTOCOL` other than these four, raises a `ValueError` that names the variable. As with API connectors, `env_prefix_map` maps a label to a different prefix, and `KafkaConnConfig.from_env("SENSOR_FEED_")` loads a single label.
 
 To register the connection in Python, for example with a password from a secret store:
 
 ```python
-from graflo.connections import (
-    InMemoryConnectionProvider,
-    KafkaConnConfig,
-    KafkaGeneralizedConnConfig,
-)
+from graflo.connections import InMemoryConnectionProvider, KafkaConnConfig
 
-provider = InMemoryConnectionProvider()
-provider.register_generalized_config(
-    conn_proxy="sensor_feed",
-    config=KafkaGeneralizedConnConfig(
-        config=KafkaConnConfig(
+provider = InMemoryConnectionProvider(
+    {
+        "sensor_feed": KafkaConnConfig(
             bootstrap_servers="kafka.plant.example:9093",
             security_protocol="SASL_SSL",
             sasl_mechanism="SCRAM-SHA-512",
             sasl_username="graflo",
             sasl_password="your-password",
         )
-    ),
+    }
 )
-provider.bind_from_bindings(bindings=bindings)
 ```
 
 ## Limits

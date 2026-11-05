@@ -48,8 +48,10 @@ class Schema(ConfigBaseModel):
 
     def finish_init(self) -> None:
         from .db_aware import compile_secondary_identity_indexes
+        from .hierarchy import check_hierarchy_iris
 
         self.core_schema.finish_init()
+        check_hierarchy_iris(self.metadata, self.core_schema)
         self._check_reserved_names()
         compile_secondary_identity_indexes(
             self.core_schema.vertex_config, self.db_profile

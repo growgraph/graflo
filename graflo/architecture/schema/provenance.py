@@ -57,12 +57,13 @@ class Provenance(ConfigBaseModel):
         default=None,
         description="Id of the commit that produced this state.",
     )
-    merge_recipe: str | None = PydanticField(
+    recipe: str | None = PydanticField(
         default=None,
         description=(
-            "Content hash of the recorded MergeRecipe, on merge commits only. "
-            "The recipe rides with the commit; this is the pointer a re-merge "
-            "follows to find it."
+            "Content hash of the recorded recipe: a MergeRecipe on merge "
+            "commits, a LiftRecipe on lift commits. The recipe rides with the "
+            "commit; this is the pointer a re-merge or a re-lift follows to "
+            "find it."
         ),
     )
 

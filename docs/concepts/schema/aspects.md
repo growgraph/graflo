@@ -48,7 +48,8 @@ undo, blockers = invert_ops(ops, manifest=manifest)
 The plan lists everything it adds before anything it removes: groundings,
 directions and units first, then the state types, then the provenance types,
 and last the removal of properties that moved onto a state type. `ASPECTS`
-lists the aspects by name.
+lists the aspects by name, each with a `version` that moves when its
+vocabulary or what it plans changes.
 
 A lift changes the **schema only**. Nothing fills the new types until a
 resource does; see [Filling the provenance types](#filling-the-provenance-types).
@@ -72,6 +73,51 @@ Lifting twice is the same as lifting once. Composing manifests that each carry
 part of the vocabulary and then lifting gives the same schema as lifting each
 one and then composing them.
 
+## Recording a lift
+
+What a lift adds looks the same as vocabulary declared by hand, so a lifted
+manifest cannot show which aspects produced it. Record the lift in a commit
+store to keep that:
+
+```bash
+graflo lift manifest.yaml --spec lift.yaml -o lifted.yaml -m "lift aspects"
+```
+
+`-m` records a commit of kind `lift` whose one parent is the commit holding
+`manifest.yaml`. The manifest must already be in the store (`--store`, default
+`.graflo/commits`), or the command exits 2. The commit holds the planned ops and
+a lift recipe: the aspects in the order named, the version of each, the spec
+without its defaults, and the graflo version. The written manifest names the
+commit and the recipe in `metadata.provenance`. Lifting a manifest that already
+carries the aspects records nothing.
+
+From Python:
+
+```python
+from graflo.architecture.evolution.aspects import build_lift_recipe, plan_lift
+from graflo.architecture.evolution.lift_commit import build_lift_commit
+
+ops = plan_lift(manifest, spec, aspects=["provenance"])
+recipe = build_lift_recipe(manifest, spec, aspects=["provenance"])
+commit = build_lift_commit(manifest, ops, parent=parent_id, recipe=recipe)
+```
+
+To retract a lift, revert its commit with `graflo revert`. To lift again after
+the manifest has changed or an aspect's version has moved, plan from the
+recorded recipe:
+
+```python
+from graflo.architecture.evolution.aspects import plan_relift, recipe_drift
+from graflo.architecture.evolution.lift_commit import lift_recipe_of
+
+recipe = lift_recipe_of(commit)
+recipe_drift(recipe)  # aspects whose version moved: {"provenance": (1, 2)}
+ops = plan_relift(recipe, manifest)
+```
+
+The record says what was lifted and how. Whether a manifest carries an aspect
+is still read from its schema.
+
 ## The provenance aspect
 
 Two types and two edges:
@@ -85,6 +131,7 @@ Two types and two edges:
 |---|---|---|
 | `<Type> -wasDerivedFrom-> SourceRecord` | — | `prov:wasDerivedFrom` |
 | `SourceRecord -wasAttributedTo-> Agent` | `role` | `prov:wasAttributedTo` |
+| `SourceRecord -mentions-> <Type>` | — | `schema:mentions` |
 
 A `SourceRecord` is the record a fact was read from: a document, a message, an
 API response, a table row. It holds the record's **address and content hash,
@@ -100,6 +147,11 @@ Which types gain `wasDerivedFrom`:
 
 `SourceRecord -wasAttributedTo-> Agent` is added even when nothing else is, so
 the schema can always say who produced a record.
+
+`mentions` says a record names an entity, for the types in the spec's
+`mentions_for`. It answers "which records name this?" in one hop for any type,
+including one whose facts come from elsewhere, such as a ticket named in a
+message.
 
 A source kit can declare its own `SourceRecord` with only the properties it
 fills, plus its own. The lift adds the rest of the table to it, as for any
@@ -170,10 +222,11 @@ By default the moved properties are removed from their type (`retire: move`);
 ## The access aspect
 
 The lift adds one field, `access_zones: LIST<INT>`, to each vertex type in the
-spec's `access_for` and each edge relation in `access_edges`. Each vertex type
-names how an upsert combines its zones: `replace` (the element takes the zones of
-its latest write) or `union` (it keeps every zone it was written with). Edges
-always replace.
+spec's `access_for` and each edge relation in `access_edges`. Each type and
+relation names how an upsert combines its zones: `replace` (the element takes the
+zones of its latest write) or `union` (it keeps every zone it was written with).
+A union is written by FalkorDB, Neo4j and the file backend; another backend
+refuses the write.
 
 The field is **reserved**: no document supplies it, and a type sheet, element
 text or instance schema never shows it. The writer sets it from a stamp, and
@@ -226,8 +279,8 @@ engine.ingest(manifest=manifest, target_db_config=conn_conf, ingestion_params=pa
 
 What a zone is and which zones a reader opens are not part of the graph; your
 service decides both. Combine several conditions with `conjoin()`. Guards and
-`union` labels are supported on Neo4j and the file backend; other backends
-refuse them. The guard
+`union` labels are supported on Neo4j, FalkorDB and the file backend; other
+backends refuse them. The guard
 names the field as stored, so do not rename `access_zones` in `db_profile`. A
 reserved field cannot be part of an identity.
 
@@ -248,9 +301,10 @@ The spec declares that. The `state` and `access` aspects require one;
 | `measured` | state | units of existing properties: `{Machine.operating_temp: Cel}` (UCUM; currency as ISO 4217, `USD`) |
 | `retire` | state | `move` (default) or `keep` the properties named in `stateful` |
 | `provenance_for` | provenance | the types that gain `wasDerivedFrom` |
+| `mentions_for` | provenance | the types `SourceRecord` gains `mentions` to |
 | `provenance` | provenance | `false` leaves the aspect out, like not naming it |
 | `access_for` | access | per vertex type, the merge mode of its zones: `{Ticket: replace, Product: union}` |
-| `access_edges` | access | the edge relations that gain `access_zones` |
+| `access_edges` | access | per edge relation, the merge mode of its zones: `{about: union}` |
 
 ## When a lift refuses
 

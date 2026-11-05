@@ -69,18 +69,14 @@ configuration and registers them for `shop_db`:
 ```python
 postgres_conf = PostgresConfig.from_docker_env()
 
-provider = InMemoryConnectionProvider()
-provider.bind_single_config_for_bindings(
-    bindings=manifest.require_bindings(),
-    conn_proxy="shop_db",
-    config=PostgresGeneralizedConnConfig(config=postgres_conf),
-)
+provider = InMemoryConnectionProvider({"shop_db": postgres_conf})
 ```
 
-The connection provider maps each connector with the label `shop_db` to these
-settings. Outside this example, build `PostgresConfig` from your own secret
-store, or with `PostgresConfig.from_env()` from environment variables that
-start with `POSTGRES_`.
+The connection provider maps the label `shop_db` to these settings; every
+connector the bindings give that label reads through them. Outside this
+example, build `PostgresConfig` from your own secret store, or with
+`PostgresConfig.from_proxy_env("shop_db")` from `SHOP_DB_URI`,
+`SHOP_DB_USERNAME`, `SHOP_DB_PASSWORD` and the like.
 
 ### 3. Ingest with the provider
 
@@ -120,17 +116,17 @@ reads anything:
 
 ```text
 ValueError: Registry build failed in strict mode:
-- Failed to register SQL source for resource 'users' (connector 'users'): no PostgreSQL connection configuration for table 'users'
-- Failed to register SQL source for resource 'products' (connector 'products'): no PostgreSQL connection configuration for table 'products'
-- Failed to register SQL source for resource 'purchases' (connector 'purchases'): no PostgreSQL connection configuration for table 'purchases'
-- Failed to register SQL source for resource 'follows' (connector 'follows'): no PostgreSQL connection configuration for table 'follows'
+- Failed to register SQL source for resource 'users' (connector 'users'): no connection configuration is registered for conn_proxy 'shop_db' (connector 'users')
+- Failed to register SQL source for resource 'products' (connector 'products'): no connection configuration is registered for conn_proxy 'shop_db' (connector 'products')
+- Failed to register SQL source for resource 'purchases' (connector 'purchases'): no connection configuration is registered for conn_proxy 'shop_db' (connector 'purchases')
+- Failed to register SQL source for resource 'follows' (connector 'follows'): no connection configuration is registered for conn_proxy 'shop_db' (connector 'follows')
 ```
 
 ## Also possible
 
-- Several databases: give their connectors different labels, register each
-  label with `provider.register_generalized_config(conn_proxy=..., config=...)`,
-  then call `provider.bind_from_bindings(bindings=...)` once.
+- Several sources: give their connectors different labels and put one entry
+  per label in the mapping, `InMemoryConnectionProvider({"shop_db": ...,
+  "crm": ...})`. Databases, REST APIs and Kafka brokers mix freely.
 - The same pattern holds for SPARQL endpoints, REST APIs and Kafka topics.
   [Example 12](../12-api-env-config/README.md) reads the settings of each label
   from environment variables.

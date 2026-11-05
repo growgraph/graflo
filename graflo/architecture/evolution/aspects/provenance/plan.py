@@ -1,9 +1,9 @@
 """Planning the provenance aspect: ``SourceRecord``, ``Agent`` and their edges.
 
 A pure planner over the same op vocabulary as every other manifest change.
-It needs no spec: which types read their facts from a source record is the one
-thing a caller may add, and the composed lift adds the state and observation
-scaffolds to that list itself.
+It needs no spec: which types read their facts from a source record and which a
+record can name are all a caller may add, and the composed lift adds the state
+and observation scaffolds to the first list itself.
 """
 
 from __future__ import annotations
@@ -19,7 +19,10 @@ from . import vocabulary as vocab
 
 
 def plan_provenance(
-    manifest: GraphManifest, *, attach: Iterable[str] = ()
+    manifest: GraphManifest,
+    *,
+    attach: Iterable[str] = (),
+    mentions: Iterable[str] = (),
 ) -> list[ManifestOp]:
     """The ops that make lineage expressible in *manifest*.
 
@@ -38,6 +41,8 @@ def plan_provenance(
         attach: vertex type names that gain a ``wasDerivedFrom`` edge to
             ``SourceRecord``, in this order. The caller vouches that each one
             exists or is added by the same change set.
+        mentions: vertex type names ``SourceRecord`` gains a ``mentions`` edge to,
+            in this order, on the same terms.
 
     Raises:
         LiftError: the manifest has no schema, or declares part of the
@@ -54,6 +59,7 @@ def plan_provenance(
         vertices=[vocab.source_record_vertex(), vocab.agent_vertex()],
         edges=[
             *(vocab.derived_from_edge(name) for name in attach),
+            *(vocab.mentions_edge(name) for name in mentions),
             vocab.attributed_to_edge(),
         ],
     )

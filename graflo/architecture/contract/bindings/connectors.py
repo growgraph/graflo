@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import abc
+import itertools
 import pathlib
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Literal, Self
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self
+from urllib.parse import quote
 
 import suthing
 from pydantic import (
@@ -108,6 +110,10 @@ class ResourceConnector(ConfigBaseModel, abc.ABC):
         exclude=True,
         description="Deterministic internal connector id derived from defining fields.",
     )
+    #: Whether the bindings' default ``conn_proxy`` applies to this connector.
+    #: A connector that can be read without a connection only uses one wired
+    #: to it explicitly.
+    takes_default_conn_proxy: ClassVar[bool] = True
     row_annotations: dict[str, Any] = Field(
         default_factory=dict,
         description=(
@@ -146,21 +152,243 @@ class ResourceConnector(ConfigBaseModel, abc.ABC):
     def bound_source_kind(self) -> BoundSourceKind:
         """Return the physical source kind for this connector."""
 
+    def row_constants(self) -> list[dict[str, Any]]:
+        """The constant fields this connector puts on its rows, one mapping per request.
+
+        A row field of the same name wins over a constant, so these are what
+        the connector fixes, not what every row ends up holding.
+        """
+        return [dict(self.row_annotations)]
+
+
+#: ``{name}`` placeholders a connector fills from its variables.
+TEMPLATE_VARIABLE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
+_VARIABLE_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\Z")
+
+#: A value a connector variable can take.
+TemplateValue = str | int | float | bool
+
+
+def render_text(
+    template: str, values: Mapping[str, Any], *, quote_values: bool = False
+) -> str:
+    """Fill ``{name}`` for every name in *values*; any other brace pair stays as written.
+
+    With *quote_values* each value is percent-encoded, for a URL path.
+    """
+
+    def substitute(match: re.Match[str]) -> str:
+        name = match.group(1)
+        if name not in values:
+            return match.group(0)
+        text = str(values[name])
+        return quote(text, safe="") if quote_values else text
+
+    return TEMPLATE_VARIABLE.sub(substitute, template)
+
+
+def render_param(value: Any, values: Mapping[str, Any]) -> Any:
+    """Fill the strings of a JSON-like *value*, at any depth; keys stay as written.
+
+    A string that is exactly ``{name}`` for a name in *values* becomes the
+    value itself, its type kept; any other string is filled as text.
+    """
+    if isinstance(value, str):
+        whole = TEMPLATE_VARIABLE.fullmatch(value)
+        if whole is not None and whole.group(1) in values:
+            return values[whole.group(1)]
+        return render_text(value, values)
+    if isinstance(value, Mapping):
+        return {key: render_param(item, values) for key, item in value.items()}
+    if isinstance(value, list):
+        return [render_param(item, values) for item in value]
+    return value
+
+
+def render_body(body: Any, values: Mapping[str, Any]) -> Any:
+    """Fill a request body: a string as text, a JSON structure by :func:`render_param`."""
+    if isinstance(body, str):
+        return render_text(body, values)
+    return render_param(body, values)
+
+
+def template_variables(*parts: Any) -> set[str]:
+    """The ``{name}`` variables in the strings of *parts*, at any depth."""
+    found: set[str] = set()
+    for part in parts:
+        if isinstance(part, str):
+            found.update(TEMPLATE_VARIABLE.findall(part))
+        elif isinstance(part, Mapping):
+            found |= template_variables(*part.values())
+        elif isinstance(part, list):
+            found |= template_variables(*part)
+    return found
+
+
+class TemplatedConnector(ResourceConnector, abc.ABC):
+    """A connector whose request fields may hold ``{name}`` variables.
+
+    ``values`` enumerates variables. The connector then makes one request per
+    combination of their values -- in declaration order, the last variable
+    varying fastest -- with the variables filled in, and every row carries the
+    variables as fields unless it has a field of the same name. Which record
+    becomes what is the resource's to say (a ``vertex_router`` on that field);
+    the connector names no vertex.
+
+    Template fields are of two kinds. In an *address* (a URL path, a query
+    parameter, an IRI) every ``{name}`` must be a declared variable. In a
+    *query text* (a request body, a SPARQL query) braces are syntax, so only
+    declared variables are filled and every other brace pair is literal.
+
+    Attributes:
+        values: Variable name -> the values it takes, in request order. Every
+            variable must be used in a template field.
+    """
+
+    values: dict[str, list[TemplateValue]] | None = Field(
+        default=None,
+        description=(
+            "Variable -> values; one request per combination, each row carrying "
+            "the variables as fields."
+        ),
+    )
+
+    @abc.abstractmethod
+    def _address_templates(self) -> list[Any]:
+        """Template fields in which every ``{name}`` must be declared."""
+
+    @abc.abstractmethod
+    def _text_templates(self) -> list[Any]:
+        """Template fields in which only declared variables are filled."""
+
+    def _bound_variables(self) -> set[str]:
+        """Variables filled other than from ``values``."""
+        return set()
+
+    @abc.abstractmethod
+    def _label(self) -> str:
+        """How an error names this connector."""
+
+    @abc.abstractmethod
+    def rendered(self, values: Mapping[str, Any]) -> Self:
+        """A copy for one request: template fields filled from *values*, no ``values``.
+
+        The copy keeps this connector's name and hash, so its connection and
+        bindings still resolve to it.
+        """
+
+    @field_validator("values")
+    @classmethod
+    def _check_values(
+        cls, v: dict[str, list[TemplateValue]] | None
+    ) -> dict[str, list[TemplateValue]] | None:
+        if v is None:
+            return v
+        if not v:
+            raise ValueError("values declares no variable; leave it unset")
+        for name, items in v.items():
+            if not _VARIABLE_NAME.match(name):
+                raise ValueError(
+                    f"values: {name!r} is not a variable name (a letter or "
+                    "underscore, then letters, digits or underscores)"
+                )
+            if not items:
+                raise ValueError(f"values: {name!r} lists no value")
+            seen: list[tuple[type, TemplateValue]] = []
+            for item in items:
+                if (type(item), item) in seen:
+                    raise ValueError(f"values: {name!r} lists {item!r} twice")
+                seen.append((type(item), item))
+        return v
+
+    @model_validator(mode="after")
+    def _check_variables(self) -> Self:
+        enumerated = set(self.values or {})
+        bound = self._bound_variables()
+        if both := enumerated & bound:
+            raise ValueError(
+                f"connector '{self._label()}' declares {sorted(both)} both in "
+                "values and as a parent field"
+            )
+        declared = enumerated | bound
+        undeclared = template_variables(*self._address_templates()) - declared
+        if undeclared:
+            raise ValueError(
+                f"connector '{self._label()}' uses template variables "
+                f"{sorted(undeclared)} that neither values nor parent.fields declares"
+            )
+        used = template_variables(*self._address_templates(), *self._text_templates())
+        if unused := enumerated - used:
+            raise ValueError(
+                f"connector '{self._label()}' declares values for {sorted(unused)} "
+                "that no template field uses"
+            )
+        if clash := enumerated & set(self.row_annotations):
+            raise ValueError(
+                f"connector '{self._label()}' sets {sorted(clash)} both in values "
+                "and in row_annotations"
+            )
+        return self
+
+    def value_combinations(self) -> list[dict[str, Any]]:
+        """One mapping per request, in request order; ``[{}]`` without ``values``."""
+        if not self.values:
+            return [{}]
+        names = list(self.values)
+        return [
+            dict(zip(names, combination, strict=True))
+            for combination in itertools.product(*(self.values[n] for n in names))
+        ]
+
+    def row_constants(self) -> list[dict[str, Any]]:
+        return [
+            {**self.row_annotations, **combination}
+            for combination in self.value_combinations()
+        ]
+
+    def _hash_payload(self) -> dict[str, Any]:
+        payload = super()._hash_payload()
+        if self.values is None:
+            # Unset, it must not move the hash of connectors declared before it.
+            payload.pop("values", None)
+        return payload
+
 
 class FileConnector(ResourceConnector):
     """Connector for matching files.
 
     Attributes:
         regex: Regular expression pattern for matching filenames
-        sub_path: Path to search for matching files (default: "./")
+        sub_path: Directory to search for matching files (default: "./"). With
+            a ``conn_proxy`` naming a files connection it is relative to that
+            connection's root, a local directory or an S3 prefix; without one,
+            a local path.
+        recursive: Also search the directories under ``sub_path``. ``regex``
+            still matches the file's name, not its path.
+        file_type: Format of the matched files, for names that do not show it.
+            Left unset, the format comes from the extension.
         time_filter: Refused when set. A file is read whole, so a window
             declared here would not be applied; filter the rows in a pipeline
             step, or bind a :class:`TableConnector`.
     """
 
+    takes_default_conn_proxy: ClassVar[bool] = False
+
     regex: str | None = None
     sub_path: pathlib.Path = Field(default_factory=lambda: pathlib.Path("./"))
+    recursive: bool = False
+    file_type: Literal["json", "jsonl", "table", "parquet"] | None = None
     time_filter: ColumnTimeFilter | None = None
+
+    def _hash_payload(self) -> dict[str, Any]:
+        payload = super()._hash_payload()
+        # Left out at their defaults, so a connector that does not set them
+        # keeps the hash it is referred to by.
+        if not self.recursive:
+            del payload["recursive"]
+        if self.file_type is None:
+            del payload["file_type"]
+        return payload
 
     @model_validator(mode="after")
     def _validate_file_connector(self) -> Self:
@@ -500,16 +728,19 @@ class TableConnector(ResourceConnector):
         return parse_filter_expression(cls._qualify_filter_payload(payload, base_alias))
 
 
-class SparqlConnector(ResourceConnector):
+class SparqlConnector(TemplatedConnector):
     """Connector for matching SPARQL / RDF data sources.
 
-    Each ``SparqlConnector`` targets instances of a single ``rdf:Class``.
-    It can be backed either by a remote SPARQL endpoint (Fuseki, Blazegraph, ...)
-    or by a local RDF file parsed with *rdflib*.
+    Each request targets instances of a single ``rdf:Class``; with ``values``
+    the connector makes one request per value (see :class:`TemplatedConnector`).
+    ``rdf_class`` and ``graph_uri`` are address templates, ``sparql_query`` a
+    query text. It can be backed either by a remote SPARQL endpoint (Fuseki,
+    Blazegraph, ...) or by a local RDF file parsed with *rdflib*.
 
     Attributes:
         rdf_class: Full URI of the ``rdf:Class`` whose instances this connector
-            fetches (e.g. ``"http://example.org/Person"``).
+            fetches (e.g. ``"http://example.org/Person"``), or a template of
+            one (``"http://example.org/{cls}"``).
         endpoint_url: SPARQL query endpoint URL.  When set, instances are
             fetched via HTTP.  When ``None`` the connector is for local file mode.
         graph_uri: Named-graph URI to restrict the query to (optional).
@@ -565,6 +796,29 @@ class SparqlConnector(ResourceConnector):
         if self.row_annotations:
             raise ValueError("row_annotations is not implemented for SparqlConnector")
         return self
+
+    def _address_templates(self) -> list[Any]:
+        return [self.rdf_class, self.graph_uri]
+
+    def _text_templates(self) -> list[Any]:
+        return [self.sparql_query]
+
+    def _label(self) -> str:
+        return self.name or self.rdf_class
+
+    def rendered(self, values: Mapping[str, Any]) -> Self:
+        return self.model_copy(
+            update={
+                "rdf_class": render_text(self.rdf_class, values),
+                "graph_uri": None
+                if self.graph_uri is None
+                else render_text(self.graph_uri, values),
+                "sparql_query": None
+                if self.sparql_query is None
+                else render_text(self.sparql_query, values),
+                "values": None,
+            }
+        )
 
     def matches(self, resource_identifier: str) -> bool:
         """Match by the local name (fragment) of the rdf:Class URI.
@@ -832,44 +1086,37 @@ def _as_utc(value: Any) -> datetime:
     return moment.astimezone(UTC)
 
 
-#: ``{name}`` placeholders in a dependent connector's ``path`` and ``params``.
-TEMPLATE_VARIABLE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
-
-
 class ParentRequest(ConfigBaseModel):
     """Make one request per record of another API connector.
 
     Attributes:
         connector: Name of the parent API connector in the same bindings.
         fields: Template variable -> dot path into a parent record. Each
-            variable fills ``{variable}`` in the child's ``path`` and string
-            ``params``; a parent record missing any of them is skipped.
+            variable fills ``{variable}`` in the child's ``path``, ``params``
+            and ``body``; a parent record missing any of them is skipped.
     """
 
     connector: str = Field(..., min_length=1)
     fields: dict[str, str] = Field(..., min_length=1)
 
 
-def template_variables(path: str, params: dict[str, Any]) -> set[str]:
-    """Return the ``{name}`` variables used in *path* and string *params*."""
-    found = set(TEMPLATE_VARIABLE.findall(path))
-    for value in params.values():
-        if isinstance(value, str):
-            found.update(TEMPLATE_VARIABLE.findall(value))
-    return found
-
-
-class APIConnector(ResourceConnector):
+class APIConnector(TemplatedConnector):
     """Connector for REST API endpoints.
 
     Declares the non-secret access pattern (path, method, pagination). Runtime
     ``base_url`` and credentials are supplied via ``connector_connection`` ->
-    ``conn_proxy`` -> :class:`~graflo.connections.provider.ApiGeneralizedConnConfig`.
+    ``conn_proxy`` -> :class:`~graflo.connections.sources.RestApiConnConfig`.
+
+    ``path`` and ``params`` are address templates and ``body`` a query text
+    (see :class:`TemplatedConnector`); their variables come from ``values``
+    and from ``parent.fields``.
 
     Attributes:
         path: Relative endpoint path (e.g. ``/api/users``).
         method: HTTP method (default ``GET``).
         params: Static query parameters.
+        body: Request body: a mapping is sent as JSON, a string as is. Not
+            allowed with ``GET``.
         pagination: Pagination strategy and response path configuration.
         row_annotations: Constant fields merged into every fetched document (doc wins).
         headers: Non-secret HTTP headers.
@@ -881,14 +1128,17 @@ class APIConnector(ResourceConnector):
         verify: Verify SSL certificates.
         watermark: Where a run left off; see :class:`WatermarkConfig`.
         parent: Make one request per record of another API connector, with
-            ``{variable}`` in ``path`` and ``params`` filled from that record;
-            see :class:`ParentRequest`. Without its own ``conn_proxy`` mapping
-            the child uses the parent's connection.
+            ``{variable}`` in ``path``, ``params`` and ``body`` filled from that
+            record; see :class:`ParentRequest`. Without its own ``conn_proxy``
+            mapping the child uses the parent's connection.
+        values: One request per value of each variable; see
+            :class:`TemplatedConnector`.
     """
 
     path: str = Field(..., description="Relative API endpoint path")
     method: str = "GET"
     params: dict[str, Any] = Field(default_factory=dict)
+    body: dict[str, Any] | str | None = None
     pagination: PaginationConfig | None = None
     headers: dict[str, str] = Field(default_factory=dict)
     timeout: float | None = None
@@ -902,19 +1152,39 @@ class APIConnector(ResourceConnector):
     parent: ParentRequest | None = None
 
     @model_validator(mode="after")
-    def _check_template_variables(self) -> Self:
-        used = template_variables(self.path, self.params)
-        declared = set(self.parent.fields) if self.parent is not None else set()
-        if self.parent is not None and used - declared:
+    def _check_body(self) -> Self:
+        if self.body is not None and self.method.upper() == "GET":
             raise ValueError(
-                f"API connector '{self.name or self.path}' uses template variables "
-                f"{sorted(used - declared)} that parent.fields does not declare"
+                f"API connector '{self._label()}' has a body; a GET request "
+                "carries none"
             )
         return self
 
+    def _address_templates(self) -> list[Any]:
+        return [self.path, self.params]
+
+    def _text_templates(self) -> list[Any]:
+        return [self.body]
+
+    def _bound_variables(self) -> set[str]:
+        return set(self.parent.fields) if self.parent is not None else set()
+
+    def _label(self) -> str:
+        return self.name or self.path
+
+    def rendered(self, values: Mapping[str, Any]) -> Self:
+        return self.model_copy(
+            update={
+                "path": render_text(self.path, values, quote_values=True),
+                "params": render_param(self.params, values),
+                "body": None if self.body is None else render_body(self.body, values),
+                "values": None,
+            }
+        )
+
     def _hash_payload(self) -> dict[str, Any]:
         payload = super()._hash_payload()
-        for optional in ("watermark", "parent"):
+        for optional in ("body", "watermark", "parent"):
             if payload.get(optional) is None:
                 # Unset, it must not move the hash of connectors declared before it.
                 payload.pop(optional, None)
@@ -966,6 +1236,7 @@ class APIConnector(ResourceConnector):
             headers=headers,
             auth=auth,
             params=dict(self.params),
+            body=self.body,
             timeout=self.timeout,
             retries=self.retries,
             retry_backoff_factor=self.retry_backoff_factor,
@@ -993,6 +1264,8 @@ class PushConnector(ResourceConnector):
             envelope rather than a record.
         row_annotations: Constant fields merged into every record (record wins).
     """
+
+    takes_default_conn_proxy: ClassVar[bool] = False
 
     kind: Literal["push"]
     # Narrowed from the base's optional name; validate_assignment refuses None.
@@ -1022,7 +1295,7 @@ class KafkaConnector(ResourceConnector):
     Declares the non-secret access pattern (topics, consumer group, decode
     options). Runtime bootstrap servers and credentials are supplied via
     ``connector_connection`` -> ``conn_proxy`` ->
-    :class:`~graflo.connections.provider.KafkaGeneralizedConnConfig`.
+    :class:`~graflo.connections.sources.KafkaConnConfig`.
 
     Attributes:
         topics: Topic names to subscribe to.

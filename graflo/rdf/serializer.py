@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any, cast
 
 from rdflib import RDF, BNode, Graph, Literal, URIRef
@@ -103,6 +104,14 @@ class ManifestRdfSerializer:
         add_literal(graph, metadata_uri, ns.description, schema.metadata.description)
         self._emit_semantics(graph, metadata_uri, schema.metadata.semantics)
         self._emit_naming(graph, metadata_uri, schema.metadata.naming)
+        if schema.metadata.base_iri:
+            graph.add((metadata_uri, ns.baseIri, URIRef(schema.metadata.base_iri)))
+        for prefix, iri in sorted(schema.metadata.namespaces.items()):
+            binding = BNode()
+            graph.add((metadata_uri, ns.hasNamespace, binding))
+            graph.add((binding, RDF.type, ns.NamespaceBinding))
+            add_literal(graph, binding, ns.namespacePrefix, prefix)
+            graph.add((binding, ns.namespaceIri, URIRef(iri)))
 
         core_uri = URIRef(join_uri(str(schema_uri), "core"))
         graph.add((schema_uri, ns.hasCoreSchema, core_uri))
@@ -126,6 +135,15 @@ class ManifestRdfSerializer:
             graph.add((vertex_config_uri, ns.hasVertex, vertex_uri))
             add_literal(graph, vertex_uri, ns.artifactIndex, index)
             self._emit_vertex(graph, vertex_uri, vertex)
+        # After every vertex has its node: a local superclass may be declared later.
+        for vertex in schema.core_schema.vertex_config.vertices:
+            for parent in vertex.subclass_of:
+                target = (
+                    vertex_uri_by_name[parent.vertex]
+                    if parent.vertex is not None
+                    else URIRef(str(parent.iri))
+                )
+                graph.add((vertex_uri_by_name[vertex.name], ns.subclassOf, target))
 
         edge_uri_by_id: dict[EdgeId, URIRef] = {}
         for index, edge in enumerate(schema.core_schema.edge_config.edges):
@@ -135,6 +153,15 @@ class ManifestRdfSerializer:
             graph.add((edge_config_uri, ns.hasEdge, edge_uri))
             add_literal(graph, edge_uri, ns.artifactIndex, index)
             self._emit_edge(graph, edge_uri, edge, vertex_uri_by_name)
+        # After every edge has its node, as for vertices.
+        for edge in schema.core_schema.edge_config.edges:
+            for parent in edge.subproperty_of:
+                target = (
+                    edge_uri_by_id[parent.edge.edge_id()]
+                    if parent.edge is not None
+                    else URIRef(str(parent.iri))
+                )
+                graph.add((edge_uri_by_id[edge.edge_id], ns.subpropertyOf, target))
 
         for index, pair in enumerate(schema.core_schema.edge_config.inverses):
             inverse_uri = URIRef(
@@ -265,6 +292,11 @@ class ManifestRdfSerializer:
             graph.add((subject, ns.exactMatch, URIRef(iri)))
         for synonym in semantics.synonyms:
             add_literal(graph, subject, ns.altLabel, synonym)
+        add_literal(graph, subject, ns.rdfsLabel, semantics.label)
+        for iri in semantics.close_match:
+            graph.add((subject, ns.closeMatch, URIRef(iri)))
+        for iri in semantics.broader:
+            graph.add((subject, ns.broader, URIRef(iri)))
         add_literal(graph, subject, ns.unit, getattr(semantics, "unit", None))
 
     def _emit_naming(
@@ -362,6 +394,32 @@ class ManifestRdfSerializer:
             add_literal(graph, field_uri, ns.fieldReserved, True)
         if field_obj.merge != "replace":
             add_literal(graph, field_uri, ns.fieldMergeMode, field_obj.merge)
+        self._emit_match(graph, field_uri, field_obj)
+        if field_obj.derived is not None:
+            add_literal(graph, field_uri, ns.derivedSource, field_obj.derived.source)
+            add_literal(graph, field_uri, ns.derivedForm, field_obj.derived.form)
+
+    def _emit_match(self, graph: Graph, field_uri: URIRef, field_obj: Field) -> None:
+        """Emit a field's ``match`` as a node of its own, so an empty one survives."""
+        match = field_obj.match
+        if match is None:
+            return
+        match_uri = URIRef(join_uri(str(field_uri), "match"))
+        graph.add((field_uri, ns.fieldMatch, match_uri))
+        graph.add((match_uri, RDF.type, ns.FieldMatch))
+        add_literal(graph, match_uri, ns.matchNormalizer, match.normalizer)
+        if match.parts is not None:
+            split = match.parts.split
+            # One literal: separators keep their order, and "words" stays a mode.
+            add_literal(
+                graph,
+                match_uri,
+                ns.matchSplit,
+                split if isinstance(split, str) else json.dumps(split),
+            )
+            add_literal(graph, match_uri, ns.matchOrder, match.parts.order)
+        if match.exclusive is not None:
+            add_literal(graph, match_uri, ns.matchExclusive, match.exclusive)
 
     def _emit_edge(
         self,

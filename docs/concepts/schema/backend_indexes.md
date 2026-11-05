@@ -90,9 +90,12 @@ logs a warning, because every filtered read on that tag then fails with
 
 ## Per backend
 
+For the same limits at a glance, beside the other features of each backend, see
+[Choosing a backend](../backends.md).
+
 | Backend | Identity index | Declared vertex indexes | Declared edge indexes |
 |---|---|---|---|
-| Neo4j | A uniqueness constraint over the identity fields, created with the other indexes. If the server refuses a composite constraint (Community edition may), a plain index with a warning | `CREATE INDEX`, or a uniqueness constraint when `unique: true`; a constraint the server refuses is an error | A relationship index, or a uniqueness constraint when `unique: true` |
+| Neo4j | A uniqueness constraint over the identity fields, created with the other indexes. If the server refuses a composite constraint, a plain index with a warning | `CREATE INDEX`, or a uniqueness constraint when `unique: true`; a constraint the server refuses is an error | A relationship index, or a uniqueness constraint when `unique: true` |
 | Memgraph (3.2 or later) | One index over the identity fields and a uniqueness constraint over them, created with the other indexes | One index over the fields, plus a uniqueness constraint when `unique: true` | `CREATE EDGE INDEX ON :<relation>(<field>)`, one field only, never unique |
 | FalkorDB | Each identity field indexed and a uniqueness constraint over them, created with the other indexes | Each field indexed (FalkorDB keeps one index per label), plus a uniqueness constraint when `unique: true` | The same, on the relationship type |
 | NebulaGraph | A tag index over the identity fields, always created, because `LOOKUP` and filtered `MATCH` need it | A tag index; never unique | An edge index; never unique |

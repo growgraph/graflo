@@ -108,10 +108,10 @@ by name, so the same resource can read a file today and a table tomorrow.
 
 | Connector | Reads | Manifest inferred from the source | Page |
 |---|---|---|---|
-| `FileConnector` | CSV, TSV, JSON, JSON Lines and Parquet files whose names match a regex under a directory | no | [Ingest CSV files](../examples/csv-two-resources/index.md) (1) |
+| `FileConnector` | CSV, TSV, JSON, JSON Lines and Parquet files whose names match a regex under a directory; `recursive: true` also searches its subdirectories, in path order, and `file_type` names the format when a file name does not show it | no | [Ingest CSV files](../examples/csv-two-resources/index.md) (1) |
 | `TableConnector` | one SQL table, optionally filtered or joined into a view | yes, from primary and foreign keys | [Table filters and views](connectors/table_views.md) |
-| `SparqlConnector` | the instances of one RDF class, from an RDF file (Turtle, RDF/XML, N-Triples, N3, JSON-LD and others) or a SPARQL endpoint | yes, from an OWL or RDFS ontology | [A graph from an ontology and RDF data](../examples/infer-from-rdf/index.md) (10) |
-| `APIConnector` | a REST endpoint, with offset, page or cursor pagination | no | [API connector](connectors/api_connector.md) |
+| `SparqlConnector` | the instances of one RDF class, or of one class per value of `values`, from an RDF file (Turtle, RDF/XML, N-Triples, N3, JSON-LD and others) or a SPARQL endpoint | yes, from an OWL or RDFS ontology | [A graph from an ontology and RDF data](../examples/infer-from-rdf/index.md) (10) |
+| `APIConnector` | a REST endpoint, with offset, page or cursor pagination, one request per value of `values` | no | [API connector](connectors/api_connector.md) |
 | `KafkaConnector` | JSON messages from one or more Kafka topics, read as a finite batch | no | [Kafka connector](connectors/kafka_connector.md) |
 
 From Python you can also pass records that are already in memory, a list of
@@ -130,16 +130,16 @@ a sample of its records lets GraFlo propose identities; see
 ## What GraFlo writes
 
 Every target accepts a manifest ingest and can receive a whole graph moved
-from another database. The file backend keeps a graph on disk as chunked,
-compressed JSON Lines files plus the schema, which is useful for exports and
-for moving a graph between databases.
+from another database. The file backend is a dump, not a database: it keeps a
+graph on disk as chunked, compressed JSON Lines files plus the schema, for
+exports and for moving a graph between databases.
 
 | Target | Stores vertex and edge types as | Can be read back whole |
 |---|---|---|
 | ArangoDB | document and edge collections | yes |
 | Neo4j | labels and relationship types | yes |
 | Memgraph | labels and relationship types | no |
-| FalkorDB | labels and relationship types | no |
+| FalkorDB | labels and relationship types | yes |
 | TigerGraph | vertex and edge types, with native undirected edges and reverse edges | no |
 | NebulaGraph | tags and edge types | no |
 | PostgreSQL | one table per vertex type and one table per edge type | yes |
@@ -152,6 +152,8 @@ A target that can be read back whole is a graph source:
 GraFlo can read the schema of all eight targets. Keep a copy in the file
 backend of a graph you may need to move out of a target that cannot be read
 back. See [graph export and migration](operations/graph_export_migration.md).
+To compare the targets feature by feature, see
+[Choosing a backend](backends.md).
 
 Properties may carry a type: `INT`, `UINT`, `FLOAT`, `DOUBLE`, `BOOL`,
 `STRING`, `DATETIME`, `UUID`, and `LIST` of one of those. Types are optional
@@ -162,6 +164,8 @@ schema. See [supported field types](architecture/core_components.md#supported-fi
 
 The pages are grouped as in the navigation. The [glossary](glossary.md) gives
 each term one short definition and links to the page that explains it.
+[Choosing a backend](backends.md) answers: which database should I use, and
+what does GraFlo do on each one?
 
 ### Architecture
 

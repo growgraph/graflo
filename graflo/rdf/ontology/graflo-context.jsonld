@@ -2,6 +2,7 @@
     "@context": {
         "gf": "https://ontology.growgraph.dev/graflo/",
         "skos": "http://www.w3.org/2004/02/skos/core#",
+        "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
         "xsd": "http://www.w3.org/2001/XMLSchema#",
         "GraphManifest": "gf:GraphManifest",
         "Schema": "gf:Schema",
@@ -200,6 +201,37 @@
             "@type": "@id"
         },
         "altLabel": "skos:altLabel",
+        "label": "rdfs:label",
+        "closeMatch": {
+            "@id": "skos:closeMatch",
+            "@type": "@id"
+        },
+        "broader": {
+            "@id": "skos:broader",
+            "@type": "@id"
+        },
+        "subclassOf": {
+            "@id": "gf:subclassOf",
+            "@type": "@id"
+        },
+        "subpropertyOf": {
+            "@id": "gf:subpropertyOf",
+            "@type": "@id"
+        },
+        "baseIri": {
+            "@id": "gf:baseIri",
+            "@type": "@id"
+        },
+        "NamespaceBinding": "gf:NamespaceBinding",
+        "hasNamespace": {
+            "@id": "gf:hasNamespace",
+            "@type": "@id"
+        },
+        "namespacePrefix": "gf:namespacePrefix",
+        "namespaceIri": {
+            "@id": "gf:namespaceIri",
+            "@type": "@id"
+        },
         "hasNamingConvention": {
             "@id": "gf:hasNamingConvention",
             "@type": "@id"

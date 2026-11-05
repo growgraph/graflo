@@ -44,3 +44,23 @@ def test_insert_edges_batch_includes_merge_properties_in_cypher(mock_driver) -> 
     query = session.run.call_args[0][0]
     collapsed = " ".join(query.split())
     assert "MERGE (source)-[r:REL {`kind`: row[2]['kind']}]->(target)" in collapsed
+
+
+@patch("graflo.db.neo4j.conn.GraphDatabase.driver")
+def test_upsert_docs_batch_runs_in_a_managed_transaction(mock_driver) -> None:
+    """Only a managed transaction retries a deadlock with a concurrent write."""
+    session = MagicMock()
+    transaction = MagicMock()
+    session.execute_write.side_effect = lambda work: work(transaction)
+    mock_driver.return_value = MagicMock()
+    mock_driver.return_value.session.return_value = session
+
+    conn = Neo4jConnection(Neo4jConfig(uri="bolt://localhost:7687"))
+    conn.upsert_docs_batch([{"id": "a"}], "S", ("id",))
+
+    session.execute_write.assert_called_once()
+    session.run.assert_not_called()
+    query = " ".join(transaction.run.call_args[0][0].split())
+    assert "MERGE (n:S { id: row.id })" in query
+    assert transaction.run.call_args[1] == {"batch": [{"id": "a"}]}
+    transaction.run.return_value.consume.assert_called_once()

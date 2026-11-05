@@ -763,6 +763,9 @@ class PostgresConnection(PostgresTargetWriteMixin, Connection):
                 cursor.execute(query, (limit,))
                 return [dict(row) for row in cursor.fetchall()]
         except Exception as e:
+            # A failed statement aborts the transaction; without the rollback
+            # every later query on this connection fails too.
+            self.conn.rollback()
             logger.debug(
                 f"Could not fetch sample rows for '{schema_name}.{table_name}': {e}"
             )

@@ -151,6 +151,8 @@ schema:
                     type: STRING
                 -   name: label
                     type: STRING
+                    semantics:
+                        iri: http://www.w3.org/2000/01/rdf-schema#label
                 -   name: agent_kind
                     type: STRING
                 identity:

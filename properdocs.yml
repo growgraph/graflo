@@ -82,12 +82,14 @@ nav:
 -   Concepts:
     -   Overview: concepts/index.md
     -   Glossary: concepts/glossary.md
+    -   Choosing a backend: concepts/backends.md
     -   Architecture:
         -   Diagrams: concepts/architecture/diagrams.md
         -   Core components: concepts/architecture/core_components.md
     -   Schema and manifest:
         -   Sampling and profiling: concepts/schema/sampling_and_profiling.md
         -   Vertex identity: concepts/schema/vertex_identity.md
+        -   Comparing and deriving field values: concepts/schema/comparing_values.md
         -   Cross-resource identity discovery: concepts/schema/cross_resource_identity.md
         -   Cards: concepts/schema/cards.md
         -   Schema context for a language model: concepts/schema/llm_context.md
@@ -118,6 +120,7 @@ nav:
 -   Guides:
     -   Guides index: guides/index.md
     -   Database connections: guides/database_connections.md
+    -   Connections and discovery: guides/connections_and_discovery.md
     -   Importing and layering: guides/importing.md
     -   Graph DB migration: guides/graph_db_migration.md
     -   Graph namespace and schema: guides/graph_namespace_and_schema.md
@@ -125,6 +128,7 @@ nav:
     -   API env wiring: guides/api_env_wiring.md
     -   Finding a key for your data: guides/identity_inference.md
     -   Evolving a manifest: guides/evolving_a_manifest.md
+    -   Drawing a manifest: guides/drawing_a_manifest.md
     -   TigerGraph bulk load: guides/tigergraph_bulk_load.md
     -   Inferring a graph from SQL: guides/sql_schema_inference.md
     -   Adding a database backend: guides/adding_a_backend.md

@@ -24,6 +24,7 @@ from graflo.architecture.schema.database_features import (
 )
 from graflo.architecture.schema.document import Schema
 from graflo.architecture.schema.edge import Edge, EdgeConfig, union_inverses
+from graflo.architecture.schema.hierarchy import localize_refs
 from graflo.architecture.schema.identity_funnel import IdentityFunnel
 from graflo.architecture.schema.metadata import GraphMetadata
 from graflo.architecture.schema.namespace import validate_namespace
@@ -1236,8 +1237,38 @@ def _merge_graph_metadata(left: GraphMetadata, right: GraphMetadata) -> GraphMet
         description=_fold_description(left.description, right.description),
         semantics=merge_semantics(left.semantics, right.semantics),
         naming=_merge_naming(left.naming, right.naming),
+        base_iri=_merge_base_iri(left.base_iri, right.base_iri),
+        namespaces=_merge_namespaces(left.namespaces, right.namespaces),
         provenance=None,
     )
+
+
+def _merge_base_iri(left: str | None, right: str | None) -> str | None:
+    """One side's minting namespace, or none when the two disagree.
+
+    Like a disputed ``iri``: the merged schema mints in neither namespace alone,
+    so electing the left one would be a false claim about the right side's
+    types.
+    """
+    if left is None or right is None:
+        return left if right is None else right
+    return left if left == right else None
+
+
+def _merge_namespaces(left: dict[str, str], right: dict[str, str]) -> dict[str, str]:
+    """Both sides' prefixes; a prefix bound to two namespaces is refused.
+
+    A prefix is how every CURIE in the schema is read, so silently keeping one
+    binding would change the meaning of the other side's terms.
+    """
+    clashes = sorted(p for p in left.keys() & right.keys() if left[p] != right[p])
+    if clashes:
+        raise ValueError(
+            "Conflicting namespace prefixes: "
+            + ", ".join(f"{p!r} is {left[p]!r} vs {right[p]!r}" for p in clashes)
+            + ". Rename the prefix on one side before merging."
+        )
+    return {**left, **right}
 
 
 def _merge_manifest_metadata(
@@ -1425,6 +1456,10 @@ def _union_schema(
             by_id[eid] = edge
 
     meta = _merge_graph_metadata(left.metadata, right.metadata)
+    # A parent one side named by IRI may now be a vertex or edge of the union.
+    out_vertices, merged_edges = localize_refs(
+        meta, list(out_vertices), list(by_id.values())
+    )
 
     db_profile = _merge_db_profiles(left.db_profile, right.db_profile)
     inverses, symmetric = union_inverses(
@@ -1436,7 +1471,7 @@ def _union_schema(
         core_schema=CoreSchema(
             vertex_config=VertexConfig(vertices=out_vertices, force_types=force_types),
             edge_config=EdgeConfig(
-                edges=list(by_id.values()),
+                edges=merged_edges,
                 inverses=inverses,
                 symmetric=symmetric,
             ),

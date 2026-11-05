@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 from graflo.architecture.contract.ingestion import IngestionModel
 from graflo.architecture.contract.ingestion.resource import (
+    route_discriminator,
     router_reach,
     step_produces_vertices,
 )
@@ -24,6 +25,11 @@ from graflo.architecture.schema.edge import (
     inverse_map,
     normalize_inverse_table,
     remap_inverses,
+)
+from graflo.architecture.schema.hierarchy import (
+    rewrite_vertex_refs,
+    spliced_superclasses,
+    spliced_superproperties,
 )
 from graflo.architecture.schema.vertex import (
     Field,
@@ -103,11 +109,13 @@ from .ops import (
     SetEdgeDescriptionsOp,
     SetEdgeDirectedOp,
     SetEdgeSemanticsOp,
+    SetEdgeSubpropertyOfOp,
     SetFieldSemanticsOp,
     SetInverseEmissionOp,
     SetNativeInversesOp,
     SetVertexDescriptionsOp,
     SetVertexSemanticsOp,
+    SetVertexSubclassOfOp,
 )
 from .project import compute_projection
 from .rewrite import (
@@ -179,6 +187,191 @@ def _prune_ingestion_for_removed_vertices(
         raise ValueError(
             "remove_vertices would leave ingestion_model.resources empty; aborting."
         )
+
+
+def _transform_writes(step: Mapping[str, Any]) -> set[str] | None:
+    """Fields a normalized transform step may write; ``None`` when it does not say."""
+    writes: set[str] = set()
+    rename = step.get("rename")
+    if isinstance(rename, dict):
+        writes |= {name for name in rename.values() if isinstance(name, str)}
+    call = step.get("call")
+    if isinstance(call, dict):
+        output = call.get("output")
+        if isinstance(output, str):
+            writes.add(output)
+        elif isinstance(output, list):
+            writes |= {name for name in output if isinstance(name, str)}
+        else:
+            return None
+    return writes
+
+
+def _row_reach(
+    pipeline: Sequence[Any], constants: Mapping[str, Any], declared: Collection[str]
+) -> set[str]:
+    """Classes *pipeline* can produce from a row carrying *constants*.
+
+    A top-level ``vertex_router`` whose ``type_field`` the constants fix routes
+    that value the way the runtime does, unless an earlier transform may
+    rewrite the field. Every other producing step, at any level, counts with
+    all it can produce.
+    """
+    reach: set[str] = set()
+
+    def everything(level: Any) -> None:
+        if not isinstance(level, list):
+            return
+        for item in level:
+            if not isinstance(item, dict):
+                continue
+            step = normalize_actor_step(dict(item))
+            reach.update(step_produces_vertices(step, known_vertices=declared))
+            if step.get("type") == "descend":
+                everything(step.get("pipeline"))
+
+    rewritten: set[str] | None = set()
+    for item in pipeline:
+        if not isinstance(item, dict):
+            continue
+        step = normalize_actor_step(dict(item))
+        kind = step.get("type")
+        field = step.get("type_field")
+        if kind == "transform":
+            writes = _transform_writes(step)
+            rewritten = (
+                None if writes is None or rewritten is None else rewritten | writes
+            )
+            continue
+        if (
+            kind == "vertex_router"
+            and isinstance(field, str)
+            and isinstance(constants.get(field), str | int | float | bool)
+            and rewritten is not None
+            and field not in rewritten
+        ):
+            vertex = route_discriminator(step, constants[field], declared)
+            if vertex is not None:
+                reach.add(vertex)
+            continue
+        everything([step])
+    return reach
+
+
+def prune_connectors_for_removed_vertices(
+    manifest: GraphManifest, removed: set[str], *, declared: Collection[str]
+) -> None:
+    """Drop what the bindings fetch only for classes in *removed*, in place.
+
+    Runs before the resources are trimmed. Each request a connector makes puts
+    constants on its rows (:meth:`ResourceConnector.row_constants`); routed
+    through the pipeline of every resource the connector is bound to, they
+    reach some classes of *declared*. A request is dead when it reached some
+    class and every class it reached, in every bound resource, is removed. An
+    enumerated connector loses each value all of whose requests are dead, and
+    is dropped when a variable has no value left; any other connector is
+    dropped when its request is dead. A connector bound to no resource, or
+    named as another connector's parent, is left alone.
+    """
+    from graflo.architecture.contract.bindings import (
+        APIConnector,
+        Bindings,
+        TemplatedConnector,
+    )
+    from graflo.architecture.contract.bindings.core import ResourceConnectorBinding
+
+    bindings = manifest.bindings
+    ingestion = manifest.ingestion_model
+    if bindings is None or ingestion is None or not removed:
+        return
+    pipelines = {resource.name: resource.pipeline for resource in ingestion.resources}
+    rows = [
+        ResourceConnectorBinding.model_validate(row) if isinstance(row, dict) else row
+        for row in bindings.resource_connector
+    ]
+    bound: dict[str, set[str]] = {}
+    for connector in bindings.connectors:
+        if connector.resource_name is not None:
+            bound.setdefault(connector.hash, set()).add(connector.resource_name)
+    for row in rows:
+        for connector_hash in bindings.resolve_connector_refs_to_hashes(
+            [row.connector]
+        ):
+            bound.setdefault(connector_hash, set()).add(row.resource)
+    parents = {
+        parent.hash
+        for connector in bindings.connectors
+        if isinstance(connector, APIConnector)
+        and (parent := bindings.get_parent_connector(connector)) is not None
+    }
+
+    def dead(constants: Mapping[str, Any], resources: set[str]) -> bool:
+        reaches = [
+            _row_reach(pipelines[name], constants, declared)
+            for name in resources
+            if name in pipelines
+        ]
+        return bool(reaches) and all(reach and reach <= removed for reach in reaches)
+
+    dropped: set[str] = set()
+    replaced: dict[str, Any] = {}
+    for connector in bindings.connectors:
+        resources = bound.get(connector.hash)
+        if not resources or connector.hash in parents:
+            continue
+        if not isinstance(connector, TemplatedConnector) or not connector.values:
+            if all(dead(c, resources) for c in connector.row_constants()):
+                dropped.add(connector.hash)
+            continue
+        combinations = connector.row_constants()
+        kept: dict[str, list[Any]] = {}
+        for name, items in connector.values.items():
+            kept[name] = [
+                item
+                for item in items
+                if not all(
+                    dead(c, resources)
+                    for c in combinations
+                    if type(c[name]) is type(item) and c[name] == item
+                )
+            ]
+        if any(not items for items in kept.values()):
+            dropped.add(connector.hash)
+        elif kept != connector.values:
+            payload = connector.to_dict(skip_defaults=False)
+            payload["values"] = kept
+            replaced[connector.hash] = type(connector).model_validate(payload)
+
+    if not dropped and not replaced:
+        return
+
+    def ref(reference: str) -> str | None:
+        """*reference* as it should read now; ``None`` when its connector is gone."""
+        hashes = bindings.resolve_connector_refs_to_hashes([reference])
+        if hashes & dropped:
+            return None
+        for old_hash in hashes:
+            if old_hash in replaced and reference == old_hash:
+                return replaced[old_hash].hash
+        return reference
+
+    data = bindings.to_dict(skip_defaults=False)
+    data["connectors"] = [
+        (replaced.get(c.hash) or c).to_dict(skip_defaults=False)
+        for c in bindings.connectors
+        if c.hash not in dropped
+    ]
+    data["resource_connector"] = [
+        {**row.to_dict(), "connector": new}
+        for row in rows
+        if (new := ref(row.connector)) is not None
+    ]
+    data["connector_connection"] = [
+        {**row.to_dict(), "connector": new}
+        for row in bindings.connector_connection_bindings
+        if (new := ref(row.connector)) is not None
+    ]
+    manifest.bindings = Bindings.model_validate(data)
 
 
 def prune_bindings_for_resources(manifest: GraphManifest, surviving: set[str]) -> None:
@@ -302,13 +495,28 @@ def apply_remove_vertices(manifest: GraphManifest, op: RemoveVerticesOp) -> None
     missing = removed - core.vertex_config.vertex_set
     if missing:
         raise ValueError(f"Unknown vertices to remove: {sorted(missing)}")
+    # A removed class or relation is spliced out of the hierarchy: what was
+    # under it moves under its parents, so the survivors' subsumptions hold.
+    parents = spliced_superclasses(core.vertex_config.vertices, removed)
+    cascaded = {
+        e.edge_id
+        for e in core.edge_config.edges
+        if e.source in removed or e.target in removed
+    }
+    edge_parents = spliced_superproperties(core.edge_config.edges, cascaded)
 
     core.vertex_config.remove_vertices(removed)
+    for vertex in core.vertex_config.vertices:
+        if vertex.name in parents:
+            vertex.subclass_of = parents[vertex.name]
     filtered_edges = [
         e
         for e in core.edge_config.edges
         if e.source not in removed and e.target not in removed
     ]
+    for edge in filtered_edges:
+        if edge.edge_id in edge_parents:
+            edge.subproperty_of = edge_parents[edge.edge_id]
     retain_native_inverses(schema.db_profile, _relations_of(filtered_edges))
     schema.core_schema = CoreSchema(
         vertex_config=core.vertex_config,
@@ -319,10 +527,14 @@ def apply_remove_vertices(manifest: GraphManifest, op: RemoveVerticesOp) -> None
     schema.db_profile = _revalidate_db_profile(schema.db_profile)
 
     if manifest.ingestion_model is not None:
+        surviving_vertices = set(core.vertex_config.vertex_set)
+        prune_connectors_for_removed_vertices(
+            manifest, removed, declared=surviving_vertices | removed
+        )
         _prune_ingestion_for_removed_vertices(
             manifest.ingestion_model,
             removed,
-            surviving=set(core.vertex_config.vertex_set),
+            surviving=surviving_vertices,
         )
         manifest.ingestion_model = IngestionModel.model_validate(
             manifest.ingestion_model.to_dict(skip_defaults=False)
@@ -376,7 +588,7 @@ def _build_merged_vertex_config(
         new_force[into] = deduped_ft
 
     return VertexConfig(
-        vertices=new_vertices,
+        vertices=rewrite_vertex_refs(new_vertices, {s: into for s in sources}),
         force_types=new_force,
     )
 
@@ -709,7 +921,9 @@ def _canonicalize_vertex_config(
                     accumulated.append(entry)
         if accumulated:
             new_force[target] = accumulated
-    return VertexConfig(vertices=new_vertices, force_types=new_force)
+    return VertexConfig(
+        vertices=rewrite_vertex_refs(new_vertices, mapping), force_types=new_force
+    )
 
 
 def _check_property_renames(
@@ -1319,6 +1533,18 @@ def _apply_rename_entities(
                             vertex["name"] = vertex_map.get(
                                 vertex["name"], vertex["name"]
                             )
+                        # A local superclass is named like any other reference.
+                        for parent in (
+                            vertex.get("subclass_of") or []
+                            if isinstance(vertex, dict)
+                            else []
+                        ):
+                            if isinstance(parent, dict) and isinstance(
+                                parent.get("vertex"), str
+                            ):
+                                parent["vertex"] = vertex_map.get(
+                                    parent["vertex"], parent["vertex"]
+                                )
 
                 force_types = vertex_config.get("force_types")
                 if isinstance(force_types, dict):
@@ -1359,6 +1585,20 @@ def _apply_rename_entities(
                             edge["relation"] = edge_map.get(
                                 edge["relation"], edge["relation"]
                             )
+                        # A local superproperty names an edge by its id.
+                        for parent in edge.get("subproperty_of") or []:
+                            ref = (
+                                parent.get("edge") if isinstance(parent, dict) else None
+                            )
+                            if not isinstance(ref, dict):
+                                continue
+                            for end in ("source", "target"):
+                                if isinstance(ref.get(end), str):
+                                    ref[end] = vertex_map.get(ref[end], ref[end])
+                            if isinstance(ref.get("relation"), str):
+                                ref["relation"] = edge_map.get(
+                                    ref["relation"], ref["relation"]
+                                )
 
     ingestion_payload = payload.get("ingestion_model")
     if isinstance(ingestion_payload, dict):
@@ -1609,6 +1849,14 @@ def apply_remove_edges(manifest: GraphManifest, op: RemoveEdgesOp) -> None:
     removed = set(op.relations)
     if not removed:
         return
+    _splice_superproperties(
+        schema.core_schema,
+        {
+            edge.edge_id
+            for edge in schema.core_schema.edge_config.edges
+            if edge.relation in removed
+        },
+    )
     apply_relation_removal_to_db_profile(schema.db_profile, removed)
     schema.db_profile = _revalidate_db_profile(schema.db_profile)
     schema.core_schema = CoreSchema(
@@ -1662,6 +1910,14 @@ def apply_remove_edges(manifest: GraphManifest, op: RemoveEdgesOp) -> None:
         )
 
 
+def _splice_superproperties(core: CoreSchema, removed: set[EdgeId]) -> None:
+    """Splice removed edges out of the relation hierarchy, in place."""
+    for edge_id, parents in spliced_superproperties(
+        core.edge_config.edges, removed
+    ).items():
+        core.edge_config.edge_for(edge_id).subproperty_of = parents
+
+
 def apply_remove_edge_ids(
     manifest: GraphManifest, removed_edge_ids: set[EdgeId]
 ) -> None:
@@ -1671,6 +1927,7 @@ def apply_remove_edge_ids(
     schema = manifest.graph_schema
     if schema is None:
         raise ValueError("remove_edge_ids requires graph_schema")
+    _splice_superproperties(schema.core_schema, removed_edge_ids)
 
     surviving = [
         edge
@@ -2334,10 +2591,18 @@ def _dispatch_op(manifest: GraphManifest, op: Any) -> None:
         from .semantics import apply_set_vertex_descriptions
 
         apply_set_vertex_descriptions(manifest, op)
+    elif isinstance(op, SetVertexSubclassOfOp):
+        from .semantics import apply_set_vertex_subclass_of
+
+        apply_set_vertex_subclass_of(manifest, op)
     elif isinstance(op, SetEdgeDescriptionsOp):
         from .semantics import apply_set_edge_descriptions
 
         apply_set_edge_descriptions(manifest, op)
+    elif isinstance(op, SetEdgeSubpropertyOfOp):
+        from .semantics import apply_set_edge_subproperty_of
+
+        apply_set_edge_subproperty_of(manifest, op)
     elif isinstance(op, SetEdgeSemanticsOp):
         from .semantics import apply_set_edge_semantics
 

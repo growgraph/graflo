@@ -15,6 +15,7 @@ from .connectors import (
     ResourceConnector,
     SparqlConnector,
     TableConnector,
+    TemplatedConnector,
     WatermarkConfig,
 )
 from .core import (
@@ -47,5 +48,6 @@ __all__ = [
     "SparqlConnector",
     "StagingProxyBinding",
     "TableConnector",
+    "TemplatedConnector",
     "WatermarkConfig",
 ]

@@ -20,7 +20,7 @@ Rules enforced here (import-time = top-level, non-``TYPE_CHECKING`` imports):
    sibling config modules sit at L3. The package façade is lazy for this reason.
 3. Runtime factories may cross layers **only** via deferred (function-level)
    imports — those are not import-time edges and are not flagged.
-4. ``graflo.link`` is provisional scaffolding over the key contract: it may
+4. ``graflo.link`` is the linking workflow over the key contract: it may
    import anything below it, and no module outside it imports it at all —
    not at import time, not deferred, not under ``TYPE_CHECKING``.
 
@@ -78,7 +78,7 @@ LAYERS: dict[str, int] = {
     "graflo.rdf": 6,
     "graflo.plot": 6,
     "graflo.cli": 6,
-    # Provisional scaffolding over the key contract; nothing else depends on it.
+    # The linking workflow over the key contract; nothing else depends on it.
     "graflo.link": 7,
 }
 

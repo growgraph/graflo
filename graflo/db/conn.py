@@ -114,6 +114,9 @@ class InsertEdgesKwArgs:
     uniq_weight_collections: Any
     on_duplicate: Literal["upsert", "ignore"]
     relationship_merge_properties: Any
+    #: Stored names of the list properties written as a union with what the
+    #: edge holds; only a backend that declares ``supports_union_merge`` reads it.
+    union_fields: tuple[str, ...] = ()
 
 
 def consume_insert_edges_kwargs(kwargs: dict[str, Any]) -> InsertEdgesKwArgs:
@@ -130,6 +133,7 @@ def consume_insert_edges_kwargs(kwargs: dict[str, Any]) -> InsertEdgesKwArgs:
         uniq_weight_collections=kwargs.pop("uniq_weight_collections", None),
         on_duplicate=_parse_on_duplicate(kwargs.pop("on_duplicate", "ignore")),
         relationship_merge_properties=kwargs.pop("relationship_merge_properties", None),
+        union_fields=tuple(kwargs.pop("union_fields", ()) or ()),
     )
     if kwargs:
         logger.warning(
@@ -169,6 +173,7 @@ class ConnectionCapability(Enum):
     READ_GUARD = "supports_read_guard"
     UNION_MERGE = "supports_union_merge"
     SCOPED_DELETE = "supports_scoped_delete"
+    MEMBERSHIP_READ = "supports_membership_read"
 
     @property
     def label(self) -> str:
@@ -182,6 +187,7 @@ class ConnectionCapability(Enum):
             ConnectionCapability.READ_GUARD: "a read guard on every element read",
             ConnectionCapability.UNION_MERGE: "union-merged list fields",
             ConnectionCapability.SCOPED_DELETE: "deleting the elements of a scope",
+            ConnectionCapability.MEMBERSHIP_READ: "reading a list field by ANY_IN",
         }[self]
 
 
@@ -279,6 +285,9 @@ class Connection(abc.ABC):
     #: Writes ``merge: union`` list fields as the union of the stored and the
     #: written value. A writer refuses such a field on a backend without it.
     supports_union_merge: ClassVar[bool] = False
+    #: :meth:`fetch_docs` takes an ``ANY_IN`` filter on a list field. Lookup by a
+    #: derived keys field refuses a backend without it.
+    supports_membership_read: ClassVar[bool] = False
     #: A migration emitter exists for this backend, so a non-dry-run apply can
     #: be attempted at all. Declaring it is what lets a caller refuse an
     #: unsupported backend **by name, before opening a connection**, instead of
@@ -544,6 +553,9 @@ class Connection(abc.ABC):
                 - relationship_merge_properties: Property names for Cypher MERGE
                   (Neo4j, FalkorDB, Memgraph) so parallel edges differ by weights;
                   on PostgreSQL, the edge table's key columns besides the endpoints
+                - union_fields: List properties written as the union of the
+                  stored list and the written one; only a backend that declares
+                  ``supports_union_merge`` is passed them
         """
 
     @abc.abstractmethod

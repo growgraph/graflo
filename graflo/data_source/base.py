@@ -7,6 +7,7 @@ and provide a unified interface for batch iteration.
 
 import abc
 from collections.abc import Iterator
+from typing import Any
 
 from pydantic import PrivateAttr
 
@@ -31,6 +32,30 @@ class DataSourceType(BaseEnum):
     IN_MEMORY = "in_memory"
     SPARQL = "sparql"
     KAFKA = "kafka"
+
+
+def _as_number(value: object) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return None
+    return None
+
+
+def later_watermark(candidate: object, current: object) -> bool:
+    """True when *candidate* is past *current* as a watermark.
+
+    Two numbers (or numeric strings) compare as numbers, anything else as text.
+    """
+    a, b = _as_number(candidate), _as_number(current)
+    if a is not None and b is not None:
+        return a > b
+    return str(candidate) > str(current)
 
 
 class AbstractDataSource(ConfigBaseModel, abc.ABC):
@@ -66,6 +91,14 @@ class AbstractDataSource(ConfigBaseModel, abc.ABC):
             value: Resource name to set
         """
         self._resource_name = value
+
+    @property
+    def high_water(self) -> Any:
+        """Largest watermark value the current iteration has yielded.
+
+        ``None`` for a source without a declared watermark.
+        """
+        return None
 
     @abc.abstractmethod
     def iter_batches(

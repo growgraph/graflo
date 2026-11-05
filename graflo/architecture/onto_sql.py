@@ -74,6 +74,7 @@ class RawTableInfo(BaseModel):
 
     name: str
     schema_name: str
+    """The schema the catalog lists the table in; empty where the engine has none."""
     description: str = ""
     """The table's comment, when the engine stores one."""
     columns: list[ColumnInfo]

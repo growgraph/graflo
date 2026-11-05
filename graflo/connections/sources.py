@@ -8,9 +8,10 @@ Leaf module: no imports from ``bindings``, ``data_source``, ``hq``, or
 from __future__ import annotations
 
 import os
+from pathlib import Path, PurePosixPath
 from typing import Literal, cast
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from graflo.connections.onto import PostgresConfig, SparqlEndpointConfig
 
@@ -36,21 +37,22 @@ class ApiAuth(BaseModel):
     prefix: str = "Bearer"
 
 
+_PROXY_NAME_DESCRIPTION = (
+    "Non-secret runtime handle. Matches conn_proxy in manifest bindings. "
+    "Must be unique per registry instance."
+)
+_ALIAS_DESCRIPTION = "Human-friendly display label."
+
+
 class RestApiConnConfig(BaseModel):
     """Runtime REST API connection settings (base URL and credentials)."""
 
+    kind: Literal["api"] = "api"
     base_url: str
     auth: ApiAuth | None = None
     default_headers: dict[str, str] = Field(default_factory=dict)
-    proxy_name: str | None = Field(
-        default=None,
-        description=(
-            "Non-secret runtime handle. Matches conn_proxy in manifest bindings. "
-            "Must be unique per registry instance. Mirrors DBConfig.proxy_name: "
-            "an API source's connector is looked up by the same label a "
-            "database connector is."
-        ),
-    )
+    proxy_name: str | None = Field(default=None, description=_PROXY_NAME_DESCRIPTION)
+    alias: str | None = Field(default=None, description=_ALIAS_DESCRIPTION)
 
     @classmethod
     def from_env(cls, env_prefix: str) -> RestApiConnConfig:
@@ -103,24 +105,13 @@ class RestApiConnConfig(BaseModel):
         return cls(base_url=cast(str, base_url), auth=auth)
 
 
-class PostgresGeneralizedConnConfig(BaseModel):
-    """Generalized runtime config variant for SQL/Postgres connections."""
+class S3ConnConfig(BaseModel):
+    """What a boto3 S3 client needs: endpoint, region and keys, plus a default bucket.
 
-    kind: Literal["postgres"] = "postgres"
-    config: PostgresConfig
+    Not a registered connection on its own: a :class:`FilesConnConfig` with an
+    ``s3://`` root produces one (:meth:`FilesConnConfig.s3_config`).
+    """
 
-
-class SparqlGeneralizedConnConfig(BaseModel):
-    """Generalized runtime config variant for SPARQL endpoint connections."""
-
-    kind: Literal["sparql"] = "sparql"
-    config: SparqlEndpointConfig
-
-
-class S3GeneralizedConnConfig(BaseModel):
-    """Runtime credentials and defaults for S3 staging (TigerGraph bulk ingest)."""
-
-    kind: Literal["s3"] = "s3"
     bucket: str | None = Field(
         default=None,
         description="Default bucket when TigergraphBulkLoadConfig.s3_bucket is unset.",
@@ -140,12 +131,22 @@ class S3GeneralizedConnConfig(BaseModel):
         ),
     )
 
+    @classmethod
+    def from_env(cls, env_prefix: str) -> S3ConnConfig:
+        """Load S3 staging config from ``{env_prefix}<FIELD>`` variables.
 
-class ApiGeneralizedConnConfig(BaseModel):
-    """Generalized runtime config variant for REST API connections."""
-
-    kind: Literal["rest_api"] = "rest_api"
-    config: RestApiConnConfig
+        Reads ``BUCKET``, ``REGION``, ``AWS_ACCESS_KEY_ID``,
+        ``AWS_SECRET_ACCESS_KEY``, ``ENDPOINT_URL`` and ``LOADER_ENDPOINT_URL``;
+        all are optional.
+        """
+        return cls(
+            **{
+                name: value
+                for name in cls.model_fields
+                if (value := os.environ.get(f"{env_prefix}{name.upper()}") or None)
+                is not None
+            }
+        )
 
 
 KafkaSecurityProtocol = Literal["PLAINTEXT", "SASL_PLAINTEXT", "SASL_SSL", "SSL"]
@@ -157,12 +158,15 @@ _VALID_KAFKA_SECURITY_PROTOCOLS = frozenset(
 class KafkaConnConfig(BaseModel):
     """Runtime Kafka broker connection settings (bootstrap and auth)."""
 
+    kind: Literal["stream"] = "stream"
     bootstrap_servers: str
     security_protocol: KafkaSecurityProtocol = "PLAINTEXT"
     client_id: str | None = None
     sasl_mechanism: str | None = None
     sasl_username: str | None = None
     sasl_password: str | None = None
+    proxy_name: str | None = Field(default=None, description=_PROXY_NAME_DESCRIPTION)
+    alias: str | None = Field(default=None, description=_ALIAS_DESCRIPTION)
 
     @classmethod
     def from_env(cls, env_prefix: str) -> KafkaConnConfig:
@@ -217,17 +221,123 @@ class KafkaConnConfig(BaseModel):
         return cfg
 
 
-class KafkaGeneralizedConnConfig(BaseModel):
-    """Generalized runtime config variant for Kafka connections."""
-
-    kind: Literal["kafka"] = "kafka"
-    config: KafkaConnConfig
+_S3_SCHEME = "s3://"
 
 
-GeneralizedConnConfig = (
-    PostgresGeneralizedConnConfig
-    | SparqlGeneralizedConnConfig
-    | S3GeneralizedConnConfig
-    | ApiGeneralizedConnConfig
-    | KafkaGeneralizedConnConfig
+class FilesConnConfig(BaseModel):
+    """A place files are read from: a local directory or an S3 bucket prefix.
+
+    ``root`` is an absolute local path, or ``s3://<bucket>[/<prefix>]``. A
+    ``FileConnector`` bound to this connection reads ``sub_path`` relative to
+    the root. The S3 fields apply to an ``s3://`` root only; keys come from
+    ``{PREFIX}ACCESS_KEY_ID`` / ``{PREFIX}SECRET_ACCESS_KEY`` at run time.
+    """
+
+    kind: Literal["files"] = "files"
+    root: str = Field(min_length=1)
+    endpoint_url: str | None = Field(
+        default=None, description="For S3-compatible endpoints (MinIO, SeaweedFS)."
+    )
+    region: str | None = None
+    loader_endpoint_url: str | None = Field(
+        default=None,
+        description=(
+            "The S3 endpoint as a bulk loader in another network namespace sees "
+            "it; boto3 keeps using endpoint_url."
+        ),
+    )
+    access_key_id: str | None = None
+    secret_access_key: str | None = None
+    proxy_name: str | None = Field(default=None, description=_PROXY_NAME_DESCRIPTION)
+    alias: str | None = Field(default=None, description=_ALIAS_DESCRIPTION)
+
+    @model_validator(mode="after")
+    def _check_root(self) -> FilesConnConfig:
+        if self.is_s3:
+            if not self.bucket:
+                raise ValueError(f"root {self.root!r} names no bucket")
+        else:
+            if not PurePosixPath(self.root).is_absolute():
+                raise ValueError(
+                    f"root {self.root!r} must be an absolute path or an s3:// URL"
+                )
+            s3_only = [
+                name
+                for name in (
+                    "endpoint_url",
+                    "region",
+                    "loader_endpoint_url",
+                    "access_key_id",
+                    "secret_access_key",
+                )
+                if getattr(self, name) is not None
+            ]
+            if s3_only:
+                raise ValueError(f"{', '.join(s3_only)} apply to an s3:// root only")
+        return self
+
+    @property
+    def is_s3(self) -> bool:
+        return self.root.startswith(_S3_SCHEME)
+
+    @property
+    def bucket(self) -> str | None:
+        """The bucket of an ``s3://`` root."""
+        if not self.is_s3:
+            return None
+        return self.root[len(_S3_SCHEME) :].split("/", 1)[0] or None
+
+    @property
+    def prefix(self) -> str:
+        """The key prefix of an ``s3://`` root, without slashes at either end."""
+        if not self.is_s3:
+            return ""
+        _, _, rest = self.root[len(_S3_SCHEME) :].partition("/")
+        return rest.strip("/")
+
+    @property
+    def local_root(self) -> Path:
+        """The directory of a local root."""
+        if self.is_s3:
+            raise ValueError(f"root {self.root!r} is not a local directory")
+        return Path(self.root).expanduser()
+
+    def s3_config(self) -> S3ConnConfig:
+        """The boto3 settings of an ``s3://`` root."""
+        if not self.is_s3:
+            raise ValueError(f"root {self.root!r} is not an s3:// URL")
+        return S3ConnConfig(
+            bucket=self.bucket,
+            region=self.region,
+            aws_access_key_id=self.access_key_id,
+            aws_secret_access_key=self.secret_access_key,
+            endpoint_url=self.endpoint_url,
+            loader_endpoint_url=self.loader_endpoint_url,
+        )
+
+    @classmethod
+    def from_env(cls, env_prefix: str) -> FilesConnConfig:
+        """Load from ``{env_prefix}<FIELD>``: ``ROOT`` is required, the rest optional."""
+        if not os.environ.get(f"{env_prefix}ROOT"):
+            raise ValueError(
+                f"Environment variable {env_prefix}ROOT is required for FilesConnConfig"
+            )
+        return cls.model_validate(
+            {
+                name: value
+                for name in cls.model_fields
+                if name != "kind"
+                and (value := os.environ.get(f"{env_prefix}{name.upper()}") or None)
+                is not None
+            }
+        )
+
+
+ConnConfig = (
+    PostgresConfig
+    | SparqlEndpointConfig
+    | RestApiConnConfig
+    | KafkaConnConfig
+    | FilesConnConfig
 )
+"""A runtime connection a ``conn_proxy`` label resolves to."""

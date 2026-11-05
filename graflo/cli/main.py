@@ -63,7 +63,7 @@ def _mount_existing() -> None:
     """Mount the pre-existing console scripts as subcommands.
 
     Imported lazily and defensively: several of these pull optional extras
-    (plotting needs pygraphviz, the TigerGraph verbs need a driver), and a
+    (plotting needs the `plot` extra, the TigerGraph verbs need a driver), and a
     missing extra must not take the whole CLI down with it. A verb that cannot
     import is simply absent, which is what the user can act on.
     """

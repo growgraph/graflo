@@ -111,11 +111,11 @@ base  : 97382d5d
 merged (took left):
   identity  : ['ssn']
   properties: ['id', 'ssn', 'email', 'created_at', 'ssn_verified', 'email_verified']
-  hash      : fb66c0ec806b
+  hash      : 40b11aeaec80
 
 merge commit: f26ae87f
   parents   : f42a0133, 78397faf
-  recipe    : d7e4607459e1
+  recipe    : ce563141dc6b
 
 heads after merging: 1
 stored: artifacts/commits
@@ -187,11 +187,11 @@ change from its first parent, the SSN branch, to the merged manifest. That is wh
 `graflo verify --base manifest.yaml --store artifacts/commits` replay the whole
 history from the base (`history replays cleanly (4 commit(s), 1 head(s))`), and
 `graflo checkout --base manifest.yaml --store artifacts/commits f26ae87f`
-rebuild the merged manifest (`manifest hash: fb66c0ec806b`).
+rebuild the merged manifest (`manifest hash: 40b11aeaec80`).
 
 `uv run python merge_branches.py --take right` decides for the email branch
 instead and stores that merge commit in place of `f26ae87f`: the identity
-becomes `['email']`, and the hash (`e294e3f07eb7`) and the merge commit
+becomes `['email']`, and the hash (`3d8513501f81`) and the merge commit
 (`6daeb51f`) change with it.
 
 ## Also possible
@@ -210,5 +210,5 @@ becomes `['email']`, and the hash (`e294e3f07eb7`) and the merge commit
   schema into one that records how facts change over time.
 - [Merging two branches](../../docs/concepts/schema/versioning.md#merging-two-branches):
   slots, conflicts and merge commits in detail.
-- [Tracked merges](../../docs/concepts/schema/versioning.md#tracked-merges):
+- [Tracked merges](../../docs/concepts/schema/versioning.md#tracked-merges-and-lifts):
   how a stored decision is replayed.

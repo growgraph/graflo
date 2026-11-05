@@ -5,6 +5,163 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.25.0]
+
+### Fixed
+
+- A PostgreSQL table introspected without a schema named records the schema the catalog
+  lists it in; a sample that fails to read a table no longer leaves the connection in an
+  aborted transaction.
+- `connection_type` reports the right flavour for a config built by `from_env` or
+  `from_proxy_env`, and for `GraphDBConfig` (new `DBType.GRAPHDB`); these used to report
+  `arango`.
+- A `key` or `any_key` step that reaches a null now writes nothing; with a transform inside it
+  used to fail the whole record.
+- `to_yaml` and `to_yaml_str` write a manifest that has edges; they used to raise on the edge
+  type, after emptying the target file.
+- Neo4j vertex upserts run in a managed transaction, so a deadlock with a concurrent write is
+  retried instead of stopping the ingest.
+- Plot rendering gives Graphviz a larger WebAssembly stack, so larger schemas draw. A graph
+  still too large to lay out raises `StackExhausted` (a `RuntimeError`) naming its size,
+  instead of a raw `wasm trap: call stack exhausted`.
+- `plot-manifest` draws the remaining figures when one cannot be drawn, then exits 1 naming it.
+- `remove_vertices` and `project_manifest` drop a connector, or a value of its `values`,
+  whose records a router sent only to removed classes; such connectors used to survive with
+  their shared resource.
+
+### Added
+
+- **Connection kinds**: every connection config carries `kind` (`database`, `api`, `stream`,
+  `files`) and a database its `db_type`; `parse_connection` reads any stored one back,
+  `CONNECTION_ADAPTER` validates the union, and `roles()` says whether it is read from,
+  written to or both.
+- **`FilesConnConfig`**: files under a local directory or an `s3://` prefix. A
+  `FileConnector` wired to one reads `sub_path` relative to its root, for sampling and ingest.
+- **Discovery**: `GraphEngine.discover(connection)` lists what a connection offers as
+  connectors (PostgreSQL tables, SPARQL classes, Kafka topics, files);
+  `Discovery.bindings()` (or `bindings_for(conn_proxy, resources)`) turns a pick into a
+  bindings block. Files in one directory whose names differ only in digits are one candidate,
+  read by a `regex`, locally and on S3 alike.
+- Sampling reads SPARQL and Kafka connectors too; a Kafka sample uses a consumer group of its
+  own and commits nothing.
+- A SPARQL connector without `endpoint_url` reads the endpoint of its connection.
+- `resolve_secrets_from_env` fills Kafka SASL credentials and S3 keys as well.
+- **`values`** on API and SPARQL connectors: one request per value, filled into `{name}`
+  placeholders, each record carrying the value it was fetched with.
+- **`APIConnector.body`**: a JSON or text request body, with `{name}` placeholders filled from
+  `values` or `parent.fields`; other braces in it are sent as written.
+- Every `plot-manifest` figure carries a legend of its colours and shapes; a colour means the
+  same thing in every figure, and level colours (`--color-vc-by-level`) are named per level and
+  never reuse a type colour. New guide: *Drawing a manifest*.
+- **`FileConnector.recursive`** searches the directories under `sub_path`, and
+  **`FileConnector.file_type`** names the format of files whose names don't show it. Matched
+  files are now always read in path order.
+- **Vocabulary layer.** `semantics` gains `label` (`rdfs:label`), `close_match`
+  (`skos:closeMatch`) and `broader` (`skos:broader`); schema metadata gains `base_iri`, the
+  namespace the schema mints IRIs in, and `namespaces`, its vocabulary prefixes.
+- **Class and relation hierarchies**: `Vertex.subclass_of` (`{vertex: …}` or `{iri: …}`) and
+  `Edge.subproperty_of` (`{edge: {source, target, relation}}` or `{iri: …}`). Logical assertions,
+  checked by the schema: declared, acyclic, an edge's endpoints under its parent's, an undirected
+  edge under an undirected parent. Nothing is inherited.
+- **`graflo.architecture.schema.hierarchy`**: `Hierarchy` (transitive super/subclasses and
+  properties, external parents reached), `new_subsumptions(base, candidate)` and `vertex_iri`.
+- Renames, merges and retargets carry hierarchy references along; removing a parent splices it
+  out, so what was under it moves under its parents. A schema slice keeps the parents of what it
+  keeps.
+- **`set_vertex_subclass_of`** and **`set_edge_subproperty_of`** ops, emitted by
+  `diff_manifests` and reversible.
+- **Ontology 1.10.0**: `gf:subclassOf`, `gf:subpropertyOf`, `gf:baseIri`, `gf:NamespaceBinding`
+  (`gf:hasNamespace`, `gf:namespacePrefix`, `gf:namespaceIri`), `gf:FieldMatch`, `gf:fieldMatch`,
+  `gf:matchNormalizer`, `gf:matchSplit`, `gf:matchOrder`, `gf:matchExclusive`, `gf:derivedSource`
+  and `gf:derivedForm`; `rdfs:label`, `skos:closeMatch` and `skos:broader` on grounded elements.
+- **`notation_fields(vertex)`** and `NOTATION_IRIS` (`graflo.hq.lookup`): the fields grounded as
+  a vertex's short code (`skos:notation`, `dcterms:identifier`, `schema:identifier`), beside
+  `label_fields`.
+- **Union merge on edges**: an edge field declared `merge: union` is written as the union of the
+  stored list and the written one, on FalkorDB, Neo4j and the file backend; other backends refuse
+  the write.
+- **`Field.match`** (`normalizer`, `parts: {split, order}`, `exclusive`) declares how a field's
+  values compare, and `graflo.architecture.schema.compare.compare_value` grades a stated value
+  against a stored one: `exact`, `compatible`, `differs`, `conflict` or `unknown`.
+- **`Field.derived`** (`{source, form: normal | keys}`): a field GraFlo computes from another before
+  every write and digest, overwriting a stated value and hidden from type sheets. A derived
+  identity field names its source in `identity_label` and its normalizer in the digest.
+- **`NORMALIZERS`** (`graflo.util.transform`) with `label_v1`.
+- **Lookup lane `compatible`**: a derived keys field read by `ANY_IN`
+  (`supports_membership_read`: Neo4j, FalkorDB, the file backend). An `alias` hit carries
+  `targets`.
+- **`graflo.link`**: lane `context` (neighbours one hop from entities a source resolved by key or
+  the `subjects` passed to `gather_candidates`), `EntityCandidate.support` and
+  `support(candidate) -> accept | propose`.
+- **Provenance aspect**: `LiftSpec.mentions_for` adds `SourceRecord -mentions-> <Type>`
+  (`schema:mentions`), for the records that name an entity.
+- **`SourceSample.combine({prefix: sample, …})`** merges samples from several sources; with two
+  or more, resource, connector and foreign-key target names are prefixed `<prefix>_`.
+- **Choosing a backend** (docs): one page of what GraFlo does on each backend, and what each
+  server's free edition allows.
+- **Lift commits**: `graflo lift -m LABEL` records a lift as a `lift` commit carrying a
+  `LiftRecipe` (aspects, their versions, the spec), and stamps the written manifest with it.
+- `build_lift_recipe`, `build_lift_commit`, `lift_recipe_of`, `plan_relift` (plan a recorded lift
+  again) and `recipe_drift` (aspects whose version moved); `Aspect.version`.
+
+### Changed
+
+- A `.txt` file is no longer guessed to be a table; set `file_type: table` on its
+  `FileConnector`.
+
+- `GraphEngine.sample_resources(bindings, connection_provider=...)` is the only way to sample;
+  the PostgreSQL-config and file-path forms are gone, as are `ResourceSampler.sample_file`,
+  `sample_files` and `sample_postgres`. Use `GraphEngine.discover` for a connection no model
+  reads yet.
+- The bindings' default `conn_proxy` no longer applies to file and push connectors.
+- TigerGraph S3 staging resolves a files connection with an `s3://` root instead of an
+  `S3ConnConfig`; `MinioConfig.to_s3_conn_config()` is now `to_files_conn_config()`.
+- `SOURCE_DATABASES` holds only what a connector reads (PostgreSQL, SPARQL, GraphDB); graph
+  databases are targets.
+- **Connection provider is a `conn_proxy` → config map.** `InMemoryConnectionProvider({"shop_db":
+  PostgresConfig(...), "crm_api": RestApiConnConfig(...)})`; which connector uses which label is
+  read from the bindings at run time, so a provider built before a connector patch still serves it.
+  `ConnectionProvider.get_config(conn_proxy)` replaces the connector-keyed lookups.
+- `InMemoryConnectionProvider.from_env(bindings)` loads every label the bindings use, of any
+  kind, from `{LABEL}_<FIELD>` variables; `DBConfig.from_proxy_env(conn_proxy)` and
+  `S3ConnConfig.from_env(prefix)` follow the same rule.
+- The `*GeneralizedConnConfig` wrappers are gone: a provider holds `PostgresConfig`,
+  `SparqlEndpointConfig`, `RestApiConnConfig`, `KafkaConnConfig` or `S3ConnConfig` (renamed from
+  `S3GeneralizedConnConfig`) directly, typed `ConnConfig`.
+- Removed: `register_generalized_config`, `bind_from_bindings`, `bind_single_config_for_bindings`,
+  `bind_connector_to_conn_proxy` on the provider, the `register_*_from_env` helpers,
+  `get_postgres_config`, `get_sparql_auth`, the per-resource maps;
+  `to_s3_generalized_conn_config` → `to_s3_conn_config`, `boto3_s3_client_from_generalized` →
+  `boto3_s3_client`. `RegistryBuilder.api_source`, `api_config` and `sparql_source` take the
+  bindings.
+- An undeclared `{name}` in an API connector's `path` or `params` is refused when the bindings
+  load; without a `parent` it used to be sent as written.
+- **Access aspect**: `LiftSpec.access_edges` maps each relation to the merge mode of its zones
+  (`{about: union}`), as `access_for` does for vertex types; the list form is refused.
+- **`graflo.link`** is stable. `AttributeCheck` is `{field, level, exclusive}`; `verdict`,
+  `compare` and `AttributeVerdict` are removed. A candidate is left out only when a key field is in
+  `conflict`.
+- **`LookupSpec.normalized_fields`** is removed: the `normalized` lane reads the schema's
+  `derived: {form: normal}` fields.
+- **`support()`** also accepts a candidate found by a `compatible` form no other entity of its type
+  holds in the reader's view (`SupportFeatures.unique_compatible`); a `compatible` hit carries
+  `targets`, as an alias hit does.
+- **`writable=`** (`resolve_records`, `write_record_graphs`) maps each vertex type to its filter; a
+  guarded type the mapping leaves out is link-only when found.
+- **`resolve_records`** under a guard: a stated key of a type whose guarded fields merge by union
+  joins an entity the guard hides, instead of staging as `hidden`.
+- IRIs in `semantics`, parents, `base_iri` and `namespaces` must be absolute: a non-IRI or a
+  prefixed name (`foaf:Agent`, or one using a declared prefix) is refused. A local vertex or edge
+  named by IRI as a parent is refused too; write the local reference.
+- **Provenance aspect**: `Agent.label` is grounded in `rdfs:label`; a lift adds the grounding to
+  an existing `Agent` that has none.
+- `MergeRecipeRef` is `RecipeRef` and its `kind` is required; `Commit.merge_recipe`,
+  `Provenance.merge_recipe` and `stamp_provenance(merge_recipe=)` are `recipe`. A stored commit
+  under the old key still loads; in a manifest, rename `metadata.provenance.merge_recipe` to
+  `recipe`.
+- A commit's recipe must match its kind (a merge recipe on `merge`/`merge3`, a lift recipe on a
+  single-parent `lift`); any other commit carries none.
+
 ## [1.24.1]
 
 ### Added
@@ -1709,7 +1866,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Example 20 — version control** (`examples/22-version-control/`): record commits over a manifest, fork it, hit a real identity conflict, resolve it, record the merge commit, and replay the recorded decision after one branch advances. Database-free. Documented in the new "Version control" concepts page.
 
-- **The `docs` extra no longer carries `ruff`.** A linter declared as a documentation dependency, unpinned, and a second uncoordinated source of truth for the version beside `.pre-commit-config.yaml`'s `rev`. The pinned `ruff-pre-commit` hook owns it now, matching `graflo-server`, `schewea` and `decigent`, which declare it nowhere.
+- **The `docs` extra no longer carries `ruff`.** A linter declared as a documentation dependency, unpinned, and a second uncoordinated source of truth for the version beside `.pre-commit-config.yaml`'s `rev`. The pinned `ruff-pre-commit` hook owns it now.
 
 - **Canonical form** (`graflo.architecture.evolution.canonicalize`) — the payload a content hash is taken over, and the first half of V0 of version control for world models. `to_minimal_canonical_dict()` already normalized defaults, `None`, aliases and key order; what it did not normalize is **list order**, so two identical schemas authored in different order — or one authored and one replayed, since `apply_add_vertices` appends — hashed differently. `canonical_payload()` adds exactly that one normalization.
 

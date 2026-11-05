@@ -94,12 +94,15 @@ from .resources import (
 from .semantics import (
     EdgeDescriptionTarget,
     EdgeFieldSemanticsTarget,
+    EdgeSubpropertyTarget,
     FieldSemanticsTarget,
     SetEdgeDescriptionsOp,
     SetEdgeSemanticsOp,
+    SetEdgeSubpropertyOfOp,
     SetFieldSemanticsOp,
     SetVertexDescriptionsOp,
     SetVertexSemanticsOp,
+    SetVertexSubclassOfOp,
 )
 from .validation import (
     validate_merge_sources,
@@ -148,6 +151,7 @@ __all__ = [
     "EdgePropertyRenames",
     "EdgeRetargetEntry",
     "EdgeSelector",
+    "EdgeSubpropertyTarget",
     "EnsureExtractedFields",
     "EnsureExtractedFieldsOp",
     "FieldSemanticsTarget",
@@ -194,11 +198,13 @@ __all__ = [
     "SetEdgeDescriptionsOp",
     "SetEdgeDirectedOp",
     "SetEdgeSemanticsOp",
+    "SetEdgeSubpropertyOfOp",
     "SetFieldSemanticsOp",
     "SetInverseEmissionOp",
     "SetNativeInversesOp",
     "SetVertexDescriptionsOp",
     "SetVertexSemanticsOp",
+    "SetVertexSubclassOfOp",
     "SideRenames",
     "VertexEquivalence",
     "branch_fields",
@@ -236,8 +242,10 @@ ManifestOp = Annotated[
     | SetBindingsOp
     | SetDbProfileOp
     | SetVertexSemanticsOp
+    | SetVertexSubclassOfOp
     | SetVertexDescriptionsOp
     | SetEdgeDescriptionsOp
+    | SetEdgeSubpropertyOfOp
     | SetEdgeSemanticsOp
     | SetFieldSemanticsOp
     | MergeVerticesOp

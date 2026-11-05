@@ -7,6 +7,7 @@ from pydantic import model_validator
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.schema.edge import EdgeConfig
+from graflo.architecture.schema.hierarchy import Hierarchy, check_hierarchy
 from graflo.architecture.schema.vertex import VertexConfig
 
 
@@ -31,6 +32,7 @@ class CoreSchema(ConfigBaseModel):
         self.vertex_config.finish_init()
         self._validate_edge_vertices_defined()
         self.edge_config.finish_init(self.vertex_config)
+        check_hierarchy(self.vertex_config, self.edge_config)
 
     def _validate_edge_vertices_defined(self) -> None:
         """Ensure all edge endpoints reference defined vertex names."""
@@ -47,8 +49,14 @@ class CoreSchema(ConfigBaseModel):
             )
 
     def remove_disconnected_vertices(self) -> set[str]:
-        """Remove disconnected vertices and return removed names."""
-        connected = self.edge_config.vertices
+        """Remove disconnected vertices and return removed names.
+
+        A superclass of a connected vertex stays: it is part of that vertex's
+        meaning, and removing it would leave its subclass naming nothing.
+        """
+        hierarchy = Hierarchy.of(self)
+        connected = set(self.edge_config.vertices)
+        connected |= {p for v in list(connected) for p in hierarchy.superclasses(v)}
         disconnected = self.vertex_config.vertex_set - connected
         if disconnected:
             self.vertex_config.remove_vertices(disconnected)

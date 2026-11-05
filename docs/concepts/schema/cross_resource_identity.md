@@ -23,6 +23,7 @@ refuses a proposal whose strategy is `no_viable_identity`.
 from suthing import FileHandle
 
 from graflo import GraphEngine, GraphManifest
+from graflo.connections import FilesConnConfig, InMemoryConnectionProvider
 from graflo.db.cross_resource_identity import (
     apply_proposal_to_vertex,
     infer_from_source_sample,
@@ -32,8 +33,13 @@ manifest = GraphManifest.from_config(FileHandle.load("manifest.yaml"))
 manifest.finish_init()
 machine = manifest.require_schema().core_schema.vertex_config["machine"]
 
-source = GraphEngine().sample_resources(
-    ["exports/maintenance_assets.csv", "exports/sensor_devices.csv"],
+exports = FilesConnConfig(root="/srv/exports")
+engine = GraphEngine()
+source = engine.sample_resources(
+    engine.discover(exports).bindings(
+        "exports", ["maintenance_assets", "sensor_devices"]
+    ),
+    connection_provider=InMemoryConnectionProvider({"exports": exports}),
     max_docs=500,
 )
 proposal = infer_from_source_sample(source, vertex_name="machine")

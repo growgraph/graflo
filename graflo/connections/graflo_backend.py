@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import SettingsConfigDict
@@ -18,6 +19,8 @@ class GraFloBackendConfig(DBConfig):
         env_prefix="GRAFLO_BACKEND_",
         case_sensitive=False,
     )
+
+    db_type: Literal[DBType.GRAFLO_BACKEND] = DBType.GRAFLO_BACKEND  # ty: ignore[invalid-mutable-override]
 
     output_dir: Path = Field(
         ...,

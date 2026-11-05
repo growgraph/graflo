@@ -82,10 +82,7 @@ conn_conf.bulk_load = TigergraphBulkLoadConfig(
     s3_bucket=minio_conf.bucket,
     s3_key_prefix=os.environ.get("BULK_S3_PREFIX", "demo"),
 )
-provider.register_generalized_config(
-    conn_proxy="minio_bulk",
-    config=minio_conf.to_s3_generalized_conn_config(),
-)
+provider.register("minio_bulk", minio_conf.to_files_conn_config())
 ```
 
 Before ingesting, the script creates the bucket if it is missing, and fails at
@@ -150,9 +147,10 @@ loading job.
 
 ## Also possible
 
-- For AWS S3 or any other S3-compatible store, build an
-  `S3GeneralizedConnConfig` yourself and register it under the same label;
-  `MinioConfig.to_s3_generalized_conn_config()` is only a shortcut.
+- For AWS S3 or any other S3-compatible store, build a `FilesConnConfig` with
+  an `s3://<bucket>` root yourself (or `FilesConnConfig.from_env("MINIO_BULK_")`)
+  and register it under the same label; `MinioConfig.to_files_conn_config()` is
+  only a shortcut.
 - For other ways to emulate S3 in development, see
   [Emulating S3 in development](../../docs/guides/tigergraph_bulk_load.md#emulating-s3-in-development).
 

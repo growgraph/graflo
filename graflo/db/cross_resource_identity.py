@@ -13,7 +13,7 @@ merges distinct entities, and the damage is unbounded and hard to reverse.
 
 Typical use::
 
-    sample = engine.sample_resources(bindings)
+    sample = engine.sample_resources(bindings, connection_provider=provider)
     proposal = CrossResourceIdentityInferencer().infer(
         sample.samples_by_resource, vertex_name="party"
     )

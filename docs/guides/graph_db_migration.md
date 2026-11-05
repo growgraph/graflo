@@ -15,8 +15,8 @@ operations do and which backends support them, read
 
 - GraFlo installed (`pip install graflo`). The drivers for every backend come
   with it.
-- A source that GraFlo can read as a graph: Neo4j, ArangoDB, PostgreSQL
-  holding a graph that GraFlo wrote, or a GraFlo file backend.
+- A source that GraFlo can read as a graph: Neo4j, ArangoDB, FalkorDB,
+  PostgreSQL holding a graph that GraFlo wrote, or a GraFlo file backend.
 - A target: any of the eight backends (ArangoDB, Neo4j, TigerGraph, FalkorDB,
   Memgraph, NebulaGraph, PostgreSQL, the file backend).
 - Connection settings for both. Each config class loads them with
@@ -49,8 +49,8 @@ print([v.name for v in schema.core_schema.vertex_config.vertices])
 print([e.edge_id for e in schema.core_schema.edge_config.edges])
 ```
 
-This prints the vertex types and the edge types that will be moved. Neo4j and
-ArangoDB have no schema catalog, so the schema is recovered from
+This prints the vertex types and the edge types that will be moved. Neo4j,
+FalkorDB and ArangoDB have no schema catalog, so the schema is recovered from
 `sample_limit` records per type. If a type has a property that the sample
 missed, raise `sample_limit`. PostgreSQL and the file backend read a catalog
 and do not sample.
@@ -121,7 +121,7 @@ GraphEngine(target_db_flavor=DBType.POSTGRES).migrate_graph(
 )
 ```
 
-A source that GraFlo cannot read as a graph (TigerGraph, FalkorDB, Memgraph,
+A source that GraFlo cannot read as a graph (TigerGraph, Memgraph,
 NebulaGraph) raises `ValueError` naming the backends that can be read. Build
 a file backend from the original data instead and migrate from that; see
 [Graph export and replay](graph_export_and_replay.md).

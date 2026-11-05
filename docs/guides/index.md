@@ -19,6 +19,7 @@ assume you have a manifest or a graph to work with.
 | Load a large graph into TigerGraph quickly | [TigerGraph bulk load](tigergraph_bulk_load.md) | [Bulk load into TigerGraph (13)](../examples/tigergraph-bulk-s3/index.md) |
 | Move a graph from one database to another | [Graph DB migration](graph_db_migration.md) | [A graph on disk, without a database (14)](../examples/file-backend-export/index.md) |
 | Save a graph to files and load it back | [Graph export and replay](graph_export_and_replay.md) | [A graph on disk, without a database (14)](../examples/file-backend-export/index.md) |
+| Draw my manifest and read its colours and shapes | [Drawing a manifest](drawing_a_manifest.md) | — |
 | Import only the parts of GraFlo I use, and know which layer my code belongs to | [Importing and layering](importing.md) | — |
 | Add support for a new database | [Adding a database backend](adding_a_backend.md) | — |
 

@@ -265,11 +265,10 @@ def _unit_ops(spec: LiftSpec, by_name: dict[str, Vertex]) -> list[ManifestOp]:
                 field=field_name,
                 # Preserve any grounding already on the property: a unit is an
                 # addition to what a field means, not a replacement for it.
-                semantics=FieldSemantics(
-                    iri=existing.iri if existing else None,
-                    exact_match=list(existing.exact_match) if existing else [],
-                    synonyms=list(existing.synonyms) if existing else [],
-                    unit=unit,
+                semantics=(
+                    existing.model_copy(update={"unit": unit}, deep=True)
+                    if existing
+                    else FieldSemantics(unit=unit)
                 ),
             )
         )

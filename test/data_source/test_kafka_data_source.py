@@ -11,7 +11,7 @@ import pytest
 
 from graflo.architecture.contract.bindings import Bindings, KafkaConnector
 from graflo.connections.provider import InMemoryConnectionProvider
-from graflo.connections.sources import KafkaConnConfig, KafkaGeneralizedConnConfig
+from graflo.connections.sources import KafkaConnConfig
 from graflo.data_source.kafka import (
     KafkaConfig,
     KafkaDataSource,
@@ -283,13 +283,10 @@ def test_registry_builder_registers_kafka_source() -> None:
         ],
     )
     provider = InMemoryConnectionProvider()
-    provider.register_generalized_config(
-        conn_proxy="kafka_local",
-        config=KafkaGeneralizedConnConfig(
-            config=KafkaConnConfig(bootstrap_servers=KAFKA_BOOTSTRAP)
-        ),
+    provider.register(
+        "kafka_local",
+        KafkaConnConfig(bootstrap_servers=KAFKA_BOOTSTRAP),
     )
-    provider.bind_from_bindings(bindings=bindings)
 
     registry = RegistryBuilder(schema, ingestion_model).build(
         bindings=bindings,

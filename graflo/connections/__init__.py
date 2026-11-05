@@ -7,7 +7,12 @@ This package is the single home for *how to reach things*:
 - :mod:`graflo.connections.graflo_backend` — config for the on-disk GraFlo backend.
 - :mod:`graflo.connections.mapping` — ``DBType`` → config-class mapping.
 - :mod:`graflo.connections.sources` — runtime *source* connection models
-  (REST API, Kafka, SPARQL, S3 credentials).
+  (REST API, Kafka, files on a local disk or S3) and ``ConnConfig``, the union
+  a ``conn_proxy`` label resolves to.
+- :mod:`graflo.connections.kinds` — every connection as one union discriminated
+  by ``kind``, ``parse_connection`` and the roles each kind plays.
+- :mod:`graflo.connections.env` — the ``conn_proxy`` → ``{PREFIX}<FIELD>``
+  environment-variable rule.
 - :mod:`graflo.connections.provider` — ``ConnectionProvider`` protocol resolving
   ``conn_proxy`` labels to runtime configs (keeps YAML manifests secret-free).
 
@@ -41,55 +46,73 @@ _EXPORTS: dict[str, str] = {
     # mapping
     "DB_TYPE_MAPPING": "graflo.connections.mapping",
     "get_config_class": "graflo.connections.mapping",
+    # kinds — every connection as one union, and its roles
+    "CONNECTION_ADAPTER": "graflo.connections.kinds",
+    "AnyConnection": "graflo.connections.kinds",
+    "Connection": "graflo.connections.kinds",
+    "ConnectionKind": "graflo.connections.kinds",
+    "Role": "graflo.connections.kinds",
+    "connection_kind": "graflo.connections.kinds",
+    "parse_connection": "graflo.connections.kinds",
+    "roles": "graflo.connections.kinds",
     # sources — runtime source connection models
     "ApiAuth": "graflo.connections.sources",
-    "ApiGeneralizedConnConfig": "graflo.connections.sources",
-    "GeneralizedConnConfig": "graflo.connections.sources",
+    "ConnConfig": "graflo.connections.sources",
+    "FilesConnConfig": "graflo.connections.sources",
     "KafkaConnConfig": "graflo.connections.sources",
-    "KafkaGeneralizedConnConfig": "graflo.connections.sources",
     "KafkaSecurityProtocol": "graflo.connections.sources",
-    "PostgresGeneralizedConnConfig": "graflo.connections.sources",
     "RestApiConnConfig": "graflo.connections.sources",
-    "S3GeneralizedConnConfig": "graflo.connections.sources",
+    "S3ConnConfig": "graflo.connections.sources",
     "SparqlAuth": "graflo.connections.sources",
-    "SparqlGeneralizedConnConfig": "graflo.connections.sources",
+    # env — the conn_proxy → environment-variable naming rule
+    "proxy_env_prefix": "graflo.connections.env",
     # provider — runtime resolution (imports the contract; lazy on purpose)
     "ConnectionProvider": "graflo.connections.provider",
     "EmptyConnectionProvider": "graflo.connections.provider",
     "InMemoryConnectionProvider": "graflo.connections.provider",
+    "connector_config": "graflo.connections.provider",
+    "resolve_secrets_from_env": "graflo.connections.provider",
 }
 
 __all__ = [
+    "CONNECTION_ADAPTER",
     "DB_TYPE_MAPPING",
     "TARGET_DATABASES",
+    "AnyConnection",
     "ApiAuth",
-    "ApiGeneralizedConnConfig",
     "ArangoConfig",
+    "ConnConfig",
+    "Connection",
+    "ConnectionKind",
     "ConnectionProvider",
     "DBConfig",
     "EmptyConnectionProvider",
     "FalkordbConfig",
-    "GeneralizedConnConfig",
+    "FilesConnConfig",
     "GraFloBackendConfig",
     "GraphDBConfig",
     "InMemoryConnectionProvider",
     "KafkaConnConfig",
-    "KafkaGeneralizedConnConfig",
     "KafkaSecurityProtocol",
     "MemgraphConfig",
     "NebulaConfig",
     "Neo4jConfig",
     "PostgresConfig",
-    "PostgresGeneralizedConnConfig",
     "RestApiConnConfig",
-    "S3GeneralizedConnConfig",
+    "Role",
+    "S3ConnConfig",
     "SparqlAuth",
     "SparqlEndpointConfig",
-    "SparqlGeneralizedConnConfig",
     "TigergraphBulkLoadConfig",
     "TigergraphBulkLoadJobOptions",
     "TigergraphConfig",
+    "connection_kind",
+    "connector_config",
     "get_config_class",
+    "parse_connection",
+    "proxy_env_prefix",
+    "resolve_secrets_from_env",
+    "roles",
 ]
 
 

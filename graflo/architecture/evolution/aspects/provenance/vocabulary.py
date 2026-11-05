@@ -4,7 +4,9 @@
 an API response, a table row. It carries the *address* of that record and a
 hash of its content, never the content: the text or the row stays where it
 was landed, and the graph points at it. ``Agent`` is who or what produced the
-record. Both are ``prov:`` types; the two edges are the PROV-O relations.
+record. Both are ``prov:`` types; ``wasDerivedFrom`` and ``wasAttributedTo`` are
+the PROV-O relations. ``mentions`` says a record names an entity, which holds
+whether or not the entity's facts were read from that record.
 """
 
 from __future__ import annotations
@@ -19,6 +21,8 @@ from ..iris import (
     PROV_GENERATED_AT,
     PROV_WAS_ATTRIBUTED_TO,
     PROV_WAS_DERIVED_FROM,
+    RDFS_LABEL,
+    SCHEMA_MENTIONS,
     SOSA_SENSOR,
 )
 
@@ -31,6 +35,8 @@ MEDIA_TYPE = "media_type"
 CONTENT_HASH = "content_hash"
 RETRIEVED_AT = "retrieved_at"
 ROLE = "role"
+
+MENTIONS = "mentions"
 
 
 def source_record_vertex() -> Vertex:
@@ -66,7 +72,11 @@ def agent_vertex() -> Vertex:
         semantics=Semantics(iri=PROV_AGENT, exact_match=[PROV_AGENT, SOSA_SENSOR]),
         properties=[
             Field(name="agent_id", type=FieldType.STRING),
-            Field(name="label", type=FieldType.STRING),
+            Field(
+                name="label",
+                type=FieldType.STRING,
+                semantics=FieldSemantics(iri=RDFS_LABEL),
+            ),
             Field(name="agent_kind", type=FieldType.STRING),
         ],
         identity=["agent_id"],
@@ -105,6 +115,17 @@ def derived_from_edge(source: str) -> Edge:
     )
 
 
+def mentions_edge(target: str) -> Edge:
+    """``SourceRecord -mentions-> <target>``."""
+    return grounded_edge(
+        SOURCE_RECORD,
+        target,
+        MENTIONS,
+        SCHEMA_MENTIONS,
+        "An entity this record names.",
+    )
+
+
 def attributed_to_edge() -> Edge:
     """``SourceRecord -wasAttributedTo-> Agent``, with the agent's role on the edge."""
     return grounded_edge(
@@ -121,6 +142,7 @@ __all__ = [
     "AGENT",
     "CONTENT_HASH",
     "MEDIA_TYPE",
+    "MENTIONS",
     "RETRIEVED_AT",
     "ROLE",
     "SOURCE_RECORD",
@@ -130,5 +152,6 @@ __all__ = [
     "attributed_to_edge",
     "derived_from_edge",
     "grounded_edge",
+    "mentions_edge",
     "source_record_vertex",
 ]

@@ -16,7 +16,7 @@ from graflo.db.tigergraph.bulk_csv import edge_column_order, vertex_column_order
 from graflo.onto import DBType
 
 if TYPE_CHECKING:
-    from graflo.connections.provider import S3GeneralizedConnConfig
+    from graflo.connections.sources import S3ConnConfig
 
 
 def _logical_vertex_for_physical(vc, physical: str) -> str:
@@ -42,7 +42,7 @@ def _values_placeholders(n: int) -> str:
 _DATA_SOURCE_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
-def _tigergraph_s3_data_source_dict(cfg: S3GeneralizedConnConfig) -> dict[str, Any]:
+def _tigergraph_s3_data_source_dict(cfg: S3ConnConfig) -> dict[str, Any]:
     """JSON object for ``CREATE DATA_SOURCE`` (TigerGraph cloud / S3 loader)."""
     if not cfg.aws_access_key_id or not cfg.aws_secret_access_key:
         raise ValueError(
@@ -77,7 +77,7 @@ def build_create_and_run_loading_job(
     staged_files: dict[str, Path],
     bulk_cfg: TigergraphBulkLoadConfig,
     path_for_gsql: dict[str, str],
-    tigergraph_s3_loader: S3GeneralizedConnConfig | None = None,
+    tigergraph_s3_loader: S3ConnConfig | None = None,
     tigergraph_s3_data_source_name: str | None = None,
 ) -> str:
     """Build a GSQL script: USE GRAPH, optional DATA_SOURCE, CREATE LOADING JOB, RUN.
@@ -88,7 +88,7 @@ def build_create_and_run_loading_job(
     TigerGraph requires a ``CREATE DATA_SOURCE`` with credentials and (for MinIO) a
     custom endpoint when using ``s3://`` paths; filenames must look like
     ``"$data_source_name:s3://bucket/key"``. Pass *tigergraph_s3_loader* when any path
-    is ``s3://`` (typically the same :class:`~graflo.connections.provider.S3GeneralizedConnConfig`
+    is ``s3://`` (typically the same :class:`~graflo.connections.sources.S3ConnConfig`
     used for boto3 upload).
     """
     if schema_db.db_profile.db_flavor != DBType.TIGERGRAPH:
@@ -105,7 +105,7 @@ def build_create_and_run_loading_job(
         if tigergraph_s3_loader is None:
             raise ValueError(
                 "TigerGraph LOADING JOB with s3:// paths requires "
-                "tigergraph_s3_loader (S3GeneralizedConnConfig): "
+                "tigergraph_s3_loader (S3ConnConfig): "
                 "use CREATE DATA_SOURCE with credentials and a MinIO endpoint. "
                 "Bare s3:// URLs are resolved against AWS and will not load from MinIO."
             )

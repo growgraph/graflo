@@ -15,7 +15,6 @@ from graflo.architecture.contract.bindings import (
 )
 from graflo.connections.onto import PostgresConfig
 from graflo.connections.provider import (
-    ApiGeneralizedConnConfig,
     InMemoryConnectionProvider,
     RestApiConnConfig,
 )
@@ -57,16 +56,10 @@ def _users_connector(page_size: int = 2) -> APIConnector:
     )
 
 
-def _api_provider(port: int, connector: APIConnector) -> InMemoryConnectionProvider:
-    provider = InMemoryConnectionProvider()
-    provider.register_generalized_config(
-        conn_proxy="api_source",
-        config=ApiGeneralizedConnConfig(
-            config=RestApiConnConfig(base_url=f"http://localhost:{port}")
-        ),
+def _api_provider(port: int) -> InMemoryConnectionProvider:
+    return InMemoryConnectionProvider(
+        {"api_source": RestApiConnConfig(base_url=f"http://localhost:{port}")}
     )
-    provider.bind_connector_to_conn_proxy(connector=connector, conn_proxy="api_source")
-    return provider
 
 
 def _build_registry(
@@ -87,7 +80,7 @@ def _build_registry(
         resource_connector=[{"resource": resource_name, "connector": "users_api"}],
         connector_connection=[{"connector": "users_api", "conn_proxy": "api_source"}],
     )
-    provider = _api_provider(port, connector)
+    provider = _api_provider(port)
     registry = RegistryBuilder(schema, ingestion_model).build(
         bindings=bindings,
         ingestion_params=ingestion_params
@@ -280,14 +273,6 @@ def _build_envelope_registry(
 ) -> APIDataSource:
     _, port = mock_envelope_api_server
     connector = _envelope_connector(page_size=page_size)
-    provider = InMemoryConnectionProvider()
-    provider.register_generalized_config(
-        conn_proxy="api_source",
-        config=ApiGeneralizedConnConfig(
-            config=RestApiConnConfig(base_url=f"http://localhost:{port}")
-        ),
-    )
-    provider.bind_connector_to_conn_proxy(connector=connector, conn_proxy="api_source")
     config = connector.build_api_config(
         base_url=f"http://localhost:{port}",
         page_size_override=page_size,

@@ -45,20 +45,15 @@ class ConfigBaseModel(BaseModel):
         return cls.model_validate(data)
 
     def to_yaml(self, path: str, **kwargs: Any) -> None:
-        """Save instance to a YAML file."""
+        """Save instance to a YAML file; a value that can't be written leaves the file as it was."""
+        text = self.to_yaml_str(**kwargs)
         with open(path, "w") as f:
-            yaml.safe_dump(
-                self.model_dump(by_alias=True, exclude_none=True),
-                f,
-                default_flow_style=False,
-                sort_keys=False,
-                **kwargs,
-            )
+            f.write(text)
 
     def to_yaml_str(self, **kwargs: Any) -> str:
         """Convert instance to a YAML string."""
         return yaml.safe_dump(
-            self.model_dump(by_alias=True, exclude_none=True),
+            self.model_dump(mode="json", by_alias=True, exclude_none=True),
             default_flow_style=False,
             sort_keys=False,
             **kwargs,

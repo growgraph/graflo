@@ -19,10 +19,8 @@ from graflo.object_storage import upload_staged_csvs
 from graflo.onto import DBType
 
 if TYPE_CHECKING:
-    from graflo.connections.provider import (
-        ConnectionProvider,
-        S3GeneralizedConnConfig,
-    )
+    from graflo.connections.provider import ConnectionProvider
+    from graflo.connections.sources import S3ConnConfig
     from graflo.db.tigergraph.conn import TigerGraphConnection
 
 _tiger_bulk_sessions_lock = threading.Lock()
@@ -102,26 +100,34 @@ def bulk_load_finalize(
     path_for_gsql: dict[str, str] = {k: str(v.resolve()) for k, v in staged.items()}
     proxy = bulk_cfg.resolve_s3_conn_proxy(bindings)
     bucket = bulk_cfg.s3_bucket
-    tigergraph_s3_loader: S3GeneralizedConnConfig | None = None
+    tigergraph_s3_loader: S3ConnConfig | None = None
     if proxy and connection_provider is not None:
-        from graflo.connections.provider import S3GeneralizedConnConfig
+        from graflo.connections.sources import FilesConnConfig
 
-        gen = connection_provider.get_generalized_config_by_proxy(proxy)
-        if isinstance(gen, S3GeneralizedConnConfig):
-            tigergraph_s3_loader = gen
-            resolved_bucket = bucket or gen.bucket
-            if not resolved_bucket:
-                raise ValueError(
-                    "S3 bulk staging requires TigergraphBulkLoadConfig.s3_bucket "
-                    "or S3GeneralizedConnConfig.bucket"
-                )
-            path_for_gsql = upload_staged_csvs(
-                staged_files=staged,
-                bucket=resolved_bucket,
-                key_prefix=bulk_cfg.s3_key_prefix,
-                session_id=session_id,
-                s3_cfg=gen,
+        files = connection_provider.get_config(proxy)
+        if not isinstance(files, FilesConnConfig) or not files.is_s3:
+            raise ValueError(
+                f"S3 bulk staging proxy {proxy!r} must resolve to a files "
+                "connection with an s3:// root"
             )
+        s3_cfg = files.s3_config()
+        tigergraph_s3_loader = s3_cfg
+        resolved_bucket = bucket or s3_cfg.bucket
+        if not resolved_bucket:
+            raise ValueError(
+                "S3 bulk staging requires TigergraphBulkLoadConfig.s3_bucket "
+                "or a bucket in the files connection's root"
+            )
+        key_prefix = "/".join(
+            part for part in (files.prefix, bulk_cfg.s3_key_prefix.strip("/")) if part
+        )
+        path_for_gsql = upload_staged_csvs(
+            staged_files=staged,
+            bucket=resolved_bucket,
+            key_prefix=key_prefix,
+            session_id=session_id,
+            s3_cfg=s3_cfg,
+        )
     gsql = build_create_and_run_loading_job(
         graph_name=graph_name,
         job_name=job_name,

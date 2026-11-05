@@ -70,9 +70,13 @@ export SENSOR_FEED_TOKEN=example-sensor-token
 settings of each label found in it:
 
 ```python
-provider = InMemoryConnectionProvider()
-provider.register_all_api_configs_from_env(bindings=bindings)
+provider = InMemoryConnectionProvider.from_env(bindings)
 ```
+
+The kind of settings follows the connectors: an API connector's label reads the
+variables above, a table connector's label reads `{LABEL}_URI`,
+`{LABEL}_USERNAME`, `{LABEL}_PASSWORD`, a Kafka connector's label reads
+`{LABEL}_BOOTSTRAP_SERVERS`. One call covers a manifest that mixes them.
 
 To ingest, pass the provider to `engine.define_and_ingest(...,
 connection_provider=provider)`, as [example 11](../11-connection-proxy/README.md)
@@ -100,18 +104,20 @@ readings_api: https://sensors.example.com/api/readings (label sensor_feed, auth 
 **A variable is missing.** Without `SENSOR_FEED_BASE_URL`, loading stops with:
 
 ```text
-ValueError: Environment variable SENSOR_FEED_BASE_URL is required for RestApiConnConfig
+ValueError: Cannot load connection configs from the environment: 'sensor_feed': Environment variable SENSOR_FEED_BASE_URL is required for RestApiConnConfig
 ```
+
+Every label with a missing variable is listed in the one error.
 
 ## Also possible
 
 - When your variables use other names, map a label to its prefix:
-  `provider.register_all_api_configs_from_env(bindings=bindings,
+  `InMemoryConnectionProvider.from_env(bindings,
   env_prefix_map={"sensor_feed": "SENSORS_"})` reads `SENSORS_BASE_URL` and
   `SENSORS_TOKEN`.
-- `provider.register_api_config_from_env(conn_proxy="maintenance_api")` loads
-  one label; `provider.bind_from_bindings(bindings=bindings)` then connects the
-  connectors to their labels.
+- To load one label yourself, build its config and pass a mapping:
+  `InMemoryConnectionProvider({"maintenance_api":
+  RestApiConnConfig.from_env("MAINTENANCE_API_")})`.
 
 ## What to read next
 

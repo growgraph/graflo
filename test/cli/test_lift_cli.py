@@ -14,6 +14,12 @@ import pathlib
 import yaml
 from click.testing import CliRunner
 
+from graflo.architecture.contract.provenance import read_provenance
+from graflo.architecture.evolution.commit import build_root_commit
+from graflo.architecture.evolution.hashing import manifest_hash
+from graflo.architecture.evolution.history import FileCommitStore
+from graflo.architecture.evolution.lift_commit import lift_recipe_of
+from graflo.cli.io import load_manifest
 from graflo.cli.main import graflo
 
 EXAMPLE = pathlib.Path(__file__).resolve().parents[2] / "examples" / "23-lift-aspects"
@@ -132,3 +138,116 @@ def test_the_shipped_example_lifts_to_its_shipped_artifacts(
     assert yaml.safe_load(out.read_text()) == yaml.safe_load(
         (shipped / "manifest_lifted.yaml").read_text()
     )
+
+
+def _stored(manifest: pathlib.Path, store: pathlib.Path) -> str:
+    """A store whose one root names *manifest*; returns the root's id."""
+    root = build_root_commit(load_manifest(manifest), label="base")
+    FileCommitStore(store).append(root)
+    return root.id
+
+
+class TestRecordingTheLift:
+    """``-m`` records the lift in the store as a ``lift`` commit.
+
+    Without it a lifted manifest cannot say which aspects, at which version
+    and under which spec, produced it.
+    """
+
+    def test_without_the_flag_no_store_is_written(self, tmp_path: pathlib.Path) -> None:
+        store = tmp_path / "commits"
+        result = _run(
+            str(MANIFEST_IN),
+            "--spec",
+            str(SPEC),
+            "-o",
+            str(tmp_path / "lifted.yaml"),
+            "--store",
+            str(store),
+        )
+
+        assert result.exit_code == 0, result.output
+        assert not store.exists()
+
+    def test_the_label_records_a_lift_commit_and_stamps_the_output(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        store, out = tmp_path / "commits", tmp_path / "lifted.yaml"
+        root = _stored(MANIFEST_IN, store)
+
+        result = _run(
+            str(MANIFEST_IN),
+            "--spec",
+            str(SPEC),
+            "-o",
+            str(out),
+            "--store",
+            str(store),
+            "-m",
+            "lift aspects",
+        )
+
+        assert result.exit_code == 0, result.output
+        head = FileCommitStore(store).load().heads()[0]
+        assert head.kind == "lift" and head.parents == [root]
+        assert head.label == "lift aspects"
+        assert lift_recipe_of(head).aspects == ["provenance", "state"]
+        provenance = read_provenance(load_manifest(out))
+        assert provenance is not None and head.recipe is not None
+        assert provenance.commit == head.id
+        assert provenance.parents == [root]
+        assert provenance.recipe == head.recipe.hash
+        assert manifest_hash(load_manifest(out)) == head.tree
+
+    def test_a_manifest_absent_from_the_store_is_refused(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """Exit 2: the lift is fine, the store cannot name a parent for it."""
+        out = tmp_path / "lifted.yaml"
+        result = _run(
+            str(MANIFEST_IN),
+            "--spec",
+            str(SPEC),
+            "-o",
+            str(out),
+            "--store",
+            str(tmp_path / "empty"),
+            "-m",
+            "lift",
+        )
+
+        assert result.exit_code == 2
+        assert "cannot be named as a parent" in result.output
+        assert not out.exists()
+
+    def test_lifting_again_records_nothing_and_exits_zero(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        store, once = tmp_path / "commits", tmp_path / "once.yaml"
+        _stored(MANIFEST_IN, store)
+        args = ["--spec", str(SPEC), "--store", str(store), "-m", "lift"]
+        assert _run(str(MANIFEST_IN), *args, "-o", str(once)).exit_code == 0
+
+        again = _run(str(once), *args, "-o", str(tmp_path / "twice.yaml"))
+
+        assert again.exit_code == 0, again.output
+        assert "nothing to record" in again.output
+        assert len(FileCommitStore(store).load().commits) == 2
+
+    def test_dry_run_records_nothing(self, tmp_path: pathlib.Path) -> None:
+        store = tmp_path / "commits"
+        _stored(MANIFEST_IN, store)
+
+        result = _run(
+            str(MANIFEST_IN),
+            "--spec",
+            str(SPEC),
+            "--store",
+            str(store),
+            "-m",
+            "x",
+            "--dry-run",
+        )
+
+        assert result.exit_code == 0, result.output
+        assert len(FileCommitStore(store).load().commits) == 1

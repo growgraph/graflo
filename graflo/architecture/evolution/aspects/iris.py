@@ -24,6 +24,11 @@ SSN = "http://www.w3.org/ns/ssn/"
 TIME = "http://www.w3.org/2006/time#"
 QUDT = "http://qudt.org/schema/qudt/"
 DCTERMS = "http://purl.org/dc/terms/"
+RDFS = "http://www.w3.org/2000/01/rdf-schema#"
+
+RDFS_LABEL = f"{RDFS}label"
+
+SCHEMA_MENTIONS = "https://schema.org/mentions"
 
 PROV_ENTITY = f"{PROV}Entity"
 PROV_ACTIVITY = f"{PROV}Activity"
@@ -63,6 +68,7 @@ __all__ = [
     "PROV_WAS_INFLUENCED_BY",
     "QUDT",
     "QUDT_UCUM_CODE",
+    "SCHEMA_MENTIONS",
     "SOSA",
     "SOSA_FEATURE_OF_INTEREST",
     "SOSA_HAS_FEATURE_OF_INTEREST",

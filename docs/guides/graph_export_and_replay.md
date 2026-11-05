@@ -15,8 +15,8 @@ and the limits of export, read
 ## What you need
 
 - GraFlo installed (`pip install graflo`).
-- A graph to export: Neo4j, ArangoDB, PostgreSQL holding a graph that GraFlo
-  wrote, or another file backend. If you have source files and a manifest
+- A graph to export: Neo4j, ArangoDB, FalkorDB, PostgreSQL holding a graph that
+  GraFlo wrote, or another file backend. If you have source files and a manifest
   instead, go to [step 4](#4-build-the-files-from-source-data-instead).
 - A directory to write to.
 

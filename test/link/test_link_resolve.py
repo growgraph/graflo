@@ -281,12 +281,18 @@ def test_write_record_graphs_resolves_then_writes(schema, tmp_path):
         assert len(db.fetch_all_edges("Customer", "Ticket", "RAISED")) == 1
 
 
-def _zoned_schema() -> Schema:
+def _zoned_schema(merge: str = "replace") -> Schema:
     lifted: dict[str, Any] = copy.deepcopy(SCHEMA)
     ticket = lifted["core_schema"]["vertex_config"]["vertices"][1]
     ticket["properties"] = [
         *ticket["properties"],
-        {"name": "access_zones", "type": "LIST", "item_type": "INT", "reserved": True},
+        {
+            "name": "access_zones",
+            "type": "LIST",
+            "item_type": "INT",
+            "reserved": True,
+            "merge": merge,
+        },
     ]
     return Schema.model_validate(lifted)
 
@@ -338,10 +344,10 @@ def test_the_guard_reaches_every_lookup(schema, tmp_path, monkeypatch, guarded_b
     assert seen == [("Ticket", guard), ("Ticket", None), ("Customer", None)]
 
 
-def _zoned_ticket(conf, number, zones):
+def _zoned_ticket(conf, number, zones, merge="replace"):
     asyncio.run(
         write_container(
-            _zoned_schema(),
+            _zoned_schema(merge),
             GraphContainer(vertices={"Ticket": [{"number": number}]}),
             conf,
             stamp={"access_zones": zones},
@@ -384,6 +390,35 @@ def test_a_stated_key_of_a_hidden_entity_stages_as_hidden(tmp_path, guarded_back
     assert _reasons(resolution) == {("chat-1", "t"): "hidden"}
     assert [r.waiting_on for r in resolution.staged.relations] == [["t"]]
     assert "Ticket" not in promote(_zoned_schema(), resolution).vertices
+
+
+def test_a_stated_key_joins_a_hidden_entity_whose_guard_field_merges_by_union(
+    tmp_path, guarded_backend
+):
+    conf = GraFloBackendConfig(output_dir=tmp_path)
+    _zoned_ticket(conf, "HD-9", [2], merge="union")
+    schema = _zoned_schema("union")
+    graph = _g("doc-1", [_m("t", "Ticket", number="HD-9")])
+    guard = _opens(1)
+
+    with ConnectionManager(connection_config=conf) as db:
+        resolution = resolve_records(schema, [graph], db=db, guard=guard)
+    assert not resolution.staged.records
+    assert [item.found_in for item in resolution.resolved] == [None]
+
+    asyncio.run(
+        write_record_graphs(
+            schema,
+            [graph],
+            conf,
+            stamp={"access_zones": [1]},
+            guard=guard,
+            writable={"Ticket": guard},
+        )
+    )
+    with ConnectionManager(connection_config=conf) as db:
+        rows = db.fetch_docs("Ticket", filters=None, limit=10)
+    assert [sorted(row["access_zones"]) for row in rows] == [[1, 2]]
 
 
 def test_a_stated_key_the_guard_shows_or_nobody_holds_resolves(
@@ -433,7 +468,11 @@ def test_an_entity_the_write_may_not_change_is_linked_not_written(
 
     with ConnectionManager(connection_config=conf) as db:
         resolution = resolve_records(
-            _zoned_schema(), [graph], db=db, guard=_opens(1, 2), writable=_only(1)
+            _zoned_schema(),
+            [graph],
+            db=db,
+            guard=_opens(1, 2),
+            writable={"Ticket": _only(1)},
         )
 
     link_only = {r.ref for r in resolution.resolved if r.link_only}
@@ -449,7 +488,7 @@ def test_a_writable_filter_on_fields_a_type_lacks_leaves_it_link_only(
     conf = GraFloBackendConfig(output_dir=tmp_path)
     _zoned_ticket(conf, "HD-1", [1])
     graph = _g("chat-1", [_m("t", "Ticket", number="HD-1", severity=5)])
-    writable = FilterExpression.from_dict(["==", "x", "owner"])
+    writable = {"Ticket": FilterExpression.from_dict(["==", "x", "owner"])}
 
     with ConnectionManager(connection_config=conf) as db:
         resolution = resolve_records(
@@ -457,6 +496,40 @@ def test_a_writable_filter_on_fields_a_type_lacks_leaves_it_link_only(
         )
 
     assert [r.link_only for r in resolution.resolved] == [True]
+
+
+def test_a_guarded_type_the_writable_mapping_leaves_out_is_link_only(
+    tmp_path, guarded_backend
+):
+    conf = GraFloBackendConfig(output_dir=tmp_path)
+    _zoned_ticket(conf, "HD-1", [1])
+    graph = _g("chat-1", [_m("t", "Ticket", number="HD-1", severity=5)])
+
+    with ConnectionManager(connection_config=conf) as db:
+        resolution = resolve_records(
+            _zoned_schema(), [graph], db=db, guard=_opens(1), writable={}
+        )
+
+    assert [r.link_only for r in resolution.resolved] == [True]
+
+
+def test_a_type_whose_filter_is_the_guard_is_written_wherever_the_guard_shows_it(
+    tmp_path, guarded_backend
+):
+    conf = GraFloBackendConfig(output_dir=tmp_path)
+    _zoned_ticket(conf, "HD-2", [2])
+    graph = _g("chat-1", [_m("wide", "Ticket", number="HD-2", severity=9)])
+
+    with ConnectionManager(connection_config=conf) as db:
+        resolution = resolve_records(
+            _zoned_schema(),
+            [graph],
+            db=db,
+            guard=_opens(1, 2),
+            writable={"Ticket": _opens(1, 2)},
+        )
+
+    assert [r.link_only for r in resolution.resolved] == [False]
 
 
 def test_a_type_without_the_guarded_field_is_looked_up_unguarded(

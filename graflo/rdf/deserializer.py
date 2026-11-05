@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from rdflib import BNode, Graph, Literal, URIRef
@@ -65,6 +66,19 @@ class ManifestRdfDeserializer:
             metadata_naming = self._read_naming(graph, metadata_uri)
             if metadata_naming is not None:
                 metadata["naming"] = metadata_naming
+            base_iri = self._object(graph, metadata_uri, ns.baseIri)
+            if isinstance(base_iri, URIRef):
+                metadata["base_iri"] = str(base_iri)
+            namespaces = {}
+            for binding in graph.objects(metadata_uri, ns.hasNamespace):
+                if not isinstance(binding, (URIRef, BNode)):
+                    continue
+                prefix = self._literal(graph, binding, ns.namespacePrefix)
+                iri = self._object(graph, binding, ns.namespaceIri)
+                if prefix is not None and isinstance(iri, URIRef):
+                    namespaces[prefix] = str(iri)
+            if namespaces:
+                metadata["namespaces"] = dict(sorted(namespaces.items()))
             schema["metadata"] = metadata
 
         if core_uri is not None:
@@ -153,6 +167,19 @@ class ManifestRdfDeserializer:
         semantics = self._read_semantics(graph, vertex_uri)
         if semantics is not None:
             vertex["semantics"] = semantics
+        parents = []
+        for parent in graph.objects(vertex_uri, ns.subclassOf):
+            local = (
+                self._literal(graph, parent, ns.name)
+                if isinstance(parent, URIRef) and (parent, RDF.type, ns.Vertex) in graph
+                else None
+            )
+            parents.append({"vertex": local} if local else {"iri": str(parent)})
+        if parents:
+            # A set, read back in canonical order as the other set-valued terms are.
+            vertex["subclass_of"] = sorted(
+                parents, key=lambda p: json.dumps(p, sort_keys=True)
+            )
         blank_value = self._literal(graph, vertex_uri, ns.blank)
         if blank_value is not None:
             vertex["blank"] = blank_value.lower() == "true"
@@ -266,6 +293,9 @@ class ManifestRdfDeserializer:
         semantics = self._read_semantics(graph, field_uri)
         reserved = self._literal(graph, field_uri, ns.fieldReserved)
         merge_mode = self._literal(graph, field_uri, ns.fieldMergeMode)
+        match = self._read_match(graph, field_uri)
+        derived_source = self._literal(graph, field_uri, ns.derivedSource)
+        derived_form = self._literal(graph, field_uri, ns.derivedForm)
         # A field with nothing but a name round-trips as a bare string, which is
         # how most schemas author it. Semantics has to join that condition or a
         # grounded field would collapse back to a string and lose its block.
@@ -276,6 +306,8 @@ class ManifestRdfDeserializer:
             and semantics is None
             and reserved is None
             and merge_mode is None
+            and match is None
+            and derived_source is None
         ):
             return name
         field: dict[str, Any] = {"name": name}
@@ -295,7 +327,33 @@ class ManifestRdfDeserializer:
             field["reserved"] = reserved.lower() == "true"
         if merge_mode is not None:
             field["merge"] = merge_mode
+        if match is not None:
+            field["match"] = match
+        if derived_source is not None:
+            field["derived"] = {"source": derived_source, "form": derived_form}
         return field
+
+    def _read_match(
+        self, graph: Graph, field_uri: URIRef | BNode
+    ) -> dict[str, Any] | None:
+        """Mirror of ``ManifestRdfSerializer._emit_match``."""
+        match_uri = self._object(graph, field_uri, ns.fieldMatch)
+        if match_uri is None:
+            return None
+        match: dict[str, Any] = {}
+        normalizer = self._literal(graph, match_uri, ns.matchNormalizer)
+        if normalizer is not None:
+            match["normalizer"] = normalizer
+        split = self._literal(graph, match_uri, ns.matchSplit)
+        if split is not None:
+            match["parts"] = {
+                "split": split if split == "words" else json.loads(split),
+                "order": self._literal(graph, match_uri, ns.matchOrder),
+            }
+        exclusive = self._literal(graph, match_uri, ns.matchExclusive)
+        if exclusive is not None:
+            match["exclusive"] = exclusive.lower() == "true"
+        return match
 
     def _read_naming(
         self, graph: Graph, subject: URIRef | BNode | None
@@ -345,6 +403,13 @@ class ManifestRdfDeserializer:
         synonyms = self._literals(graph, subject, ns.altLabel)
         if synonyms:
             block["synonyms"] = sorted(synonyms)
+        label = self._literal(graph, subject, ns.rdfsLabel)
+        if label is not None:
+            block["label"] = label
+        for key, predicate in (("close_match", ns.closeMatch), ("broader", ns.broader)):
+            iris = [str(obj) for obj in graph.objects(subject, predicate)]
+            if iris:
+                block[key] = sorted(iris)
         unit = self._literal(graph, subject, ns.unit)
         if unit is not None:
             block["unit"] = unit
@@ -366,6 +431,16 @@ class ManifestRdfDeserializer:
         semantics = self._read_semantics(graph, edge_uri)
         if semantics is not None:
             edge["semantics"] = semantics
+        parents = [
+            {"edge": self._edge_ref(graph, parent)}
+            if isinstance(parent, URIRef) and (parent, RDF.type, ns.Edge) in graph
+            else {"iri": str(parent)}
+            for parent in graph.objects(edge_uri, ns.subpropertyOf)
+        ]
+        if parents:
+            edge["subproperty_of"] = sorted(
+                parents, key=lambda p: json.dumps(p, sort_keys=True)
+            )
 
         # `gf:edgePayload` predates the first-class predicates below and is still
         # read so graphs serialized before `gf:edgeDirected` existed keep loading.
@@ -397,6 +472,16 @@ class ManifestRdfDeserializer:
             edge["properties"] = properties
 
         return edge
+
+    def _edge_ref(self, graph: Graph, edge_uri: URIRef) -> dict[str, Any]:
+        """A local edge node as an ``EdgeRef`` payload: its endpoints' names and relation."""
+        source_uri = self._object(graph, edge_uri, ns.edgeSource)
+        target_uri = self._object(graph, edge_uri, ns.edgeTarget)
+        return {
+            "source": self._literal(graph, source_uri, ns.name) if source_uri else None,
+            "target": self._literal(graph, target_uri, ns.name) if target_uri else None,
+            "relation": self._literal(graph, edge_uri, ns.relation),
+        }
 
     def _parse_database_profile(
         self, graph: Graph, profile_uri: URIRef | BNode

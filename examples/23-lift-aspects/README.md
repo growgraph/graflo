@@ -238,6 +238,10 @@ as a pattern when you write such a model yourself;
   `lift.yaml` has the same effect as leaving the aspect out.
 - `graflo check --waivers FILE` records a check that you decide not to meet,
   with a reason; the report shows it as waived, never as passed.
+- `-m "lift aspects"` records the lift in a commit store, with the aspects,
+  their versions and the spec, so that it can be reverted or planned again
+  later. The input manifest must already be in the store; see
+  [Recording a lift](../../docs/concepts/schema/aspects.md#recording-a-lift).
 
 ## What to read next
 

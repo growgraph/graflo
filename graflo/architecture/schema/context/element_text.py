@@ -17,6 +17,7 @@ from pydantic import Field as PydanticField
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.graph_types.identifiers import EdgeId
 from graflo.architecture.schema.context.graph import edge_sort_key
+from graflo.architecture.schema.derive import derived_sources
 from graflo.architecture.schema.semantics import Semantics
 from graflo.architecture.schema.vertex import format_field_type_label
 
@@ -125,13 +126,14 @@ def minted_key_fields(vertex: Vertex) -> set[str]:
 def extractable_properties(vertex: Vertex) -> list[Field]:
     """The vertex's properties a document can supply, in declared order.
 
-    Minted key fields and reserved fields are left out: no text supplies them.
+    Minted key fields, derived fields and reserved fields are left out: no text
+    supplies them, and core overwrites a stated derived value.
     """
     minted = minted_key_fields(vertex)
     return [
         field
         for field in vertex.properties
-        if field.name not in minted and not field.reserved
+        if field.name not in minted and not field.reserved and field.derived is None
     ]
 
 
@@ -152,9 +154,10 @@ def identity_label(vertex: Vertex) -> str:
             ", ".join(branch.fields) for branch in vertex.identity_funnel.branches
         )
         return f"hash(first of: {branches})"
+    # A derived field is named by its source, the field a text states.
     if mode == "hash":
-        return f"hash({', '.join(vertex.hash_identity_properties)})"
-    return ", ".join(vertex.identity)
+        return f"hash({', '.join(derived_sources(vertex, vertex.hash_identity_properties))})"
+    return ", ".join(derived_sources(vertex, vertex.identity))
 
 
 def edge_pattern(edge: Edge) -> str:

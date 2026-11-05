@@ -68,7 +68,11 @@ from pydantic import Field as PydanticField
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.contract.manifest import GraphManifest
+from graflo.architecture.graph_types import EdgeId
+from graflo.architecture.schema.edge import SuperProperty
+from graflo.architecture.schema.hierarchy import Hierarchy
 from graflo.architecture.schema.naming import canonical_key
+from graflo.architecture.schema.vertex import SuperClass
 
 from . import ops
 from .autogenerate import RenameHints, diff_manifests_verified
@@ -246,6 +250,10 @@ def op_slots(op: ManifestOp) -> set[Slot]:
         slots |= {(*_edge_slot(*entry.edge_id()), "semantics") for entry in op.edges}
     elif isinstance(op, ops.SetEdgeDescriptionsOp):
         slots |= {(*_edge_slot(*entry.edge_id()), "description") for entry in op.edges}
+    elif isinstance(op, ops.SetEdgeSubpropertyOfOp):
+        slots |= {
+            (*_edge_slot(*entry.edge_id()), "subproperty_of") for entry in op.edges
+        }
 
     # ── grounding ───────────────────────────────────────────────────────────
     #
@@ -256,6 +264,8 @@ def op_slots(op: ManifestOp) -> set[Slot]:
         slots |= {(*_vertex_slot(name), "semantics") for name in op.semantics}
     elif isinstance(op, ops.SetVertexDescriptionsOp):
         slots |= {(*_vertex_slot(name), "description") for name in op.descriptions}
+    elif isinstance(op, ops.SetVertexSubclassOfOp):
+        slots |= {(*_vertex_slot(name), "subclass_of") for name in op.subclass_of}
     elif isinstance(op, ops.SetFieldSemanticsOp):
         for target in op.targets:
             if isinstance(target, ops.FieldSemanticsTarget):
@@ -386,6 +396,7 @@ _SPLITS: dict[type, tuple[tuple[str, str], ...]] = {
     ops.RemoveVertexIndexesOp: (("indexes", "keys"),),
     ops.SetVertexSemanticsOp: (("semantics", "keys"),),
     ops.SetVertexDescriptionsOp: (("descriptions", "keys"),),
+    ops.SetVertexSubclassOfOp: (("subclass_of", "keys"),),
     ops.SetFieldSemanticsOp: (("targets", "items"),),
     ops.AddEdgesOp: (("edges", "items"),),
     ops.RemoveEdgesOp: (("relations", "items"), ("edges", "items")),
@@ -395,6 +406,7 @@ _SPLITS: dict[type, tuple[tuple[str, str], ...]] = {
     ops.SetEdgeDirectedOp: (("edges", "items"),),
     ops.SetEdgeSemanticsOp: (("edges", "items"),),
     ops.SetEdgeDescriptionsOp: (("edges", "items"),),
+    ops.SetEdgeSubpropertyOfOp: (("edges", "items"),),
     ops.RenameRelationsOp: (("renames", "keys"),),
     ops.AddEdgePropertiesOp: (("additions", "keys"), ("per_edge", "items")),
     ops.RemoveEdgePropertiesOp: (("removals", "keys"), ("per_edge", "items")),
@@ -547,6 +559,57 @@ def _identity_target_fields(target: Any) -> list[str]:
     return []
 
 
+# A hierarchy edit is valid or not by what the hierarchy entails, which runs
+# through every link of a chain, not just the one named. So it reads the
+# ``subclass_of`` (and ``subproperty_of``) slot of each element on the chain
+# in *base*: a write there on the other side -- a link cut, a cycle closed --
+# is a conflict, not a merged result that no longer validates.
+
+
+def _hierarchy(base: GraphManifest | None) -> Hierarchy | None:
+    schema = base.graph_schema if base is not None else None
+    return Hierarchy.of(schema.core_schema) if schema is not None else None
+
+
+def _class_chain_reads(names: Iterable[str], hierarchy: Hierarchy | None) -> set[Slot]:
+    chain = set(names)
+    if hierarchy is not None:
+        chain |= {p for name in list(chain) for p in hierarchy.superclasses(name)}
+    return {(*_vertex_slot(name), "subclass_of") for name in chain}
+
+
+def _superclass_reads(
+    parents: Iterable[SuperClass], base: GraphManifest | None
+) -> set[Slot]:
+    local = [p.vertex for p in parents if p.vertex is not None]
+    return {_vertex_slot(name) for name in local} | _class_chain_reads(
+        local, _hierarchy(base)
+    )
+
+
+def _superproperty_reads(
+    child: EdgeId, parents: Iterable[SuperProperty], base: GraphManifest | None
+) -> set[Slot]:
+    local = [p.edge.edge_id() for p in parents if p.edge is not None]
+    if not local:
+        return set()
+    hierarchy = _hierarchy(base)
+    chain = set(local)
+    if hierarchy is not None:
+        chain |= {p for edge_id in local for p in hierarchy.superproperties(edge_id)}
+    reads: set[Slot] = {(*_edge_slot(*child), "directed")}
+    for edge_id in local:
+        reads |= {
+            _edge_slot(*edge_id),
+            (*_edge_slot(*edge_id), "directed"),
+            _vertex_slot(edge_id[0]),
+            _vertex_slot(edge_id[1]),
+        }
+    reads |= {(*_edge_slot(*edge_id), "subproperty_of") for edge_id in chain}
+    # Endpoint subsumption runs up the child's endpoints' class chains.
+    return reads | _class_chain_reads(child[:2], hierarchy)
+
+
 def op_reads(
     op: ManifestOp,
     base: GraphManifest | None = None,
@@ -579,11 +642,26 @@ def op_reads(
     reads: set[Slot] = set()
 
     # ── edges, addressed by endpoints ───────────────────────────────────────
-    if isinstance(op, ops.AddEdgesOp):
+    # A local superclass or superproperty is a reference, as an edge's endpoint is.
+    if isinstance(op, ops.SetVertexSubclassOfOp):
+        reads |= _superclass_reads(
+            (parent for parents in op.subclass_of.values() for parent in parents),
+            base,
+        )
+    elif isinstance(op, ops.AddVerticesOp):
+        reads |= _superclass_reads(
+            (parent for vertex in op.vertices for parent in vertex.subclass_of), base
+        )
+    elif isinstance(op, ops.SetEdgeSubpropertyOfOp):
+        for entry in op.edges:
+            reads |= {_vertex_slot(entry.source), _vertex_slot(entry.target)}
+            reads |= _superproperty_reads(entry.edge_id(), entry.subproperty_of, base)
+    elif isinstance(op, ops.AddEdgesOp):
         for edge in op.edges:
             reads |= {_vertex_slot(edge.source), _vertex_slot(edge.target)}
             if edge.by is not None:
                 reads.add(_vertex_slot(edge.by))
+            reads |= _superproperty_reads(edge.edge_id, edge.subproperty_of, base)
     elif isinstance(op, ops.RetargetEdgesOp):
         for entry in op.edges:
             reads |= {_vertex_slot(entry.source), _vertex_slot(entry.target)}

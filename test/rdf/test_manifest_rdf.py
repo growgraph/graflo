@@ -509,6 +509,11 @@ def _grounded_manifest() -> GraphManifest:
                     "name": "grounded",
                     "version": "1.0.0",
                     "semantics": {"iri": "https://schema.org/Dataset"},
+                    "base_iri": "https://example.org/hr/",
+                    "namespaces": {
+                        "schema": "https://schema.org/",
+                        "foaf": "http://xmlns.com/foaf/0.1/",
+                    },
                 },
                 "graph": {
                     "vertex_config": {
@@ -529,14 +534,27 @@ def _grounded_manifest() -> GraphManifest:
                                 "identity": ["email"],
                                 "semantics": {
                                     "iri": "https://schema.org/Person",
+                                    "label": "Person",
                                     "exact_match": ["http://xmlns.com/foaf/0.1/Person"],
+                                    "close_match": ["https://example.org/Human"],
+                                    "broader": ["https://schema.org/Thing"],
                                     "synonyms": ["human", "individual"],
                                 },
+                                "subclass_of": [
+                                    {"iri": "http://xmlns.com/foaf/0.1/Agent"},
+                                    {"vertex": "party"},
+                                ],
                             },
                             {
                                 "name": "company",
                                 "properties": ["tax_id"],
                                 "identity": ["tax_id"],
+                                "subclass_of": [{"vertex": "party"}],
+                            },
+                            {
+                                "name": "party",
+                                "properties": ["party_id"],
+                                "identity": ["party_id"],
                             },
                         ]
                     },
@@ -544,10 +562,25 @@ def _grounded_manifest() -> GraphManifest:
                         "edges": [
                             {
                                 "source": "person",
+                                "target": "party",
+                                "relation": "member_of",
+                            },
+                            {
+                                "source": "person",
                                 "target": "company",
                                 "relation": "works_at",
                                 "semantics": {"iri": "https://schema.org/worksFor"},
-                            }
+                                "subproperty_of": [
+                                    {
+                                        "edge": {
+                                            "source": "person",
+                                            "target": "party",
+                                            "relation": "member_of",
+                                        }
+                                    },
+                                    {"iri": "https://schema.org/memberOf"},
+                                ],
+                            },
                         ]
                     },
                 },
@@ -582,6 +615,39 @@ def test_semantics_emits_expected_triples() -> None:
     assert (speed, ns.unit, Literal("m/s")) in graph
 
 
+def test_the_vocabulary_layer_emits_its_terms() -> None:
+    graph = ManifestRdfSerializer(include_ontology=False).to_graph(
+        _grounded_manifest(), BASE_URI
+    )
+    person = URIRef(f"{BASE_URI}schema/core/vertex/person")
+    party = URIRef(f"{BASE_URI}schema/core/vertex/party")
+    assert (person, RDFS.label, Literal("Person")) in graph
+    assert (person, ns.closeMatch, URIRef("https://example.org/Human")) in graph
+    assert (person, ns.broader, URIRef("https://schema.org/Thing")) in graph
+    # A local superclass is the vertex's own node; an external one its IRI.
+    assert set(graph.objects(person, ns.subclassOf)) == {
+        party,
+        URIRef("http://xmlns.com/foaf/0.1/Agent"),
+    }
+    works_at = URIRef(f"{BASE_URI}schema/core/edge/person_works_at_company")
+    assert set(graph.objects(works_at, ns.subpropertyOf)) == {
+        URIRef(f"{BASE_URI}schema/core/edge/person_member_of_party"),
+        URIRef("https://schema.org/memberOf"),
+    }
+    metadata = URIRef(f"{BASE_URI}schema/metadata")
+    assert (metadata, ns.baseIri, URIRef("https://example.org/hr/")) in graph
+    prefixes = {
+        str(graph.value(binding, ns.namespacePrefix)): graph.value(
+            binding, ns.namespaceIri
+        )
+        for binding in graph.objects(metadata, ns.hasNamespace)
+    }
+    assert prefixes == {
+        "schema": URIRef("https://schema.org/"),
+        "foaf": URIRef("http://xmlns.com/foaf/0.1/"),
+    }
+
+
 def test_schemas_without_semantics_emit_no_semantic_triples() -> None:
     """Absent blocks stay absent — the vocabulary costs nothing when unused."""
     graph = ManifestRdfSerializer(include_ontology=False).to_graph(
@@ -598,6 +664,11 @@ def test_ontology_declares_semantic_terms() -> None:
     # Domain-free on purpose: the docs viz derives its grouping from domain/range
     # structure, and these terms attach to four unrelated classes.
     assert not list(ontology.objects(ns.semanticIri, RDFS.domain))
+    assert (ns.subclassOf, RDFS.domain, ns.Vertex) in ontology
+    assert (ns.subpropertyOf, RDFS.domain, ns.Edge) in ontology
+    assert (ns.baseIri, RDFS.domain, ns.GraphMetadata) in ontology
+    assert (ns.hasNamespace, RDFS.range, ns.NamespaceBinding) in ontology
+    assert (ns.NamespaceBinding, RDF.type, OWL.Class) in ontology
 
 
 def test_context_has_semantic_terms() -> None:
@@ -607,6 +678,19 @@ def test_context_has_semantic_terms() -> None:
     assert '"semanticIri"' in payload
     assert '"unit": "gf:unit"' in payload
     assert '"altLabel": "skos:altLabel"' in payload
+    context = json.loads(payload)["@context"]
+    assert context["label"] == "rdfs:label"
+    for term, iri in {
+        "closeMatch": "skos:closeMatch",
+        "broader": "skos:broader",
+        "subclassOf": "gf:subclassOf",
+        "subpropertyOf": "gf:subpropertyOf",
+        "baseIri": "gf:baseIri",
+        "hasNamespace": "gf:hasNamespace",
+        "namespaceIri": "gf:namespaceIri",
+    }.items():
+        assert context[term] == {"@id": iri, "@type": "@id"}, term
+    assert context["namespacePrefix"] == "gf:namespacePrefix"
 
 
 # ----------------------------------------------------------------------

@@ -110,6 +110,13 @@ class LiftSpec(ConfigBaseModel):
             "observation scaffolds get one regardless."
         ),
     )
+    mentions_for: list[str] = PydanticField(
+        default_factory=list,
+        description=(
+            "Existing types a source record can name: ``SourceRecord`` gains a "
+            "``mentions`` edge to each."
+        ),
+    )
     access_for: dict[str, FieldMerge] = PydanticField(
         default_factory=dict,
         description=(
@@ -117,11 +124,11 @@ class LiftSpec(ConfigBaseModel):
             "its zones on upsert: ``replace`` or ``union``."
         ),
     )
-    access_edges: list[str] = PydanticField(
-        default_factory=list,
+    access_edges: dict[str, FieldMerge] = PydanticField(
+        default_factory=dict,
         description=(
-            "Edge relations that gain ``access_zones``; their zones are replaced "
-            "on upsert."
+            "Edge relations that gain ``access_zones``, each with the merge mode "
+            "of its zones on upsert: ``replace`` or ``union``."
         ),
     )
     retire: Literal["move", "keep"] = PydanticField(

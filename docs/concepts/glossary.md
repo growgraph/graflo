@@ -68,7 +68,11 @@ A named value on a vertex or an edge, written as a bare name (`serial_number`) o
 
 ### grounding
 
-An optional `semantics` block on the schema, a vertex type, an edge type or a property that ties it to an external vocabulary: an `iri`, `exact_match` IRIs, `synonyms` and, on a property, a `unit`. Nothing reads it when records are cast or written; the `world-model` profile checks it. See [Conformance profiles](schema/world_model_profile.md).
+An optional `semantics` block on the schema, a vertex type, an edge type or a property that ties it to an external vocabulary: an `iri`, a `label`, `exact_match`, `close_match` and `broader` IRIs, `synonyms` and, on a property, a `unit`. Nothing reads it when records are cast or written; the `world-model` profile checks it. See [Conformance profiles](schema/world_model_profile.md).
+
+### hierarchy
+
+A vertex type's `subclass_of` and an edge type's `subproperty_of`: the classes and relations it falls under, local or external by IRI. They are logical assertions the schema checks and core reasons over (an edge's endpoints fall under its parent's), but nothing is inherited. See [the ontology](schema/ontology.md).
 
 ### identity
 
@@ -122,7 +126,7 @@ The `db_profile` block of the schema: what the target database needs and the log
 
 ### namespace
 
-The database, graph or space a schema is deployed into: an ArangoDB or Neo4j database, a TigerGraph graph, a NebulaGraph space. It is, in this order, an explicit override from the call or the connection config, `db_profile.target_namespace`, or `schema.metadata.name` rewritten to what the database accepts. See [Graph namespace and schema](../guides/graph_namespace_and_schema.md).
+The database, graph or space a schema is deployed into: an ArangoDB database, a TigerGraph graph, a NebulaGraph space. It is, in this order, an explicit override from the call or the connection config, `db_profile.target_namespace`, or `schema.metadata.name` rewritten to what the database accepts. On Neo4j and Memgraph the name does not select a database: GraFlo uses the server's default one. See [Graph namespace and schema](../guides/graph_namespace_and_schema.md).
 
 ## Ingestion
 
@@ -247,7 +251,7 @@ See [the connection proxy example (11)](../examples/connection-proxy/index.md).
 
 ### connection provider
 
-The runtime object that turns each connection proxy into a real connection config. `InMemoryConnectionProvider` holds configs you register in Python, and reads API and Kafka configs from environment variables prefixed with the upper-cased proxy label (`PLANT_API_BASE_URL` for `plant_api`). See [API env wiring](../guides/api_env_wiring.md).
+The runtime object that turns each connection proxy into a real connection config. `InMemoryConnectionProvider` maps labels to configs, `InMemoryConnectionProvider({"plant_api": ...})`, or reads every label the bindings use from environment variables prefixed with the upper-cased label (`PLANT_API_BASE_URL` for `plant_api`) with `InMemoryConnectionProvider.from_env(bindings)`. Which connector uses which label stays in the bindings. See [API env wiring](../guides/api_env_wiring.md).
 
 ### target backend
 
@@ -255,11 +259,11 @@ The database the graph is written to, chosen when you run ingestion by the conne
 
 ### file backend
 
-A target backend that is a directory instead of a database: `schema.yaml`, `INDEX.json`, and gzip JSON Lines chunks under `vertices/` and `edges/`, configured with `GraFloBackendConfig`. It appends every record it receives and does not upsert, so loading the same records twice without recreating the schema stores them twice. See [Graph export and migration](operations/graph_export_migration.md).
+A target backend that is a directory instead of a database: `schema.yaml`, `INDEX.json`, and gzip JSON Lines chunks under `vertices/` and `edges/`, configured with `GraFloBackendConfig`. It is for dumping a graph, not for serving one. It appends every record it receives and does not upsert, so loading the same records twice without recreating the schema stores them twice. See [Graph export and migration](operations/graph_export_migration.md).
 
 ### graph migration
 
-Copying a whole graph, schema and data, from one database to another with `GraphEngine.migrate_graph()`, without a manifest. The source can be Neo4j, ArangoDB, PostgreSQL or the file backend, and the target any of the eight target backends. See [Graph export and migration](operations/graph_export_migration.md).
+Copying a whole graph, schema and data, from one database to another with `GraphEngine.migrate_graph()`, without a manifest. The source can be Neo4j, ArangoDB, FalkorDB, PostgreSQL or the file backend, and the target any of the eight target backends. See [Graph export and migration](operations/graph_export_migration.md).
 
 ## Evolution
 
@@ -318,7 +322,7 @@ A place in a manifest that an op changes, such as the type of one property of on
 
 ### commit
 
-A recorded change set with the content hash before and after it, its parent commits, a kind (`root`, `edit`, `merge`, `merge3` or `revert`) and an id derived from its content. Commits are stored one YAML file each under `.graflo/commits` and handled with `graflo commit`, `log`, `checkout`, `verify`, `revert` and `stamp`. See [Version control](schema/versioning.md#commits).
+A recorded change set with the content hash before and after it, its parent commits, a kind (`root`, `edit`, `merge`, `merge3`, `revert` or `lift`) and an id derived from its content. Commits are stored one YAML file each under `.graflo/commits` and handled with `graflo commit`, `log`, `checkout`, `verify`, `revert` and `stamp`. See [Version control](schema/versioning.md#commits).
 
 ### live drift
 
@@ -365,7 +369,7 @@ A vocabulary that every domain needs and none owns, added to a manifest by a lif
 
 ### provenance aspect
 
-The types a lift adds so that a manifest can say where a fact came from: `SourceRecord`, the record a fact was read from (its address and content hash, never its content), and `Agent`, who produced it, linked by `wasDerivedFrom` and `wasAttributedTo` (PROV-O). A type named in the spec's `provenance_for` gains a `wasDerivedFrom` edge; the state and observation types always do. See [Aspects](schema/aspects.md#the-provenance-aspect).
+The types a lift adds so that a manifest can say where a fact came from: `SourceRecord`, the record a fact was read from (its address and content hash, never its content), and `Agent`, who produced it, linked by `wasDerivedFrom` and `wasAttributedTo` (PROV-O). `SourceRecord -mentions-> <Type>` says a record names an entity. A type named in the spec's `provenance_for` gains a `wasDerivedFrom` edge; the state and observation types always do. See [Aspects](schema/aspects.md#the-provenance-aspect).
 
 ### state aspect
 
@@ -383,7 +387,7 @@ A vertex type named `<Type>Observation` that holds one measurement of an entity 
 
 ### sample
 
-Records pulled from sources and kept as they were read, flat rows for a table and nested documents for an API, one `ResourceSample` per resource inside a `SourceSample`. `GraphEngine.sample_resources()` takes a PostgreSQL config, a bindings block or a file path. See [Sampling and profiling](schema/sampling_and_profiling.md).
+Records pulled from sources and kept as they were read, flat rows for a table and nested documents for an API, one `ResourceSample` per resource inside a `SourceSample`. `GraphEngine.sample_resources()` reads a bindings block through a connection provider; `GraphEngine.discover()` gives the bindings for a connection that no model reads yet. See [Sampling and profiling](schema/sampling_and_profiling.md).
 
 ### profile
 
