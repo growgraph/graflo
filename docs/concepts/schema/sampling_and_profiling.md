@@ -18,11 +18,23 @@ all.
 
 ## The sample
 
+A sample reads through a `bindings` block and a connection provider, the same
+pair ingestion reads through. When there is no model yet, discovery supplies
+the bindings: it lists what a connection offers, and a pick of it becomes a
+bindings block.
+
 ```python
 from graflo import GraphEngine
+from graflo.connections import FilesConnConfig, InMemoryConnectionProvider
 
-source = GraphEngine().sample_resources("sample-source/", max_docs=100)
-print("source_name:", source.source_name)
+files = FilesConnConfig(root="/data/sample-source")
+engine = GraphEngine()
+found = engine.discover(files)
+source = engine.sample_resources(
+    found.bindings("src", ["customers", "orders", "api_orders"]),
+    connection_provider=InMemoryConnectionProvider({"src": files}),
+    max_docs=100,
+)
 for s in source.samples:
     print(
         f"  resource={s.resource_name!r} connector={s.connector!r} "
@@ -30,32 +42,21 @@ for s in source.samples:
     )
 ```
 
-For a directory holding `customers.csv`, `orders.csv`, a nested
-`api_orders.json` and a one-line `NOTES.txt`, this prints:
+For a directory holding `customers.csv`, `orders.csv` and a nested
+`api_orders.json`, this prints:
 
 ```text
-source_name: sample-source
-  resource='api_orders' connector='api_orders' docs=2 truncated=False
   resource='customers' connector='customers' docs=3 truncated=False
   resource='orders' connector='orders' docs=3 truncated=False
+  resource='api_orders' connector='api_orders' docs=2 truncated=False
 ```
 
-`NOTES.txt` is read as a table, yields no records and is skipped with a
-warning. A file GraFlo cannot read at all, such as a `README.md`, is skipped the
-same way.
-
-`sample_resources` takes three kinds of source and returns a `SourceSample`
-holding one `ResourceSample` per file or table:
-
-- A file path, a directory path, or a list of file paths. JSON, JSON Lines, CSV
-  and Parquet files are read; each sample is named after its file without the
-  extension.
-- A `PostgresConfig`, with `schema_name=`, samples the tables of that schema.
-  `resources=[...]` limits it to some tables.
-- The `bindings` block of a manifest samples each resource through the
-  connector that feeds it, so what is sampled is what ingestion will read. A
-  file connector contributes the first file it matches. A table connector
-  needs `connection_provider=`, the same provider ingestion uses.
+What discovery lists depends on the kind of connection; see
+[Connections and discovery](../../guides/connections_and_discovery.md). Each
+pick is read by its connector, so what is sampled is what ingestion will read:
+a file connector contributes the first file it matches, a table connector its
+first rows, a SPARQL connector its first instances, an API connector its first
+records, and a Kafka connector the first messages of its topics.
 
 Besides its records, a `ResourceSample` carries:
 
@@ -63,7 +64,7 @@ Besides its records, a `ResourceSample` carries:
   is turned into a resource, this relation becomes its `resource_connector`
   binding, so where the records came from is not lost.
 - `primary_key` and `foreign_keys`: what the source declared. Sampling a
-  PostgreSQL schema fills both from the real constraints; file sampling leaves
+  PostgreSQL table fills both from the real constraints; file sampling leaves
   them empty. A `ForeignKeyHint` records a declared reference, never a guess
   made from a column called `*_id`.
 - `description` and `field_descriptions`: table and column comments, from
@@ -85,7 +86,7 @@ Sampled records leave the library: they end up in prompts, previews and logs.
 `ResourceSampler` therefore bounds them:
 
 - `max_docs` (default 100): records per resource. `sample_resources` passes it
-  through.
+  through. A Kafka sample also stops after 10 seconds without messages.
 - `max_cell_chars` (default 512): the length of any string value. A longer
   value is clipped, and a bytes value is replaced by a placeholder such as
   `<2048 bytes>`; either marks the sample `truncated`.
@@ -155,7 +156,7 @@ document becomes one record.
 
 ```mermaid
 flowchart LR
-    C["Connectors<br/>files · PostgreSQL tables"]
+    C["Connectors<br/>files · tables · SPARQL · API · Kafka"]
     S["ResourceSampler<br/>bounded records, as read"]
     SS["SourceSample<br/>records + connector + declared keys"]
     P["profile_sample<br/>paths · types · null ratio"]
@@ -189,12 +190,13 @@ cannot carry secrets, neither can a manifest built from it.
 
 ## Rules and limits
 
-- Sampling reads from the source. A `bindings` block with table connectors
-  needs a `connection_provider`, the same one ingestion would use.
-- Sampling reads files and PostgreSQL tables. Through `bindings`, a connector
-  of another kind (API, SPARQL, Kafka) is skipped with a warning; if no
-  resource could be sampled, the call raises an error that names each skipped
-  resource and why.
+- Sampling reads from the source, through the `connection_provider` ingestion
+  would use. A resource that cannot be read is skipped with a warning; if none
+  could be sampled, the call raises an error that names each skipped resource
+  and why.
+- A Kafka sample reads in a consumer group of its own and commits nothing, so
+  it never moves the position a running consumer reads from.
+- A push connector has nothing to fetch and cannot be sampled.
 - `profile_sample` records at most `max_paths` distinct paths (default 200) and
   marks the profile `truncated` when it reaches that cap. It keeps at most
   `max_examples` example values per path (default 3).
@@ -206,8 +208,9 @@ cannot carry secrets, neither can a manifest built from it.
 | `SourceSample`, `ResourceSample`, `ForeignKeyHint` | `graflo.architecture.onto_sample` |
 | `ResourceProfile`, `FieldProfile` | `graflo.architecture.onto_sample` |
 | `profile_sample`, `profile_source`, `iter_paths`, `infer_field_type` | `graflo.architecture.onto_sample` |
-| `ResourceSampler` (`sample_file`, `sample_files`, `sample_postgres`, `sample_connector`, `sample_bindings`) | `graflo.hq.sampler` |
-| `GraphEngine.sample_resources` | `graflo.hq.graph_engine` |
+| `ResourceSampler` (`sample_connector`, `sample_bindings`) | `graflo.hq.sampler` |
+| `GraphEngine.discover`, `GraphEngine.sample_resources` | `graflo.hq.graph_engine` |
+| `discover`, `Discovery`, `DiscoveredResource` | `graflo.hq.discovery` |
 
 ## What to read next
 

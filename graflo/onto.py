@@ -158,6 +158,7 @@ class DBType(StrEnum, metaclass=MetaEnum):
     MONGODB = "mongodb"
     SQLITE = "sqlite"
     SPARQL = "sparql"
+    GRAPHDB = "graphdb"
 
 
 # Mapping from graph DB type to expression flavor for filter rendering.

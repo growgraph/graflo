@@ -219,7 +219,7 @@ class ConnectorConnectionBinding(ConfigBaseModel):
 class StagingProxyBinding(ConfigBaseModel):
     """Named staging profile -> runtime connection-proxy (e.g. S3 credentials).
 
-    Used by TigerGraph bulk ingest to resolve an ``S3ConnConfig`` without
+    Used by TigerGraph bulk ingest to resolve an S3 files connection without
     putting secrets in the manifest.
     """
 
@@ -240,7 +240,8 @@ class BindingsConfig(ConfigBaseModel):
         default=None,
         description=(
             "Default runtime connection proxy for connectors without an explicit "
-            "``connector_connection`` entry."
+            "``connector_connection`` entry; file and push connectors take one "
+            "only explicitly."
         ),
     )
     connectors: list[AnyConnector] = Field(default_factory=list)
@@ -595,7 +596,10 @@ class BindingsConfig(ConfigBaseModel):
 
         if self.conn_proxy is not None:
             for connector in self.connectors:
-                if connector.hash not in self._connector_to_conn_proxy:
+                if (
+                    connector.takes_default_conn_proxy
+                    and connector.hash not in self._connector_to_conn_proxy
+                ):
                     self._connector_to_conn_proxy[connector.hash] = self.conn_proxy
 
     def get_conn_proxy_for_connector(self, connector: AnyConnector) -> str | None:

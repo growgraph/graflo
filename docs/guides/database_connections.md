@@ -118,7 +118,8 @@ fills the address, credentials and database from one connection string.
 `graflo migrate-schema apply --db-config-path db.yaml` read the database from
 a file. `db_type` picks the class: `arango`, `neo4j`, `tigergraph`,
 `falkordb`, `memgraph`, `nebula`, `postgres` or `graflo_backend`. The other
-keys are the fields of that class.
+keys are the fields of that class. Every config writes its `db_type` back, with
+`kind: database`, when dumped.
 
 ```yaml
 db_type: neo4j
@@ -181,10 +182,12 @@ environment.
 
 ## Databases you read from
 
-A PostgreSQL database, a SPARQL endpoint, a REST API or a Kafka topic that
-records come from is not configured this way. The manifest names it by a label
-(`conn_proxy`), and at run time you register the settings for that label with
-a connection provider, so the manifest never holds a password. The
+A PostgreSQL database, a SPARQL endpoint, a REST API, a Kafka cluster or a
+directory or S3 prefix that records come from is not configured this way. The
+manifest names it by a label (`conn_proxy`), and at run time you register the
+settings for that label with a connection provider, so the manifest never
+holds a password. [Connections and discovery](connections_and_discovery.md)
+lists every kind and how to find what each one offers to read. The
 [connection proxy example (11)](../examples/connection-proxy/index.md) shows
 it for PostgreSQL, and the
 [API environment example (12)](../examples/api-env-config/index.md) for REST

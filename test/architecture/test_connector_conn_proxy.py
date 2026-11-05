@@ -8,6 +8,7 @@ from graflo.architecture.contract.bindings import (
     ConnectorUpdate,
     FileConnector,
     KafkaConnector,
+    PushConnector,
     SparqlConnector,
     TableConnector,
 )
@@ -15,6 +16,7 @@ from graflo.connections.onto import Neo4jConfig, PostgresConfig, SparqlEndpointC
 from graflo.connections.provider import (
     ApiAuth,
     EmptyConnectionProvider,
+    FilesConnConfig,
     InMemoryConnectionProvider,
     KafkaConnConfig,
     RestApiConnConfig,
@@ -102,9 +104,9 @@ def test_provider_maps_labels_to_configs() -> None:
     assert provider.get_config("missing") is None
     assert EmptyConnectionProvider().get_config("pg") is None
 
-    s3 = S3ConnConfig(bucket="staging")
-    provider.register("s3", s3)
-    assert provider.get_config("s3") is s3
+    staging = FilesConnConfig(root="s3://staging")
+    provider.register("s3", staging)
+    assert provider.get_config("s3") is staging
 
 
 def test_connector_config_resolves_through_the_bindings() -> None:
@@ -288,13 +290,35 @@ def test_from_env_refuses_a_label_shared_by_different_kinds() -> None:
         InMemoryConnectionProvider.from_env(bindings)
 
 
-def test_from_env_skips_labels_named_only_by_file_connectors() -> None:
+def test_from_env_reads_a_files_connection_for_a_wired_file_connector(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LAKE_ROOT", "s3://landing/raw")
+    monkeypatch.setenv("LAKE_ENDPOINT_URL", "http://minio:9000")
     bindings = Bindings(
         connectors=[FileConnector(regex=r".*\.csv", name="files")],
         connector_connection=[{"connector": "files", "conn_proxy": "lake"}],
     )
 
-    assert InMemoryConnectionProvider.from_env(bindings).get_config("lake") is None
+    config = InMemoryConnectionProvider.from_env(bindings).get_config("lake")
+
+    assert isinstance(config, FilesConnConfig)
+    assert (config.bucket, config.prefix, config.endpoint_url) == (
+        "landing",
+        "raw",
+        "http://minio:9000",
+    )
+
+
+def test_the_default_conn_proxy_never_reaches_file_or_push_connectors() -> None:
+    files = FileConnector(regex=r".*\.csv", name="files")
+    pushed = PushConnector(kind="push", name="events")
+    table = TableConnector(table_name="t1", name="t1")
+    bindings = Bindings(connectors=[files, pushed, table], conn_proxy="pg")
+
+    assert bindings.get_conn_proxy_for_connector(table) == "pg"
+    assert bindings.get_conn_proxy_for_connector(files) is None
+    assert bindings.get_conn_proxy_for_connector(pushed) is None
 
 
 @pytest.mark.parametrize(

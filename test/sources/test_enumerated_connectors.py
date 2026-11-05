@@ -390,13 +390,6 @@ class TestApiRuntime:
         )
         assert len(sample.docs) == 4
 
-    def test_sampling_without_bindings_says_so(self, api: _Server) -> None:
-        _, (connector, _, provider) = _source(api, OBJECTS_CONNECTOR)
-        with pytest.raises(ValueError, match="the bindings that name it"):
-            ResourceSampler(max_docs=10).sample_connector(
-                connector, resource_name="objects", connection_provider=provider
-            )
-
 
 EX = "http://example.org/"
 _TURTLE = """

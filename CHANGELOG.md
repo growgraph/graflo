@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `connection_type` reports the right flavour for a config built by `from_env` or
+  `from_proxy_env`, and for `GraphDBConfig` (new `DBType.GRAPHDB`); these used to report
+  `arango`.
 - A `key` or `any_key` step that reaches a null now writes nothing; with a transform inside it
   used to fail the whole record.
 - `to_yaml` and `to_yaml_str` write a manifest that has edges; they used to raise on the edge
@@ -25,6 +28,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Connection kinds**: every connection config carries `kind` (`database`, `api`, `stream`,
+  `files`) and a database its `db_type`; `parse_connection` reads any stored one back,
+  `CONNECTION_ADAPTER` validates the union, and `roles()` says whether it is read from,
+  written to or both.
+- **`FilesConnConfig`**: files under a local directory or an `s3://` prefix. A
+  `FileConnector` wired to one reads `sub_path` relative to its root, for sampling and ingest.
+- **Discovery**: `GraphEngine.discover(connection)` lists what a connection offers as
+  connectors (PostgreSQL tables, SPARQL classes, Kafka topics, files);
+  `Discovery.bindings()` turns a pick into a bindings block.
+- Sampling reads SPARQL and Kafka connectors too; a Kafka sample uses a consumer group of its
+  own and commits nothing.
+- A SPARQL connector without `endpoint_url` reads the endpoint of its connection.
+- `resolve_secrets_from_env` fills Kafka SASL credentials and S3 keys as well.
 - **`values`** on API and SPARQL connectors: one request per value, filled into `{name}`
   placeholders, each record carrying the value it was fetched with.
 - **`APIConnector.body`**: a JSON or text request body, with `{name}` placeholders filled from
@@ -81,6 +97,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `GraphEngine.sample_resources(bindings, connection_provider=...)` is the only way to sample;
+  the PostgreSQL-config and file-path forms are gone, as are `ResourceSampler.sample_file`,
+  `sample_files` and `sample_postgres`. Use `GraphEngine.discover` for a connection no model
+  reads yet.
+- The bindings' default `conn_proxy` no longer applies to file and push connectors.
+- TigerGraph S3 staging resolves a files connection with an `s3://` root instead of an
+  `S3ConnConfig`; `MinioConfig.to_s3_conn_config()` is now `to_files_conn_config()`.
+- `SOURCE_DATABASES` holds only what a connector reads (PostgreSQL, SPARQL, GraphDB); graph
+  databases are targets.
 - **Connection provider is a `conn_proxy` → config map.** `InMemoryConnectionProvider({"shop_db":
   PostgresConfig(...), "crm_api": RestApiConnConfig(...)})`; which connector uses which label is
   read from the bindings at run time, so a provider built before a connector patch still serves it.

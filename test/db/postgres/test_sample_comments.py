@@ -10,6 +10,8 @@ from __future__ import annotations
 import pytest
 
 from graflo.architecture.onto_sample import profile_sample
+from graflo.connections.provider import InMemoryConnectionProvider
+from graflo.hq.discovery import discover
 from graflo.hq.sampler import ResourceSampler
 
 
@@ -36,8 +38,9 @@ def commented(postgres_conn):
 
 
 def test_comments_reach_the_sample_and_profile(commented, conn_conf) -> None:
-    source = ResourceSampler(max_docs=5).sample_postgres(
-        conn_conf, tables=["gf_commented"]
+    bindings = discover(conn_conf).bindings("pg", ["gf_commented"])
+    source = ResourceSampler(max_docs=5).sample_bindings(
+        bindings, connection_provider=InMemoryConnectionProvider({"pg": conn_conf})
     )
     sample = source.get("gf_commented")
     assert sample is not None

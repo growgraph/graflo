@@ -125,9 +125,9 @@ def test_graflo_backend_connection_write_and_read(tmp_path: Path) -> None:
         assert edges[0][0]["id"] == "1"
 
 
-def test_graflo_backend_registered_as_source_and_target() -> None:
+def test_graflo_backend_registered_as_a_target() -> None:
     config = GraFloBackendConfig(output_dir=Path("/tmp/graflo-backend-test"))
-    assert config.can_be_source()
+    assert not config.can_be_source()
     assert config.can_be_target()
     assert config.connection_type == DBType.GRAFLO_BACKEND
     assert DBType.GRAFLO_BACKEND in ConnectionManager.graph_export_flavors()

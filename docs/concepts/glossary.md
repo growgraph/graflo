@@ -387,7 +387,7 @@ A vertex type named `<Type>Observation` that holds one measurement of an entity 
 
 ### sample
 
-Records pulled from sources and kept as they were read, flat rows for a table and nested documents for an API, one `ResourceSample` per resource inside a `SourceSample`. `GraphEngine.sample_resources()` takes a PostgreSQL config, a bindings block or a file path. See [Sampling and profiling](schema/sampling_and_profiling.md).
+Records pulled from sources and kept as they were read, flat rows for a table and nested documents for an API, one `ResourceSample` per resource inside a `SourceSample`. `GraphEngine.sample_resources()` reads a bindings block through a connection provider; `GraphEngine.discover()` gives the bindings for a connection that no model reads yet. See [Sampling and profiling](schema/sampling_and_profiling.md).
 
 ### profile
 

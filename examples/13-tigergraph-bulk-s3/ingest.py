@@ -57,7 +57,7 @@ def configure_bulk_load(
         s3_bucket=minio_conf.bucket,
         s3_key_prefix=os.environ.get("BULK_S3_PREFIX", "demo"),
     )
-    provider.register("minio_bulk", minio_conf.to_s3_conn_config())
+    provider.register("minio_bulk", minio_conf.to_files_conn_config())
 
     # Preflight: raises with an actionable message when the S3 API is unreachable,
     # so a missing S3 service fails here rather than as an empty graph after a

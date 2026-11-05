@@ -23,6 +23,7 @@ from graflo.architecture.contract.bindings import (
     TemplatedConnector,
 )
 from graflo.architecture.contract.ingestion import IngestionModel
+from graflo.architecture.graph_types import EncodingType
 from graflo.architecture.schema import Schema
 from graflo.connections.onto import PostgresConfig, SparqlEndpointConfig
 from graflo.connections.provider import (
@@ -30,7 +31,11 @@ from graflo.connections.provider import (
     EmptyConnectionProvider,
     connector_config,
 )
-from graflo.connections.sources import KafkaConnConfig, RestApiConnConfig
+from graflo.connections.sources import (
+    FilesConnConfig,
+    KafkaConnConfig,
+    RestApiConnConfig,
+)
 from graflo.data_source.base import AbstractDataSource
 from graflo.data_source.enumerated import EnumeratedDataSource, EnumeratedMember
 from graflo.data_source.factory import DataSourceFactory
@@ -131,7 +136,12 @@ class RegistryBuilder:
                         continue
                     try:
                         self._register_file_sources(
-                            registry, resource_name, connector, ingestion_params
+                            registry,
+                            resource_name,
+                            connector,
+                            bindings,
+                            ingestion_params,
+                            provider,
                         )
                     except Exception as e:
                         msg = (
@@ -330,25 +340,62 @@ class RegistryBuilder:
         registry: DataSourceRegistry,
         resource_name: str,
         connector: FileConnector,
+        bindings: Bindings,
         ingestion_params: IngestionParams,
+        connection_provider: ConnectionProvider,
     ) -> None:
-        if connector.sub_path is None:
-            raise ValueError(
-                f"FileConnector for resource '{resource_name}' has no sub_path"
-            )
-
-        path_obj = connector.sub_path.expanduser()
-        files = self.discover_files(
-            path_obj, limit_files=ingestion_params.limit_files, connector=connector
-        )
-        logger.info(f"For resource name {resource_name} {len(files)} files were found")
-
         encoding = self.ingestion_model.fetch_resource_config(resource_name).encoding
-        for file_path in files:
-            file_source = DataSourceFactory.create_file_data_source(
-                path=file_path, file_type=connector.file_type, encoding=encoding
-            )
+        sources = self.file_sources(
+            connector,
+            bindings,
+            connection_provider,
+            limit_files=ingestion_params.limit_files,
+            encoding=encoding,
+        )
+        logger.info(
+            "For resource name %s %d files were found", resource_name, len(sources)
+        )
+        for file_source in sources:
             registry.register(file_source, resource_name=resource_name)
+
+    @classmethod
+    def file_sources(
+        cls,
+        connector: FileConnector,
+        bindings: Bindings,
+        connection_provider: ConnectionProvider,
+        *,
+        limit_files: int | None = None,
+        encoding: EncodingType = EncodingType.UTF_8,
+    ) -> list[AbstractDataSource]:
+        """One data source per file *connector* matches.
+
+        With a ``conn_proxy`` the files are found under that files connection's
+        root, a local directory or an S3 prefix; without one, under the local
+        ``sub_path``.
+        """
+        if bindings.get_conn_proxy_for_connector(connector) is None:
+            return [
+                DataSourceFactory.create_file_data_source(
+                    path=path, file_type=connector.file_type, encoding=encoding
+                )
+                for path in cls.discover_files(
+                    connector.sub_path.expanduser(),
+                    connector=connector,
+                    limit_files=limit_files,
+                )
+            ]
+        from graflo.data_source.files import file_data_source, list_files
+
+        files = connector_config(
+            connector, bindings, connection_provider, FilesConnConfig
+        )
+        return [
+            file_data_source(
+                files, relative, file_type=connector.file_type, encoding=encoding
+            )
+            for relative in list_files(files, connector, limit=limit_files)
+        ]
 
     # ------------------------------------------------------------------
     # SQL / table sources
@@ -490,7 +537,8 @@ class RegistryBuilder:
     ) -> AbstractDataSource:
         """Return the data source that reads *connector*'s instances.
 
-        * **Endpoint mode** (``connector.endpoint_url`` is set): a
+        * **Endpoint mode** (``connector.endpoint_url`` is set, or its
+          ``conn_proxy`` names a SPARQL endpoint): a
           :class:`SparqlEndpointDataSource` that queries the remote endpoint.
         * **File mode** (``connector.rdf_file`` is set): an
           :class:`RdfFileDataSource` that parses a local RDF file.
@@ -509,25 +557,27 @@ class RegistryBuilder:
                     connection_provider=connection_provider,
                 ),
             )
-        if connector.endpoint_url:
+        # A public endpoint needs no conn_proxy; a declared one must resolve, and
+        # gives the endpoint when the connector does not name one.
+        endpoint_url = connector.endpoint_url
+        username: str | None = None
+        password: str | None = None
+        if bindings.get_conn_proxy_for_connector(connector) is not None:
+            cfg = connector_config(
+                connector, bindings, connection_provider, SparqlEndpointConfig
+            )
+            username = cfg.username
+            password = cfg.password
+            endpoint_url = endpoint_url or cfg.query_endpoint
+        if endpoint_url:
             from graflo.data_source.rdf import (
                 SparqlEndpointDataSource,
                 SparqlSourceConfig,
             )
 
-            # A public endpoint needs no conn_proxy; a declared one must resolve.
-            username: str | None = None
-            password: str | None = None
-            if bindings.get_conn_proxy_for_connector(connector) is not None:
-                cfg = connector_config(
-                    connector, bindings, connection_provider, SparqlEndpointConfig
-                )
-                username = cfg.username
-                password = cfg.password
-
             return SparqlEndpointDataSource(
                 config=SparqlSourceConfig(
-                    endpoint_url=connector.endpoint_url,
+                    endpoint_url=endpoint_url,
                     rdf_class=connector.rdf_class,
                     graph_uri=connector.graph_uri,
                     sparql_query=connector.sparql_query,
@@ -547,7 +597,10 @@ class RegistryBuilder:
                 same_as=connector.same_as,
                 typed_objects=connector.typed_objects,
             )
-        raise ValueError("SparqlConnector has neither endpoint_url nor rdf_file")
+        raise ValueError(
+            "SparqlConnector has no endpoint_url, no rdf_file and no conn_proxy "
+            "naming a SPARQL endpoint"
+        )
 
     @staticmethod
     def _enumerated(

@@ -120,6 +120,7 @@ nav:
 -   Guides:
     -   Guides index: guides/index.md
     -   Database connections: guides/database_connections.md
+    -   Connections and discovery: guides/connections_and_discovery.md
     -   Importing and layering: guides/importing.md
     -   Graph DB migration: guides/graph_db_migration.md
     -   Graph namespace and schema: guides/graph_namespace_and_schema.md

@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from graflo.architecture.contract.bindings import Bindings
 from graflo.architecture.onto_sample import (
     ForeignKeyHint,
     ResourceSample,
@@ -22,9 +23,31 @@ from graflo.architecture.onto_sample import (
     profile_source,
 )
 from graflo.architecture.schema.vertex import FieldType
+from graflo.connections.provider import (
+    EmptyConnectionProvider,
+    InMemoryConnectionProvider,
+)
+from graflo.connections.sources import FilesConnConfig
+from graflo.hq.discovery import discover
 from graflo.hq.sampler import ResourceSampler, _jsonable
 
 SOURCE_DIR = Path(__file__).parent.parent / "data" / "sample-source"
+
+
+def sample_directory(
+    sampler: ResourceSampler, root: Path, names: list[str] | None = None
+) -> SourceSample:
+    """Every readable file under *root*, sampled through a files connection."""
+    files = FilesConnConfig(root=str(root))
+    return sampler.sample_bindings(
+        discover(files).bindings("src", names),
+        connection_provider=InMemoryConnectionProvider({"src": files}),
+        source_name=root.name,
+    )
+
+
+def sample_one(sampler: ResourceSampler, path: Path) -> ResourceSample:
+    return sample_directory(sampler, path.parent, [path.stem]).samples[0]
 
 
 @pytest.fixture
@@ -34,7 +57,7 @@ def sampler() -> ResourceSampler:
 
 @pytest.fixture
 def file_sample(sampler: ResourceSampler) -> SourceSample:
-    return sampler.sample_files(SOURCE_DIR)
+    return sample_directory(sampler, SOURCE_DIR, ["customers", "orders", "api_orders"])
 
 
 # ----------------------------------------------------------------------
@@ -51,10 +74,11 @@ def test_sample_files_records_connector_provenance(file_sample):
         assert sample.connector == sample.resource_name
 
 
-def test_sample_files_skips_non_data_files(file_sample):
-    """A source directory routinely holds notes beside its data."""
-    names = {sample.resource_name for sample in file_sample.samples}
-    assert names == {"customers", "orders", "api_orders"}
+def test_a_file_with_no_rows_is_a_candidate_that_samples_empty(sampler):
+    """Discovery goes by extension: a .txt note is a table file with no rows."""
+    names = {r.name for r in discover(FilesConnConfig(root=str(SOURCE_DIR))).resources}
+    assert names == {"customers", "orders", "api_orders", "NOTES"}
+    assert sample_one(sampler, SOURCE_DIR / "NOTES.txt").docs == []
 
 
 def test_sample_files_keeps_documents_verbatim(file_sample):
@@ -82,7 +106,7 @@ def test_samples_by_resource_matches_inferencer_input_shape(file_sample):
 
 def test_max_docs_caps_and_marks_truncated():
     sampler = ResourceSampler(max_docs=2)
-    sample = sampler.sample_file(SOURCE_DIR / "orders.csv")
+    sample = sample_one(sampler, SOURCE_DIR / "orders.csv")
     assert len(sample.docs) == 2
     assert sample.truncated is True
 
@@ -93,16 +117,16 @@ def test_max_docs_below_one_is_rejected():
 
 
 def test_sample_single_file_directly(sampler):
-    sample = sampler.sample_file(SOURCE_DIR / "customers.csv")
+    sample = sample_one(sampler, SOURCE_DIR / "customers.csv")
     assert sample.resource_name == "customers"
     assert len(sample.docs) == 3
     assert sample.truncated is False
 
 
 def test_sample_files_rejects_directory_without_data(tmp_path, sampler):
-    (tmp_path / "readme.txt").write_text("nothing here")
-    with pytest.raises(ValueError, match="No sampleable files"):
-        sampler.sample_files(tmp_path)
+    (tmp_path / "readme.md").write_text("nothing here")
+    with pytest.raises(ValueError, match="the bindings map no resources"):
+        sample_directory(sampler, tmp_path)
 
 
 def test_source_sample_requires_at_least_one_resource():
@@ -215,7 +239,7 @@ def test_infer_field_type_lists_carry_item_type():
 
 
 def test_profile_sample_types_tabular_columns(sampler):
-    profile = profile_sample(sampler.sample_file(SOURCE_DIR / "orders.csv"))
+    profile = profile_sample(sample_one(sampler, SOURCE_DIR / "orders.csv"))
     assert profile.max_depth == 0
     assert profile.nested is False
     types = {field.path: field.type for field in profile.fields}
@@ -225,7 +249,7 @@ def test_profile_sample_types_tabular_columns(sampler):
 
 def test_profile_sample_describes_nesting(sampler):
     """Nesting depth is the signal an ingestion model needs descend steps."""
-    profile = profile_sample(sampler.sample_file(SOURCE_DIR / "api_orders.json"))
+    profile = profile_sample(sample_one(sampler, SOURCE_DIR / "api_orders.json"))
     assert profile.nested is True
     assert profile.max_depth == 1
     assert "items[].sku" in profile.field_paths
@@ -233,7 +257,7 @@ def test_profile_sample_describes_nesting(sampler):
 
 
 def test_profile_sample_tracks_nulls_and_cardinality(sampler):
-    profile = profile_sample(sampler.sample_file(SOURCE_DIR / "api_orders.json"))
+    profile = profile_sample(sample_one(sampler, SOURCE_DIR / "api_orders.json"))
     fields = {field.path: field for field in profile.fields}
     assert fields["customer.city"].null_count == 1
     assert fields["order_id"].unique is True
@@ -241,7 +265,7 @@ def test_profile_sample_tracks_nulls_and_cardinality(sampler):
 
 
 def test_profile_sample_types_scalar_lists(sampler):
-    profile = profile_sample(sampler.sample_file(SOURCE_DIR / "api_orders.json"))
+    profile = profile_sample(sample_one(sampler, SOURCE_DIR / "api_orders.json"))
     tags = next(field for field in profile.fields if field.path == "tags")
     assert tags.type == FieldType.LIST
     assert tags.item_type == FieldType.STRING
@@ -279,7 +303,7 @@ def test_profile_max_paths_caps_and_marks_truncated():
 
 def test_flat_docs_makes_nested_sources_eligible_for_identity_inference(sampler):
     """Identity inference operates on flat records; this is the bridge."""
-    sample = sampler.sample_file(SOURCE_DIR / "api_orders.json")
+    sample = sample_one(sampler, SOURCE_DIR / "api_orders.json")
     profile = profile_sample(sample)
     flat = profile.flat_docs(sample.docs)
     assert flat[0]["customer.id"] == "c1"
@@ -364,15 +388,9 @@ def test_bindings_sample_each_table_through_its_own_connection(
 
     seen: dict[str, str | None] = {}
 
-    def _fake(
-        connector,
-        *,
-        resource_name,
-        config=None,
-        connection_provider=None,
-        bindings=None,
-    ):
-        seen[resource_name] = config.database if config else None
+    def _fake(connector, *, resource_name, bindings, connection_provider):
+        proxy = bindings.get_conn_proxy_for_connector(connector)
+        seen[resource_name] = connection_provider.get_config(proxy).database
         return ResourceSample(
             resource_name=resource_name, connector=connector.name, docs=[{"id": 1}]
         )
@@ -386,13 +404,15 @@ def test_bindings_sample_each_table_through_its_own_connection(
 def test_bindings_with_no_connection_say_why_nothing_was_sampled(
     sampler: ResourceSampler,
 ) -> None:
-    with pytest.raises(ValueError, match=r"users: .*requires a PostgresConfig"):
-        sampler.sample_bindings(_table_bindings())
+    with pytest.raises(ValueError, match=r"users: no connection configuration"):
+        sampler.sample_bindings(
+            _table_bindings(), connection_provider=EmptyConnectionProvider()
+        )
 
 
 def test_a_file_sample_claims_no_description(sampler: ResourceSampler) -> None:
     """A description is what the source says; a file says nothing about itself."""
-    assert sampler.sample_file(SOURCE_DIR / "customers.csv").description is None
+    assert sample_one(sampler, SOURCE_DIR / "customers.csv").description is None
 
 
 class _DeclaringPostgres:
@@ -445,10 +465,17 @@ def test_a_table_connector_carries_what_the_table_declares(
     from graflo.db.postgres import conn as pg_conn
 
     monkeypatch.setattr(pg_conn, "PostgresConnection", _DeclaringPostgres)
+    connector = TableConnector(
+        table_name="orders", schema_name="public", name="orders_c"
+    )
     sample = sampler.sample_connector(
-        TableConnector(table_name="orders", schema_name="public", name="orders_c"),
+        connector,
         resource_name="orders",
-        config=_pg("shop"),
+        bindings=Bindings(
+            connectors=[connector],
+            connector_connection=[{"connector": "orders_c", "conn_proxy": "shop"}],
+        ),
+        connection_provider=InMemoryConnectionProvider({"shop": _pg("shop")}),
     )
     assert sample.docs == [{"id": 1, "user_id": 7, "total": 9.5}]
     assert sample.description == "What customers bought"
@@ -503,18 +530,26 @@ def test_an_api_connector_is_sampled_through_its_connection() -> None:
 def test_an_api_connector_without_a_connection_says_so() -> None:
     from graflo.architecture.contract.bindings import APIConnector
 
+    connector = APIConnector(name="issues", path="/items")
     with pytest.raises(ValueError, match="REST API connection"):
         ResourceSampler().sample_connector(
-            APIConnector(name="issues", path="/items"), resource_name="issues"
+            connector,
+            resource_name="issues",
+            bindings=Bindings(connectors=[connector]),
+            connection_provider=EmptyConnectionProvider(),
         )
 
 
 def test_a_push_connector_cannot_be_sampled() -> None:
     from graflo.architecture.contract.bindings import PushConnector
 
+    connector = PushConnector(kind="push", name="groundings")
     with pytest.raises(ValueError, match="pushed, not fetched"):
         ResourceSampler().sample_connector(
-            PushConnector(kind="push", name="groundings"), resource_name="provenance"
+            connector,
+            resource_name="provenance",
+            bindings=Bindings(connectors=[connector]),
+            connection_provider=EmptyConnectionProvider(),
         )
 
 
@@ -527,15 +562,18 @@ def test_a_file_connector_declares_the_format_a_name_does_not_show(
     chunk.parent.mkdir()
     chunk.write_bytes(gzip.compress(b'{"id": "e1"}\n'))
 
+    connector = FileConnector(
+        regex=r"^chunk_\d+\.gz$",
+        sub_path=tmp_path,
+        recursive=True,
+        file_type="jsonl",
+        name="events_c",
+    )
     sample = sampler.sample_connector(
-        FileConnector(
-            regex=r"^chunk_\d+\.gz$",
-            sub_path=tmp_path,
-            recursive=True,
-            file_type="jsonl",
-            name="events_c",
-        ),
+        connector,
         resource_name="events",
+        bindings=Bindings(connectors=[connector]),
+        connection_provider=EmptyConnectionProvider(),
     )
 
     assert sample.connector == "events_c"

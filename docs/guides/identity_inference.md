@@ -27,34 +27,35 @@ runs these steps on two CSV files.
 ### 1. Sample the source
 
 Sampling reads a bounded number of records from each file or table and keeps
-them as they were read.
+them as they were read. Point a files connection at the directory, list what it
+holds, and sample the files you pick:
 
 ```python
 from graflo import GraphEngine
+from graflo.connections import FilesConnConfig, InMemoryConnectionProvider
 
-source = GraphEngine().sample_resources(
-    ["data/machines.csv", "data/work_orders.csv"], max_docs=500
+data = FilesConnConfig(root="/srv/data")
+engine = GraphEngine()
+source = engine.sample_resources(
+    engine.discover(data).bindings("data", ["machines", "work_orders"]),
+    connection_provider=InMemoryConnectionProvider({"data": data}),
+    max_docs=500,
 )
 for sample in source.samples:
     print(sample.resource_name, len(sample.docs), sample.truncated)
 ```
 
-The result holds one sample per file, named after the file without its
-extension (`machines`, `work_orders`). `max_docs` caps the records per sample.
-Its default, 100, equals the inference floor, so raise it when you can;
-`truncated` tells you whether the cap cut the source short.
+Discovery names each file after its path without the extension (`machines`,
+`work_orders`). `max_docs` caps the records per sample. Its default, 100,
+equals the inference floor, so raise it when you can; `truncated` tells you
+whether the cap cut the source short.
 
-`sample_resources` takes other sources too:
-
-- A directory path samples every file in it that GraFlo can read, and skips
-  the rest with a warning.
-- A `PostgresConfig` samples the tables of a schema: pass `schema_name=` and,
-  to sample only some tables, `resources=[...]`. Each sample is named after its
-  table and carries the table's declared `primary_key`.
-- The `bindings` block of a manifest samples each resource through its own
-  connector; a file connector contributes the first file it matches. Pass
-  `connection_provider=` when a connector reads a PostgreSQL table. Connectors
-  of other kinds (API, SPARQL, Kafka) are skipped with a warning.
+Any connection that is read from works the same way. Discovering a PostgreSQL
+connection lists its tables, and each sample carries the table's declared
+`primary_key`. The `bindings` block of a manifest can be sampled directly: each
+resource is read through its own connector, with the provider ingestion uses.
+[Connections and discovery](connections_and_discovery.md) lists what each kind
+of connection offers.
 
 [Sampling and profiling](../concepts/schema/sampling_and_profiling.md)
 describes the caps and what a sample records.
@@ -183,8 +184,12 @@ resource in the sample takes part.
 ```python
 from graflo.db.cross_resource_identity import infer_from_source_sample
 
-source = GraphEngine().sample_resources(
-    ["exports/maintenance_assets.csv", "exports/sensor_devices.csv"], max_docs=500
+source = engine.sample_resources(
+    engine.discover(data).bindings(
+        "data", ["exports_maintenance_assets", "exports_sensor_devices"]
+    ),
+    connection_provider=InMemoryConnectionProvider({"data": data}),
+    max_docs=500,
 )
 proposal = infer_from_source_sample(source, vertex_name="machine")
 ```

@@ -82,7 +82,7 @@ from graflo.object_storage import MinioConfig, ensure_staging_bucket_for_config
 minio = MinioConfig.from_docker_env()
 ensure_staging_bucket_for_config(minio)
 
-provider = InMemoryConnectionProvider({"minio_bulk": minio.to_s3_conn_config()})
+provider = InMemoryConnectionProvider({"minio_bulk": minio.to_files_conn_config()})
 
 conn_conf.bulk_load = TigergraphBulkLoadConfig(
     enabled=True,

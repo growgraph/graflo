@@ -8,7 +8,7 @@ import pathlib
 import re
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Literal, Self
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self
 from urllib.parse import quote
 
 import suthing
@@ -110,6 +110,10 @@ class ResourceConnector(ConfigBaseModel, abc.ABC):
         exclude=True,
         description="Deterministic internal connector id derived from defining fields.",
     )
+    #: Whether the bindings' default ``conn_proxy`` applies to this connector.
+    #: A connector that can be read without a connection only uses one wired
+    #: to it explicitly.
+    takes_default_conn_proxy: ClassVar[bool] = True
     row_annotations: dict[str, Any] = Field(
         default_factory=dict,
         description=(
@@ -355,7 +359,10 @@ class FileConnector(ResourceConnector):
 
     Attributes:
         regex: Regular expression pattern for matching filenames
-        sub_path: Path to search for matching files (default: "./")
+        sub_path: Directory to search for matching files (default: "./"). With
+            a ``conn_proxy`` naming a files connection it is relative to that
+            connection's root, a local directory or an S3 prefix; without one,
+            a local path.
         recursive: Also search the directories under ``sub_path``. ``regex``
             still matches the file's name, not its path.
         file_type: Format of the matched files, for names that do not show it.
@@ -364,6 +371,8 @@ class FileConnector(ResourceConnector):
             declared here would not be applied; filter the rows in a pipeline
             step, or bind a :class:`TableConnector`.
     """
+
+    takes_default_conn_proxy: ClassVar[bool] = False
 
     regex: str | None = None
     sub_path: pathlib.Path = Field(default_factory=lambda: pathlib.Path("./"))
@@ -1255,6 +1264,8 @@ class PushConnector(ResourceConnector):
             envelope rather than a record.
         row_annotations: Constant fields merged into every record (record wins).
     """
+
+    takes_default_conn_proxy: ClassVar[bool] = False
 
     kind: Literal["push"]
     # Narrowed from the base's optional name; validate_assignment refuses None.

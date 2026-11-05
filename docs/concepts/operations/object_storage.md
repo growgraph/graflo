@@ -57,7 +57,7 @@ from graflo.object_storage import MinioConfig
 
 minio = MinioConfig.from_docker_env()
 
-provider = InMemoryConnectionProvider({"minio_bulk": minio.to_s3_conn_config()})
+provider = InMemoryConnectionProvider({"minio_bulk": minio.to_files_conn_config()})
 
 conn_conf = TigergraphConfig.from_env()
 conn_conf.bulk_load = TigergraphBulkLoadConfig(
@@ -91,11 +91,13 @@ not used with `ConnectionManager`.
 `MinioConfig.from_docker_env()` reads the settings of the MinIO container
 shipped under `docker/minio` (`MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`,
 `MINIO_API_PORT`, `MINIO_STAGING_BUCKET`, `MINIO_LOADER_ENDPOINT` and a few
-alternatives). `to_s3_conn_config()` turns it into the `S3ConnConfig` that a
-connection provider stores; you can also build an `S3ConnConfig` directly with
-`bucket`, `region`, `endpoint_url`, `aws_access_key_id`,
-`aws_secret_access_key` and `loader_endpoint_url`, or read those from
-`{PREFIX}BUCKET`, `{PREFIX}REGION`, … with `S3ConnConfig.from_env(prefix)`.
+alternatives). `to_files_conn_config()` turns it into the files connection
+(`FilesConnConfig`, root `s3://<bucket>`) that a connection provider stores; you
+can also build a `FilesConnConfig` directly with `root`, `region`,
+`endpoint_url`, `access_key_id`, `secret_access_key` and
+`loader_endpoint_url`, or read those from `{PREFIX}ROOT`, `{PREFIX}REGION`, …
+with `FilesConnConfig.from_env(prefix)`. The root's prefix, when it has one,
+comes before `s3_key_prefix`.
 
 `graflo.object_storage` also exports the helpers the bulk load uses:
 

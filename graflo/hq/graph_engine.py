@@ -32,12 +32,15 @@ from graflo.db.manager import ConnectionManager
 from graflo.db.postgres.conn import PostgresConnection
 from graflo.hq.caster import Caster, IngestionParams
 from graflo.hq.db_writer import DBWriter
+from graflo.hq.discovery import DEFAULT_DISCOVERY_LIMIT
 from graflo.hq.resource_mapper import ResourceMapper
 from graflo.hq.sanitizer import Sanitizer
 from graflo.hq.sql_inferencer import SQLInferenceManager
 from graflo.onto import DBType
 
 if TYPE_CHECKING:
+    from graflo.connections.kinds import AnyConnection
+    from graflo.hq.discovery import Discovery
     from graflo.migrate.drift import LiveSchemaDrift
 
 logger = logging.getLogger(__name__)
@@ -147,55 +150,54 @@ class GraphEngine:
                 entity_tables=entity_tables,
             )
 
+    def discover(
+        self, connection: "AnyConnection", *, limit: int = DEFAULT_DISCOVERY_LIMIT
+    ) -> "Discovery":
+        """What *connection* offers to read: tables, classes, topics or files.
+
+        A pick of the result becomes bindings (``Discovery.bindings``), sampled
+        with :meth:`sample_resources`. See :func:`graflo.hq.discovery.discover`.
+        """
+        from graflo.hq.discovery import discover
+
+        return discover(connection, limit=limit)
+
     def sample_resources(
         self,
-        source: "PostgresConfig | Bindings | Path | str | list[Path | str]",
+        bindings: Bindings,
         *,
-        schema_name: str | None = None,
+        connection_provider: ConnectionProvider,
         resources: list[str] | None = None,
         max_docs: int = DEFAULT_MAX_DOCS,
-        source_name: str | None = None,
-        connection_provider: ConnectionProvider | None = None,
+        source_name: str = "bindings",
     ) -> "SourceSample":
-        """Sample documents from a source, keeping connector provenance.
+        """Sample documents from every resource *bindings* wire up.
 
         The returned :class:`~graflo.architecture.onto_sample.SourceSample` holds
-        pure JSON documents per resource. It is the shared input for schema
-        inference — algorithmic or agentic — and
+        pure JSON documents per resource, each recording its connector. It is
+        the shared input for schema inference — algorithmic or agentic — and
         ``SourceSample.samples_by_resource`` is the shape cross-resource identity
         inference consumes directly.
 
         Args:
-            source: A ``PostgresConfig``, a ``Bindings`` block, or a file/directory path.
-            schema_name: PostgreSQL schema to sample (PostgreSQL sources only).
+            bindings: Connectors, their resources and their ``conn_proxy`` wiring.
+            connection_provider: Resolves each ``conn_proxy`` (and its
+                credentials) the way ingestion does.
             resources: Restrict sampling to these resource names.
             max_docs: Cap on documents fetched per resource.
-            source_name: Override the logical source name.
-            connection_provider: For a ``Bindings`` source, resolves each
-                connector's connection (and credentials) the way ingestion
-                does. Without it, table connectors cannot be sampled.
+            source_name: The logical source name recorded on the sample.
 
         Returns:
             SourceSample: Per-resource samples with connector provenance.
         """
         from graflo.hq.sampler import ResourceSampler
 
-        sampler = ResourceSampler(max_docs=max_docs)
-        if isinstance(source, PostgresConfig):
-            return sampler.sample_postgres(
-                source,
-                schema_name=schema_name,
-                tables=resources,
-                source_name=source_name,
-            )
-        if isinstance(source, Bindings):
-            return sampler.sample_bindings(
-                source,
-                resources=resources,
-                connection_provider=connection_provider,
-                source_name=source_name or "bindings",
-            )
-        return sampler.sample_files(source, source_name=source_name)
+        return ResourceSampler(max_docs=max_docs).sample_bindings(
+            bindings,
+            connection_provider=connection_provider,
+            resources=resources,
+            source_name=source_name,
+        )
 
     def infer_manifest(
         self,

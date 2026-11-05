@@ -240,7 +240,7 @@ UNBUILDABLE: list[tuple[Callable[[], Connector], str]] = [
         lambda: SparqlConnector(
             rdf_class="http://example.org/E", resource_name="events"
         ),
-        "neither endpoint_url nor rdf_file",
+        "no endpoint_url, no rdf_file and no conn_proxy",
     ),
 ]
 UNBUILDABLE_IDS = ["api-source", "kafka-source", "table-source", "sparql-source"]
