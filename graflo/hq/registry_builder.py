@@ -23,6 +23,10 @@ from graflo.architecture.contract.bindings import (
     TemplatedConnector,
 )
 from graflo.architecture.contract.ingestion import IngestionModel
+from graflo.architecture.contract.ingestion.resource import (
+    routed_row_condition,
+    router_keeps_subset,
+)
 from graflo.architecture.graph_types import EncodingType
 from graflo.architecture.schema import Schema
 from graflo.connections.onto import PostgresConfig, SparqlEndpointConfig
@@ -41,11 +45,12 @@ from graflo.data_source.enumerated import EnumeratedDataSource, EnumeratedMember
 from graflo.data_source.factory import DataSourceFactory
 from graflo.data_source.registry import DataSourceRegistry
 from graflo.data_source.sql import SQLConfig, SQLDataSource
-from graflo.filter.sql import datetime_range_filter
+from graflo.filter.sql import datetime_range_filter, values_in_filter
 
 if TYPE_CHECKING:
     from graflo.architecture.contract.bindings import Bindings
     from graflo.data_source.api import APIConfig
+    from graflo.filter.onto import FilterExpression
     from graflo.hq.caster import IngestionParams
 
 logger = logging.getLogger(__name__)
@@ -124,6 +129,8 @@ class RegistryBuilder:
                     continue
                 cref = connector.name or connector.hash
                 kind = connector.bound_source_kind()
+                if not isinstance(connector, TableConnector):
+                    self._report_unnarrowed(resource_name, connector)
 
                 if kind == BoundSourceKind.FILE:
                     if not isinstance(connector, FileConnector):
@@ -440,6 +447,16 @@ class RegistryBuilder:
                     vertex_config=self.schema.core_schema.vertex_config,
                 )
 
+            routed = self._routed_rows(resource_name)
+            if routed == {}:
+                logger.warning(
+                    "Connector '%s' is not read: resource '%s' routes no value "
+                    "of its rows to a class",
+                    connector.name or connector.hash,
+                    resource_name,
+                )
+                return
+
             # The run's date range is one more condition on the connector's
             # query: it applies whether the column comes from the connector or
             # from the run, beside any window the connector declares itself.
@@ -460,6 +477,19 @@ class RegistryBuilder:
                         "set TableConnector.date_field or IngestionParams.datetime_column for resource %s",
                         resource_name,
                     )
+
+            if routed is not None:
+                pushed = self._routed_filter(connector, routed)
+                if pushed is not None:
+                    run_filters.append(pushed)
+                    logger.info(
+                        "Connector '%s' reads only the rows resource '%s' routes: %s",
+                        connector.name or connector.hash,
+                        resource_name,
+                        _describe(routed),
+                    )
+                else:
+                    self._report_unnarrowed(resource_name, connector)
 
             query = connector.build_query(effective_schema, extra_filters=run_filters)
 
@@ -484,6 +514,55 @@ class RegistryBuilder:
                 exc_info=True,
             )
             raise
+
+    def _routed_rows(self, resource_name: str) -> dict[str, frozenset[Any]] | None:
+        """The routed values per field a row of *resource_name* must hold to count.
+
+        See :func:`routed_row_condition`; ``None`` when a row may count anyway.
+        """
+        pipeline = self.ingestion_model.fetch_resource_config(resource_name).pipeline
+        return routed_row_condition(
+            pipeline, self.schema.core_schema.vertex_config.vertex_set
+        )
+
+    @staticmethod
+    def _routed_filter(
+        connector: TableConnector, routed: Mapping[str, frozenset[Any]]
+    ) -> FilterExpression | None:
+        """*routed* as a condition on *connector*'s query; ``None`` if it cannot be one."""
+        columns: dict[str, set[Any]] = {}
+        for field, values in routed.items():
+            column = connector.source_column(field)
+            if column is None:
+                return None
+            columns.setdefault(column, set()).update(values)
+        return values_in_filter(columns)
+
+    def _report_unnarrowed(self, resource_name: str, connector: Any) -> None:
+        """Warn when *connector* reads rows its resource's routers drop.
+
+        Said when a router keeps a chosen subset (closed, or bounded by
+        ``vertex_types``) and the connector fixes the routed fields on none of
+        its requests. A table connector reaches here only when its query
+        cannot carry the condition.
+        """
+        routed = self._routed_rows(resource_name)
+        if routed is None:
+            return
+        pipeline = self.ingestion_model.fetch_resource_config(resource_name).pipeline
+        if routed and not router_keeps_subset(pipeline):
+            return
+        if routed and not isinstance(connector, TableConnector):
+            requests = connector.row_constants()
+            if requests and all(set(routed) <= set(c) for c in requests):
+                return
+        logger.warning(
+            "Connector '%s' reads every row, but resource '%s' keeps only rows "
+            "with %s; the others are read and dropped",
+            connector.name or connector.hash,
+            resource_name,
+            _describe(routed) if routed else "no routed value",
+        )
 
     # ------------------------------------------------------------------
     # SPARQL / RDF sources
@@ -822,3 +901,11 @@ class RegistryBuilder:
             connector.group_id,
             resource_name,
         )
+
+
+def _describe(routed: Mapping[str, frozenset[Any]]) -> str:
+    """Routed values per field, for a log line."""
+    return " or ".join(
+        f"{field} in {len(values)} value{'s' if len(values) != 1 else ''}"
+        for field, values in sorted(routed.items())
+    )

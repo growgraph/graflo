@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Collection, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from typing import Any
 
 from pydantic import AliasChoices, model_validator
@@ -296,6 +296,134 @@ def role_reach(pipeline: Any) -> dict[str, frozenset[str] | None]:
 
     walk(pipeline)
     return roles
+
+
+def transform_writes(step: Mapping[str, Any]) -> set[str] | None:
+    """Fields a normalized transform step may write; ``None`` when it does not say."""
+    writes: set[str] = set()
+    rename = step.get("rename")
+    if isinstance(rename, dict):
+        writes |= {name for name in rename.values() if isinstance(name, str)}
+    call = step.get("call")
+    if isinstance(call, dict):
+        output = call.get("output")
+        if isinstance(output, str):
+            writes.add(output)
+        elif isinstance(output, list):
+            writes |= {name for name in output if isinstance(name, str)}
+        else:
+            return None
+    return writes
+
+
+def level_rewrites(level: Sequence[Any]) -> set[str] | None:
+    """Fields the transforms of one pipeline level may write; ``None`` if one does not say.
+
+    Every transform of a level runs before the level's routers, whatever its
+    place in the list, so all of them count.
+    """
+    writes: set[str] = set()
+    for item in level:
+        if not isinstance(item, dict):
+            continue
+        step = normalize_actor_step(dict(item))
+        if step.get("type") != "transform":
+            continue
+        step_writes = transform_writes(step)
+        if step_writes is None:
+            return None
+        writes |= step_writes
+    return writes
+
+
+def router_accepted_values(
+    step: dict[str, Any], declared: Collection[str]
+) -> frozenset[Any]:
+    """Every discriminator value a ``vertex_router`` sends to some class.
+
+    An unmapped value routes as the class of that name, so the values that
+    can route are the ``type_map`` keys and the *declared* class names; each
+    is kept when :func:`route_discriminator` routes it.
+    """
+    normalized = normalize_actor_step(dict(step))
+    candidates = [*_router_table(normalized), *declared]
+    return frozenset(
+        raw
+        for raw in candidates
+        if route_discriminator(normalized, raw, declared) is not None
+    )
+
+
+def router_keeps_subset(pipeline: Sequence[Any]) -> bool:
+    """Whether a top-level router of *pipeline* is closed or bounded by ``vertex_types``."""
+    for item in pipeline:
+        if not isinstance(item, dict):
+            continue
+        step = normalize_actor_step(dict(item))
+        if step.get("type") == "vertex_router" and not is_unbounded_router(step):
+            return True
+    return False
+
+
+def routed_row_condition(
+    pipeline: Sequence[Any], declared: Collection[str]
+) -> dict[str, frozenset[Any]] | None:
+    """The rows *pipeline* produces anything from, as routed values per field.
+
+    When every top-level step is a transform, a ``vertex_router``, or an
+    ``edge`` between router roles, a row produces something only if a router
+    routes its ``type_field`` value. The result maps each such field to the
+    values routed (routers on one field add up); a row counts when any field
+    holds one of its values. A field no value routes on is left out, so ``{}``
+    means no row produces anything.
+
+    ``None`` when a row may produce something without a router: another kind
+    of top-level step, an edge end that is not a router role, or a transform
+    of the level that may write a router's ``type_field``.
+    """
+    steps = [
+        normalize_actor_step(dict(item)) if isinstance(item, dict) else item
+        for item in pipeline
+    ]
+    if any(not isinstance(step, dict) for step in steps):
+        return None
+    routers = [step for step in steps if step.get("type") == "vertex_router"]
+    if not routers:
+        return None
+    rewritten = level_rewrites(steps)
+    roles = {step.get("role") or step.get("type_field") for step in routers}
+    values: dict[str, set[Any]] = {}
+    for step in steps:
+        kind = step.get("type")
+        if kind == "transform":
+            continue
+        if kind == "edge":
+            if not _edge_ends_in_roles(step, roles):
+                return None
+            continue
+        if kind != "vertex_router":
+            return None
+        field = step.get("type_field")
+        if not isinstance(field, str) or rewritten is None or field in rewritten:
+            return None
+        values.setdefault(field, set()).update(router_accepted_values(step, declared))
+    return {field: frozenset(vals) for field, vals in values.items() if vals}
+
+
+def _edge_ends_in_roles(step: Mapping[str, Any], roles: Collection[Any]) -> bool:
+    """Whether every end of a normalized edge step is one of *roles*."""
+    links = step.get("links")
+    intents = links if isinstance(links, list) else [step]
+    for intent in intents:
+        if not isinstance(intent, dict):
+            return False
+        for side, alias in (("source", "from"), ("target", "to")):
+            if intent.get(side) is not None or intent.get(alias) is not None:
+                return False
+            role = intent.get(f"{side}_role") or intent.get(f"{side}_type_field")
+            if role not in roles:
+                return False
+    return True
 
 
 def _router_table(normalized: dict[str, Any]) -> dict[Any, Any]:

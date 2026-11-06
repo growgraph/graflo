@@ -126,9 +126,11 @@ The keys of a join:
 - `on_self`: the column of the connector's own table.
 - `on_other`: the column of the joined table that `on_self` must equal.
 - `alias`: the name of the joined table in the query. You need it when you join the same table twice.
-- `select_fields`: the columns to take from the joined table. Each arrives as `<alias>__<column>`. Without it, every column of the joined table is selected.
+- `select_fields`: the columns to take from the joined table. Each arrives as `<alias>__<column>`. Without it, every column of the joined table is selected under its own name.
 - `join_type`: `LEFT` by default.
 - `schema_name`: by default the connector's schema.
+
+Every column of a query must have its own name. A read whose result names two columns alike, such as an `on_other` key that the connector's own table also has, stops with an error naming the column; take the joined columns with `select_fields`, or rename them with `as` in a view.
 
 With joins, the connector's own table is called `base` in the query; `base_alias` changes that name. A field without a dot in `filters` refers to `base`; write `asset.kind` for a column of a joined table. `select_columns` replaces the whole column list with the SQL expressions you give.
 
@@ -262,6 +264,8 @@ The keys of a `select` view:
 
     Without `select`, the view selects `all_base`. The `as` key is optional; `alias` is accepted in its place.
 
+    The entries form a set of named columns: an entry repeated is one column, and a column of the connector's own table under its own name is already part of `all_base`. Two different columns given one name are refused when the manifest loads.
+
 - `joins`: joins with the keys described in [Join other tables with `joins`](#join-other-tables-with-joins).
 - `where`: one condition, in the syntax of `filters`. It is checked when the manifest loads. When the view has joins, qualify each column with `base.` or a join alias.
 - `from`: the table to read. By default it is the connector's `table_name`.
@@ -307,9 +311,19 @@ Only the first part may set `where` and `from`; the others raise a `ValueError` 
 
 ## Automatic joins for edge tables
 
-A table connector with neither `view` nor `joins` can get joins that GraFlo adds when ingestion starts. This happens for an edge step of the connector's resource that names both vertex types with `from` and `to` and sets both `match_source` and `match_target`. GraFlo reads those two keys as columns of the connector's table. For each end it finds the table connector of the resource named after the vertex type and joins that table on the vertex type's first identity property, as `s` for the source and `t` for the target. Rows whose ends are not found are left out.
+A table connector with neither `view` nor `joins` can get joins that GraFlo adds when ingestion starts. This happens for an edge step of the connector's resource that names both vertex types with `from` and `to` and sets both `match_source` and `match_target`. GraFlo reads those two keys as columns of the connector's table. For each end it finds the table connector of the resource named after the vertex type and joins that table on the vertex type's first identity property, as `s` for the source and `t` for the target. Rows whose ends are not found are left out. The joins only filter: the rows keep the columns of the connector's table alone.
 
 Declaring `view` or `joins` turns this off, and the query is then exactly the one you declared. An edge step that takes its ends from roles gets no automatic join; use `type_lookup` for it.
+
+## A router's types reach the query
+
+When a resource only routes, its table connector reads only the rows the routers keep. GraFlo adds the condition when ingestion starts, beside any date range. The manifest is not changed.
+
+This applies when every top-level step of the resource is a transform, a `vertex_router`, or an edge between router roles, and no transform writes a router's `type_field`. Each router then contributes `type_field IN (values it routes)`. Those values are its `type_map` keys and the declared type names that reach a type it may produce. Several routers are joined with `OR`. The router still checks every row, so the condition only spares reading rows it would skip.
+
+The `type_field` must be a column of the query: a column of the table, a `select_fields` column (`alias__column`), or a named column of a `view`. With the `equipment` join above, a router on `asset__kind` adds `asset."kind" IN (...)`, and in a view, a router on the column selected as `{from_join: asset, column: kind, as: asset_kind}` does the same. A row cap (`max_items`) then counts kept rows only.
+
+If the condition cannot be added, ingestion logs a warning naming the connector when the router keeps a subset (`type_map_only` or `vertex_types`). This happens for an expression column, raw `select_columns`, a join that selects all its columns, or values of mixed types. The same warning is logged for a connector of another kind that fixes no router field on its rows. A router that routes no value leaves its table connector unread.
 
 ## What to read next
 

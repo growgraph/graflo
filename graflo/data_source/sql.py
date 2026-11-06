@@ -6,7 +6,8 @@ memory using server-side cursor semantics where the driver supports them.
 """
 
 import logging
-from collections.abc import Iterator
+from collections import Counter
+from collections.abc import Iterable, Iterator
 from decimal import Decimal
 from typing import Any
 
@@ -40,6 +41,17 @@ class SQLConfig(ConfigBaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
     pagination: bool | None = None
     page_size: int | None = None
+
+
+def _check_distinct_columns(columns: Iterable[str]) -> None:
+    """Raise when a result names two columns alike: its rows have no single reading."""
+    repeated = sorted(name for name, n in Counter(columns).items() if n > 1)
+    if repeated:
+        raise ValueError(
+            "the query returns more than one column named "
+            + ", ".join(repr(name) for name in repeated)
+            + "; give each a distinct name (in a view, with 'as')"
+        )
 
 
 class SQLDataSource(AbstractDataSource):
@@ -118,6 +130,7 @@ class SQLDataSource(AbstractDataSource):
         Raises:
             sqlalchemy.exc.SQLAlchemyError: When the query fails. A source that
                 cannot be read must not look like an empty one.
+            ValueError: The result names two columns alike.
         """
         effective_batch = max(1, batch_size)
         engine = self._get_engine()
@@ -128,6 +141,7 @@ class SQLDataSource(AbstractDataSource):
                 stream = conn.execution_options(stream_results=True)
                 result = stream.execute(self._statement(limit), self.config.params)
                 try:
+                    _check_distinct_columns(result.keys())
                     while True:
                         if limit is not None and total_items >= limit:
                             break

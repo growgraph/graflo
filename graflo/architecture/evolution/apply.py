@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 from graflo.architecture.contract.ingestion import IngestionModel
 from graflo.architecture.contract.ingestion.resource import (
+    level_rewrites,
     route_discriminator,
     router_reach,
     step_produces_vertices,
@@ -189,33 +190,16 @@ def _prune_ingestion_for_removed_vertices(
         )
 
 
-def _transform_writes(step: Mapping[str, Any]) -> set[str] | None:
-    """Fields a normalized transform step may write; ``None`` when it does not say."""
-    writes: set[str] = set()
-    rename = step.get("rename")
-    if isinstance(rename, dict):
-        writes |= {name for name in rename.values() if isinstance(name, str)}
-    call = step.get("call")
-    if isinstance(call, dict):
-        output = call.get("output")
-        if isinstance(output, str):
-            writes.add(output)
-        elif isinstance(output, list):
-            writes |= {name for name in output if isinstance(name, str)}
-        else:
-            return None
-    return writes
-
-
 def _row_reach(
     pipeline: Sequence[Any], constants: Mapping[str, Any], declared: Collection[str]
 ) -> set[str]:
     """Classes *pipeline* can produce from a row carrying *constants*.
 
     A top-level ``vertex_router`` whose ``type_field`` the constants fix routes
-    that value the way the runtime does, unless an earlier transform may
-    rewrite the field. Every other producing step, at any level, counts with
-    all it can produce.
+    that value the way the runtime does, unless a transform of the level may
+    rewrite the field (transforms run before routers, wherever they are
+    listed). Every other producing step, at any level, counts with all it can
+    produce.
     """
     reach: set[str] = set()
 
@@ -230,7 +214,7 @@ def _row_reach(
             if step.get("type") == "descend":
                 everything(step.get("pipeline"))
 
-    rewritten: set[str] | None = set()
+    rewritten = level_rewrites(pipeline)
     for item in pipeline:
         if not isinstance(item, dict):
             continue
@@ -238,10 +222,6 @@ def _row_reach(
         kind = step.get("type")
         field = step.get("type_field")
         if kind == "transform":
-            writes = _transform_writes(step)
-            rewritten = (
-                None if writes is None or rewritten is None else rewritten | writes
-            )
             continue
         if (
             kind == "vertex_router"

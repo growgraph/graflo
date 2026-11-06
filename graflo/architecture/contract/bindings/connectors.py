@@ -685,6 +685,33 @@ class TableConnector(ResourceConnector):
 
         return query
 
+    def source_column(self, name: str) -> str | None:
+        """The column the query's output *name* reads, as a filter field.
+
+        A base column is returned bare (conditions qualify it with the base
+        alias), a joined one as ``alias.column``. ``None`` when the query's
+        output names are not known: raw ``select_columns``, or a join that
+        selects all its columns.
+        """
+        if self.view is not None:
+            from graflo.filter.select import SelectSpec
+
+            return (
+                self.view.source_column(name)
+                if isinstance(self.view, SelectSpec)
+                else None
+            )
+        if self.select_columns is not None:
+            return None
+        for jc in self.joins:
+            if jc.select_fields is None:
+                return None
+            alias = jc.alias or jc.table
+            for col in jc.select_fields:
+                if name == f"{alias}__{col}":
+                    return f"{alias}.{col}"
+        return name
+
     @staticmethod
     def _qualified_column_ref(column: str, base_alias: str | None) -> str:
         if base_alias:

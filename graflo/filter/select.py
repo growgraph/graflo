@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
-from typing import Any, Literal, Self
+from typing import Any, Literal, NamedTuple, Self
 
 from pydantic import Field, field_validator, model_validator
 
@@ -88,62 +88,80 @@ def _sql_qualify_base_column(col: str, base_alias: str | None) -> str:
     return f'"{col}"'
 
 
-def _render_select_string(item: str, base_alias: str | None) -> str:
-    if item == ALL_BASE_COLUMNS:
-        if base_alias:
-            return f"{base_alias}.*"
-        return "*"
-    if item == "*":
-        return "*"
-    if _SIMPLE_IDENT.match(item):
-        return _sql_qualify_base_column(item, base_alias)
-    return item
+class _SelectColumn(NamedTuple):
+    """What one ``select`` item takes and the name it gives it.
+
+    ``source`` is ``("all_base",)``, ``("base", column)``,
+    ``("join", alias, column)`` or ``("sql", text)``; ``name`` is ``None``
+    when only the engine decides it.
+    """
+
+    source: tuple[str, ...]
+    name: str | None
+
+    @property
+    def is_base_column(self) -> bool:
+        """A base column under its own name, which ``all_base`` already selects."""
+        return self.source[0] == "base" and self.name == self.source[1]
 
 
-def _render_select_dict(
-    item: dict[str, Any],
-    base_alias: str | None,
-    join_aliases: set[str],
-) -> str:
+def _output_alias(item: dict[str, Any]) -> str | None:
+    out = item.get("as") or item.get("alias")
+    if out is not None and not isinstance(out, str):
+        raise ValueError("select output alias must be a string")
+    return out
+
+
+def _select_column(item: str | dict[str, Any]) -> _SelectColumn:
+    """The column a ``select`` item stands for."""
+    if isinstance(item, str):
+        if item == ALL_BASE_COLUMNS:
+            return _SelectColumn(("all_base",), None)
+        if _SIMPLE_IDENT.match(item):
+            return _SelectColumn(("base", item), item)
+        return _SelectColumn(("sql", item), None)
+    out = _output_alias(item)
     if "from_join" in item:
-        alias = item["from_join"]
+        alias, col = item["from_join"], item.get("column")
         if not isinstance(alias, str):
             raise ValueError("from_join select item requires string 'from_join' alias")
+        if not col or not isinstance(col, str):
+            raise ValueError("from_join select item requires string 'column'")
+        return _SelectColumn(("join", alias, col), out or col)
+    if "base" in item:
+        col = item["base"]
+        if not isinstance(col, str):
+            raise ValueError("base select item requires string 'base' column name")
+        return _SelectColumn(("base", col), out or col)
+    expr = item.get("expr", "")
+    if not isinstance(expr, str):
+        raise ValueError("expr select item requires string 'expr'")
+    return _SelectColumn(("sql", expr), out)
+
+
+def _render_select_column(
+    column: _SelectColumn, base_alias: str | None, join_aliases: set[str]
+) -> str:
+    kind, *ref = column.source
+    if kind == "all_base":
+        return f"{base_alias}.*" if base_alias else "*"
+    if kind == "join":
+        alias, col = ref
         if alias not in join_aliases:
             raise ValueError(
                 f"select from_join alias {alias!r} is not among join aliases "
                 f"{sorted(join_aliases)}"
             )
-        col = item.get("column")
-        if not col or not isinstance(col, str):
-            raise ValueError("from_join select item requires string 'column'")
-        expr = f'{alias}."{col}"'
-        out = item.get("as") or item.get("alias")
-        if out is not None:
-            if not isinstance(out, str):
-                raise ValueError("select output alias must be a string")
-            return f"{expr} AS {out}"
+        expr, own_name = f'{alias}."{col}"', col
+    elif kind == "base":
+        (col,) = ref
+        expr, own_name = _sql_qualify_base_column(col, base_alias), col
+    else:
+        (expr,) = ref
+        own_name = None
+    if column.name is None or column.name == own_name:
         return expr
-    if "base" in item:
-        col = item["base"]
-        if not isinstance(col, str):
-            raise ValueError("base select item requires string 'base' column name")
-        expr = _sql_qualify_base_column(col, base_alias)
-        out = item.get("as") or item.get("alias")
-        if out is not None:
-            if not isinstance(out, str):
-                raise ValueError("select output alias must be a string")
-            return f"{expr} AS {out}"
-        return expr
-    expr = item.get("expr", "")
-    if not isinstance(expr, str):
-        raise ValueError("expr select item requires string 'expr'")
-    out = item.get("as") or item.get("alias")
-    if out is not None:
-        if not isinstance(out, str):
-            raise ValueError("select output alias must be a string")
-        return f"{expr} AS {out}"
-    return expr
+    return f"{expr} AS {column.name}"
 
 
 class SelectSpec(ConfigBaseModel):
@@ -318,6 +336,84 @@ class SelectSpec(ConfigBaseModel):
             )
         return self
 
+    def _select_columns(self) -> list[_SelectColumn]:
+        """The ``select`` items, each column once, in declared order.
+
+        The list stands for a set of named columns: an item repeated is one
+        column, and a base column under its own name is already in ``all_base``.
+        """
+        all_base = ALL_BASE_COLUMNS in self.select
+        columns: list[_SelectColumn] = []
+        for item in self.select:
+            column = _select_column(item)
+            if column in columns or (all_base and column.is_base_column):
+                continue
+            columns.append(column)
+        return columns
+
+    def source_column(self, name: str) -> str | None:
+        """The column the view's output *name* reads, as a filter field.
+
+        A base column is returned bare (conditions qualify it with the base
+        alias), a joined one as ``alias.column``. ``None`` when *name* is not a
+        plain column of the output: an expression, or a name the view does
+        not resolve.
+        """
+        if self.kind == "type_lookup":
+            return self._type_lookup_source_column(name)
+        columns = self._select_columns()
+        for column in columns:
+            if column.name != name:
+                continue
+            kind, *ref = column.source
+            if kind == "base":
+                return ref[0]
+            if kind == "join":
+                return f"{ref[0]}.{ref[1]}"
+            return None
+        all_base = any(column.source[0] == "all_base" for column in columns)
+        unnamed = any(
+            column.name is None and column.source[0] == "sql" for column in columns
+        )
+        return name if all_base and not unnamed else None
+
+    def _type_lookup_source_column(self, name: str) -> str | None:
+        source_type = (
+            self.source_type_column
+            if self.source_type_column is not None
+            else self.type_column
+        )
+        target_type = (
+            self.target_type_column
+            if self.target_type_column is not None
+            else self.type_column
+        )
+        outputs = {
+            "source_id": self.source,
+            "target_id": self.target,
+            "source_type": f"s.{source_type}" if source_type else None,
+            "target_type": f"t.{target_type}" if target_type else None,
+            "relation": self.relation,
+        }
+        return outputs.get(name)
+
+    @model_validator(mode="after")
+    def _validate_select_names(self) -> Self:
+        """Two different columns may not take one name."""
+        if self.kind != "select":
+            return self
+        taken: dict[str, _SelectColumn] = {}
+        for column in self._select_columns():
+            if column.name is None:
+                continue
+            other = taken.setdefault(column.name, column)
+            if other != column:
+                raise ValueError(
+                    f"select: two columns are named {column.name!r}; "
+                    "give one of them another name with 'as'"
+                )
+        return self
+
     def build_sql(
         self,
         schema: str,
@@ -419,12 +515,10 @@ class SelectSpec(ConfigBaseModel):
 
         # SELECT
         join_aliases = _collect_join_aliases(self.joins)
-        select_parts: list[str] = []
-        for item in self.select:
-            if isinstance(item, str):
-                select_parts.append(_render_select_string(item, base_alias))
-            elif isinstance(item, dict):
-                select_parts.append(_render_select_dict(item, base_alias, join_aliases))
+        select_parts = [
+            _render_select_column(column, base_alias, join_aliases)
+            for column in self._select_columns()
+        ]
         select_clause = ", ".join(select_parts) if select_parts else "*"
 
         # FROM + JOINs

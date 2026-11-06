@@ -6,7 +6,8 @@ structured filter parameters.
 
 from __future__ import annotations
 
-from typing import cast
+from collections.abc import Collection, Mapping
+from typing import Any, cast
 
 from graflo.filter.onto import (
     ComparisonOperator,
@@ -55,6 +56,36 @@ def datetime_range_filter(
         operator=LogicalOperator.AND,
         deps=parts,
     )
+
+
+def values_in_filter(
+    columns: Mapping[str, Collection[Any]],
+) -> FilterExpression | None:
+    """Rows whose column holds one of its values, for any of *columns*.
+
+    One ``IN`` per column, several joined with ``OR``; values are listed in
+    sorted order. ``None`` when a column has no value, or values that do not
+    share one type among ``str``, ``int`` and ``float``: a literal of another
+    type than the column's can fail the query instead of not matching.
+    """
+    parts: list[FilterExpression] = []
+    for column, values in sorted(columns.items()):
+        kinds = {type(value) for value in values}
+        if len(kinds) != 1 or not kinds <= {str, int, float}:
+            return None
+        parts.append(
+            FilterExpression(
+                kind="leaf",
+                field=column,
+                cmp_operator=ComparisonOperator.IN,
+                value=sorted(values),
+            )
+        )
+    if not parts:
+        return None
+    if len(parts) == 1:
+        return parts[0]
+    return FilterExpression(kind="composite", operator=LogicalOperator.OR, deps=parts)
 
 
 def datetime_range_where_sql(
