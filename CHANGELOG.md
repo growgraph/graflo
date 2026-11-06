@@ -184,16 +184,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every difference in one `LiftError`. Lifting twice is lifting once.
 - **`plan_access`**: `minted_vertices` and `minted_relations` are removed; it plans against the
   manifest as the earlier aspects of the same lift leave it.
-
-### Fixed
-
-- **`merge_manifests`**: a connector renamed by `prefix_right` takes an API connector's `parent`
-  reference with it.
-
-## [1.24.1]
-
-### Changed
-
 - **Indexes**: a multi-field index is one index over its fields, in declared order, on every
   backend. A declared index the backend cannot build (several fields, unique, or any edge index
   on TigerGraph) is refused when the schema is applied; one derived from an identity is skipped.
@@ -212,6 +202,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`merge_manifests`**: a connector renamed by `prefix_right` takes an API connector's `parent`
+  reference with it.
 - **File backend**: a connection sees writes published after its first read, its own or another
   connection's; `fetch_edges` applies `filters` before `limit`.
 - **Neo4j**: reads return Neo4j dates, times and datetimes as Python `date`, `time` and `datetime`,
