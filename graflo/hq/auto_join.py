@@ -114,6 +114,7 @@ def enrich_edge_connector_with_joins(
                 on_self=der.match_source,
                 on_other=src_pk,
                 join_type="LEFT",
+                select_fields=[],
             )
         )
         new_joins.append(
@@ -124,6 +125,7 @@ def enrich_edge_connector_with_joins(
                 on_self=der.match_target,
                 on_other=tgt_pk,
                 join_type="LEFT",
+                select_fields=[],
             )
         )
 

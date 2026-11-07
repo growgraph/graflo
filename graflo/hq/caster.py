@@ -49,6 +49,12 @@ from graflo.util.data_normalize import normalize_rows
 logger = logging.getLogger(__name__)
 
 
+def _log_nothing_cast(resource_name: str | None) -> None:
+    logger.debug(
+        "A batch from resource %r cast to no document; not written", resource_name
+    )
+
+
 def _hook_key(
     stamp: Mapping[str, Any] | None, guard: FilterExpression | None
 ) -> tuple[str, str]:
@@ -181,16 +187,21 @@ class Caster:
         result = await self.cast_normal_resource(batch, resource_name=resource_name)
         self._warn_failures(result.failures)
         gc = result.graph
-
-        if conn_conf is not None:
-            writer = self._get_db_writer(conn_conf)
-            bulk_sid = await self._ensure_bulk_session(conn_conf)
-            await writer.write(
-                gc=gc,
-                conn_conf=conn_conf,
-                resource_name=resource_name,
-                bulk_session_id=bulk_sid,
-            )
+        if conn_conf is None:
+            return
+        if gc.is_empty():
+            # Checked here, not only in the writer, so an empty batch never
+            # begins a bulk session.
+            _log_nothing_cast(resource_name)
+            return
+        writer = self._get_db_writer(conn_conf)
+        bulk_sid = await self._ensure_bulk_session(conn_conf)
+        await writer.write(
+            gc=gc,
+            conn_conf=conn_conf,
+            resource_name=resource_name,
+            bulk_session_id=bulk_sid,
+        )
 
     async def _process_batch_per_record(
         self,
@@ -236,6 +247,10 @@ class Caster:
             check_stamp(gc, self.schema, hooks[cast(tuple[str, str], key)][0])
         if any(guard is not None for _, guard in hooks.values()):
             require_read_guard(conn_conf)
+        parts = [(key, gc) for key, gc in parts if not gc.is_empty()]
+        if not parts:
+            _log_nothing_cast(resource_name)
+            return
         writer = self._get_db_writer(conn_conf)
         bulk_sid = await self._ensure_bulk_session(conn_conf)
         for key, gc in parts:

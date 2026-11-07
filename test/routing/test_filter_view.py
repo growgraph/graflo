@@ -735,6 +735,81 @@ class TestSelectStructuredItemsAndConcat:
         assert "row.*" in sql
 
 
+class TestSelectColumnSet:
+    """A view's ``select`` stands for a set of named columns."""
+
+    _JOINS = [
+        {
+            "table": "all_classes",
+            "alias": "ci_types",
+            "on_self": "cmdb_ci",
+            "on_other": "sys_id",
+        },
+        {
+            "table": "all_classes",
+            "alias": "ba_types",
+            "on_self": "business_service",
+            "on_other": "sys_id",
+        },
+    ]
+
+    def test_all_base_holds_the_base_columns_named_beside_it(self):
+        spec = SelectSpec.from_dict(
+            {
+                "joins": self._JOINS,
+                "select": [
+                    ALL_BASE_COLUMNS,
+                    {"base": "cmdb_ci"},
+                    {"base": "business_service"},
+                    {
+                        "from_join": "ci_types",
+                        "column": "sys_class_name",
+                        "as": "ci_type",
+                    },
+                    {
+                        "from_join": "ba_types",
+                        "column": "sys_class_name",
+                        "as": "business_service_type",
+                    },
+                ],
+            }
+        )
+
+        sql = spec.build_sql("public", "assets")
+
+        assert sql.startswith(
+            'SELECT base.*, ci_types."sys_class_name" AS ci_type, '
+            'ba_types."sys_class_name" AS business_service_type FROM'
+        )
+
+    def test_a_base_column_under_a_new_name_stays(self):
+        spec = SelectSpec(
+            joins=self._JOINS[:1],
+            select=[ALL_BASE_COLUMNS, {"base": "cmdb_ci", "as": "ci"}],
+        )
+
+        assert spec.build_sql("public", "assets").startswith(
+            'SELECT base.*, base."cmdb_ci" AS ci FROM'
+        )
+
+    def test_a_repeated_item_is_one_column(self):
+        head = SelectSpec(joins=self._JOINS[:1])
+        tail = SelectSpec(joins=self._JOINS[1:])
+        merged = SelectSpec.concat_select_parts(head, tail)
+
+        assert merged.build_sql("public", "assets").startswith("SELECT base.* FROM")
+
+    def test_two_columns_under_one_name_are_refused(self):
+        with pytest.raises(ValueError, match="two columns are named 'kind'"):
+            SelectSpec(
+                joins=self._JOINS,
+                select=[
+                    {"from_join": "ci_types", "column": "sys_class_name", "as": "kind"},
+                    {"from_join": "ba_types", "column": "sys_class_name", "as": "kind"},
+                ],
+            )
+
+
 class TestResourceMapperTypeLookupOverride:
     """type_lookup_overrides attach a view to introspected edge tables."""
 

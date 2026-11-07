@@ -95,3 +95,15 @@ def test_a_failing_query_raises(connection_string: str) -> None:
 
     with pytest.raises(SQLAlchemyError):
         _rows(source)
+
+
+def test_a_result_naming_two_columns_alike_raises(connection_string: str) -> None:
+    source = SQLDataSource(
+        config=SQLConfig(
+            connection_string=connection_string,
+            query="SELECT id, kind, kind FROM events",
+        )
+    )
+
+    with pytest.raises(ValueError, match="more than one column named 'kind'"):
+        _rows(source)

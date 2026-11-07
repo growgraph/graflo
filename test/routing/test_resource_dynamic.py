@@ -388,6 +388,8 @@ class TestEdgeResourceAutoJoin:
         assert "IS NOT NULL" in q
         assert '"main"."relations"' in q
         assert '"main"."classes"' in q
+        # The joins only filter: no column of a joined table reaches the row.
+        assert q.startswith('SELECT base.* FROM "main"."relations" base ')
 
     def test_auto_join_query_executes_on_sqlite(self):
         """Run the generated JOIN query against a real SQLite DB."""

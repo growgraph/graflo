@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.25.1]
+
+### Changed
+
+- A table connector of a resource that only routes reads only the rows its `vertex_router` steps
+  keep; a connector that cannot be narrowed under a closed or bounded router is reported.
+
+### Fixed
+
+- The projection's connector pruning counts every transform of a level, wherever it is listed,
+  as able to rewrite a router's `type_field`.
+- A batch that casts to no documents is not written and opens no connection; a class with no
+  documents in a batch is skipped the same way.
+- Ingestion no longer opens a connection per batch to check for native bulk loading on targets
+  without it.
+
+- A `select` view is a set of named columns: `all_base` already holds a base column named beside
+  it, and a repeated entry is one column, so the query no longer returns a column twice (a
+  limited read failed with "ambiguous column name"). Two different columns under one name are
+  refused at load.
+- A SQL source whose result names two columns alike raises an error naming them, instead of
+  keeping the last value or failing under a row limit.
+- Automatic edge-table joins only filter; joined-table columns no longer overwrite the edge
+  table's own.
+
 ## [1.25.0]
 
 ### Fixed
