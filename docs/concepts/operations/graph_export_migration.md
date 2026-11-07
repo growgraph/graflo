@@ -203,4 +203,4 @@ names of its `schema.yaml`.
 
 - [Graph DB migration](../../guides/graph_db_migration.md): move a graph from one database to another.
 - [Graph export and replay](../../guides/graph_export_and_replay.md): save a graph to files and load it back.
-- [A graph on disk, without a database (14)](../../examples/file-backend-export/index.md): runnable scripts for both.
+- [A graph on disk, without a database (13)](../../examples/file-backend-export/index.md): runnable scripts for both.

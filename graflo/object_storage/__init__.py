@@ -1,4 +1,4 @@
-"""S3-compatible object storage helpers (boto3): config, bucket ensure, bulk upload.
+"""S3-compatible object storage helpers (boto3): config, client, bucket ensure.
 
 This package is separate from graph :class:`~graflo.db.ConnectionManager` targets.
 Use :class:`~graflo.object_storage.config.MinioConfig` with
@@ -19,7 +19,6 @@ from graflo.object_storage.s3_client import (
     boto3_s3_client,
     boto3_s3_client_from_minio,
 )
-from graflo.object_storage.upload import upload_staged_csvs
 
 __all__ = [
     "MinioConfig",
@@ -29,5 +28,4 @@ __all__ = [
     "ensure_bucket_exists",
     "ensure_staging_bucket_for_config",
     "parse_dotenv_file",
-    "upload_staged_csvs",
 ]

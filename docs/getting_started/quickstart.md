@@ -19,7 +19,7 @@ shipped with the repository.
 - A running ArangoDB. The repository ships a container for it; how to start it
   is described in
   [`docker/README.md`](https://github.com/growgraph/graflo/blob/main/docker/README.md).
-  The [file backend example (14)](../examples/file-backend-export/index.md)
+  The [file backend example (13)](../examples/file-backend-export/index.md)
   writes a graph to disk and needs no database.
 
 ## 1. Look at the data

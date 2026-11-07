@@ -21,7 +21,7 @@ serial number, written `HP-0042` in one and `hp-0042` in the other. You want one
 type, `Machine`, in which records with the same serial number become one
 vertex, and you want work orders to keep reaching the machine they name. This
 is the
-[manifest union example (20)](../../examples/manifest-union/index.md).
+[manifest union example (19)](../../examples/manifest-union/index.md).
 
 GraFlo does not guess that `Asset` and `Device` are the same kind of thing. Two
 types are one only when you declare it, because a wrong guess merges data that
@@ -662,7 +662,7 @@ that member's records. A derivation that is not keyed by member is guarded the
 same way when a router produces the type, so it runs for no other type's
 records. An explicit `when` replaces the guard the union derives; a derivation
 keyed by member may not set one, because the member already decides. The
-[router union alignment example (21)](../../examples/router-union-alignment/index.md)
+[router union alignment example (20)](../../examples/router-union-alignment/index.md)
 shows one routed type end to end, with keying per type as a variant.
 
 ### Rules a derived branch must follow
@@ -723,7 +723,6 @@ The limits:
 - The old key [no longer deduplicates](#the-old-key-no-longer-deduplicates).
 - Each batch looks each attached type up once by its key, and once more when
   its edges resolve their endpoints.
-- A `find` step is refused on the bulk ingest path.
 
 ## How definitions combine
 
@@ -971,7 +970,7 @@ graflo merge manifest_maintenance.yaml manifest_sensors.yaml \
 | identity | `vertex-Machine.identity.png` | The raw fields each identity branch reads, labelled with the transform or the tag, the branches in the order a record tries them, and the key they feed. |
 | lookups | `vertex-Machine.lookups.png` | Each member's own key, kept on the merged type as a lookup; the edge names the key space. |
 
-![The identity of example 20: raw fields of two resources feeding two branches, which feed the digest](../../examples/manifest-union/figs/vertex-Machine.identity.svg)
+![The identity of example 19: raw fields of two resources feeding two branches, which feed the digest](../../examples/manifest-union/figs/vertex-Machine.identity.svg)
 
 A figure carries no title, legend or note, so it can go into any document.
 Properties and raw fields sit in a box named after their type or resource,
@@ -1044,9 +1043,9 @@ parents before it is written, so the file carries its own lineage. See
 
 ## What to read next
 
-- [Manifest union example (20)](../../examples/manifest-union/index.md): the
+- [Manifest union example (19)](../../examples/manifest-union/index.md): the
   declarations on this page, run on real files.
-- [Router union alignment example (21)](../../examples/router-union-alignment/index.md):
+- [Router union alignment example (20)](../../examples/router-union-alignment/index.md):
   a union where one source routes rows to several types.
 - [Version control](versioning.md): recording unions and edits, and the
   three-way merge of branches.

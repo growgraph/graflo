@@ -74,6 +74,7 @@ CAPABILITIES = {
     "Delete a scope": ConnectionCapability.SCOPED_DELETE,
     "Read guard": ConnectionCapability.READ_GUARD,
     "Union merge": ConnectionCapability.UNION_MERGE,
+    "Bulk load": ConnectionCapability.BULK_LOAD,
 }
 
 

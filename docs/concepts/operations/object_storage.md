@@ -1,77 +1,30 @@
 # Object storage (S3-compatible)
 
-GraFlo uses S3-compatible object storage (SeaweedFS, AWS S3 or any service that
-speaks the S3 API) for one job: staging CSV files for a TigerGraph bulk load,
-so that a TigerGraph loading job can read them from a bucket. This page is
-for you if you bulk-load TigerGraph and the database cannot read files from
-the machine that runs GraFlo. It explains how the bucket credentials reach
-GraFlo without being written into the manifest, and what the helpers in
+GraFlo reads files from S3-compatible object storage (SeaweedFS, AWS S3 or any
+service that speaks the S3 API) through a files connection whose root is an
+`s3://` URL. This page explains how the bucket credentials reach GraFlo
+without being written into the manifest, and what the helpers in
 `graflo.object_storage` do.
 
 ## The idea
 
-A bulk load writes one CSV file per vertex type and per edge type on the local
-disk, then runs a loading job in TigerGraph. When TigerGraph runs elsewhere,
-GraFlo uploads the files to a bucket first and points the loading job at the
-uploaded objects.
-
-The manifest names the bucket connection by a label only. The credentials are
-registered at run time on a connection provider under that label, the same
-way database and API credentials are (see
-[connection proxy](../glossary.md#connection-proxy)).
-
-```mermaid
-flowchart LR
-    M["manifest: bindings.staging_proxy<br/>bulk_s3 → minio_bulk"]
-    P["connection provider:<br/>minio_bulk → S3 credentials"]
-    C["TigergraphConfig.bulk_load<br/>s3_staging_name: bulk_s3"]
-    U[upload CSV files]
-    TG[TigerGraph loading job]
-    M --> C
-    P --> U
-    C --> U --> TG
-```
-
-## How it is declared
-
-In the manifest, `bindings.staging_proxy` maps a staging name to a
-`conn_proxy` label. Neither is a secret:
-
-```yaml
-bindings:
-  staging_proxy:
-    - name: bulk_s3
-      conn_proxy: minio_bulk
-```
-
-At run time, register the credentials under the label and tell the
-TigerGraph config which staging name to use:
+A `FileConnector` is bound to a files connection (`FilesConnConfig`) by a
+`conn_proxy` label. The connection's `root` is a local directory or
+`s3://<bucket>[/<prefix>]`; the connector reads its `sub_path` relative to that
+root, for sampling and ingestion alike. The credentials are registered at run
+time on a connection provider under the label, the same way database and API
+credentials are (see [connection proxy](../glossary.md#connection-proxy)).
 
 ```python
-from graflo.connections import (
-    InMemoryConnectionProvider,
-    TigergraphBulkLoadConfig,
-    TigergraphConfig,
-)
+from graflo.connections import InMemoryConnectionProvider
 from graflo.object_storage import MinioConfig
 
-minio = MinioConfig.from_docker_env()
-
-provider = InMemoryConnectionProvider({"minio_bulk": minio.to_files_conn_config()})
-
-conn_conf = TigergraphConfig.from_env()
-conn_conf.bulk_load = TigergraphBulkLoadConfig(
-    enabled=True,
-    staging_dir="bulk_staging",
-    s3_staging_name="bulk_s3",
-)
+s3 = MinioConfig.from_docker_env()
+provider = InMemoryConnectionProvider({"lake": s3.to_files_conn_config()})
 ```
 
 Pass `provider` as `connection_provider` to `GraphEngine.ingest` or
-`define_and_ingest`. `s3_conn_proxy="minio_bulk"` on the bulk config names the
-label directly and makes the manifest entry unnecessary. The whole run is
-described in the [TigerGraph bulk load](../../guides/tigergraph_bulk_load.md)
-guide.
+`define_and_ingest`.
 
 ## `MinioConfig`
 
@@ -81,63 +34,30 @@ not used with `ConnectionManager`.
 
 | Field | Default | Meaning |
 |---|---|---|
-| `endpoint_url` | required | S3 API URL, such as `http://127.0.0.1:9000` |
-| `access_key` | required | Access key id (the MinIO root user, or an IAM key) |
+| `endpoint_url` | required | S3 API URL, such as `http://127.0.0.1:8333` |
+| `access_key` | required | Access key id |
 | `secret_key` | required | Secret access key |
-| `bucket` | `graflo-staging` | Bucket for staged files |
-| `region` | `us-east-1` | Region passed to boto3; keep the default for MinIO |
-| `loader_endpoint_url` | `None` | S3 API URL as TigerGraph sees it, when that differs from `endpoint_url` |
+| `bucket` | `graflo-staging` | Default bucket |
+| `region` | `us-east-1` | Region passed to boto3; keep the default for a local service |
 
-`MinioConfig.from_docker_env()` reads the settings of the MinIO container
-shipped under `docker/minio` (`MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`,
-`MINIO_API_PORT`, `MINIO_STAGING_BUCKET`, `MINIO_LOADER_ENDPOINT` and a few
-alternatives). `to_files_conn_config()` turns it into the files connection
-(`FilesConnConfig`, root `s3://<bucket>`) that a connection provider stores; you
-can also build a `FilesConnConfig` directly with `root`, `region`,
-`endpoint_url`, `access_key_id`, `secret_access_key` and
-`loader_endpoint_url`, or read those from `{PREFIX}ROOT`, `{PREFIX}REGION`, …
-with `FilesConnConfig.from_env(prefix)`. The root's prefix, when it has one,
-comes before `s3_key_prefix`.
+`MinioConfig.from_docker_env()` reads the settings of the S3 service shipped
+under `docker/seaweedfs` (`S3_ENDPOINT` or `S3_PROTOCOL`, `S3_HOSTNAME`,
+`S3_API_PORT`; `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_BUCKET`, `AWS_REGION`).
+`to_files_conn_config()` turns it into the files connection (root
+`s3://<bucket>`) that a connection provider stores; you can also build a
+`FilesConnConfig` directly with `root`, `region`, `endpoint_url`,
+`access_key_id` and `secret_access_key`, or read those from `{PREFIX}ROOT`,
+`{PREFIX}REGION`, … with `FilesConnConfig.from_env(prefix)`.
 
-`graflo.object_storage` also exports the helpers the bulk load uses:
+`graflo.object_storage` also exports:
 
 | Helper | What it does |
 |---|---|
 | `ensure_staging_bucket_for_config(config)` | Creates the config's bucket if it does not exist; raises with a hint when the endpoint cannot be reached |
 | `ensure_bucket_exists(client, bucket)` | The same for any boto3 client |
 | `boto3_s3_client_from_minio(config)`, `boto3_s3_client(config)` | Build a boto3 S3 client from a `MinioConfig` or an `S3ConnConfig` |
-| `upload_staged_csvs(...)` | Uploads files under `<key prefix>/<session id>/` and returns their `s3://` URLs |
-
-Calling `ensure_staging_bucket_for_config` before an ingest turns a MinIO that
-is not running into an error at the start instead of an empty graph at the
-end.
-
-## Two endpoints
-
-GraFlo uploads with boto3 from the machine that runs it, using
-`endpoint_url`. TigerGraph reads the objects itself, through a
-`CREATE DATA_SOURCE` statement that GraFlo issues with the same credentials
-and with `loader_endpoint_url` when it is set, `endpoint_url` otherwise. When
-TigerGraph runs in a container and MinIO on your machine, `127.0.0.1` means
-different machines to the two of them: set `loader_endpoint_url` (or
-`MINIO_LOADER_ENDPOINT` in the settings under `docker/minio`) to an address the
-TigerGraph container can reach, such as `http://host.docker.internal:9000`.
-
-## Limits
-
-- Object storage is used only for TigerGraph bulk staging. GraFlo does not
-  read records from a bucket: a staging name is not a
-  [connector](../glossary.md#connector), and `FileConnector` reads local
-  paths only.
-- If the staging label has no S3 config on the connection provider, nothing
-  is uploaded and the loading job is given the local file paths, without an
-  error.
-- If TigerGraph cannot reach the endpoint it is given, its loading job reads
-  nothing, and the ingest still finishes without an error. Check the loaded
-  counts after a bulk load.
 
 ## What to read next
 
-- [TigerGraph bulk load](../../guides/tigergraph_bulk_load.md): the whole bulk load, step by step.
-- [Bulk load into TigerGraph (13)](../../examples/tigergraph-bulk-s3/index.md): a runnable example with MinIO.
+- [Connections and discovery](../../guides/connections_and_discovery.md): files connections and how they are stored.
 - [Database connections](../../guides/database_connections.md): the other configs a run needs.

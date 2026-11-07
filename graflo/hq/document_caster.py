@@ -158,8 +158,6 @@ def filter_graph_container_drop_empty_identity_inplace(
         vfrom, vto, _rel = edge_id
         if vfrom not in vertex_set or vto not in vertex_set:
             continue
-        if vfrom in skip_minted or vto in skip_minted:
-            continue
         match = (
             edge_derivation.endpoint_match_for(edge_id)
             if edge_derivation is not None
@@ -171,11 +169,16 @@ def filter_graph_container_drop_empty_identity_inplace(
         else:
             src_ids = vertex_config.identity_fields(vfrom)
             tgt_ids = vertex_config.identity_fields(vto)
+        # A blank or assigned endpoint may still be minted; the other is checked.
+        check_src = vfrom not in skip_minted
+        check_tgt = vto not in skip_minted
+        if not (check_src or check_tgt):
+            continue
         kept = [
             t
             for t in docs
-            if not _vertex_doc_has_empty_identity(t[0], src_ids)
-            and not _vertex_doc_has_empty_identity(t[1], tgt_ids)
+            if not (check_src and _vertex_doc_has_empty_identity(t[0], src_ids))
+            and not (check_tgt and _vertex_doc_has_empty_identity(t[1], tgt_ids))
         ]
         if len(kept) < len(docs):
             logger.warning(

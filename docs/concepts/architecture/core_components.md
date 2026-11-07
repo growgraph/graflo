@@ -248,7 +248,7 @@ Read an undirected edge with `ANY`. A reverse read (`IN` or `ANY`) costs:
 
 The operations that add inverse edges to an existing manifest are on
 [manifest evolution](../schema/manifest_evolution.md#inverse-relations-in-detail);
-the [edge inverses example](../../examples/edge-inverses/index.md) (19) shows
+the [edge inverses example](../../examples/edge-inverses/index.md) (18) shows
 all three ways of storing an inverse in one manifest.
 
 ## Resource and its steps

@@ -94,14 +94,14 @@ def _dot_sources(out: Path) -> dict[str, str]:
     plotter.plot_resources()
     plotter.plot_source2vc()
 
-    example = EXAMPLES / "21-router-union-alignment"
+    example = EXAMPLES / "20-router-union-alignment"
     preview = preview_merge(
         load_manifest(example / "manifest_maintenance.yaml"),
         load_manifest(example / "manifest_sensors.yaml"),
         MergeManifestsOp.model_validate(load_mapping(example / "merge.yaml")),
     )
     plot_merge_preview(preview, out / "merge_example.dot")
-    union = EXAMPLES / "20-manifest-union"
+    union = EXAMPLES / "19-manifest-union"
     lineage = preview_merge(
         load_manifest(union / "manifest_maintenance.yaml"),
         load_manifest(union / "manifest_sensors.yaml"),

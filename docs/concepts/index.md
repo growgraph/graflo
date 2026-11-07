@@ -214,7 +214,7 @@ what does GraFlo do on each one?
 |---|---|
 | [Graph export and migration](operations/graph_export_migration.md) | How do I copy a whole graph out of a database, onto disk or into another database? |
 | [Removing vertices and edges](operations/deleting_instances.md) | How do I take vertices or edges out of a graph by their identity? |
-| [Object storage](operations/object_storage.md) | How do I stage files in S3 for a TigerGraph bulk load? |
+| [Object storage](operations/object_storage.md) | How do I read files from an S3 bucket? |
 | [Schema migration](operations/migration_and_practices.md) | How do I apply a changed schema to a database that already holds data? |
 
 ## What to read next

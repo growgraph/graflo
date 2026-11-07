@@ -328,7 +328,7 @@ def test_the_writer_hands_each_backend_the_pinned_batches(
 ) -> None:
     recorded = _record(flavor, monkeypatch)
     golden = GOLDENS / f"{flavor.value}.json"
-    text = json.dumps(recorded, indent=1, sort_keys=True) + "\n"
+    text = json.dumps(recorded, indent=4, sort_keys=True) + "\n"
     if WRITE_GOLDENS:
         golden.parent.mkdir(parents=True, exist_ok=True)
         golden.write_text(text)

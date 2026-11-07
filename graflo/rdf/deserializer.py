@@ -805,19 +805,6 @@ class ManifestRdfDeserializer:
         if connector_connection:
             bindings["connector_connection"] = connector_connection
 
-        staging_proxy = []
-        for binding_node in self._related_nodes(
-            graph, bindings_uri, ns.hasStagingProxy
-        ):
-            staging_proxy.append(
-                {
-                    "name": self._literal(graph, binding_node, ns.name),
-                    "conn_proxy": self._literal(graph, binding_node, ns.connProxy),
-                }
-            )
-        if staging_proxy:
-            bindings["staging_proxy"] = staging_proxy
-
         return bindings
 
     def _parse_connector(

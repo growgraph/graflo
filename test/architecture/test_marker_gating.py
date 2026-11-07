@@ -12,7 +12,7 @@ import pytest
 
 from test.conftest import pytest_collection_modifyitems
 
-GATED_MARKERS = ["bulk_e2e", "performance", "nebula", "kafka", "tigergraph"]
+GATED_MARKERS = ["performance", "nebula", "kafka", "tigergraph"]
 # Prefixed: an id equal to a marker name would itself be caught by the defect under test.
 GATE_IDS = [f"gate-{name}" for name in GATED_MARKERS]
 

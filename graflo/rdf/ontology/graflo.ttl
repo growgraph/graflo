@@ -229,11 +229,6 @@ gf:ConnectorConnectionBinding a owl:Class ;
     rdfs:label "Connector connection binding"@en ;
     skos:prefLabel "ConnectorConnectionBinding"@en .
 
-gf:StagingProxyBinding a owl:Class ;
-    rdfs:subClassOf gf:GrafloArtifact ;
-    rdfs:label "Staging proxy binding"@en ;
-    skos:prefLabel "StagingProxyBinding"@en .
-
 gf:EdgePhysicalSpec a owl:Class ;
     rdfs:subClassOf gf:GrafloArtifact ;
     rdfs:label "Edge physical spec"@en ;
@@ -444,10 +439,6 @@ gf:bindsResourceToConnector a owl:ObjectProperty ;
 gf:bindsConnectorToConnProxy a owl:ObjectProperty ;
     rdfs:domain gf:Bindings ;
     rdfs:range gf:ConnectorConnectionBinding .
-
-gf:hasStagingProxy a owl:ObjectProperty ;
-    rdfs:domain gf:Bindings ;
-    rdfs:range gf:StagingProxyBinding .
 
 gf:hasVertexIndex a owl:ObjectProperty ;
     rdfs:domain gf:DatabaseProfile ;

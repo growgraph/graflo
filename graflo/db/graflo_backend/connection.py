@@ -13,14 +13,21 @@ from graflo.architecture.backend.layout import GraFloLayout
 from graflo.architecture.backend.reader import (
     edge_chunk_key,
     stored_schema,
-    vertex_chunk_key,
 )
 from graflo.architecture.graph_types import EdgeDirection, GraphContainer
 from graflo.architecture.schema.document import Schema
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.physical_keys import PhysicalKeys
 from graflo.architecture.schema.vertex import VertexConfig
+from graflo.connections.bulk import BulkConfig
 from graflo.connections.graflo_backend import GraFloBackendConfig
+from graflo.db.bulk import (
+    BulkCounts,
+    BulkEdgeChunk,
+    BulkPlan,
+    BulkVertexChunk,
+    StoredEdgeId,
+)
 from graflo.db.conn import Connection, NamespaceNotFoundError, SchemaExistsError
 from graflo.db.traversal import bfs_neighbors, edge_query_name
 from graflo.filter.onto import FilterExpression, conjoin
@@ -79,6 +86,7 @@ class GraFloBackendConnection(Connection):
     supports_read_guard = True
     supports_union_merge = True
     supports_membership_read = True
+    supports_bulk_load = True
 
     def __init__(self, config: GraFloBackendConfig) -> None:
         super().__init__()
@@ -204,6 +212,52 @@ class GraFloBackendConnection(Connection):
     ) -> list[dict[str, Any]]:
         self.upsert_docs_batch(docs, class_name, match_keys=[])
         return docs
+
+    # -- bulk load: appends, folded on read like any write ---------------------
+
+    def bulk_begin(
+        self,
+        schema: Schema,
+        cfg: BulkConfig,
+        *,
+        recreate: bool = False,
+        resume: bool = False,
+    ) -> BulkPlan:
+        """Write the schema through the first-write guard; one writer at a time."""
+        self.ensure_target_namespace(schema, create=True)
+        if not resume or not GraFloLayout(self.config.output_dir).schema_path.exists():
+            self.apply_target_schema(schema, recreate=recreate)
+        return BulkPlan(max_parallel=1)
+
+    def bulk_write_vertices(self, chunk: BulkVertexChunk) -> None:
+        # Published before returning, so a chunk recorded as written is on disk;
+        # a replayed chunk appends records the read-side fold merges.
+        self._writer.write_vertex_batch(chunk.class_name, chunk.rows)
+        self._writer.flush_index()
+
+    def bulk_prepare_edges(self, schema: Schema) -> None:
+        """Nothing to prepare: edges name their endpoints by key."""
+
+    def bulk_write_edges(self, chunk: BulkEdgeChunk) -> None:
+        edge_key = (chunk.source_class, chunk.target_class, chunk.relation_name or None)
+        self._writer.write_edge_batch(edge_key, [list(row) for row in chunk.rows])
+        self._writer.flush_index()
+
+    def bulk_finish(self, schema: Schema) -> BulkCounts:
+        self._sync_for_read()
+        index = self._reader.read_index()
+        edges: dict[StoredEdgeId, int] = {}
+        for name in index.edges:
+            source, target, relation = GraFloLayout.index_name_to_edge_key(name)
+            edges[(source, relation, target)] = len(
+                self._reader.edge_records((source, target, relation))
+            )
+        return BulkCounts(
+            vertices={
+                name: len(self._reader.vertex_records(name)) for name in index.vertices
+            },
+            edges=edges,
+        )
 
     def _sync_for_read(self) -> None:
         """Persist buffered writes, and see what any writer has published since.
@@ -543,18 +597,6 @@ class GraFloBackendConnection(Connection):
             schema=schema,
             guard=guard,
         )
-
-    def bulk_load_append(
-        self, session_id: str, gc: GraphContainer, schema: Schema
-    ) -> None:
-        # Stored under the keys the per-batch writes use, so one reader finds both.
-        written = self._reader.read_schema()
-        for vertex_type, vertex_docs in gc.vertices.items():
-            self._writer.write_vertex_batch(
-                vertex_chunk_key(written, vertex_type), vertex_docs
-            )
-        for edge_key, edge_docs in gc.edges.items():
-            self._writer.write_edge_batch(edge_chunk_key(written, edge_key), edge_docs)
 
     def export_graph_container(
         self, schema: Schema, *, limit: int | None = None

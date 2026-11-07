@@ -12,28 +12,26 @@ import logging
 import sys
 from collections.abc import Callable, Coroutine, Mapping
 from pathlib import Path
-from typing import Any, Self, cast
+from typing import TYPE_CHECKING, Any, Self, cast
 
 import pandas as pd
 from suthing import Timer
 
 from graflo.architecture.contract.bindings import Bindings
 from graflo.architecture.contract.ingestion import IngestionModel
-from graflo.architecture.graph_types import EncodingType
+from graflo.architecture.graph_types import EncodingType, GraphContainer
 from graflo.architecture.schema import Schema
+from graflo.connections.bulk import BulkConfig
 from graflo.connections.onto import DBConfig
 from graflo.connections.provider import ConnectionProvider, EmptyConnectionProvider
 from graflo.data_source.base import AbstractDataSource
 from graflo.data_source.chunker import ChunkerType
 from graflo.data_source.factory import DataSourceFactory
 from graflo.data_source.registry import DataSourceRegistry
+from graflo.db.conn import ConnectionCapability
+from graflo.db.manager import ConnectionManager
 from graflo.filter.onto import FilterExpression
-from graflo.hq.bulk_session import BulkSessionCoordinator
-from graflo.hq.concurrency_gate import (
-    SerialReason,
-    bulk_load_enabled,
-    effective_in_flight,
-)
+from graflo.hq.concurrency_gate import SerialReason, effective_in_flight
 from graflo.hq.db_writer import DBWriter, check_stamp, require_read_guard
 from graflo.hq.doc_error_sink import failure_sinks_from_ingestion_params
 from graflo.hq.document_caster import DocumentCaster
@@ -44,7 +42,11 @@ from graflo.hq.ingestion_parameters import (
     IngestionParams,
 )
 from graflo.hq.registry_builder import RegistryBuilder
+from graflo.hq.write_prepare import WriteContext
 from graflo.util.data_normalize import normalize_rows
+
+if TYPE_CHECKING:
+    from graflo.hq.bulk.stage import Stager
 
 logger = logging.getLogger(__name__)
 
@@ -91,16 +93,13 @@ class Caster:
         self._doc_cast_error_total = 0
         self._doc_cast_error_io_lock = asyncio.Lock()
         self._failure_sinks = failure_sinks_from_ingestion_params(ingestion_params)
-        self._bulk_coordinator = BulkSessionCoordinator(schema=self.schema)
-        self._ingest_bindings: Bindings | None = None
-        self._connection_provider: ConnectionProvider = EmptyConnectionProvider()
         # One writer per run: the db-aware schema projection is resolved once and
         # its semaphore bounds DB operations across all in-flight batches.
         self._db_writer: DBWriter | None = None
-        # Batches appended to a bulk session are in the target only once the
-        # session is loaded; their sources hear about them, and are closed, then.
-        self._staged_batches: list[tuple[AbstractDataSource, int]] = []
-        self._staged_sources: list[AbstractDataSource] = []
+        # Set for the staging phase of a bulk run: batches are staged, not written.
+        self._stager: Stager | None = None
+        # (resource ordinal, source position) of each data source of the run.
+        self._source_seq: dict[int, tuple[int, int]] = {}
 
     def close(self) -> None:
         """Release the cast worker pools and the writer's database connections.
@@ -119,16 +118,6 @@ class Caster:
 
     def __exit__(self, *exc: object) -> None:
         self.close()
-
-    async def _ensure_bulk_session(self, conn_conf: DBConfig) -> str | None:
-        return await self._bulk_coordinator.ensure_session(conn_conf)
-
-    async def _finalize_bulk_session(self, conn_conf: DBConfig) -> None:
-        await self._bulk_coordinator.finalize(
-            conn_conf,
-            bindings=self._ingest_bindings,
-            connection_provider=self._connection_provider,
-        )
 
     async def _persist_doc_failures(self, failures: list[DocCastFailure]) -> None:
         if not failures:
@@ -179,10 +168,19 @@ class Caster:
         batch,
         resource_name: str | None,
         conn_conf: None | DBConfig = None,
+        *,
+        batch_seq: tuple[int, int, int] | None = None,
     ):
+        """Cast *batch* and write it to *conn_conf* (cast only when ``None``).
+
+        In the staging phase of a bulk run it is staged instead, as batch
+        *batch_seq* ``(resource, source, batch)``.
+        """
         params = self.ingestion_params
         if params.stamp_for is not None or params.guard_for is not None:
-            await self._process_batch_per_record(batch, resource_name, conn_conf)
+            await self._process_batch_per_record(
+                batch, resource_name, conn_conf, batch_seq=batch_seq
+            )
             return
         result = await self.cast_normal_resource(batch, resource_name=resource_name)
         self._warn_failures(result.failures)
@@ -190,17 +188,38 @@ class Caster:
         if conn_conf is None:
             return
         if gc.is_empty():
-            # Checked here, not only in the writer, so an empty batch never
-            # begins a bulk session.
             _log_nothing_cast(resource_name)
             return
+        await self._emit(gc, conn_conf, resource_name, batch_seq=batch_seq)
+
+    async def _emit(
+        self,
+        gc: GraphContainer,
+        conn_conf: DBConfig,
+        resource_name: str | None,
+        *,
+        batch_seq: tuple[int, int, int] | None,
+        part: int = 0,
+        stamp: Mapping[str, Any] | None = None,
+        guard: FilterExpression | None = None,
+    ) -> None:
+        """Write *gc*, or stage it as part *part* of batch *batch_seq* in a bulk run."""
+        if self._stager is not None:
+            if batch_seq is None:
+                raise RuntimeError(
+                    "a bulk run stages the batches of its data sources only"
+                )
+            await asyncio.to_thread(
+                self._stager.stage, gc, (*batch_seq, part), stamp=stamp
+            )
+            return
         writer = self._get_db_writer(conn_conf)
-        bulk_sid = await self._ensure_bulk_session(conn_conf)
         await writer.write(
             gc=gc,
             conn_conf=conn_conf,
             resource_name=resource_name,
-            bulk_session_id=bulk_sid,
+            stamp=stamp,
+            guard=guard,
         )
 
     async def _process_batch_per_record(
@@ -208,6 +227,8 @@ class Caster:
         batch: list[Any],
         resource_name: str | None,
         conn_conf: DBConfig | None,
+        *,
+        batch_seq: tuple[int, int, int] | None = None,
     ) -> None:
         """Cast *batch* and write each record's output under its own stamp and guard.
 
@@ -251,15 +272,14 @@ class Caster:
         if not parts:
             _log_nothing_cast(resource_name)
             return
-        writer = self._get_db_writer(conn_conf)
-        bulk_sid = await self._ensure_bulk_session(conn_conf)
-        for key, gc in parts:
+        for part, (key, gc) in enumerate(parts):
             stamp, guard = hooks[cast(tuple[str, str], key)]
-            await writer.write(
-                gc=gc,
-                conn_conf=conn_conf,
-                resource_name=resource_name,
-                bulk_session_id=bulk_sid,
+            await self._emit(
+                gc,
+                conn_conf,
+                resource_name,
+                batch_seq=batch_seq,
+                part=part,
                 stamp=stamp,
                 guard=guard,
             )
@@ -299,7 +319,7 @@ class Caster:
         conn_conf: DBConfig | None,
     ) -> None:
         """Cast and write every batch of *data_source*, acknowledging each once written."""
-        in_flight = self._effective_in_flight(resource_name, conn_conf)
+        in_flight = self._effective_in_flight(resource_name)
 
         limit = self.ingestion_params.max_items
         batch_prefetch = self.ingestion_params.batch_prefetch
@@ -339,11 +359,14 @@ class Caster:
                 fetch_error = exc
                 await queue.put(sentinel)
 
+        source_seq = self._source_seq.get(id(data_source))
+
         async def _write_batch(index: int, batch: list[dict]) -> None:
             await self.process_batch(
                 batch,
                 resource_name=resource_name,
                 conn_conf=conn_conf,
+                batch_seq=None if source_seq is None else (*source_seq, index),
             )
             self._batch_written(data_source, index, conn_conf)
 
@@ -385,34 +408,22 @@ class Caster:
     ) -> None:
         """Tell *data_source* that batch *index* is in the target.
 
-        Nothing is said when nothing was written (no target, a dry run). A
-        batch appended to a bulk session is only staged: it is acknowledged
-        when the session is loaded.
+        Nothing is said when nothing was written (no target, a dry run, a
+        batch staged for a bulk load).
         """
-        if conn_conf is None or self.ingestion_params.dry:
+        if conn_conf is None or self.ingestion_params.dry or self._stager is not None:
             return
-        if self._bulk_coordinator.active:
-            self._staged_batches.append((data_source, index))
-        else:
-            data_source.acknowledge(index)
+        data_source.acknowledge(index)
 
+    @staticmethod
     async def _close_source(
-        self, data_source: AbstractDataSource, *, quiet: bool = False
+        data_source: AbstractDataSource, *, quiet: bool = False
     ) -> None:
-        """Close *data_source*, or leave it for the bulk session that holds its batches.
+        """Close *data_source*.
 
         *quiet* logs a failure to close instead of raising, for the path where
         another error is already on its way out.
         """
-        if self._bulk_coordinator.active:
-            self._staged_sources.append(data_source)
-            return
-        await self._close_source_now(data_source, quiet=quiet)
-
-    @staticmethod
-    async def _close_source_now(
-        data_source: AbstractDataSource, *, quiet: bool
-    ) -> None:
         try:
             await asyncio.to_thread(data_source.close)
         except Exception:
@@ -420,40 +431,19 @@ class Caster:
                 raise
             logger.warning("Closing a data source failed", exc_info=True)
 
-    async def _release_staged_sources(self, *, loaded: bool) -> None:
-        """Settle the sources whose batches went into a bulk session.
-
-        The session's load is what writes those batches, so they are
-        acknowledged only when it succeeded. The sources are closed either way.
-        """
-        batches, self._staged_batches = self._staged_batches, []
-        sources, self._staged_sources = self._staged_sources, []
-        if loaded:
-            for data_source, index in batches:
-                data_source.acknowledge(index)
-        for data_source in sources:
-            await self._close_source_now(data_source, quiet=not loaded)
-
     def _gate_resource(
-        self, resource_name: str | None, conn_conf: DBConfig | None
+        self, resource_name: str | None
     ) -> tuple[int, SerialReason | None]:
         """Gate result for one resource: allowed in-flight batches and why not."""
         try:
             runtime = self.ingestion_model.fetch_resource(resource_name)
         except (ValueError, RuntimeError):
             runtime = None
-        return effective_in_flight(
-            runtime,
-            self.ingestion_params,
-            conn_conf,
-            bulk_enabled=bulk_load_enabled(conn_conf),
-        )
+        return effective_in_flight(runtime, self.ingestion_params)
 
-    def _effective_in_flight(
-        self, resource_name: str | None, conn_conf: DBConfig | None
-    ) -> int:
+    def _effective_in_flight(self, resource_name: str | None) -> int:
         """Resolve how many batches of this source may be in flight at once."""
-        in_flight, serial_reason = self._gate_resource(resource_name, conn_conf)
+        in_flight, serial_reason = self._gate_resource(resource_name)
         if (
             serial_reason is not None
             and serial_reason is not SerialReason.USER_OVERRIDE
@@ -592,7 +582,7 @@ class Caster:
         # race its mid-cast registrations) and reintroduce exactly the cross-batch
         # ordering hazards the gate exists to prevent. USER_OVERRIDE is excluded —
         # max_in_flight_batches=1 targets batches; sources have their own knob.
-        _, serial_reason = self._gate_resource(resource_name, conn_conf)
+        _, serial_reason = self._gate_resource(resource_name)
         if (
             serial_reason is not None
             and serial_reason is not SerialReason.USER_OVERRIDE
@@ -675,8 +665,6 @@ class Caster:
         conn_conf: DBConfig,
         ingestion_params: IngestionParams | None = None,
         allowed_resource_names: set[str] | None = None,
-        bindings: Bindings | None = None,
-        connection_provider: ConnectionProvider | None = None,
     ):
         if ingestion_params is None:
             ingestion_params = IngestionParams()
@@ -691,11 +679,10 @@ class Caster:
             logger.info("ingest execution bound to init")
             sys.exit(0)
 
-        self._ingest_bindings = bindings
-        self._connection_provider = connection_provider or EmptyConnectionProvider()
         try:
             resource_groups: list[tuple[str, list[AbstractDataSource]]] = []
-            for resource_name in self.ingestion_model._resources:
+            self._source_seq = {}
+            for ordinal, resource_name in enumerate(self.ingestion_model._resources):
                 if (
                     allowed_resource_names is not None
                     and resource_name not in allowed_resource_names
@@ -707,6 +694,8 @@ class Caster:
                         f"For resource name {resource_name} {len(data_sources)} data sources were found"
                     )
                     resource_groups.append((resource_name, data_sources))
+                    for position, data_source in enumerate(data_sources):
+                        self._source_seq[id(data_source)] = (ordinal, position)
 
             with Timer() as klepsidra:
                 # Resource declaration order is semantic: a later resource may
@@ -721,23 +710,11 @@ class Caster:
                     )
             logger.info(f"Processing took {klepsidra.elapsed:.1f} sec")
         finally:
-            # Logged first: the counts describe the writes already made, and a
-            # failing finalize must not hide them.
             if self._db_writer is not None and not self._db_writer.stats.is_empty():
                 logger.info("Write resolution:\n%s", self._db_writer.stats.summary())
-            try:
-                try:
-                    await self._finalize_bulk_session(conn_conf)
-                except BaseException:
-                    await self._release_staged_sources(loaded=False)
-                    raise
-                await self._release_staged_sources(loaded=True)
-            finally:
-                # The cast pool and the writer's connections outlive individual
-                # batches on purpose; the run is where they stop.
-                self.close()
-                self._ingest_bindings = None
-                self._connection_provider = EmptyConnectionProvider()
+            # The cast pool and the writer's connections outlive individual
+            # batches on purpose; the run is where they stop.
+            self.close()
 
     def ingest(
         self,
@@ -746,11 +723,14 @@ class Caster:
         ingestion_params: IngestionParams | None = None,
         connection_provider: ConnectionProvider | None = None,
         data_source_registry: DataSourceRegistry | None = None,
+        *,
+        recreate_schema: bool = False,
     ):
         """Cast and write every resource's sources into *target_db_config*.
 
         The sources are built from *bindings*, unless *data_source_registry*
-        supplies them.
+        supplies them. In bulk mode the run defines the schema itself, dropping
+        an existing one first only when *recreate_schema*.
         """
         bindings = bindings or Bindings()
         ingestion_params = ingestion_params or IngestionParams()
@@ -769,15 +749,66 @@ class Caster:
                 strict=ingestion_params.strict_registry,
             )
 
+        if ingestion_params.mode == "bulk":
+            self._ingest_bulk(
+                registry,
+                target_db_config,
+                ingestion_params,
+                allowed_resource_names,
+                recreate_schema=recreate_schema,
+            )
+            return
+        if recreate_schema:
+            raise ValueError("recreate_schema is for a bulk run; call define_schema")
         asyncio.run(
             self.ingest_data_sources(
                 data_source_registry=registry,
                 conn_conf=target_db_config,
                 ingestion_params=ingestion_params,
                 allowed_resource_names=allowed_resource_names,
-                bindings=bindings,
-                connection_provider=connection_provider or EmptyConnectionProvider(),
             )
+        )
+
+    def _ingest_bulk(
+        self,
+        registry: DataSourceRegistry,
+        conn_conf: DBConfig,
+        ingestion_params: IngestionParams,
+        allowed_resource_names: set[str] | None,
+        *,
+        recreate_schema: bool,
+    ) -> None:
+        """Stage every batch, fold, then write once; resume a stopped run."""
+        from graflo.hq.bulk.ledger import Phase
+        from graflo.hq.bulk.run import (
+            dense_ids_for,
+            fold_staged,
+            open_staging,
+            write_folded,
+        )
+        from graflo.hq.bulk.stage import Stager
+
+        staging_dir = cast(Path, ingestion_params.staging_dir)
+        cfg = conn_conf.bulk or BulkConfig()
+        ledger = open_staging(staging_dir)
+        if not ledger.has(Phase.STAGED):
+            ctx = WriteContext.for_flavor(self.schema, conn_conf.connection_type)
+            self._stager = Stager(self.schema, ctx, staging_dir)
+            try:
+                asyncio.run(
+                    self.ingest_data_sources(
+                        data_source_registry=registry,
+                        conn_conf=conn_conf,
+                        ingestion_params=ingestion_params,
+                        allowed_resource_names=allowed_resource_names,
+                    )
+                )
+            finally:
+                self._stager = None
+            ledger.mark(Phase.STAGED)
+        fold_staged(staging_dir, ledger, cfg, dense_ids=dense_ids_for(conn_conf))
+        write_folded(
+            self.schema, conn_conf, staging_dir, ledger, cfg, recreate=recreate_schema
         )
 
     def validate_run(
@@ -808,7 +839,37 @@ class Caster:
             target_db_flavor=db_flavor,
         )
         self._document_caster = DocumentCaster(self.ingestion_model)
+        if ingestion_params.mode == "sync":
+            raise NotImplementedError("sync mode is not available yet")
+        if ingestion_params.mode == "bulk":
+            self._validate_bulk(target_db_config, allowed_resource_names)
         return allowed_resource_names
+
+    def _validate_bulk(
+        self, target_db_config: DBConfig, allowed_resource_names: set[str] | None
+    ) -> None:
+        """Refuse a bulk run that could not complete, before anything is read.
+
+        Raises:
+            RuntimeError: The ``bulk`` extra is not installed.
+            ValueError: The target has no bulk writer, or a resource in scope
+                reads the target while ingesting.
+        """
+        from graflo.hq.bulk import _deps
+        from graflo.hq.bulk.refusals import bulk_refusals
+
+        _deps.require()
+        ConnectionManager.require(target_db_config, ConnectionCapability.BULK_LOAD)
+        reasons = bulk_refusals(
+            self.schema,
+            self.ingestion_model,
+            None if allowed_resource_names is None else sorted(allowed_resource_names),
+        )
+        if reasons:
+            raise ValueError(
+                "bulk mode cannot load what reads the target while ingesting: "
+                + "; ".join(reasons)
+            )
 
     def _resolve_ingestion_scope(
         self,

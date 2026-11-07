@@ -21,7 +21,7 @@ from graflo.db.manager import ConnectionManager
 from graflo.hq.caster import IngestionParams
 from graflo.onto import DBType
 
-EXAMPLE_DIR = Path(__file__).resolve().parents[2] / "examples" / "17-identity-funnel"
+EXAMPLE_DIR = Path(__file__).resolve().parents[2] / "examples" / "16-identity-funnel"
 
 #: Eight source rows over two resources. One completes no branch and is dropped.
 #: Alan Turing carries an email in both, so both of his rows take the ``email``
@@ -30,7 +30,7 @@ EXPECTED_VERTICES = 6
 
 
 def ingest_funnel_example(conn_conf, flavor: DBType) -> None:
-    """Define and ingest ``examples/17-identity-funnel`` into a live backend."""
+    """Define and ingest ``examples/16-identity-funnel`` into a live backend."""
     manifest = GraphManifest.from_config(FileHandle.load(EXAMPLE_DIR / "manifest.yaml"))
     manifest.finish_init()
     engine = GraphEngine(target_db_flavor=flavor)

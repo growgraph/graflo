@@ -310,19 +310,6 @@ def test_a_missing_edge_stamp_is_refused_before_anything_is_written(
     assert db.upserts == []
 
 
-def test_union_is_refused_up_front_on_the_bulk_path(monkeypatch) -> None:
-    db = _DB()
-    monkeypatch.setattr("graflo.hq.db_writer.ConnectionManager", _manager(db))
-    gc = GraphContainer(vertices={"Product": [{"sku": "P"}]})
-
-    with pytest.raises(ValueError, match="union-merged list fields"):
-        asyncio.run(
-            _writer(_schema()).write(
-                gc, ARANGO, None, bulk_session_id="s", stamp={ZONES: [3]}
-            )
-        )
-
-
 def _union_edge_schema() -> Schema:
     schema = _schema()
     edge = next(iter(schema.core_schema.edge_config.values()))

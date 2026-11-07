@@ -125,11 +125,11 @@ nav:
     -   Graph DB migration: guides/graph_db_migration.md
     -   Graph namespace and schema: guides/graph_namespace_and_schema.md
     -   Graph export and replay: guides/graph_export_and_replay.md
+    -   Bulk load: guides/bulk_load.md
     -   API env wiring: guides/api_env_wiring.md
     -   Finding a key for your data: guides/identity_inference.md
     -   Evolving a manifest: guides/evolving_a_manifest.md
     -   Drawing a manifest: guides/drawing_a_manifest.md
-    -   TigerGraph bulk load: guides/tigergraph_bulk_load.md
     -   Inferring a graph from SQL: guides/sql_schema_inference.md
     -   Adding a database backend: guides/adding_a_backend.md
 -   Examples:
@@ -150,21 +150,20 @@ nav:
     -   Connections:
         -   11 - Credentials outside the manifest: examples/connection-proxy/index.md
         -   12 - API sources from environment variables: examples/api-env-config/index.md
-        -   13 - Bulk load into TigerGraph: examples/tigergraph-bulk-s3/index.md
     -   File backend:
-        -   14 - A graph on disk, without a database: examples/file-backend-export/index.md
+        -   13 - A graph on disk, without a database: examples/file-backend-export/index.md
     -   Identity:
-        -   15 - Find what identifies a record: examples/identity-inference/index.md
-        -   16 - Link by an alternative identifier: examples/secondary-identities/index.md
-        -   17 - One vertex per thing across sources: examples/identity-funnel/index.md
-        -   18 - Find matching columns across systems: examples/cross-resource-identity/index.md
+        -   14 - Find what identifies a record: examples/identity-inference/index.md
+        -   15 - Link by an alternative identifier: examples/secondary-identities/index.md
+        -   16 - One vertex per thing across sources: examples/identity-funnel/index.md
+        -   17 - Find matching columns across systems: examples/cross-resource-identity/index.md
     -   Evolution:
-        -   19 - Both directions of a relation: examples/edge-inverses/index.md
-        -   20 - Combine two manifests: examples/manifest-union/index.md
-        -   21 - Combine manifests with a routed source: examples/router-union-alignment/index.md
-        -   22 - Version control for a manifest: examples/version-control/index.md
+        -   18 - Both directions of a relation: examples/edge-inverses/index.md
+        -   19 - Combine two manifests: examples/manifest-union/index.md
+        -   20 - Combine manifests with a routed source: examples/router-union-alignment/index.md
+        -   21 - Version control for a manifest: examples/version-control/index.md
     -   Aspects and profiles:
-        -   23 - Track state and measurements: examples/lift-aspects/index.md
+        -   22 - Track state and measurements: examples/lift-aspects/index.md
 -   API Reference: reference/
 -   Internals:
     -   Merge internals: internals/merge_internals.md

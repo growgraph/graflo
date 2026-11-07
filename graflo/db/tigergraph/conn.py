@@ -10,24 +10,18 @@ from __future__ import annotations
 import contextlib
 import logging
 import re
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from graflo.architecture.contract.bindings import Bindings
-from graflo.architecture.graph_types import GraphContainer, Index
+from graflo.architecture.graph_types import Index
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import FieldType, VertexConfig
-from graflo.connections.onto import TigergraphBulkLoadConfig, TigergraphConfig
+from graflo.connections.onto import TigergraphConfig
 from graflo.db.conn import Connection
 from graflo.db.tigergraph import (
     compat,  # noqa: F401  # patch requests exceptions on import
 )
 from graflo.db.tigergraph.auth import TigerGraphAuth
-from graflo.db.tigergraph.bulk_session import (
-    bulk_load_append,
-    bulk_load_begin,
-    bulk_load_finalize,
-)
 from graflo.db.tigergraph.data_ops import TigerGraphDataOps
 from graflo.db.tigergraph.document_utils import clean_document, extract_id
 from graflo.db.tigergraph.graph_admin import GraphAdmin
@@ -53,9 +47,6 @@ from graflo.db.util import (
     load_tigergraph_identifier_rules as _load_tigergraph_identifier_rules,
 )
 from graflo.onto import DBType
-
-if TYPE_CHECKING:
-    from graflo.connections.provider import ConnectionProvider
 
 logger = logging.getLogger(__name__)
 
@@ -469,32 +460,6 @@ class TigerGraphConnection(Connection):
 
     def close(self):
         pass
-
-    def bulk_load_begin(
-        self, schema: Schema, bulk_cfg: TigergraphBulkLoadConfig
-    ) -> str:
-        return bulk_load_begin(self, schema, bulk_cfg)
-
-    def bulk_load_append(
-        self, session_id: str, gc: GraphContainer, schema: Schema
-    ) -> None:
-        bulk_load_append(self, session_id, gc, schema)
-
-    def bulk_load_finalize(
-        self,
-        session_id: str,
-        schema: Schema,
-        *,
-        bindings: Bindings | None = None,
-        connection_provider: ConnectionProvider | None = None,
-    ) -> str:
-        return bulk_load_finalize(
-            self,
-            session_id,
-            schema,
-            bindings=bindings,
-            connection_provider=connection_provider,
-        )
 
     def init_db(
         self,

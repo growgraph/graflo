@@ -25,17 +25,6 @@ def test_from_docker_env_parses_s3_env(tmp_path: Path) -> None:
     assert cfg.region == "us-west-2"
 
 
-def test_from_docker_env_loader_endpoint_for_tigergraph(tmp_path: Path) -> None:
-    env_path = tmp_path / ".env"
-    env_path.write_text(
-        "S3_API_PORT=8333\nS3_LOADER_ENDPOINT=http://172.17.0.1:8333\n",
-        encoding="utf-8",
-    )
-    cfg = MinioConfig.from_docker_env(docker_dir=tmp_path)
-    assert cfg.endpoint_url == "http://127.0.0.1:8333"
-    assert cfg.loader_endpoint_url == "http://172.17.0.1:8333"
-
-
 def test_from_docker_env_endpoint_override(tmp_path: Path) -> None:
     (tmp_path / ".env").write_text(
         "S3_ENDPOINT=https://s3.example.com\n", encoding="utf-8"
@@ -49,4 +38,3 @@ def test_from_docker_env_defaults_without_env_file(tmp_path: Path) -> None:
     assert cfg.endpoint_url == "http://127.0.0.1:8333"
     assert cfg.access_key and cfg.secret_key
     assert cfg.bucket == "graflo-staging"
-    assert cfg.loader_endpoint_url is None

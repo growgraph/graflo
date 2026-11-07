@@ -896,19 +896,6 @@ class ManifestRdfSerializer:
             add_literal(graph, binding_uri, ns.connectorName, connector)
             add_literal(graph, binding_uri, ns.connProxy, proxy)
 
-        for mapping in bindings.staging_proxy:
-            binding_uri = BNode()
-            graph.add((bindings_uri, ns.hasStagingProxy, binding_uri))
-            graph.add((binding_uri, RDF.type, ns.StagingProxyBinding))
-            name = mapping.name if hasattr(mapping, "name") else mapping["name"]
-            proxy = (
-                mapping.conn_proxy
-                if hasattr(mapping, "conn_proxy")
-                else mapping["conn_proxy"]
-            )
-            add_literal(graph, binding_uri, ns.name, name)
-            add_literal(graph, binding_uri, ns.connProxy, proxy)
-
     def _emit_connector(
         self,
         graph: Graph,

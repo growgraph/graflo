@@ -1,6 +1,6 @@
 """``graflo merge`` -- the binary merge of two manifests, from the shell.
 
-This verb is ``examples/20-manifest-union/merge.yaml`` applied from the
+This verb is ``examples/19-manifest-union/merge.yaml`` applied from the
 shell: the merge op and its canonical maps are one recipe, resolved together
 in one pass over the two manifests' own names. A refusal names every problem
 at once and prints the naming table -- each merged name, the classes that

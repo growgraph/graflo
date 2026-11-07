@@ -1,4 +1,4 @@
-"""Shared boto3 S3 client construction for staging and uploads."""
+"""Shared boto3 S3 client construction."""
 
 from __future__ import annotations
 

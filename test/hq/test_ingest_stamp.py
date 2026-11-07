@@ -206,7 +206,7 @@ def test_without_hooks_the_batch_is_written_once_unstamped(tmp_path):
     calls = _recorded_writes(tmp_path, IngestionParams())
 
     (call,) = calls
-    assert set(call) == {"gc", "conn_conf", "resource_name", "bulk_session_id"}
+    assert call.get("stamp") is None and call.get("guard") is None
     assert [doc["id"] for doc in call["gc"].vertices["Message"]] == ["m1", "m2", "m3"]
 
 

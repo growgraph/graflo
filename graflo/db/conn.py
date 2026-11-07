@@ -64,8 +64,8 @@ from graflo.architecture.schema import Schema
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.physical_keys import PhysicalKeys
 from graflo.architecture.schema.vertex import VertexConfig
-from graflo.connections.onto import TigergraphBulkLoadConfig
-from graflo.db.bulk_exc import UnsupportedBulkLoad
+from graflo.connections.bulk import BulkConfig
+from graflo.db.bulk import BulkCounts, BulkEdgeChunk, BulkPlan, BulkVertexChunk
 from graflo.db.resolve import (
     DEFAULT_RESOLVE_CHUNK_SIZE,
     bucket_by_key,
@@ -82,9 +82,7 @@ from graflo.onto import (
 )
 
 if TYPE_CHECKING:
-    from graflo.architecture.contract.bindings import Bindings
     from graflo.architecture.graph_types import EdgeId
-    from graflo.connections.provider import ConnectionProvider
     from graflo.db.edge_direction_support import EdgeDirectionDiagnostic
 
 logger = logging.getLogger(__name__)
@@ -174,6 +172,7 @@ class ConnectionCapability(Enum):
     UNION_MERGE = "supports_union_merge"
     SCOPED_DELETE = "supports_scoped_delete"
     MEMBERSHIP_READ = "supports_membership_read"
+    BULK_LOAD = "supports_bulk_load"
 
     @property
     def label(self) -> str:
@@ -188,6 +187,7 @@ class ConnectionCapability(Enum):
             ConnectionCapability.UNION_MERGE: "union-merged list fields",
             ConnectionCapability.SCOPED_DELETE: "deleting the elements of a scope",
             ConnectionCapability.MEMBERSHIP_READ: "reading a list field by ANY_IN",
+            ConnectionCapability.BULK_LOAD: "bulk loading an empty target",
         }[self]
 
 
@@ -308,6 +308,11 @@ class Connection(abc.ABC):
     supports_instance_delete: ClassVar[bool] = False
     #: Implements :meth:`delete_scoped_vertices` and :meth:`delete_scoped_edges`.
     supports_scoped_delete: ClassVar[bool] = False
+    #: Implements the bulk-load protocol (:mod:`graflo.db.bulk`): ``bulk_begin``
+    #: through ``bulk_finish``.
+    supports_bulk_load: ClassVar[bool] = False
+    #: Its bulk writer takes dense integer ids on every vertex and edge endpoint.
+    bulk_dense_ids: ClassVar[bool] = False
 
     def __init__(self):
         """Initialize the connection."""
@@ -430,6 +435,44 @@ class Connection(abc.ABC):
             create_namespace: Whether namespace creation is allowed. Backends use
                 this during recreate to decide if the graph/db shell may be dropped.
         """
+
+    # -- bulk load (graflo.db.bulk) -------------------------------------------
+
+    def bulk_begin(
+        self,
+        schema: Schema,
+        cfg: BulkConfig,
+        *,
+        recreate: bool = False,
+        resume: bool = False,
+    ) -> BulkPlan:
+        """Start a bulk load into an empty target: namespace and schema DDL.
+
+        The schema is applied through the first-write guard, so a target that
+        already holds one is refused unless *recreate*. On *resume* the load
+        began before: the guard is skipped and DDL is applied only where missing.
+
+        Raises:
+            NotImplementedError: The backend has no bulk writer.
+            SchemaExistsError: The target holds a schema and *recreate* is off.
+        """
+        raise NotImplementedError(f"{type(self).__name__} has no bulk writer")
+
+    def bulk_write_vertices(self, chunk: BulkVertexChunk) -> None:
+        """Create the chunk's vertices; none exists yet unless ``chunk.replay``."""
+        raise NotImplementedError(f"{type(self).__name__} has no bulk writer")
+
+    def bulk_prepare_edges(self, schema: Schema) -> None:
+        """Make edge endpoints quick to find, once every vertex is written."""
+        raise NotImplementedError(f"{type(self).__name__} has no bulk writer")
+
+    def bulk_write_edges(self, chunk: BulkEdgeChunk) -> None:
+        """Create the chunk's edges between existing vertices."""
+        raise NotImplementedError(f"{type(self).__name__} has no bulk writer")
+
+    def bulk_finish(self, schema: Schema) -> BulkCounts:
+        """Build what the load deferred; return the elements the target holds."""
+        raise NotImplementedError(f"{type(self).__name__} has no bulk writer")
 
     @property
     def _reported_edge_directions(self) -> set["EdgeId"]:
@@ -940,39 +983,6 @@ class Connection(abc.ABC):
         Args:
             edges: List of edge configurations to create
         """
-
-    def bulk_load_begin(
-        self, schema: Schema, bulk_cfg: TigergraphBulkLoadConfig
-    ) -> str:
-        """Start a native bulk-load session (CSV staging + LOADING JOB).
-
-        Raises:
-            UnsupportedBulkLoad: For backends that only support REST/document APIs.
-        """
-        raise UnsupportedBulkLoad(
-            f"Database flavor {self.flavor!r} does not support native bulk load"
-        )
-
-    def bulk_load_append(
-        self, session_id: str, gc: GraphContainer, schema: Schema
-    ) -> None:
-        """Append one cast batch to the active bulk-load session."""
-        raise UnsupportedBulkLoad(
-            f"Database flavor {self.flavor!r} does not support native bulk load"
-        )
-
-    def bulk_load_finalize(
-        self,
-        session_id: str,
-        schema: Schema,
-        *,
-        bindings: "Bindings | None" = None,
-        connection_provider: "ConnectionProvider | None" = None,
-    ) -> str:
-        """Close staging files, optionally upload to S3, run LOADING JOB, return GSQL log text."""
-        raise UnsupportedBulkLoad(
-            f"Database flavor {self.flavor!r} does not support native bulk load"
-        )
 
     def vertex_address(
         self, doc: dict[str, Any], identity_fields: Sequence[str]

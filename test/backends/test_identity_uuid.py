@@ -374,3 +374,20 @@ def test_uuid_pattern_shared_with_identity_inference() -> None:
     from graflo.db.identity_inference import _UUID_PATTERN
 
     assert _UUID_PATTERN is UUID_PATTERN
+
+
+def test_drop_empty_identity_still_checks_the_endpoint_beside_an_assigned_one() -> None:
+    vc = VertexConfig(
+        vertices=[
+            Vertex(name="event", properties=[], assigned=True),
+            Vertex(name="user", properties=[Field(name="uid")], identity=["uid"]),
+        ]
+    )
+    edge_id = ("user", "event", None)
+    gc = GraphContainer(
+        vertices={},
+        edges={edge_id: [({"uid": None}, {}, {}), ({"uid": "u1"}, {}, {})]},
+        linear=[],
+    )
+    filter_graph_container_drop_empty_identity_inplace(gc, vertex_config=vc)
+    assert gc.edges[edge_id] == [({"uid": "u1"}, {}, {})]

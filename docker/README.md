@@ -167,7 +167,7 @@ config = FalkordbConfig.from_docker_env()
 
 ## SeaweedFS (S3)
 
-SeaweedFS provides S3-compatible object storage ([Docker Hub image](https://hub.docker.com/r/chrislusf/seaweedfs)). Use it for bulk staging (e.g. TigerGraph examples that upload staged CSVs).
+SeaweedFS provides S3-compatible object storage ([Docker Hub image](https://hub.docker.com/r/chrislusf/seaweedfs)). Use it for file sources with an `s3://` root.
 
 **Run:**
 ```shell
@@ -179,9 +179,7 @@ docker compose --profile graflo.seaweedfs up -d
 
 Settings are optional and go in `docker/seaweedfs/.env`: `S3_ENDPOINT` (or `S3_PROTOCOL`, `S3_HOSTNAME`, `S3_API_PORT`), `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_BUCKET` (default `graflo-staging`), `AWS_REGION`.
 
-When TigerGraph runs in Docker and GraFlo uploads from the host, set **`S3_LOADER_ENDPOINT`** to the S3 URL **as seen from the TigerGraph container** (e.g. `http://172.17.0.1:8333` or `http://host.docker.internal:8333`). That value is used only in the GSQL `CREATE DATA_SOURCE` for bulk loads; boto3 on the host uses the endpoint above.
-
-**Programmatic connection (boto3 / bulk staging):**
+**Programmatic connection (boto3):**
 ```python
 from graflo.object_storage import MinioConfig
 from graflo.object_storage import ensure_staging_bucket_for_config
@@ -191,7 +189,7 @@ ensure_staging_bucket_for_config(config)
 # config.endpoint_url, config.access_key, config.secret_key, config.bucket, …
 ```
 
-Implementation helpers (`upload_staged_csvs`, boto3 client factories, bucket ensure) live in **`graflo.object_storage`**. See **docs/concepts/operations/object_storage.md** in the repo for staging vs ingestion connectors.
+Boto3 client factories and bucket ensure live in **`graflo.object_storage`**. See **docs/concepts/operations/object_storage.md** in the repo.
 
 
 ## Kafka

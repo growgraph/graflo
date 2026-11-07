@@ -78,7 +78,6 @@ KafkaConnector = GF.KafkaConnector
 PushConnector = GF.PushConnector
 ResourceConnectorBinding = GF.ResourceConnectorBinding
 ConnectorConnectionBinding = GF.ConnectorConnectionBinding
-StagingProxyBinding = GF.StagingProxyBinding
 EdgePhysicalSpec = GF.EdgePhysicalSpec
 Index = GF.Index
 
@@ -117,7 +116,6 @@ hasKeySelection = GF.hasKeySelection
 hasConnector = GF.hasConnector
 bindsResourceToConnector = GF.bindsResourceToConnector
 bindsConnectorToConnProxy = GF.bindsConnectorToConnProxy
-hasStagingProxy = GF.hasStagingProxy
 hasVertexIndex = GF.hasVertexIndex
 hasEdgeSpec = GF.hasEdgeSpec
 refinesEdge = GF.refinesEdge

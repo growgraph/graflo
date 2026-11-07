@@ -123,16 +123,16 @@ cannot build. `no` means the target does not have the feature.
 
 ## Reading and changing a graph
 
-| Backend | Read back whole | Schema introspection | Migration DDL | Delete | Delete a scope | Read guard | Union merge |
-|---|---|---|---|---|---|---|---|
-| ArangoDB | yes | sampled | yes | yes | no | no | no |
-| Neo4j | yes | sampled | yes | yes | yes | yes | yes |
-| Memgraph | no | sampled | no | yes | no | no | no |
-| FalkorDB | yes | sampled | no | yes | yes | yes | yes |
-| TigerGraph | no | catalog | no | yes | no | no | no |
-| NebulaGraph | no | sampled | no | yes | no | no | no |
-| PostgreSQL | yes | catalog | no | yes | no | no | no |
-| GraFlo file backend | yes | catalog | no | no | no | yes | yes |
+| Backend | Read back whole | Schema introspection | Migration DDL | Delete | Delete a scope | Read guard | Union merge | Bulk load |
+|---|---|---|---|---|---|---|---|---|
+| ArangoDB | yes | sampled | yes | yes | no | no | no | no |
+| Neo4j | yes | sampled | yes | yes | yes | yes | yes | no |
+| Memgraph | no | sampled | no | yes | no | no | no | no |
+| FalkorDB | yes | sampled | no | yes | yes | yes | yes | no |
+| TigerGraph | no | catalog | no | yes | no | no | no | no |
+| NebulaGraph | no | sampled | no | yes | no | no | no | no |
+| PostgreSQL | yes | catalog | no | yes | no | no | no | no |
+| GraFlo file backend | yes | catalog | no | no | no | yes | yes | yes |
 
 - **Read back whole:** the target can be the source of `export_graph` and
   `migrate_graph`. See
@@ -144,6 +144,8 @@ cannot build. `no` means the target does not have the feature.
 - **Delete** and **Delete a scope:** see
   [removing vertices and edges](operations/deleting_instances.md).
 - **Read guard** and **Union merge:** see [aspects](schema/aspects.md).
+- **Bulk load:** loads an empty target without lookups. See
+  [bulk load](../guides/bulk_load.md).
 
 ## What the free editions allow
 

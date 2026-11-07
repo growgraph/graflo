@@ -30,12 +30,6 @@ def pytest_addoption(parser):
         help="Rewrite the reference files under test/ref instead of comparing to them",
     )
     parser.addoption(
-        "--run-bulk-e2e",
-        action="store_true",
-        default=False,
-        help="Run TigerGraph native bulk E2E tests marked @pytest.mark.bulk_e2e",
-    )
-    parser.addoption(
         "--run-performance",
         action="store_true",
         default=False,
@@ -63,7 +57,6 @@ def pytest_addoption(parser):
 
 def pytest_collection_modifyitems(config, items):
     _skip_map = {
-        "bulk_e2e": ("--run-bulk-e2e", "need --run-bulk-e2e option to run"),
         "performance": ("--run-performance", "need --run-performance option to run"),
         "nebula": ("--run-nebula", "need --run-nebula option to run"),
         "kafka": ("--run-kafka", "need --run-kafka option to run"),

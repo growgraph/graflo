@@ -92,7 +92,7 @@ settings from those containers.
 
 If you do not want to run a database yet, use the file backend: it writes the
 graph to a directory, and you can load it into a database later. The
-[file backend example (14)](../examples/file-backend-export/index.md) shows
+[file backend example (13)](../examples/file-backend-export/index.md) shows
 how.
 
 ## What to read next

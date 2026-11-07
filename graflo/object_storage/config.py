@@ -1,7 +1,6 @@
 """S3-compatible endpoint configuration (SeaweedFS, AWS S3, MinIO, etc.).
 
-Used for TigerGraph bulk CSV staging and other boto3 S3 clients. Not a graph
-database target. :meth:`MinioConfig.from_docker_env` reads ``docker/seaweedfs``,
+Used by boto3 S3 clients. Not a graph database target. :meth:`MinioConfig.from_docker_env` reads ``docker/seaweedfs``,
 the S3 service this repository ships.
 
 ``S3EndpointConfig`` is an alias for :class:`MinioConfig` (name reflects any S3 API).
@@ -42,19 +41,11 @@ class MinioConfig(BaseModel):
     secret_key: str = Field(description="S3 secret access key.")
     bucket: str = Field(
         default="graflo-staging",
-        description="Default bucket for staged bulk CSV objects.",
+        description="Default bucket.",
     )
     region: str = Field(
         default="us-east-1",
         description="AWS region string passed to boto3 (us-east-1 for a local S3 service).",
-    )
-    loader_endpoint_url: str | None = Field(
-        default=None,
-        description=(
-            "Optional S3 API URL for TigerGraph LOADING JOB (CREATE DATA_SOURCE). "
-            "Set when TigerGraph runs in Docker and the S3 service is on the host "
-            "(e.g. http://172.17.0.1:8333). Boto3 uses endpoint_url above."
-        ),
     )
 
     def to_files_conn_config(self) -> FilesConnConfig:
@@ -67,7 +58,6 @@ class MinioConfig(BaseModel):
             endpoint_url=self.endpoint_url,
             access_key_id=self.access_key,
             secret_access_key=self.secret_key,
-            loader_endpoint_url=self.loader_endpoint_url,
         )
 
     @classmethod
@@ -79,8 +69,8 @@ class MinioConfig(BaseModel):
         the file is optional.
 
         Settings: ``S3_ENDPOINT`` (or ``S3_PROTOCOL``, ``S3_HOSTNAME``,
-        ``S3_API_PORT``), ``S3_ACCESS_KEY``, ``S3_SECRET_KEY``, ``S3_BUCKET``,
-        ``AWS_REGION`` and ``S3_LOADER_ENDPOINT`` (the address TigerGraph uses).
+        ``S3_API_PORT``), ``S3_ACCESS_KEY``, ``S3_SECRET_KEY``, ``S3_BUCKET``
+        and ``AWS_REGION``.
         """
         if docker_dir is None:
             docker_dir = (
@@ -108,8 +98,6 @@ class MinioConfig(BaseModel):
             data["bucket"] = bucket
         if region := env_vars.get("AWS_REGION"):
             data["region"] = region
-        if loader_ep := env_vars.get("S3_LOADER_ENDPOINT"):
-            data["loader_endpoint_url"] = loader_ep
 
         return cls(**data)
 

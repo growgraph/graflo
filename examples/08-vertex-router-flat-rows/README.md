@@ -140,5 +140,5 @@ deserve attention:
   next example.
 - [The `vertex_router` step](../../docs/concepts/architecture/core_components.md#the-vertex_router-step):
   every option of the step.
-- [Combine manifests with a routed source](../21-router-union-alignment/README.md):
+- [Combine manifests with a routed source](../20-router-union-alignment/README.md):
   a routed table in a union of two manifests.

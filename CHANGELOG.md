@@ -7,19 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Bulk mode: `IngestionParams(mode="bulk", staging_dir=...)` / `ingest --bulk --staging-dir`
+  stages the whole input, folds it by identity in DuckDB and writes it once into an empty
+  target; resumable. Needs the `bulk` extra. The file backend supports it.
+- `Connection.bulk_begin` … `bulk_finish`, `supports_bulk_load`, `DBConfig.bulk`.
+
+### Removed
+
+- The TigerGraph-only bulk path: `Connection.bulk_load_*`, `TigergraphBulkLoadConfig`,
+  `TigergraphConfig.bulk_load`, `UnsupportedBulkLoad`, `upload_staged_csvs`,
+  `loader_endpoint_url`, `DBWriter.write(bulk_session_id=...)` and the `bulk_e2e` test marker.
+- `Bindings.staging_proxy` and `StagingProxyBinding`; a manifest that sets it is refused.
+- `Caster.ingest_data_sources` no longer takes `bindings` or `connection_provider`;
+  `effective_in_flight` takes `(runtime, params)`.
+
 ### Changed
 
-- The steps a write applies before a backend sees a batch (derived fields, minted identities,
-  dropping documents with no identity value, stored names) are functions of
-  `graflo.hq.write_prepare` over a `WriteContext` built from the target flavor, with no
-  connection; `DBWriter` runs them before it takes a connection.
+- `graflo.hq.write_prepare`: the connection-free steps of a write; `DBWriter` runs them before
+  taking a connection.
 
 ### Fixed
 
-- Documents of one batch fused on a `merge: union` field union as the backends do: null members
-  are dropped, a null value adds nothing and a scalar is one member, the first document
-  included. A null no longer reached the stored list, and a later null no longer erased the
-  members fused before it.
+- In-batch fusion of `merge: union` fields drops nulls and keeps earlier members, as the
+  backends do.
+- The cast drops an edge whose endpoint has no key even when its other endpoint is blank or
+  assigned.
 
 ## [1.25.1]
 

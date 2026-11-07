@@ -1646,8 +1646,6 @@ def _union_bindings(
         + list(right_data.get("resource_connector") or []),
         "connector_connection": list(left_data.get("connector_connection") or [])
         + list(right_data.get("connector_connection") or []),
-        "staging_proxy": list(left_data.get("staging_proxy") or [])
-        + list(right_data.get("staging_proxy") or []),
     }
     return Bindings.model_validate(merged)
 

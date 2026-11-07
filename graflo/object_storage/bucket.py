@@ -1,4 +1,4 @@
-"""Ensure S3 buckets exist (idempotent) for bulk staging."""
+"""Ensure S3 buckets exist (idempotent)."""
 
 from __future__ import annotations
 

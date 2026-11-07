@@ -97,7 +97,7 @@ If the embedded viewer is blank in an IDE browser preview, use **Open full scree
 **Bindings block**
 
 - `gf:Bindings`, and `gf:BoundConnector` with one subclass per connector model: `gf:FileConnector`, `gf:TableConnector`, `gf:SparqlConnector`, `gf:APIConnector`, `gf:KafkaConnector`
-- `gf:ResourceConnectorBinding`, `gf:ConnectorConnectionBinding`, `gf:StagingProxyBinding`
+- `gf:ResourceConnectorBinding`, `gf:ConnectorConnectionBinding`
 
 **Semantic grounding** (optional)
 

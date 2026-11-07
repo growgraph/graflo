@@ -426,5 +426,5 @@ describes the plan, the risk levels and which databases it can apply to.
   which ones can be undone.
 - [Version control](../concepts/schema/versioning.md): branches, three-way
   merges and reverts.
-- [Edge inverses example (19)](../examples/edge-inverses/index.md): a relation
+- [Edge inverses example (18)](../examples/edge-inverses/index.md): a relation
   read and stored both ways.

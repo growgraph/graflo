@@ -343,7 +343,7 @@ observed: [Machine]
 measured: {Machine.operating_temp: Cel}
 ```
 
-See [the lift example (23)](../examples/lift-aspects/index.md).
+See [the lift example (22)](../examples/lift-aspects/index.md).
 
 ## Checks
 
@@ -377,11 +377,11 @@ The types a lift adds so that a manifest can record how facts change: a state ty
 
 ### state
 
-A vertex type named `<Type>State` that holds the properties of an entity that change over time, each value valid from `valid_from` to `valid_to`: a machine keeps its serial number, and its `status` moves to `MachineState`. It is keyed on the entity's key plus `valid_from`, so each value is a separate fact rather than an overwrite of the last one. See [the lift example (23)](../examples/lift-aspects/index.md).
+A vertex type named `<Type>State` that holds the properties of an entity that change over time, each value valid from `valid_from` to `valid_to`: a machine keeps its serial number, and its `status` moves to `MachineState`. It is keyed on the entity's key plus `valid_from`, so each value is a separate fact rather than an overwrite of the last one. See [the lift example (22)](../examples/lift-aspects/index.md).
 
 ### observation
 
-A vertex type named `<Type>Observation` that holds one measurement of an entity at one time: `observed_property`, `result_value`, `result_unit` (a UCUM unit such as `Cel`) and `result_time`. A temperature reading taken on a machine is one `MachineObservation`. See [the lift example (23)](../examples/lift-aspects/index.md).
+A vertex type named `<Type>Observation` that holds one measurement of an entity at one time: `observed_property`, `result_value`, `result_unit` (a UCUM unit such as `Cel`) and `result_time`. A temperature reading taken on a machine is one `MachineObservation`. See [the lift example (22)](../examples/lift-aspects/index.md).
 
 ## Inference and sampling
 

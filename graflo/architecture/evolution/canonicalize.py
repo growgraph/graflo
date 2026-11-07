@@ -171,7 +171,6 @@ LIST_ORDER: dict[tuple[str, str], ListOrder] = {
     ("BindingsRegistry", "connector_templates"): SORTED,
     ("BindingsRegistry", "connector_connection"): SORTED,
     ("BindingsRegistry", "resource_connector"): SORTED,
-    ("BindingsRegistry", "staging_proxy"): SORTED,
     # Membership sets on a connector.
     ("KafkaConnector", "topics"): SORTED,
     ("APIConnector", "retry_status_forcelist"): SORTED,

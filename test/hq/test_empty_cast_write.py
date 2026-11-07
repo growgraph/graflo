@@ -16,15 +16,8 @@ from graflo.architecture.schema import CoreSchema, GraphMetadata, Schema
 from graflo.architecture.schema.database_features import DatabaseProfile
 from graflo.architecture.schema.edge import Edge, EdgeConfig
 from graflo.architecture.schema.vertex import Field, Vertex, VertexConfig
-from graflo.connections.onto import (
-    ArangoConfig,
-    Neo4jConfig,
-    TigergraphBulkLoadConfig,
-    TigergraphConfig,
-)
-from graflo.db.bulk_exc import UnsupportedBulkLoad
+from graflo.connections.onto import ArangoConfig, Neo4jConfig
 from graflo.filter.onto import FilterExpression
-from graflo.hq.bulk_session import BulkSessionCoordinator
 from graflo.hq.caster import Caster
 from graflo.hq.db_writer import DBWriter
 from graflo.hq.document_caster import CastBatchResult
@@ -189,22 +182,18 @@ class _Writes:
 
 
 def _spy_on_writes(caster: Caster, monkeypatch: pytest.MonkeyPatch) -> dict:
-    seen: dict[str, Any] = {"writer": 0, "session": 0, "writes": _Writes()}
+    seen: dict[str, Any] = {"writer": 0, "writes": _Writes()}
 
     def _get_db_writer(conn_conf: Any) -> _Writes:
         seen["writer"] += 1
         return seen["writes"]
 
-    async def _ensure_bulk_session(conn_conf: Any) -> None:
-        seen["session"] += 1
-
     monkeypatch.setattr(caster, "_get_db_writer", _get_db_writer)
-    monkeypatch.setattr(caster, "_ensure_bulk_session", _ensure_bulk_session)
     return seen
 
 
 class TestTheCaster:
-    def test_an_empty_batch_builds_no_writer_and_begins_no_session(
+    def test_an_empty_batch_builds_no_writer(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         caster = _caster()
@@ -217,7 +206,7 @@ class TestTheCaster:
 
         asyncio.run(caster.process_batch([{"id": 1}, {"id": 2}], "items", NEO4J))
 
-        assert (seen["writer"], seen["session"]) == (0, 0)
+        assert seen["writer"] == 0
 
     def test_per_record_writes_skip_the_empty_parts(
         self, monkeypatch: pytest.MonkeyPatch
@@ -235,7 +224,7 @@ class TestTheCaster:
 
         assert seen["writes"].written == [kept]
 
-    def test_per_record_writes_with_only_empty_parts_begin_no_session(
+    def test_per_record_writes_with_only_empty_parts_build_no_writer(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         caster = _caster(stamp_for=lambda resource, record: {"t": record["t"]})
@@ -248,58 +237,4 @@ class TestTheCaster:
 
         asyncio.run(caster.process_batch([{"t": "a"}, {"t": "b"}], "items", NEO4J))
 
-        assert (seen["writer"], seen["session"]) == (0, 0)
-
-
-class TestBulkSession:
-    def test_a_target_without_bulk_loading_is_not_connected_to(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        def _refuse(*args: Any, **kwargs: Any) -> None:
-            raise AssertionError("no connection expected")
-
-        monkeypatch.setattr("graflo.db.manager.ConnectionManager", _refuse)
-        coordinator = BulkSessionCoordinator(_schema())
-
-        async def _twice() -> list[str | None]:
-            return [await coordinator.ensure_session(NEO4J) for _ in range(2)]
-
-        assert asyncio.run(_twice()) == [None, None]
-
-    def test_an_unsupported_bulk_load_is_asked_once_per_run(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path
-    ) -> None:
-        asked: list[int] = []
-
-        class _Manager:
-            def __init__(self, connection_config: Any) -> None:
-                del connection_config
-
-            def __enter__(self) -> Self:
-                return self
-
-            def __exit__(self, *exc: object) -> bool:
-                return False
-
-            def bulk_load_begin(self, schema: Any, cfg: Any) -> str:
-                asked.append(1)
-                raise UnsupportedBulkLoad("no")
-
-        monkeypatch.setattr("graflo.db.manager.ConnectionManager", _Manager)
-        conf = TigergraphConfig(
-            uri="http://localhost:9000",
-            username="u",
-            password="p",
-            bulk_load=TigergraphBulkLoadConfig(enabled=True, staging_dir=str(tmp_path)),
-        )
-        coordinator = BulkSessionCoordinator(_schema())
-
-        async def _run() -> None:
-            await coordinator.ensure_session(conf)
-            await coordinator.ensure_session(conf)
-            await coordinator.finalize(conf, bindings=None, connection_provider=None)
-            await coordinator.ensure_session(conf)
-
-        asyncio.run(_run())
-
-        assert len(asked) == 2
+        assert seen["writer"] == 0

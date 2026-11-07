@@ -114,7 +114,7 @@ class S3ConnConfig(BaseModel):
 
     bucket: str | None = Field(
         default=None,
-        description="Default bucket when TigergraphBulkLoadConfig.s3_bucket is unset.",
+        description="Default bucket.",
     )
     region: str | None = Field(default=None)
     aws_access_key_id: str | None = Field(default=None)
@@ -122,22 +122,13 @@ class S3ConnConfig(BaseModel):
     endpoint_url: str | None = Field(
         default=None, description="For S3-compatible endpoints (MinIO, etc.)."
     )
-    loader_endpoint_url: str | None = Field(
-        default=None,
-        description=(
-            "S3 endpoint URL as seen by TigerGraph when it runs in another network "
-            "namespace (e.g. Docker). Used only in CREATE DATA_SOURCE for LOADING JOB; "
-            "boto3 continues to use endpoint_url."
-        ),
-    )
 
     @classmethod
     def from_env(cls, env_prefix: str) -> S3ConnConfig:
-        """Load S3 staging config from ``{env_prefix}<FIELD>`` variables.
+        """Load S3 config from ``{env_prefix}<FIELD>`` variables.
 
         Reads ``BUCKET``, ``REGION``, ``AWS_ACCESS_KEY_ID``,
-        ``AWS_SECRET_ACCESS_KEY``, ``ENDPOINT_URL`` and ``LOADER_ENDPOINT_URL``;
-        all are optional.
+        ``AWS_SECRET_ACCESS_KEY`` and ``ENDPOINT_URL``; all are optional.
         """
         return cls(
             **{
@@ -239,13 +230,6 @@ class FilesConnConfig(BaseModel):
         default=None, description="For S3-compatible endpoints (MinIO, SeaweedFS)."
     )
     region: str | None = None
-    loader_endpoint_url: str | None = Field(
-        default=None,
-        description=(
-            "The S3 endpoint as a bulk loader in another network namespace sees "
-            "it; boto3 keeps using endpoint_url."
-        ),
-    )
     access_key_id: str | None = None
     secret_access_key: str | None = None
     proxy_name: str | None = Field(default=None, description=_PROXY_NAME_DESCRIPTION)
@@ -266,7 +250,6 @@ class FilesConnConfig(BaseModel):
                 for name in (
                     "endpoint_url",
                     "region",
-                    "loader_endpoint_url",
                     "access_key_id",
                     "secret_access_key",
                 )
@@ -312,7 +295,6 @@ class FilesConnConfig(BaseModel):
             aws_access_key_id=self.access_key_id,
             aws_secret_access_key=self.secret_access_key,
             endpoint_url=self.endpoint_url,
-            loader_endpoint_url=self.loader_endpoint_url,
         )
 
     @classmethod

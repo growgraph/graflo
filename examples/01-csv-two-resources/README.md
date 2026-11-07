@@ -151,6 +151,6 @@ conn_conf = Neo4jConfig.from_docker_env()
 
 - [Records that refer to their own kind](../02-json-self-edges/README.md): edges
   between vertices of the same type.
-- [A graph on disk, without a database](../14-file-backend-export/README.md).
+- [A graph on disk, without a database](../13-file-backend-export/README.md).
 - [Creating a manifest](../../docs/getting_started/creating_manifest.md): every
   block of the manifest in detail.

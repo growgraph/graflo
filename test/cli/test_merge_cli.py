@@ -406,7 +406,7 @@ def test_a_composing_run_reports_what_the_merge_changed(tmp_path):
     from graflo.cli.io import load_manifest
 
     example = (
-        pathlib.Path(__file__).resolve().parents[2] / "examples" / "20-manifest-union"
+        pathlib.Path(__file__).resolve().parents[2] / "examples" / "19-manifest-union"
     )
     left = example / "manifest_maintenance.yaml"
     right = example / "manifest_sensors.yaml"
@@ -608,7 +608,7 @@ class TestRecordingTheCompose:
 #: The manifest-union example: one key owner per side, and a work-order
 #: resource that only references the maintenance side's machines.
 EXAMPLE_UNION = (
-    pathlib.Path(__file__).resolve().parents[2] / "examples" / ("20-manifest-union")
+    pathlib.Path(__file__).resolve().parents[2] / "examples" / ("19-manifest-union")
 )
 
 
@@ -640,7 +640,7 @@ def test_a_dry_run_prints_the_routing_table_after_the_naming_table() -> None:
 
 # ── one equivalence, four views ─────────────────────────────────────────────
 
-UNION = pathlib.Path(__file__).resolve().parents[2] / "examples" / "20-manifest-union"
+UNION = pathlib.Path(__file__).resolve().parents[2] / "examples" / "19-manifest-union"
 
 
 def _figures(tmp_path: pathlib.Path, *extra: str, op: str = "merge.yaml"):

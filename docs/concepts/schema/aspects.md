@@ -324,7 +324,7 @@ when:
 
 ## See also
 
-- [Track state and measurements (example 23)](../../examples/lift-aspects/index.md):
+- [Track state and measurements (example 22)](../../examples/lift-aspects/index.md):
   a manifest lifted with both aspects, before and after.
 - [Conformance profiles](world_model_profile.md): the checks a lifted manifest
   passes.

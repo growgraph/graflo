@@ -1029,32 +1029,6 @@ class TestEdgeEndpointResolution:
         assert written == {"near": ["c3"], "at": ["c1"]}
 
 
-class TestAttachRefusedInBulk:
-    def test_a_resource_that_attaches_is_refused(self, monkeypatch):
-        with pytest.raises(ValueError, match="REST ingest"):
-            _attach_write_bulk(monkeypatch, GraphContainer(), "attach")
-
-    def test_attached_records_are_refused(self, monkeypatch):
-        gc = _attached([{"serial": "S1"}])
-        with pytest.raises(ValueError, match="REST ingest"):
-            _attach_write_bulk(monkeypatch, gc, None)
-
-
-def _attach_write_bulk(monkeypatch, gc: GraphContainer, resource_name) -> None:
-    schema = _cmdb_schema()
-    writer = DBWriter(schema=schema, ingestion_model=_cmdb_model(schema))
-
-    monkeypatch.setattr(
-        "graflo.hq.db_writer.ConnectionManager", _manager_for(_AttachDB())
-    )
-    conn_conf = Neo4jConfig(uri="bolt://localhost:7687", username="u", password="p")
-    asyncio.run(
-        writer.write(
-            gc=gc, conn_conf=conn_conf, resource_name=resource_name, bulk_session_id="s"
-        )
-    )
-
-
 def test_attached_records_are_resolved_and_written_under_stored_names(monkeypatch):
     """``from`` and ``type`` are TigerGraph reserved words, so both are renamed."""
     schema = Schema.model_validate(

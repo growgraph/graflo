@@ -127,7 +127,7 @@ class ResourceRuntime:
             raise ValueError(f"Resource {config.name!r}: {exc}") from exc
         # Validated over the whole schema, registered only for the classes this
         # runtime writes: an excluded class would make endpoint matching (and
-        # its serialized, non-bulk write path) look necessary when it is not.
+        # its serialized write path) look necessary when it is not.
         runtime_vertices = runtime_vertex_config.vertex_set
         self._attached_selectors = {
             vertex: selector

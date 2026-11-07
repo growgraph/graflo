@@ -18,7 +18,6 @@ from contextlib import AsyncExitStack, contextmanager
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from graflo.architecture.contract.ingestion import IngestionModel
-from graflo.architecture.evolution.sanitize import materialize_physical_schema
 from graflo.architecture.graph_types import EdgeId, GraphContainer, Weight
 from graflo.architecture.graph_types.merge import fuse_doc_basis
 from graflo.architecture.graph_types.transform import VertexRep
@@ -254,7 +253,6 @@ class DBWriter:
         conn_conf: DBConfig,
         resource_name: str | None,
         *,
-        bulk_session_id: str | None = None,
         stamp: Mapping[str, Any] | None = None,
         guard: FilterExpression | None = None,
     ) -> None:
@@ -269,22 +267,16 @@ class DBWriter:
         extra-weight vertices — so a write never links to, attaches onto or
         copies from a vertex the guard hides.
 
-        When *bulk_session_id* is provided, appends rows using the connection's
-        native bulk interface instead of using per-record writes.
-
         A container with no documents opens no connection and writes nothing;
         a class with no documents is skipped the same way.
 
         .. note::
-            *gc* is mutated in-place for the REST path: blank-vertex keys are
-            updated and blank edges are extended after the vertex round-trip.
-            The bulk path does not support blank vertices, attached records or
-            ``extra_weights``.
+            *gc* is mutated in-place: blank-vertex keys are updated and blank
+            edges are extended after the vertex round-trip.
 
         Raises:
-            ValueError: If *gc* carries attached records under a bulk session,
-                or an element of a type with a reserved field and *stamp* does
-                not set it.
+            ValueError: If an element of a type with a reserved field and
+                *stamp* does not set it.
             NotImplementedError: If *guard* is given and the backend does not
                 apply read guards; nothing is written.
         """
@@ -292,39 +284,11 @@ class DBWriter:
         # that cast to nothing is refused like any other.
         if guard is not None:
             require_read_guard(conn_conf)
-        if bulk_session_id:
-            self._validate_bulk_resource(resource_name)
         if gc.is_empty():
             return
         check_stamp(gc, self.schema, stamp)
         refuse_reserved_attributes(gc, self.schema)
         self._check_union(gc, conn_conf)
-        if bulk_session_id:
-            apply_stamp(gc, self.schema, stamp)
-            if any(gc.attached.values()):
-                raise ValueError(
-                    "Native bulk ingest does not support attached records "
-                    f"({sorted(gc.attached)}): finding the vertices they attach to "
-                    "needs DB round-trips. Use REST ingest."
-                )
-            if self.dry:
-                logger.debug(
-                    "Dry run: would append batch to bulk session %s",
-                    bulk_session_id,
-                )
-                return
-
-            keys = self._keys_for(conn_conf)
-            stored_gc = keys.container(gc, self.schema.core_schema.edge_config)
-            stored_schema = materialize_physical_schema(self._named_for(conn_conf))
-
-            def _append() -> None:
-                with self._connection(conn_conf) as db:
-                    db.bulk_load_append(bulk_session_id, stored_gc, stored_schema)
-
-            await asyncio.to_thread(_append)
-            return
-
         # A container that no resource produced (``migrate_graph`` writes an
         # exported graph through an empty ingestion model) has no resource to
         # consult, and needs none: extra weights, endpoint selections and the
@@ -484,22 +448,6 @@ class DBWriter:
                     keys.vertex_fields(vertex, [field])[0],
                     value,
                 )
-
-    def _validate_bulk_resource(self, resource_name: str | None) -> None:
-        if resource_name is None:
-            return
-        resource = self.ingestion_model.fetch_resource(resource_name)
-        if resource.config.extra_weights:
-            raise ValueError(
-                "Native bulk ingest does not support resources with extra_weights "
-                "(those require DB round-trips). Use REST ingest or disable extra_weights."
-            )
-        if resource.attached_selectors:
-            raise ValueError(
-                "Native bulk ingest does not support resources that attach records "
-                f"to existing vertices ({sorted(resource.attached_selectors)}; those "
-                "require DB round-trips). Use REST ingest."
-            )
 
     # ------------------------------------------------------------------
     # Vertices
@@ -1222,9 +1170,6 @@ class DBWriter:
 
     def _db_aware_for(self, conn_conf: DBConfig) -> SchemaDBAware:
         return self.context(conn_conf).db_aware
-
-    def _named_for(self, conn_conf: DBConfig) -> Schema:
-        return self.context(conn_conf).named_schema
 
     def _keys_for(self, conn_conf: DBConfig) -> PhysicalKeys:
         return self.context(conn_conf).keys

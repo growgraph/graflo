@@ -38,8 +38,6 @@ _EXPORTS: dict[str, str] = {
     "PostgresConfig": "graflo.connections.onto",
     "GraphDBConfig": "graflo.connections.onto",
     "SparqlEndpointConfig": "graflo.connections.onto",
-    "TigergraphBulkLoadConfig": "graflo.connections.onto",
-    "TigergraphBulkLoadJobOptions": "graflo.connections.onto",
     "TigergraphConfig": "graflo.connections.onto",
     # graflo_backend
     "GraFloBackendConfig": "graflo.connections.graflo_backend",
@@ -103,8 +101,6 @@ __all__ = [
     "S3ConnConfig",
     "SparqlAuth",
     "SparqlEndpointConfig",
-    "TigergraphBulkLoadConfig",
-    "TigergraphBulkLoadJobOptions",
     "TigergraphConfig",
     "connection_kind",
     "connector_config",

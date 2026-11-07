@@ -15,7 +15,6 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from graflo.architecture.pipeline.runtime.resource import ResourceRuntime
-    from graflo.connections.onto import DBConfig
     from graflo.hq.ingestion_parameters import IngestionParams
 
 logger = logging.getLogger(__name__)
@@ -26,7 +25,6 @@ class SerialReason(StrEnum):
 
     USER_OVERRIDE = "user_override"
     DYNAMIC_EDGES = "dynamic_edges"
-    BULK_SESSION = "bulk_session"
     EXTRA_WEIGHTS = "extra_weights"
     BLANK_VERTICES = "blank_vertices"
     SECONDARY_IDENTITY = "secondary_identity_endpoints"
@@ -35,9 +33,6 @@ class SerialReason(StrEnum):
 def effective_in_flight(
     runtime: ResourceRuntime | None,
     params: IngestionParams,
-    conn_conf: DBConfig | None,
-    *,
-    bulk_enabled: bool,
 ) -> tuple[int, SerialReason | None]:
     """Return ``(max_in_flight, reason)`` for one data source.
 
@@ -47,7 +42,6 @@ def effective_in_flight(
     - ``USER_OVERRIDE`` — ``max_in_flight_batches=1`` requested explicitly;
     - ``DYNAMIC_EDGES`` — dynamic edge feedback mutates the shared edge config
       *during* casting, so document order across batches is semantic;
-    - ``BULK_SESSION`` — native bulk load appends to a single ordered session;
     - ``EXTRA_WEIGHTS`` — weight enrichment reads the DB between the vertex and
       edge pushes (read-modify-write, racy across concurrent writers);
     - ``BLANK_VERTICES`` — blank-edge resolution pairs source/target docs
@@ -60,8 +54,6 @@ def effective_in_flight(
         return 1, SerialReason.USER_OVERRIDE
     if params.dynamic_edges:
         return 1, SerialReason.DYNAMIC_EDGES
-    if bulk_enabled:
-        return 1, SerialReason.BULK_SESSION
     if runtime is not None:
         # getattr, not attribute access: duck-typed runtimes (test doubles,
         # minimal stubs) may not carry the full ResourceRuntime surface.
@@ -82,11 +74,3 @@ def effective_in_flight(
             if not names or names & blank:
                 return 1, SerialReason.BLANK_VERTICES
     return params.max_in_flight_batches, None
-
-
-def bulk_load_enabled(conn_conf: DBConfig | None) -> bool:
-    """Whether *conn_conf* declares an enabled native bulk-load config."""
-    if conn_conf is None:
-        return False
-    bulk_cfg = getattr(conn_conf, "bulk_load", None)
-    return bool(bulk_cfg is not None and getattr(bulk_cfg, "enabled", False))

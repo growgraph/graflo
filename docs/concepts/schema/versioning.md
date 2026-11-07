@@ -9,9 +9,9 @@ shell or from Python.
 
 Two operations here combine manifests, and they are different. A three-way
 merge reconciles two branches of one manifest's history (`merge_three_way`,
-`graflo merge3`, the [version control example (22)](../../examples/version-control/index.md));
+`graflo merge3`, the [version control example (21)](../../examples/version-control/index.md));
 a union combines two unrelated manifests (`merge_manifests`, `graflo merge`, the
-[manifest union example (20)](../../examples/manifest-union/index.md)), and is
+[manifest union example (19)](../../examples/manifest-union/index.md)), and is
 described on [Merging manifests](merging_manifests.md).
 
 History moves forward, like a git log, not like a migration script with an
@@ -447,7 +447,7 @@ know what to compare against.
 
 ## What to read next
 
-- [Version control example (22)](../../examples/version-control/index.md): a
+- [Version control example (21)](../../examples/version-control/index.md): a
   fork, a conflict, a resolution and a merge, end to end.
 - [Manifest evolution](manifest_evolution.md): the ops a commit records.
 - [Merging manifests](merging_manifests.md): combining two unrelated manifests.
