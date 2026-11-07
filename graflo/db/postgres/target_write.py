@@ -1089,9 +1089,8 @@ class PostgresTargetWriteMixin:
         """Write edge rows, keyed on their endpoints and merge properties.
 
         ``relationship_merge_properties`` names the weights that, with the
-        endpoints, identify an edge -- the table's unique key. Under
-        ``on_duplicate="upsert"`` an existing edge gets the other weights a row
-        carries; otherwise it is left as stored. Rows sharing a key are fused,
+        endpoints, identify an edge -- the table's unique key. An existing
+        edge gets the other weights a row carries. Rows sharing a key are fused,
         later weights winning, and rows missing an endpoint value are dropped.
         The first write to a table on this connection gives it that key if it
         lacks it.
@@ -1146,11 +1145,7 @@ class PostgresTargetWriteMixin:
         statements: list[tuple[sql.Composed, list[tuple]]] = []
         for shape, shaped in shapes.items():
             weights = sorted(shape)
-            update = (
-                [w for w in weights if w not in merge]
-                if opts.on_duplicate == "upsert"
-                else []
-            )
+            update = [w for w in weights if w not in merge]
             statements.append(
                 (
                     _insert_on_conflict(

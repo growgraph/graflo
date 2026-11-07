@@ -304,10 +304,6 @@
             "@id": "gf:assigned",
             "@type": "xsd:boolean"
         },
-        "edgesOnDuplicate": {
-            "@id": "gf:edgesOnDuplicate",
-            "@type": "@id"
-        },
         "resourceName": "gf:resourceName",
         "connectorName": "gf:connectorName",
         "connProxy": "gf:connProxy",

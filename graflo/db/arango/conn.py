@@ -111,6 +111,35 @@ def _arango_edge_uniq_weight_keys(
     return keys
 
 
+def _fuse_edge_rows(
+    rows: list[Any],
+    match_keys_source: tuple[str, ...],
+    match_keys_target: tuple[str, ...],
+    weight_keys: list[str],
+) -> list[list[Any]]:
+    """One ``[source, target, props]`` row per edge identity, later properties winning.
+
+    One ``UPSERT`` query does not find what it wrote itself, so two rows of
+    one edge in a batch would insert it twice.
+    """
+    fused: dict[str, list[Any]] = {}
+    for row in rows:
+        source, target = row[0], row[1]
+        props = row[2] if len(row) > 2 and isinstance(row[2], dict) else {}
+        ident = json.dumps(
+            [
+                [source.get(k) for k in match_keys_source],
+                [target.get(k) for k in match_keys_target],
+                [props.get(k) for k in weight_keys],
+            ],
+            sort_keys=True,
+            default=str,
+        )
+        earlier = fused.get(ident)
+        fused[ident] = [source, target, {**(earlier[2] if earlier else {}), **props}]
+    return list(fused.values())
+
+
 def _arango_edge_upsert_match_literal(
     ups_from: str,
     ups_to: str,
@@ -1006,8 +1035,6 @@ class ArangoConnection(Connection):
                 - collection_name: Edge collection name (defaults to {source_class}_{target_class}_edges if not provided)
                 - uniq_weight_fields: Fields included in UPSERT match (parallel edges)
                 - uniq_weight_collections: Extra match keys (legacy; list of names)
-                - on_duplicate: ``\"upsert\"`` (AQL UPSERT) or ``\"ignore\"`` (default:
-                  ``INSERT`` with ``ignoreErrors``)
                 - relationship_merge_properties: Ignored (Cypher backends only)
         """
         opts = consume_insert_edges_kwargs(kwargs)
@@ -1021,6 +1048,13 @@ class ArangoConnection(Connection):
             docs_edges = docs_edges[:head]
         if filter_uniques:
             docs_edges = pick_unique_dict(docs_edges)
+        weight_keys = _arango_edge_uniq_weight_keys(
+            opts.uniq_weight_fields,
+            opts.uniq_weight_collections,
+        )
+        docs_edges = _fuse_edge_rows(
+            docs_edges, match_keys_source, match_keys_target, weight_keys
+        )
         docs_edges_str = json.dumps(docs_edges, default=json_serializer)
 
         result_from, source_filter = _arango_edge_endpoint_aql(
@@ -1038,25 +1072,17 @@ class ArangoConnection(Connection):
         logger.debug(" target_filter = %s", target_filter)
         logger.debug(" doc = %s", doc_definition)
 
-        if opts.on_duplicate == "upsert":
-            ups_from, ups_to = _arango_edge_upsert_key_exprs(
-                result_from, result_to, source_filter, target_filter
-            )
-            weight_keys = _arango_edge_uniq_weight_keys(
-                opts.uniq_weight_fields,
-                opts.uniq_weight_collections,
-            )
-            upsert_literal = _arango_edge_upsert_match_literal(
-                ups_from, ups_to, weight_keys, relation_name
-            )
-            logger.debug(" upsert clause: %s", upsert_literal)
-            clauses = f"UPSERT {upsert_literal} INSERT doc UPDATE {{}}"
-            options = "OPTIONS {exclusive: true}"
-        elif opts.on_duplicate == "ignore":
-            clauses = "INSERT doc"
-            options = "OPTIONS {exclusive: true, ignoreErrors: true}"
-        else:
-            raise AssertionError(f"unexpected on_duplicate: {opts.on_duplicate!r}")
+        # An edge is its endpoints, relation and identity fields: a row with
+        # the same identity updates the edge's other properties.
+        ups_from, ups_to = _arango_edge_upsert_key_exprs(
+            result_from, result_to, source_filter, target_filter
+        )
+        upsert_literal = _arango_edge_upsert_match_literal(
+            ups_from, ups_to, weight_keys, relation_name
+        )
+        logger.debug(" upsert clause: %s", upsert_literal)
+        clauses = f"UPSERT {upsert_literal} INSERT doc UPDATE doc"
+        options = "OPTIONS {exclusive: true}"
 
         q_update = f"""
             FOR edge in {docs_edges_str} {source_filter} {target_filter}

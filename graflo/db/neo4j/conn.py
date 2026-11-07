@@ -787,7 +787,6 @@ class Neo4jConnection(Connection):
                 - collection_name: Unused in Neo4j (kept for interface compatibility)
                 - uniq_weight_fields: Unused (ArangoDB upsert); use relationship_merge_properties instead
                 - uniq_weight_collections: Unused in Neo4j (ArangoDB-specific)
-                - on_duplicate: Unused in Neo4j (ArangoDB-specific AQL policy)
                 - relationship_merge_properties: Property names included in ``MERGE`` so parallel
                   edges (same endpoints and type, different weights) are distinct.
                 - union_fields: List properties written as the union of the

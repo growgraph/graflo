@@ -279,10 +279,6 @@ gf:KeySelectionMode a owl:Class ;
     rdfs:label "Key selection mode enumeration"@en ;
     skos:prefLabel "KeySelectionMode"@en .
 
-gf:EdgeDuplicatePolicy a owl:Class ;
-    rdfs:label "Edge duplicate policy enumeration"@en ;
-    skos:prefLabel "EdgeDuplicatePolicy"@en .
-
 #################################################################
 # Object properties
 #################################################################
@@ -670,10 +666,6 @@ gf:assigned a owl:DatatypeProperty ;
     rdfs:range xsd:boolean ;
     rdfs:comment "True when the vertex uses an intentional UUID primary key filled at assemble time. Mutually exclusive with gf:blank."@en .
 
-gf:edgesOnDuplicate a owl:ObjectProperty ;
-    rdfs:domain gf:IngestionModel ;
-    rdfs:range gf:EdgeDuplicatePolicy .
-
 gf:resourceName a owl:DatatypeProperty ;
     rdfs:range xsd:string .
 
@@ -966,10 +958,3 @@ gf:AllStrategy a gf:TransformStrategy ; gf:enumValue "all" ; rdfs:label "All str
 gf:AllKeysMode a gf:KeySelectionMode ; gf:enumValue "all" ; rdfs:label "All keys" ; skos:prefLabel "AllKeysMode" .
 gf:IncludeKeysMode a gf:KeySelectionMode ; gf:enumValue "include" ; rdfs:label "Include keys" ; skos:prefLabel "IncludeKeysMode" .
 gf:ExcludeKeysMode a gf:KeySelectionMode ; gf:enumValue "exclude" ; rdfs:label "Exclude keys" ; skos:prefLabel "ExcludeKeysMode" .
-
-#################################################################
-# EdgeDuplicatePolicy individuals
-#################################################################
-
-gf:IgnoreDuplicate a gf:EdgeDuplicatePolicy ; gf:enumValue "ignore" ; rdfs:label "Ignore duplicate" ; skos:prefLabel "IgnoreDuplicate" .
-gf:UpsertDuplicate a gf:EdgeDuplicatePolicy ; gf:enumValue "upsert" ; rdfs:label "Upsert duplicate" ; skos:prefLabel "UpsertDuplicate" .

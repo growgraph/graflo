@@ -595,13 +595,6 @@ class ManifestRdfDeserializer:
         self, graph: Graph, ingestion_uri: URIRef | BNode
     ) -> dict[str, Any]:
         model: dict[str, Any] = {}
-        duplicate_uri = self._object(graph, ingestion_uri, ns.edgesOnDuplicate)
-        if duplicate_uri is not None:
-            duplicate = reverse_enum(
-                ns.ENUM_REGISTRIES["edge_duplicate_policy"], duplicate_uri
-            )
-            if duplicate is not None:
-                model["edges_on_duplicate"] = duplicate
 
         transforms = self._ordered_nodes(
             graph,

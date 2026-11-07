@@ -1,8 +1,7 @@
 """The bulk contract on PostgreSQL, and resume after an interrupted write.
 
-PostgreSQL writes no ``merge: union`` field and keeps a stored edge's properties
-unless ``edges_on_duplicate`` is ``upsert``, so the contract
-manifest is run without the union and with edge upserts.
+PostgreSQL writes no ``merge: union`` field, so the contract manifest is run
+without the union.
 """
 
 from __future__ import annotations
@@ -29,7 +28,6 @@ def _postgres_manifest() -> dict[str, Any]:
         for prop in vertex["properties"]:
             if isinstance(prop, dict):
                 prop.pop("merge", None)
-    manifest["ingestion_model"]["edges_on_duplicate"] = "upsert"
     return manifest
 
 

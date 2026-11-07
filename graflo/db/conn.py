@@ -55,7 +55,7 @@ import logging
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 
 from suthing import batched
 
@@ -89,19 +89,6 @@ logger = logging.getLogger(__name__)
 ConnectionType = TypeVar("ConnectionType", bound="Connection")
 
 
-def _parse_on_duplicate(value: Any) -> Literal["upsert", "ignore"]:
-    if not isinstance(value, str):
-        raise TypeError(
-            "on_duplicate must be str ('upsert' or 'ignore'), "
-            f"got {type(value).__name__}"
-        )
-    if value == "upsert":
-        return "upsert"
-    if value == "ignore":
-        return "ignore"
-    raise ValueError(f"on_duplicate must be 'upsert' or 'ignore', got {value!r}")
-
-
 @dataclass(frozen=True)
 class InsertEdgesKwArgs:
     """Keyword arguments shared by :meth:`Connection.insert_edges_batch` implementations."""
@@ -110,7 +97,6 @@ class InsertEdgesKwArgs:
     collection_name: str | None
     uniq_weight_fields: Any
     uniq_weight_collections: Any
-    on_duplicate: Literal["upsert", "ignore"]
     relationship_merge_properties: Any
     #: Stored names of the list properties written as a union with what the
     #: edge holds; only a backend that declares ``supports_union_merge`` reads it.
@@ -129,7 +115,6 @@ def consume_insert_edges_kwargs(kwargs: dict[str, Any]) -> InsertEdgesKwArgs:
         collection_name=kwargs.pop("collection_name", None),
         uniq_weight_fields=kwargs.pop("uniq_weight_fields", None),
         uniq_weight_collections=kwargs.pop("uniq_weight_collections", None),
-        on_duplicate=_parse_on_duplicate(kwargs.pop("on_duplicate", "ignore")),
         relationship_merge_properties=kwargs.pop("relationship_merge_properties", None),
         union_fields=tuple(kwargs.pop("union_fields", ()) or ()),
     )
@@ -593,10 +578,6 @@ class Connection(abc.ABC):
                 - collection_name: Edge collection (ArangoDB) or unused type-specific name
                 - uniq_weight_fields: Uniqueness fields (ArangoDB UPSERT match)
                 - uniq_weight_collections: Uniqueness collections (ArangoDB UPSERT)
-                - on_duplicate: ArangoDB and PostgreSQL. ``\"ignore\"`` (default):
-                  an edge that already exists is left as stored; ``\"upsert\"``:
-                  it is updated (AQL ``UPSERT`` on ArangoDB -- align match keys with
-                  a unique index; ``ON CONFLICT DO UPDATE`` on PostgreSQL).
                 - relationship_merge_properties: Property names for Cypher MERGE
                   (Neo4j, FalkorDB, Memgraph) so parallel edges differ by weights;
                   on PostgreSQL, the edge table's key columns besides the endpoints

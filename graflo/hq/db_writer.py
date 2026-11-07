@@ -997,7 +997,6 @@ class DBWriter:
                 a union, rather than writing a replace in its place.
         """
         merge_props = stored.merge_properties
-        upsert = self.ingestion_model.edges_on_duplicate == "upsert"
         flavor = conn_conf.connection_type
         edge_kw: dict[str, Any] = {
             "filter_uniques": False,
@@ -1009,12 +1008,8 @@ class DBWriter:
             # unique key, built from the same names.
             if merge_props is not None:
                 edge_kw["relationship_merge_properties"] = merge_props
-            if flavor == DBType.POSTGRES and upsert:
-                edge_kw["on_duplicate"] = "upsert"
-        elif flavor == DBType.ARANGO and upsert:
-            edge_kw["on_duplicate"] = "upsert"
-            if merge_props is not None:
-                edge_kw["uniq_weight_fields"] = list(merge_props)
+        elif flavor == DBType.ARANGO and merge_props is not None:
+            edge_kw["uniq_weight_fields"] = list(merge_props)
         if stored.union_fields:
             ConnectionManager.require(conn_conf, ConnectionCapability.UNION_MERGE)
             edge_kw["union_fields"] = stored.union_fields

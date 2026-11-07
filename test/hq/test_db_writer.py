@@ -1085,7 +1085,6 @@ class _EdgeWrites:
 
 def _postgres_edge_kwargs(
     monkeypatch,
-    edges_on_duplicate: str,
     identities: list[list[str]] | None = None,
 ) -> dict:
     schema = Schema.model_validate(
@@ -1117,9 +1116,7 @@ def _postgres_edge_kwargs(
             "db_profile": {"db_flavor": "postgres"},
         }
     )
-    model = IngestionModel.model_validate(
-        {"resources": [], "edges_on_duplicate": edges_on_duplicate}
-    )
+    model = IngestionModel.model_validate({"resources": []})
     model.finish_init(schema.core_schema)
     writer = DBWriter(schema=schema, ingestion_model=model)
     writes = _EdgeWrites()
@@ -1148,22 +1145,14 @@ def _postgres_edge_kwargs(
 
 
 def test_postgres_edges_are_written_on_their_merge_properties(monkeypatch):
-    call = _postgres_edge_kwargs(monkeypatch, "ignore")
+    call = _postgres_edge_kwargs(monkeypatch)
 
     assert call["relationship_merge_properties"] == ("since",)
-    assert "on_duplicate" not in call
-
-
-def test_postgres_edges_upsert_when_the_model_asks_for_it(monkeypatch):
-    call = _postgres_edge_kwargs(monkeypatch, "upsert")
-
-    assert call["relationship_merge_properties"] == ("since",)
-    assert call["on_duplicate"] == "upsert"
 
 
 def test_edges_without_an_identity_are_keyed_on_their_endpoints(monkeypatch):
     """Their properties are written, never matched on."""
-    call = _postgres_edge_kwargs(monkeypatch, "upsert", identities=[])
+    call = _postgres_edge_kwargs(monkeypatch, identities=[])
 
     assert call.get("relationship_merge_properties") is None
 
@@ -1171,7 +1160,7 @@ def test_edges_without_an_identity_are_keyed_on_their_endpoints(monkeypatch):
 def test_postgres_edges_keyed_by_relation_conflict_on_their_endpoints(monkeypatch):
     """The table name holds the relation, so it adds no key column."""
     call = _postgres_edge_kwargs(
-        monkeypatch, "upsert", identities=[["source", "target", "relation"]]
+        monkeypatch, identities=[["source", "target", "relation"]]
     )
 
     assert call.get("relationship_merge_properties") is None
@@ -1181,7 +1170,7 @@ def test_postgres_edges_keyed_by_relation_and_a_property_use_the_property(
     monkeypatch,
 ):
     call = _postgres_edge_kwargs(
-        monkeypatch, "upsert", identities=[["source", "target", "relation", "since"]]
+        monkeypatch, identities=[["source", "target", "relation", "since"]]
     )
 
     assert call["relationship_merge_properties"] == ("since",)

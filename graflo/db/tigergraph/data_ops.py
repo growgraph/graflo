@@ -509,7 +509,6 @@ class TigerGraphDataOps:
                 - collection_name: Alternative edge type name (used if relation_name is None)
                 - uniq_weight_fields: Unused in TigerGraph (ArangoDB-specific)
                 - uniq_weight_collections: Unused in TigerGraph (ArangoDB-specific)
-                - on_duplicate: Unused in TigerGraph (ArangoDB-specific AQL policy)
                 - relationship_merge_properties: Unused (Cypher property-graph backends only)
         """
         opts = consume_insert_edges_kwargs(kwargs)

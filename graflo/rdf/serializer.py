@@ -580,13 +580,6 @@ class ManifestRdfSerializer:
         edge_uri_by_id: dict[EdgeId, URIRef] | None = None,
     ) -> None:
         graph.add((ingestion_uri, RDF.type, ns.IngestionModel))
-        add_enum_individual(
-            graph,
-            ingestion_uri,
-            ns.edgesOnDuplicate,
-            ingestion_model.edges_on_duplicate,
-            ns.ENUM_REGISTRIES["edge_duplicate_policy"],
-        )
 
         transform_uri_by_name: dict[str, URIRef] = {}
         for index, transform in enumerate(ingestion_model.transforms):

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
 from pydantic import Field as PydanticField
 from pydantic import PrivateAttr, model_validator
@@ -30,14 +30,6 @@ if TYPE_CHECKING:
 class IngestionModel(ConfigBaseModel):
     """Ingestion model (C): resources and transform registry."""
 
-    edges_on_duplicate: Literal["ignore", "upsert"] = PydanticField(
-        default="ignore",
-        description=(
-            "How batch edge writes tolerate an already-matching edge. Passed through to "
-            ":meth:`~graflo.db.conn.Connection.insert_edges_batch` where the target backend "
-            "supports it."
-        ),
-    )
     endpoints_on_ambiguous: EndpointAmbiguityPolicy = PydanticField(
         default=DEFAULT_ENDPOINT_AMBIGUITY,
         description=(

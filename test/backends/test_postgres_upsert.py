@@ -232,31 +232,11 @@ def test_a_failed_vertex_write_is_rolled_back_and_raised(failing_write) -> None:
 # -- edges --------------------------------------------------------------------
 
 
-def test_edges_are_ignored_on_their_key_by_default(statements) -> None:
-    _insert_edges(
-        _Pg(),
-        [[{"id": "p1"}, {"id": "o1"}, {"since": "2020", "w": 1}]],
-        relationship_merge_properties=("since",),
-    )
-
-    assert statements == [
-        (
-            (
-                f'INSERT INTO "g"."{EDGE_TABLE}" '
-                '("source_id", "target_id", "since", "w") VALUES %s '
-                'ON CONFLICT ("source_id", "target_id", "since") DO NOTHING'
-            ),
-            [("p1", "o1", "2020", 1)],
-        )
-    ]
-
-
 def test_upserted_edges_update_their_other_weights(statements) -> None:
     _insert_edges(
         _Pg(),
         [[{"id": "p1"}, {"id": "o1"}, {"since": "2020", "w": 1}]],
         relationship_merge_properties=("since",),
-        on_duplicate="upsert",
     )
 
     [(query, _)] = statements
@@ -271,7 +251,6 @@ def test_an_upserted_edge_with_only_key_weights_does_nothing(statements) -> None
         _Pg(),
         [[{"id": "p1"}, {"id": "o1"}, {"since": "2020"}]],
         relationship_merge_properties=("since",),
-        on_duplicate="upsert",
     )
 
     [(query, _)] = statements
@@ -282,6 +261,15 @@ def test_edges_without_merge_properties_conflict_on_their_endpoints(
     statements,
 ) -> None:
     _insert_edges(_Pg(), [[{"id": "p1"}, {"id": "o1"}, {"w": 1}]])
+
+    [(query, _)] = statements
+    assert query.endswith(
+        'ON CONFLICT ("source_id", "target_id") DO UPDATE SET "w" = EXCLUDED."w"'
+    )
+
+
+def test_an_edge_holding_only_its_key_is_left_as_stored(statements) -> None:
+    _insert_edges(_Pg(), [[{"id": "p1"}, {"id": "o1"}, {}]])
 
     [(query, _)] = statements
     assert query.endswith('ON CONFLICT ("source_id", "target_id") DO NOTHING')
@@ -298,7 +286,6 @@ def test_duplicate_edges_fuse_the_later_weights_winning(statements) -> None:
             [{"id": "p1"}, {"id": "o1"}, {"since": "2020", "w": 2}],
         ],
         relationship_merge_properties=("since",),
-        on_duplicate="upsert",
     )
 
     [(_, values)] = statements
@@ -319,7 +306,6 @@ def test_edge_weight_shapes_are_written_apart_without_private_keys(
             [{"id": "p2"}, {"id": "o1"}, {"note": "n"}],
             [{"id": None}, {"id": "o1"}, {"w": 3}],
         ],
-        on_duplicate="upsert",
     )
 
     assert statements == [

@@ -22,7 +22,7 @@ The `schema` block of a manifest: the vertex and edge types under `graph:` (also
 
 ### ingestion model
 
-The `ingestion_model` block of a manifest: the resources, a registry of named transforms, and two write policies, `edges_on_duplicate` and `endpoints_on_ambiguous`. The class is `IngestionModel`. See [Creating a manifest](../getting_started/creating_manifest.md).
+The `ingestion_model` block of a manifest: the resources, a registry of named transforms, and a write policy, `endpoints_on_ambiguous`. The class is `IngestionModel`. See [Creating a manifest](../getting_started/creating_manifest.md).
 
 ### bindings
 

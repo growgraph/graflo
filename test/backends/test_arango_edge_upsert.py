@@ -22,7 +22,6 @@ def _upsert_query(**kwargs: Any) -> str:
         docs_edges=[[{"_key": "1"}, {"_key": "2"}, {"since": 2020}]],
         source_class="person",
         target_class="org",
-        on_duplicate="upsert",
         filter_uniques=False,
         **kwargs,
     )
@@ -70,3 +69,32 @@ def test_a_relation_identity_token_is_matched_once_as_the_relation() -> None:
 
     assert match.count("'relation'") == 1
     assert "'relation': 'works_at'" in match
+
+
+def test_an_existing_edge_takes_the_rows_properties() -> None:
+    query = _upsert_query(relation_name="works_at")
+
+    assert "INSERT doc UPDATE doc" in query
+    assert "ignoreErrors" not in query
+
+
+def test_rows_of_one_edge_in_a_batch_are_written_once_later_values_winning() -> None:
+    fake = _Capture()
+    ArangoConnection.insert_edges_batch(
+        cast(Any, fake),
+        docs_edges=[
+            [{"_key": "1"}, {"_key": "2"}, {"since": 2020, "w": 1, "x": "a"}],
+            [{"_key": "1"}, {"_key": "2"}, {"since": 2021, "w": 2}],
+            [{"_key": "1"}, {"_key": "2"}, {"since": 2020, "w": 3}],
+        ],
+        source_class="person",
+        target_class="org",
+        relation_name="works_at",
+        filter_uniques=False,
+        uniq_weight_fields=["since"],
+    )
+    (query,) = fake.queries
+    rows = query.split("FOR edge in ", 1)[1].split(" LET", 1)[0]
+
+    assert rows.count('"since"') == 2
+    assert '{"since": 2020, "w": 3, "x": "a"}' in rows

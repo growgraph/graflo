@@ -173,7 +173,6 @@ identityName = GF.identityName
 relation = GF.relation
 blank = GF.blank
 assigned = GF.assigned
-edgesOnDuplicate = GF.edgesOnDuplicate
 resourceName = GF.resourceName
 connectorName = GF.connectorName
 connProxy = GF.connProxy
@@ -296,11 +295,6 @@ KEY_SELECTION_MODE_INDIVIDUALS: dict[str, object] = {
     "exclude": GF.ExcludeKeysMode,
 }
 
-EDGE_DUPLICATE_POLICY_INDIVIDUALS: dict[str, object] = {
-    "ignore": GF.IgnoreDuplicate,
-    "upsert": GF.UpsertDuplicate,
-}
-
 CONNECTOR_CLASSES: dict[str, object] = {
     "FileConnector": FileConnector,
     "TableConnector": TableConnector,
@@ -335,7 +329,6 @@ ENUM_REGISTRIES: dict[str, dict[str, object]] = {
     "transform_target": TRANSFORM_TARGET_INDIVIDUALS,
     "transform_strategy": TRANSFORM_STRATEGY_INDIVIDUALS,
     "key_selection_mode": KEY_SELECTION_MODE_INDIVIDUALS,
-    "edge_duplicate_policy": EDGE_DUPLICATE_POLICY_INDIVIDUALS,
 }
 
 MODEL_PAYLOAD_EXCLUDES: dict[str, set[str]] = {

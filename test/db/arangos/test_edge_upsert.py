@@ -19,7 +19,6 @@ def test_two_relations_on_one_pair_stay_two_edges(conn_conf, create_db, test_db_
                 source_class="person",
                 target_class="org",
                 relation_name=relation,
-                on_duplicate="upsert",
                 filter_uniques=False,
             )
 

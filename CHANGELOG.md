@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- `IngestionModel.edges_on_duplicate`: an edge write always updates the stored edge with the same
+  identity; a manifest that sets the field is refused.
 - The TigerGraph-only bulk path: `Connection.bulk_load_*`, `TigergraphBulkLoadConfig`,
   `TigergraphConfig.bulk_load`, `UnsupportedBulkLoad`, `upload_staged_csvs`,
   `loader_endpoint_url`, `DBWriter.write(bulk_session_id=...)` and the `bulk_e2e` test marker.
@@ -39,6 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- ArangoDB and PostgreSQL edge writes update an existing edge's non-identity properties; ArangoDB
+  no longer writes a second copy of an edge that declares no `identities`.
 - In-batch fusion of `merge: union` fields drops nulls and keeps earlier members, as the
   backends do.
 - The cast drops an edge whose endpoint has no key even when its other endpoint is blank or

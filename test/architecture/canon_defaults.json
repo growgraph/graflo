@@ -163,7 +163,6 @@
         "Index.sparse": false,
         "Index.type": "persistent",
         "Index.unique": false,
-        "IngestionModel.edges_on_duplicate": "ignore",
         "IngestionModel.endpoints_on_ambiguous": "all",
         "IngestionModel.resources": [],
         "IngestionModel.transforms": [],
