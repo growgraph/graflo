@@ -872,6 +872,6 @@ class Caster:
             writer = self._make_db_writer()
             # Pre-warm the db-aware projection so concurrent write() calls never
             # race the lazy cache fill.
-            writer._db_aware_for(conn_conf)
+            writer.context(conn_conf)
             self._db_writer = writer
         return self._db_writer

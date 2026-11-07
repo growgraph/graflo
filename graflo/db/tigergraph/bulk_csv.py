@@ -61,7 +61,7 @@ def _project_tg_edge_triples(
     relation: str | None,
     runtime: EdgeRuntime,
 ) -> tuple[list, str | None]:
-    """Match :meth:`DBWriter._project_edge_docs_for_db` for TigerGraph."""
+    """Match :func:`~graflo.hq.write_prepare.project_edge_docs` for TigerGraph."""
     relation_name = runtime.relation_name
     relation_field = runtime.effective_relation_field
     if not runtime.store_extracted_relation_as_weight or relation_field is None:

@@ -1,0 +1,392 @@
+{
+    "handmade": [
+        {
+            "call": "upsert_docs_batch",
+            "class_name": "Alias",
+            "docs": [
+                {
+                    "_key": "c760c8a9fe0e84efe0a314506d69975dbace41969ac5e27803b64c1b2080ea21",
+                    "id": "c760c8a9fe0e84efe0a314506d69975dbace41969ac5e27803b64c1b2080ea21",
+                    "label": "Rome pump",
+                    "normalized_label": "rome pump"
+                }
+            ],
+            "kwargs": {
+                "dry": false,
+                "filter_uniques": true,
+                "update_keys": "doc"
+            },
+            "match_keys": [
+                "id"
+            ]
+        },
+        {
+            "call": "upsert_docs_batch",
+            "class_name": "Event",
+            "docs": [
+                {
+                    "_key": "00000000-0000-4000-8000-000000000003",
+                    "eid": "00000000-0000-4000-8000-000000000003",
+                    "title": "Unminted"
+                }
+            ],
+            "kwargs": {
+                "dry": false,
+                "filter_uniques": true,
+                "update_keys": "doc"
+            },
+            "match_keys": [
+                "eid"
+            ]
+        },
+        {
+            "call": "upsert_docs_batch",
+            "class_name": "Org",
+            "docs": [
+                {
+                    "_key": "3d6eeacbfffcd0490ce7fc441e7de3f368d7b55d5d4b3982702c504910ec1bd1",
+                    "country": "IT",
+                    "id": "3d6eeacbfffcd0490ce7fc441e7de3f368d7b55d5d4b3982702c504910ec1bd1",
+                    "name": "Gamma"
+                }
+            ],
+            "kwargs": {
+                "dry": false,
+                "filter_uniques": true,
+                "update_keys": "doc"
+            },
+            "match_keys": [
+                "id"
+            ]
+        },
+        {
+            "call": "upsert_docs_batch",
+            "class_name": "Person",
+            "docs": [
+                {
+                    "name": "Bo",
+                    "pid": "p9",
+                    "zones": [
+                        7
+                    ]
+                }
+            ],
+            "kwargs": {
+                "dry": false,
+                "filter_uniques": true,
+                "update_keys": "doc"
+            },
+            "match_keys": [
+                "pid"
+            ]
+        },
+        {
+            "call": "insert_edges_batch",
+            "docs_edges": [
+                [
+                    {
+                        "pid": "p9"
+                    },
+                    {
+                        "country": "IT",
+                        "name": "Gamma"
+                    },
+                    {
+                        "zones": [
+                            7
+                        ]
+                    }
+                ]
+            ],
+            "kwargs": {
+                "collection_name": "Person_Org_edges",
+                "dry": false,
+                "filter_uniques": false,
+                "match_keys_source": [
+                    "pid"
+                ],
+                "match_keys_target": [
+                    "id"
+                ],
+                "relation_name": "works_at",
+                "source_class": "Person",
+                "target_class": "Org"
+            }
+        }
+    ],
+    "people": [
+        {
+            "call": "upsert_docs_batch",
+            "class_name": "Alias",
+            "docs": [
+                {
+                    "_key": "70edc139d4622aba5aed9b3fedc64783f42cfedfd57f1f60c9bb082a481d21e5",
+                    "id": "70edc139d4622aba5aed9b3fedc64783f42cfedfd57f1f60c9bb082a481d21e5",
+                    "label": "BERLIN-pump",
+                    "normalized_label": "berlin pump"
+                }
+            ],
+            "kwargs": {
+                "dry": false,
+                "filter_uniques": true,
+                "update_keys": "doc"
+            },
+            "match_keys": [
+                "id"
+            ]
+        },
+        {
+            "call": "upsert_docs_batch",
+            "class_name": "Device",
+            "docs": [
+                {
+                    "model": "X1",
+                    "uid": "6f1c2a3b-0000-4000-8000-0000000000d1"
+                }
+            ],
+            "kwargs": {
+                "dry": false,
+                "filter_uniques": true,
+                "update_keys": "doc"
+            },
+            "match_keys": [
+                "uid"
+            ]
+        },
+        {
+            "call": "upsert_docs_batch",
+            "class_name": "Event",
+            "docs": [
+                {
+                    "_key": "6f1c2a3b-0000-4000-8000-000000000001",
+                    "eid": "6f1c2a3b-0000-4000-8000-000000000001",
+                    "title": "Kick-off"
+                },
+                {
+                    "_key": "00000000-0000-4000-8000-000000000001",
+                    "eid": "00000000-0000-4000-8000-000000000001",
+                    "title": "Review"
+                },
+                {
+                    "_key": "00000000-0000-4000-8000-000000000002",
+                    "eid": "00000000-0000-4000-8000-000000000002",
+                    "title": "Wake"
+                }
+            ],
+            "kwargs": {
+                "dry": false,
+                "filter_uniques": true,
+                "update_keys": "doc"
+            },
+            "match_keys": [
+                "eid"
+            ]
+        },
+        {
+            "call": "upsert_docs_batch",
+            "class_name": "Org",
+            "docs": [
+                {
+                    "_key": "a13efe142eab228122f56b53594d6d1b45f190a76f6d042d55dbb8af470caca7",
+                    "country": "FR",
+                    "id": "a13efe142eab228122f56b53594d6d1b45f190a76f6d042d55dbb8af470caca7",
+                    "name": "Acme"
+                },
+                {
+                    "_key": "73c4606b8ecf7ad321598238505769665a244b2ce728901afe244d1a768d6a8c",
+                    "country": "DE",
+                    "id": "73c4606b8ecf7ad321598238505769665a244b2ce728901afe244d1a768d6a8c",
+                    "name": "Beta"
+                }
+            ],
+            "kwargs": {
+                "dry": false,
+                "filter_uniques": true,
+                "update_keys": "doc"
+            },
+            "match_keys": [
+                "id"
+            ]
+        },
+        {
+            "call": "upsert_docs_batch",
+            "class_name": "Person",
+            "docs": [
+                {
+                    "name": "Ann B.",
+                    "pid": "p1",
+                    "zones": [
+                        7
+                    ]
+                }
+            ],
+            "kwargs": {
+                "dry": false,
+                "filter_uniques": true,
+                "update_keys": "doc"
+            },
+            "match_keys": [
+                "pid"
+            ]
+        },
+        {
+            "call": "insert_edges_batch",
+            "docs_edges": [
+                [
+                    {
+                        "uid": "6f1c2a3b-0000-4000-8000-0000000000d1"
+                    },
+                    {
+                        "id": "a13efe142eab228122f56b53594d6d1b45f190a76f6d042d55dbb8af470caca7"
+                    },
+                    {}
+                ]
+            ],
+            "kwargs": {
+                "collection_name": "Device_Org_edges",
+                "dry": false,
+                "filter_uniques": false,
+                "match_keys_source": [
+                    "uid"
+                ],
+                "match_keys_target": [
+                    "id"
+                ],
+                "relation_name": "owned_by",
+                "source_class": "Device",
+                "target_class": "Org"
+            }
+        },
+        {
+            "call": "insert_edges_batch",
+            "docs_edges": [
+                [
+                    {
+                        "pid": "p1"
+                    },
+                    {
+                        "id": "70edc139d4622aba5aed9b3fedc64783f42cfedfd57f1f60c9bb082a481d21e5"
+                    },
+                    {}
+                ],
+                [
+                    {
+                        "pid": "p1"
+                    },
+                    {
+                        "id": "70edc139d4622aba5aed9b3fedc64783f42cfedfd57f1f60c9bb082a481d21e5"
+                    },
+                    {}
+                ]
+            ],
+            "kwargs": {
+                "collection_name": "Person_Alias_edges",
+                "dry": false,
+                "filter_uniques": false,
+                "match_keys_source": [
+                    "pid"
+                ],
+                "match_keys_target": [
+                    "id"
+                ],
+                "relation_name": "known_as",
+                "source_class": "Person",
+                "target_class": "Alias"
+            }
+        },
+        {
+            "call": "insert_edges_batch",
+            "docs_edges": [
+                [
+                    {
+                        "pid": "p1"
+                    },
+                    {
+                        "eid": "6f1c2a3b-0000-4000-8000-000000000001"
+                    },
+                    {}
+                ],
+                [
+                    {
+                        "pid": "p1"
+                    },
+                    {
+                        "eid": "00000000-0000-4000-8000-000000000001"
+                    },
+                    {}
+                ],
+                [
+                    {
+                        "pid": null
+                    },
+                    {
+                        "eid": "00000000-0000-4000-8000-000000000002"
+                    },
+                    {}
+                ]
+            ],
+            "kwargs": {
+                "collection_name": "Person_Event_edges",
+                "dry": false,
+                "filter_uniques": false,
+                "match_keys_source": [
+                    "pid"
+                ],
+                "match_keys_target": [
+                    "eid"
+                ],
+                "relation_name": "attended",
+                "source_class": "Person",
+                "target_class": "Event"
+            }
+        },
+        {
+            "call": "insert_edges_batch",
+            "docs_edges": [
+                [
+                    {
+                        "pid": "p1"
+                    },
+                    {
+                        "id": "a13efe142eab228122f56b53594d6d1b45f190a76f6d042d55dbb8af470caca7"
+                    },
+                    {
+                        "zones": [
+                            7
+                        ]
+                    }
+                ],
+                [
+                    {
+                        "pid": "p1"
+                    },
+                    {
+                        "id": "a13efe142eab228122f56b53594d6d1b45f190a76f6d042d55dbb8af470caca7"
+                    },
+                    {
+                        "zones": [
+                            7
+                        ]
+                    }
+                ]
+            ],
+            "kwargs": {
+                "collection_name": "Person_Org_edges",
+                "dry": false,
+                "filter_uniques": false,
+                "match_keys_source": [
+                    "pid"
+                ],
+                "match_keys_target": [
+                    "id"
+                ],
+                "relation_name": "works_at",
+                "source_class": "Person",
+                "target_class": "Org"
+            }
+        }
+    ],
+    "topics": {
+        "refused": "Database type <DBType.ARANGO: 'arango'> does not support union-merged list fields. Supported types: ['neo4j', 'falkordb', 'graflo_backend']"
+    }
+}

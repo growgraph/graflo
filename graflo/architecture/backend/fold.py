@@ -16,19 +16,7 @@ from __future__ import annotations
 from collections.abc import Collection, Iterable, Sequence
 from typing import Any
 
-
-def _members(value: Any) -> list[Any]:
-    if value is None:
-        return []
-    return list(value) if isinstance(value, list) else [value]
-
-
-def _union(stored: Any, written: Any) -> list[Any]:
-    out: list[Any] = []
-    for member in [*_members(stored), *_members(written)]:
-        if member is not None and member not in out:
-            out.append(member)
-    return out
+from graflo.architecture.graph_types.merge import union_members
 
 
 def merge_record(
@@ -37,7 +25,7 @@ def merge_record(
     """Apply *record* to *into* as an upsert: replace, and union *union* fields."""
     for field, value in record.items():
         if field in union:
-            into[field] = _union(into.get(field), value)
+            into[field] = union_members(into.get(field), value)
         else:
             into[field] = value
 
@@ -120,5 +108,5 @@ def _first(record: dict[str, Any], union: Collection[str]) -> dict[str, Any]:
     out = dict(record)
     for field in union:
         if field in out:
-            out[field] = _union(None, out[field])
+            out[field] = union_members(None, out[field])
     return out

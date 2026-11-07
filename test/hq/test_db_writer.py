@@ -25,6 +25,7 @@ from graflo.connections.onto import (
 )
 from graflo.hq.db_writer import DBWriter
 from graflo.hq.endpoint_resolve import AmbiguousEndpointError
+from graflo.hq.write_prepare import mint_identities
 from graflo.onto import DBType
 
 
@@ -148,7 +149,7 @@ def test_an_assigned_vertex_mirrors_its_uuid_into_the_default_key(
     kept = "00000000-0000-4000-8000-000000000001"
     docs: list[dict] = [{}, {preferred: kept, default_field: "own"}]
 
-    writer._assign_assigned_vertex_ids("event", docs, conn_conf)
+    mint_identities(writer.context(conn_conf), "event", docs)
 
     assert docs[0][default_field] == docs[0][preferred]
     assert docs[1] == {preferred: kept, default_field: "own"}

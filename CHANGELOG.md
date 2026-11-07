@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- The steps a write applies before a backend sees a batch (derived fields, minted identities,
+  dropping documents with no identity value, stored names) are functions of
+  `graflo.hq.write_prepare` over a `WriteContext` built from the target flavor, with no
+  connection; `DBWriter` runs them before it takes a connection.
+
+### Fixed
+
+- Documents of one batch fused on a `merge: union` field union as the backends do: null members
+  are dropped, a null value adds nothing and a scalar is one member, the first document
+  included. A null no longer reached the stored list, and a later null no longer erased the
+  members fused before it.
+
 ## [1.25.1]
 
 ### Changed
