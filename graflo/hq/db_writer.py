@@ -280,6 +280,9 @@ class DBWriter:
         When *bulk_session_id* is provided, appends rows using the connection's
         native bulk interface instead of using per-record writes.
 
+        A container with no documents opens no connection and writes nothing;
+        a class with no documents is skipped the same way.
+
         .. note::
             *gc* is mutated in-place for the REST path: blank-vertex keys are
             updated and blank edges are extended after the vertex round-trip.
@@ -293,14 +296,19 @@ class DBWriter:
             NotImplementedError: If *guard* is given and the backend does not
                 apply read guards; nothing is written.
         """
+        # Checks that hold whatever the container holds run first, so a batch
+        # that cast to nothing is refused like any other.
         if guard is not None:
             require_read_guard(conn_conf)
+        if bulk_session_id:
+            self._validate_bulk_resource(resource_name)
+        if gc.is_empty():
+            return
         check_stamp(gc, self.schema, stamp)
         refuse_reserved_attributes(gc, self.schema)
         self._check_union(gc, conn_conf)
         if bulk_session_id:
             apply_stamp(gc, self.schema, stamp)
-            self._validate_bulk_resource(resource_name)
             if any(gc.attached.values()):
                 raise ValueError(
                     "Native bulk ingest does not support attached records "
@@ -575,7 +583,7 @@ class DBWriter:
                 return await asyncio.to_thread(_sync)
 
         results = await asyncio.gather(
-            *[_push_one(vcol, data) for vcol, data in gc.vertices.items()]
+            *[_push_one(vcol, data) for vcol, data in gc.vertices.items() if data]
         )
 
         for vcol, result in results:
@@ -1249,7 +1257,7 @@ class DBWriter:
         # Every edge id resolves before any inserts, so an ``error`` raised for
         # one leaves the others unwritten too.
         resolved = await _gather_settled(
-            [_resolve_one(edge_id, docs) for edge_id, docs in gc.edges.items()]
+            [_resolve_one(edge_id, docs) for edge_id, docs in gc.edges.items() if docs]
         )
         await asyncio.gather(
             *[_insert_one(*entry) for entry in resolved if entry is not None]

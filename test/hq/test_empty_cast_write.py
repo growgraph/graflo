@@ -1,0 +1,305 @@
+"""A cast that yields no document is not written, and touches no database."""
+
+from __future__ import annotations
+
+import asyncio
+from collections import defaultdict
+from types import SimpleNamespace
+from typing import Any, Self
+from unittest.mock import MagicMock
+
+import pytest
+
+from graflo.architecture.contract.ingestion import IngestionModel
+from graflo.architecture.graph_types import GraphContainer
+from graflo.architecture.schema import CoreSchema, GraphMetadata, Schema
+from graflo.architecture.schema.database_features import DatabaseProfile
+from graflo.architecture.schema.edge import Edge, EdgeConfig
+from graflo.architecture.schema.vertex import Field, Vertex, VertexConfig
+from graflo.connections.onto import (
+    ArangoConfig,
+    Neo4jConfig,
+    TigergraphBulkLoadConfig,
+    TigergraphConfig,
+)
+from graflo.db.bulk_exc import UnsupportedBulkLoad
+from graflo.filter.onto import FilterExpression
+from graflo.hq.bulk_session import BulkSessionCoordinator
+from graflo.hq.caster import Caster
+from graflo.hq.db_writer import DBWriter
+from graflo.hq.document_caster import CastBatchResult
+from graflo.hq.ingestion_parameters import IngestionParams
+from graflo.onto import DBType
+
+NEO4J = Neo4jConfig(uri="bolt://localhost:7687", username="u", password="p")
+
+
+def _records_casting_to_nothing(n: int) -> GraphContainer:
+    """A container as cast from *n* records that produced nothing."""
+    return GraphContainer.from_docs_list([defaultdict(list) for _ in range(n)])
+
+
+def _schema() -> Schema:
+    return Schema(
+        metadata=GraphMetadata(name="test"),
+        core_schema=CoreSchema(
+            vertex_config=VertexConfig(
+                vertices=[
+                    Vertex(name=name, properties=[Field(name="id")], identity=["id"])
+                    for name in ("server", "rack")
+                ]
+            ),
+            edge_config=EdgeConfig(edges=[Edge(source="server", target="rack")]),
+        ),
+        db_profile=DatabaseProfile(db_flavor=DBType.NEO4J),
+    )
+
+
+def _writer() -> DBWriter:
+    schema = _schema()
+    model = IngestionModel(resources=[])
+    model.finish_init(schema.core_schema)
+    return DBWriter(schema=schema, ingestion_model=model)
+
+
+class _Recorder:
+    """A ConnectionManager stand-in that counts connections and writes."""
+
+    opened = 0
+    upserts: list[str] = []
+    edges: list[str] = []
+
+    def __init__(self, connection_config: Any) -> None:
+        del connection_config
+
+    def __enter__(self) -> Self:
+        type(self).opened += 1
+        return self
+
+    def __exit__(self, *exc: object) -> bool:
+        return False
+
+    def upsert_docs_batch(self, docs, class_name, match_keys, **kwargs) -> None:
+        type(self).upserts.append(class_name)
+
+    def insert_edges_batch(self, docs_edges, source_class, target_class, **kw) -> None:
+        type(self).edges.append(f"{source_class}->{target_class}")
+
+    def reset_after_use(self) -> None:
+        pass
+
+
+@pytest.fixture
+def recorder(monkeypatch: pytest.MonkeyPatch) -> type[_Recorder]:
+    class Recorder(_Recorder):
+        opened = 0
+        upserts: list[str] = []
+        edges: list[str] = []
+
+    monkeypatch.setattr("graflo.hq.db_writer.ConnectionManager", Recorder)
+    return Recorder
+
+
+class TestIsEmpty:
+    @pytest.mark.parametrize(
+        "gc",
+        [
+            pytest.param(GraphContainer(), id="nothing"),
+            pytest.param(
+                GraphContainer(
+                    vertices={"server": []},
+                    attached={"rack": []},
+                    edges={("server", "rack", None): []},
+                ),
+                id="empty-lists",
+            ),
+            pytest.param(_records_casting_to_nothing(3), id="empty-records"),
+        ],
+    )
+    def test_no_document_is_empty(self, gc: GraphContainer) -> None:
+        assert gc.is_empty()
+
+    @pytest.mark.parametrize(
+        "gc",
+        [
+            pytest.param(GraphContainer(vertices={"server": [{"id": 1}]}), id="vertex"),
+            pytest.param(GraphContainer(attached={"rack": [{"id": 1}]}), id="attached"),
+            pytest.param(
+                GraphContainer(edges={("server", "rack", None): [({}, {}, {})]}),
+                id="edge",
+            ),
+        ],
+    )
+    def test_one_document_is_not_empty(self, gc: GraphContainer) -> None:
+        assert not gc.is_empty()
+
+
+class TestTheWriter:
+    @pytest.mark.parametrize(
+        "gc",
+        [
+            pytest.param(_records_casting_to_nothing(2), id="empty-records"),
+            pytest.param(
+                GraphContainer(
+                    vertices={"server": []}, edges={("server", "rack", None): []}
+                ),
+                id="empty-lists",
+            ),
+        ],
+    )
+    def test_an_empty_container_opens_no_connection(
+        self, gc: GraphContainer, recorder: type[_Recorder]
+    ) -> None:
+        asyncio.run(_writer().write(gc, NEO4J, resource_name=None))
+
+        assert recorder.opened == 0
+
+    def test_a_class_without_documents_is_skipped(
+        self, recorder: type[_Recorder]
+    ) -> None:
+        gc = GraphContainer(
+            vertices={"server": [{"id": 1}], "rack": []},
+            edges={("server", "rack", None): []},
+        )
+
+        asyncio.run(_writer().write(gc, NEO4J, resource_name=None))
+
+        assert (recorder.upserts, recorder.edges) == (["server"], [])
+
+    def test_an_unsupported_guard_is_refused_even_when_empty(self) -> None:
+        arango = ArangoConfig(uri="http://localhost:8529", username="u", password="p")
+        guard = FilterExpression.from_dict(["==", "x", "id"])
+
+        with pytest.raises(NotImplementedError):
+            asyncio.run(_writer().write(GraphContainer(), arango, None, guard=guard))
+
+
+def _caster(**params: Any) -> Caster:
+    model = MagicMock()
+    model.fetch_resource = MagicMock(return_value=SimpleNamespace(name="items"))
+    return Caster(_schema(), model, ingestion_params=IngestionParams(**params))
+
+
+class _Writes:
+    def __init__(self) -> None:
+        self.written: list[GraphContainer] = []
+
+    async def write(self, gc: GraphContainer, **kwargs: Any) -> None:
+        self.written.append(gc)
+
+
+def _spy_on_writes(caster: Caster, monkeypatch: pytest.MonkeyPatch) -> dict:
+    seen: dict[str, Any] = {"writer": 0, "session": 0, "writes": _Writes()}
+
+    def _get_db_writer(conn_conf: Any) -> _Writes:
+        seen["writer"] += 1
+        return seen["writes"]
+
+    async def _ensure_bulk_session(conn_conf: Any) -> None:
+        seen["session"] += 1
+
+    monkeypatch.setattr(caster, "_get_db_writer", _get_db_writer)
+    monkeypatch.setattr(caster, "_ensure_bulk_session", _ensure_bulk_session)
+    return seen
+
+
+class TestTheCaster:
+    def test_an_empty_batch_builds_no_writer_and_begins_no_session(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        caster = _caster()
+        seen = _spy_on_writes(caster, monkeypatch)
+
+        async def _cast(data, resource_name=None) -> CastBatchResult:
+            return CastBatchResult(graph=_records_casting_to_nothing(2), failures=[])
+
+        monkeypatch.setattr(caster, "cast_normal_resource", _cast)
+
+        asyncio.run(caster.process_batch([{"id": 1}, {"id": 2}], "items", NEO4J))
+
+        assert (seen["writer"], seen["session"]) == (0, 0)
+
+    def test_per_record_writes_skip_the_empty_parts(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        caster = _caster(stamp_for=lambda resource, record: {"t": record["t"]})
+        seen = _spy_on_writes(caster, monkeypatch)
+        kept = GraphContainer(vertices={"server": [{"id": 1}]})
+
+        async def _cast_by_key(records, keys, resource_name, **kwargs):
+            return [(keys[0], GraphContainer()), (keys[1], kept)], []
+
+        monkeypatch.setattr(caster._document_caster, "cast_batch_by_key", _cast_by_key)
+
+        asyncio.run(caster.process_batch([{"t": "a"}, {"t": "b"}], "items", NEO4J))
+
+        assert seen["writes"].written == [kept]
+
+    def test_per_record_writes_with_only_empty_parts_begin_no_session(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        caster = _caster(stamp_for=lambda resource, record: {"t": record["t"]})
+        seen = _spy_on_writes(caster, monkeypatch)
+
+        async def _cast_by_key(records, keys, resource_name, **kwargs):
+            return [(key, GraphContainer()) for key in dict.fromkeys(keys)], []
+
+        monkeypatch.setattr(caster._document_caster, "cast_batch_by_key", _cast_by_key)
+
+        asyncio.run(caster.process_batch([{"t": "a"}, {"t": "b"}], "items", NEO4J))
+
+        assert (seen["writer"], seen["session"]) == (0, 0)
+
+
+class TestBulkSession:
+    def test_a_target_without_bulk_loading_is_not_connected_to(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def _refuse(*args: Any, **kwargs: Any) -> None:
+            raise AssertionError("no connection expected")
+
+        monkeypatch.setattr("graflo.db.manager.ConnectionManager", _refuse)
+        coordinator = BulkSessionCoordinator(_schema())
+
+        async def _twice() -> list[str | None]:
+            return [await coordinator.ensure_session(NEO4J) for _ in range(2)]
+
+        assert asyncio.run(_twice()) == [None, None]
+
+    def test_an_unsupported_bulk_load_is_asked_once_per_run(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path
+    ) -> None:
+        asked: list[int] = []
+
+        class _Manager:
+            def __init__(self, connection_config: Any) -> None:
+                del connection_config
+
+            def __enter__(self) -> Self:
+                return self
+
+            def __exit__(self, *exc: object) -> bool:
+                return False
+
+            def bulk_load_begin(self, schema: Any, cfg: Any) -> str:
+                asked.append(1)
+                raise UnsupportedBulkLoad("no")
+
+        monkeypatch.setattr("graflo.db.manager.ConnectionManager", _Manager)
+        conf = TigergraphConfig(
+            uri="http://localhost:9000",
+            username="u",
+            password="p",
+            bulk_load=TigergraphBulkLoadConfig(enabled=True, staging_dir=str(tmp_path)),
+        )
+        coordinator = BulkSessionCoordinator(_schema())
+
+        async def _run() -> None:
+            await coordinator.ensure_session(conf)
+            await coordinator.ensure_session(conf)
+            await coordinator.finalize(conf, bindings=None, connection_provider=None)
+            await coordinator.ensure_session(conf)
+
+        asyncio.run(_run())
+
+        assert len(asked) == 2

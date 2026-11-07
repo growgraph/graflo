@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The projection's connector pruning counts every transform of a level, wherever it is listed,
   as able to rewrite a router's `type_field`.
+- A batch that casts to no documents is not written and opens no connection; a class with no
+  documents in a batch is skipped the same way.
+- Ingestion no longer opens a connection per batch to check for native bulk loading on targets
+  without it.
 
 - A `select` view is a set of named columns: `all_base` already holds a base column named beside
   it, and a repeated entry is one column, so the query no longer returns a column twice (a

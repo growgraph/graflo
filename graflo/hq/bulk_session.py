@@ -31,6 +31,9 @@ class BulkSessionCoordinator:
         self._schema = schema
         self._stored_schema: Schema | None = None
         self._session_id: str | None = None
+        # Whether this run has asked: "no session" is remembered too, so a
+        # target without native bulk loading is not connected to per batch.
+        self._resolved = False
         self._begin_lock = asyncio.Lock()
 
     @property
@@ -48,22 +51,24 @@ class BulkSessionCoordinator:
     async def ensure_session(self, conn_conf: DBConfig) -> str | None:
         """Return an active bulk session id, or ``None`` when unsupported/disabled."""
         async with self._begin_lock:
-            if self._session_id is not None:
+            if self._resolved:
                 return self._session_id
+            bulk_cfg = getattr(conn_conf, "bulk_load", None)
+            if bulk_cfg is None or not getattr(bulk_cfg, "enabled", False):
+                self._resolved = True
+                return None
 
             def _begin() -> str | None:
                 from graflo.db.manager import ConnectionManager
 
                 with ConnectionManager(connection_config=conn_conf) as db:
-                    bulk_cfg = getattr(conn_conf, "bulk_load", None)
-                    if bulk_cfg is None or not getattr(bulk_cfg, "enabled", False):
-                        return None
                     try:
                         return db.bulk_load_begin(self._stored_for(conn_conf), bulk_cfg)
                     except UnsupportedBulkLoad:
                         return None
 
             self._session_id = await asyncio.to_thread(_begin)
+            self._resolved = True
             return self._session_id
 
     async def finalize(
@@ -76,6 +81,7 @@ class BulkSessionCoordinator:
         """Finalize the active session if one exists."""
         session_id = self._session_id
         self._session_id = None
+        self._resolved = False
         if session_id is None:
             return
 

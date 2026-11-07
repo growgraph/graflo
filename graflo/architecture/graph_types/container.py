@@ -111,6 +111,18 @@ class GraphContainer(ConfigBaseModel):
         """Get an ItemsView of the container's contents."""
         return ItemsView(self)
 
+    def is_empty(self) -> bool:
+        """Whether no vertex, attached record or edge is held.
+
+        ``linear`` is not consulted: it only indexes the same documents per
+        input record.
+        """
+        return not any(
+            docs
+            for group in (self.vertices, self.attached, self.edges)
+            for docs in group.values()
+        )
+
     def pick_unique(self):
         """Remove duplicate entries from vertices, attached documents and edges."""
         for k, v in self.vertices.items():
