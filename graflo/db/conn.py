@@ -313,6 +313,10 @@ class Connection(abc.ABC):
     supports_bulk_load: ClassVar[bool] = False
     #: Its bulk writer takes dense integer ids on every vertex and edge endpoint.
     bulk_dense_ids: ClassVar[bool] = False
+    #: Its bulk writer locks both endpoints of an edge it creates, so the edges
+    #: written at once must share no endpoint: each edge type is then written in
+    #: rounds of chunks split by a hash of their endpoints' keys.
+    bulk_partition_edges: ClassVar[bool] = False
 
     def __init__(self):
         """Initialize the connection."""
@@ -458,7 +462,7 @@ class Connection(abc.ABC):
         """
         raise NotImplementedError(f"{type(self).__name__} has no bulk writer")
 
-    def bulk_write_vertices(self, chunk: BulkVertexChunk) -> None:
+    def bulk_write_vertices(self, schema: Schema, chunk: BulkVertexChunk) -> None:
         """Create the chunk's vertices; none exists yet unless ``chunk.replay``."""
         raise NotImplementedError(f"{type(self).__name__} has no bulk writer")
 
@@ -466,7 +470,7 @@ class Connection(abc.ABC):
         """Make edge endpoints quick to find, once every vertex is written."""
         raise NotImplementedError(f"{type(self).__name__} has no bulk writer")
 
-    def bulk_write_edges(self, chunk: BulkEdgeChunk) -> None:
+    def bulk_write_edges(self, schema: Schema, chunk: BulkEdgeChunk) -> None:
         """Create the chunk's edges between existing vertices."""
         raise NotImplementedError(f"{type(self).__name__} has no bulk writer")
 

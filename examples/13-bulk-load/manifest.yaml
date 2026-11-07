@@ -1,0 +1,52 @@
+schema:
+    metadata:
+        name: works
+    graph:
+        vertex_config:
+            vertices:
+            -   name: work
+                properties:
+                -   id
+                -   title
+                -   year
+                identity:
+                -   id
+            -   name: author
+                properties:
+                -   name
+                identity:
+                -   name
+            -   name: venue
+                properties:
+                -   name
+                identity:
+                -   name
+        edge_config:
+            edges:
+            -   source: work
+                target: author
+                relation: written_by
+            -   source: work
+                target: venue
+                relation: published_in
+    db_profile: {}
+ingestion_model:
+    resources:
+    -   name: works
+        pipeline:
+        -   vertex: work
+            from:
+                id: id
+                title: title
+                year: year
+        -   vertex: author
+            from:
+                name: author
+        -   vertex: venue
+            from:
+                name: venue
+bindings:
+    connectors:
+    -   regex: "^works.*\\.csv$"
+        sub_path: data
+        resource_name: works

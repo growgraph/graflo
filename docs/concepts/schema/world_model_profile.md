@@ -33,7 +33,7 @@ Two profiles ship with GraFlo:
 ## The `world-model` profile
 
 Six assertions, version 0.1. The
-[lift example (22)](../../examples/lift-aspects/index.md) turns a
+[lift example (23)](../../examples/lift-aspects/index.md) turns a
 manifest that fails them into one that passes.
 
 ### 1. `grounded-types`
@@ -208,7 +208,7 @@ points:
 ## What to read next
 
 - [Aspects](aspects.md): the `provenance` and `state` vocabularies a lift adds.
-- [Lift example (22)](../../examples/lift-aspects/index.md): a lift
+- [Lift example (23)](../../examples/lift-aspects/index.md): a lift
   that makes a manifest pass every assertion.
 - [Vertex identity](vertex_identity.md): the identity modes assertion 2 accepts.
 - [GraFlo ontology](ontology.md): how `semantics` is written to RDF.

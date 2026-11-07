@@ -221,7 +221,7 @@ Each secondary identity gets a non-unique index automatically, and on
 NebulaGraph the lookup cannot run without it; see
 [backend indexes](backend_indexes.md).
 
-[The secondary identities example (15)](../../examples/secondary-identities/index.md)
+[The secondary identities example (16)](../../examples/secondary-identities/index.md)
 runs a source that describes only relations and finds its endpoints by
 alternative identifiers.
 
@@ -261,7 +261,7 @@ member's own key stops deduplicating its records once the merged type is keyed
 on a funnel; see
 [Merging manifests](merging_manifests.md#the-old-key-no-longer-deduplicates).
 
-[The identity funnel example (16)](../../examples/identity-funnel/index.md)
+[The identity funnel example (17)](../../examples/identity-funnel/index.md)
 runs two sources through one funnel.
 
 ## When a lookup matches several vertices
@@ -386,12 +386,12 @@ identity from a sample of your data. Single-resource inference proposes a
 natural key (one field or several) or, when no narrow key exists, a hash over
 the fields that do identify the records. [Finding a key for your
 data](../../guides/identity_inference.md) is the task guide, and
-[the identity inference example (14)](../../examples/identity-inference/index.md)
+[the identity inference example (15)](../../examples/identity-inference/index.md)
 runs it on two CSV files. When several sources describe one vertex type under
 different column names, [cross-resource identity
 discovery](cross_resource_identity.md) aligns their columns and can propose a
 funnel; [the cross-resource identity
-example (17)](../../examples/cross-resource-identity/index.md) shows it.
+example (18)](../../examples/cross-resource-identity/index.md) shows it.
 
 ## What to read next
 

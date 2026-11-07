@@ -22,7 +22,7 @@ from graflo.architecture.evolution.lift_commit import lift_recipe_of
 from graflo.cli.io import load_manifest
 from graflo.cli.main import graflo
 
-EXAMPLE = pathlib.Path(__file__).resolve().parents[2] / "examples" / "22-lift-aspects"
+EXAMPLE = pathlib.Path(__file__).resolve().parents[2] / "examples" / "23-lift-aspects"
 MANIFEST_IN = EXAMPLE / "manifest_in.yaml"
 SPEC = EXAMPLE / "lift.yaml"
 

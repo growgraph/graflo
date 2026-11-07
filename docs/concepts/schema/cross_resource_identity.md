@@ -186,7 +186,7 @@ of a list inside it.
   belong to the same machine. Its branches are ordered by resource name; check
   that the order suits you, because the first complete branch wins.
 
-[The cross-resource identity example (17)](../../examples/cross-resource-identity/index.md)
+[The cross-resource identity example (18)](../../examples/cross-resource-identity/index.md)
 runs two exports whose key columns have different names and prints the
 alignments and evidence.
 

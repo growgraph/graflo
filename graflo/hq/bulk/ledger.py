@@ -3,7 +3,7 @@
 One JSON line per event, flushed and synced before the call returns, so after a
 crash the ledger never claims more than happened. A chunk recorded as started
 but not committed may or may not be in the target: it is written again, as a
-replay.
+replay. A restart forgets every chunk, for a target that lost them.
 """
 
 from __future__ import annotations
@@ -51,6 +51,8 @@ class RunLedger:
                 event = json.loads(line)
                 if "phase" in event:
                     self._phases.add(event["phase"])
+                elif "restart" in event:
+                    self._forget()
                 elif event.get("state") == "started":
                     self._started.add(event["chunk"])
                 elif event.get("state") == "committed":
@@ -82,6 +84,16 @@ class RunLedger:
     def committed(self, chunk_id: str) -> None:
         self._append({"chunk": chunk_id, "state": "committed"})
         self._committed.add(chunk_id)
+
+    def restart(self) -> None:
+        """Forget every chunk and the phases after the load began."""
+        self._append({"restart": "chunks"})
+        self._forget()
+
+    def _forget(self) -> None:
+        self._started.clear()
+        self._committed.clear()
+        self._phases -= {Phase.EDGES_PREPARED.value, Phase.FINISHED.value}
 
     def _append(self, event: dict[str, str]) -> None:
         line = json.dumps(event, separators=(",", ":")) + "\n"

@@ -123,9 +123,7 @@ def config_for(
     )
 
     if flavor == "neo4j":
-        config = Neo4jConfig.from_docker_env()
-        config.database = config.database or "_system"
-        return config
+        return Neo4jConfig.from_docker_env()
     if flavor == "arango":
         config = ArangoConfig.from_docker_env()
         config.database = space

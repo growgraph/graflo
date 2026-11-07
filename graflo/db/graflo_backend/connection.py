@@ -229,7 +229,7 @@ class GraFloBackendConnection(Connection):
             self.apply_target_schema(schema, recreate=recreate)
         return BulkPlan(max_parallel=1)
 
-    def bulk_write_vertices(self, chunk: BulkVertexChunk) -> None:
+    def bulk_write_vertices(self, schema: Schema, chunk: BulkVertexChunk) -> None:
         # Published before returning, so a chunk recorded as written is on disk;
         # a replayed chunk appends records the read-side fold merges.
         self._writer.write_vertex_batch(chunk.class_name, chunk.rows)
@@ -238,7 +238,7 @@ class GraFloBackendConnection(Connection):
     def bulk_prepare_edges(self, schema: Schema) -> None:
         """Nothing to prepare: edges name their endpoints by key."""
 
-    def bulk_write_edges(self, chunk: BulkEdgeChunk) -> None:
+    def bulk_write_edges(self, schema: Schema, chunk: BulkEdgeChunk) -> None:
         edge_key = (chunk.source_class, chunk.target_class, chunk.relation_name or None)
         self._writer.write_edge_batch(edge_key, [list(row) for row in chunk.rows])
         self._writer.flush_index()

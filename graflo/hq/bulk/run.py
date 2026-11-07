@@ -26,8 +26,17 @@ from graflo.db.conn import ConnectionCapability
 from graflo.db.manager import ConnectionManager
 from graflo.hq.bulk import _deps
 from graflo.hq.bulk.encode import read_rows
-from graflo.hq.bulk.fold import COUNTS, FOLDED, FoldCounts, RunCounts, fold, folded_path
+from graflo.hq.bulk.fold import (
+    COUNTS,
+    FOLDED,
+    FoldCounts,
+    RunCounts,
+    fold,
+    folded_cell,
+    folded_path,
+)
 from graflo.hq.bulk.ledger import ChunkState, Phase, RunLedger
+from graflo.hq.bulk.partition import rounds
 from graflo.hq.bulk.stage import REJECTS, STAGE
 from graflo.hq.write_prepare import WriteContext, project_edges, project_vertices
 
@@ -82,8 +91,23 @@ def dense_ids_for(conn_conf: DBConfig) -> bool:
     return bool(conn_cls.bulk_dense_ids)
 
 
+def edge_buckets_for(conn_conf: DBConfig, cfg: BulkConfig) -> int | None:
+    """Buckets per endpoint to split edge runs into, when the writer asks for it.
+
+    Raises:
+        ValueError: The target has no bulk writer.
+    """
+    conn_cls = ConnectionManager.require(conn_conf, ConnectionCapability.BULK_LOAD)
+    return cfg.parallelism if conn_cls.bulk_partition_edges else None
+
+
 def fold_staged(
-    staging_dir: Path, ledger: RunLedger, cfg: BulkConfig, *, dense_ids: bool
+    staging_dir: Path,
+    ledger: RunLedger,
+    cfg: BulkConfig,
+    *,
+    dense_ids: bool,
+    edge_buckets: int | None = None,
 ) -> FoldCounts:
     """Fold the staged runs once; a resumed run reuses the fold."""
     if ledger.has(Phase.FOLDED):
@@ -91,6 +115,7 @@ def fold_staged(
     counts = fold(
         staging_dir,
         dense_ids=dense_ids,
+        edge_buckets=edge_buckets,
         memory_limit=cfg.memory_limit,
         threads=cfg.fold_threads,
     )
@@ -141,11 +166,17 @@ def write_folded(
     with ConnectionManager(connection_config=conn_conf) as db:
         ledger.mark(Phase.BEGINNING)
         plan = db.bulk_begin(target_schema, cfg, recreate=recreate, resume=resume)
+        if resume and plan.restart:
+            logger.warning(
+                "The target lost the chunks written before; writing all again"
+            )
+            ledger.restart()
         ledger.mark(Phase.BEGUN)
     parallel = min(cfg.parallelism, plan.max_parallel or cfg.parallelism)
 
     vertex_runs = [r for r in counts.runs if r.type.kind == "vertex"]
-    edge_runs = [r for r in counts.runs if r.type.kind == "edge"]
+    edge_runs = [r for r in counts.runs if r.type.kind == "edge" and not r.buckets]
+    celled_runs = [r for r in counts.runs if r.type.kind == "edge" and r.buckets]
     with _Connections(conn_conf) as conns:
         _write_chunks(
             (
@@ -153,7 +184,7 @@ def write_folded(
                 for run in vertex_runs
                 for c in _vertex_chunks(ctx, staging_dir, run, cfg)
             ),
-            lambda chunk: conns.get().bulk_write_vertices(chunk),
+            lambda chunk: conns.get().bulk_write_vertices(target_schema, chunk),
             ledger,
             parallel,
         )
@@ -164,12 +195,27 @@ def write_folded(
             (
                 c
                 for run in edge_runs
-                for c in _edge_chunks(schema, ctx, staging_dir, run, cfg)
+                for c in _edge_chunks(
+                    schema,
+                    ctx,
+                    run,
+                    [folded_path(staging_dir, run.slot)],
+                    run.slot,
+                    cfg,
+                )
             ),
-            lambda chunk: conns.get().bulk_write_edges(chunk),
+            lambda chunk: conns.get().bulk_write_edges(target_schema, chunk),
             ledger,
             parallel,
         )
+        # One run at a time: two runs may share an endpoint type.
+        for run in celled_runs:
+            _write_rounds(
+                _edge_rounds(schema, ctx, staging_dir, run, cfg),
+                lambda chunk: conns.get().bulk_write_edges(target_schema, chunk),
+                ledger,
+                parallel,
+            )
         actual = conns.get().bulk_finish(target_schema)
     verify(_expected(schema, ctx, counts), actual)
     ledger.mark(Phase.FINISHED)
@@ -203,13 +249,14 @@ def verify(expected: BulkCounts, actual: BulkCounts) -> None:
 _Chunk = tuple[str, Callable[[bool], Any]]
 
 
-def _slices(path: Path, size: int) -> Iterator[list[dict[str, Any]]]:
+def _slices(paths: list[Path], size: int) -> Iterator[list[dict[str, Any]]]:
     batch: list[dict[str, Any]] = []
-    for row in read_rows(path):
-        batch.append(row)
-        if len(batch) == size:
-            yield batch
-            batch = []
+    for path in paths:
+        for row in read_rows(path):
+            batch.append(row)
+            if len(batch) == size:
+                yield batch
+                batch = []
     if batch:
         yield batch
 
@@ -221,7 +268,7 @@ def _vertex_chunks(
         return
     name = str(run.type.name)
     for index, rows in enumerate(
-        _slices(folded_path(staging_dir, run.slot), cfg.chunk_size)
+        _slices([folded_path(staging_dir, run.slot)], cfg.chunk_size)
     ):
 
         def build(replay: bool, rows: list[dict[str, Any]] = rows, index: int = index):
@@ -241,10 +288,12 @@ def _vertex_chunks(
 def _edge_chunks(
     schema: Schema,
     ctx: WriteContext,
-    staging_dir: Path,
     run: RunCounts,
+    files: list[Path],
+    prefix: str,
     cfg: BulkConfig,
 ) -> Iterator[_Chunk]:
+    """Chunks of the edge rows in *files*, with ids ``<prefix>:<index>``."""
     if not run.folded:
         return
     edge_id = run.type.edge_id
@@ -252,21 +301,20 @@ def _edge_chunks(
     edge = schema.core_schema.edge_config.declared(edge_id)
     assert edge is not None, edge_id
     relation = edge_id[2]
-    for index, rows in enumerate(
-        _slices(folded_path(staging_dir, run.slot), cfg.chunk_size)
-    ):
+    for index, rows in enumerate(_slices(files, cfg.chunk_size)):
 
         def build(replay: bool, rows: list[dict[str, Any]] = rows, index: int = index):
             triples = [(row["source"], row["target"], row["doc"]) for row in rows]
             stored = project_edges(ctx, edge, relation, triples)
             return BulkEdgeChunk(
-                chunk_id=f"{run.slot}:{index}",
+                chunk_id=f"{prefix}:{index}",
                 source_class=stored.source_class,
                 target_class=stored.target_class,
                 relation_name=stored.relation_name,
                 match_keys_source=list(stored.match_keys_source),
                 match_keys_target=list(stored.match_keys_target),
                 collection_name=stored.collection_name,
+                merge_properties=list(stored.merge_properties or ()),
                 rows=[tuple(t) for t in stored.docs],
                 dense=(
                     [(row["sdense"], row["tdense"]) for row in rows]
@@ -276,7 +324,73 @@ def _edge_chunks(
                 replay=replay,
             )
 
-        yield f"{run.slot}:{index}", build
+        yield f"{prefix}:{index}", build
+
+
+def _edge_rounds(
+    schema: Schema,
+    ctx: WriteContext,
+    staging_dir: Path,
+    run: RunCounts,
+    cfg: BulkConfig,
+) -> Iterator[list[Iterator[_Chunk]]]:
+    """An edge run split into cells, as rounds of lanes that share no endpoint."""
+    assert run.buckets and run.type.edge_id is not None
+    source, target, _ = run.type.edge_id
+    for lanes in rounds(run.buckets, same_type=source == target):
+        yield [
+            (
+                chunk
+                for a, b in lane
+                for chunk in _edge_chunks(
+                    schema,
+                    ctx,
+                    run,
+                    folded_cell(staging_dir, run.slot, (a, b)),
+                    f"{run.slot}:{a}.{b}",
+                    cfg,
+                )
+            )
+            for lane in lanes
+        ]
+
+
+def _write_one(
+    chunk_id: str,
+    build: Callable[[bool], Any],
+    write: Callable[[Any], None],
+    ledger: RunLedger,
+) -> None:
+    """Write one chunk unless it is committed; replay it if its commit is unknown."""
+    state = ledger.chunk(chunk_id)
+    if state is ChunkState.COMMITTED:
+        return
+    chunk = build(state is ChunkState.UNCERTAIN)
+    ledger.started(chunk_id)
+    write(chunk)
+    ledger.committed(chunk_id)
+
+
+def _write_rounds(
+    rounds_: Iterator[list[Iterator[_Chunk]]],
+    write: Callable[[Any], None],
+    ledger: RunLedger,
+    parallel: int,
+) -> None:
+    """Write each round's lanes in parallel, a lane's chunks in order; round after round."""
+
+    def lane_task(lane: Iterator[_Chunk]) -> None:
+        for chunk_id, build in lane:
+            _write_one(chunk_id, build, write, ledger)
+
+    with ThreadPoolExecutor(
+        max_workers=parallel, thread_name_prefix="graflo-bulk"
+    ) as pool:
+        for lanes in rounds_:
+            futures = [pool.submit(lane_task, lane) for lane in lanes]
+            wait(futures)
+            for future in futures:
+                future.result()
 
 
 def _write_chunks(
@@ -287,26 +401,17 @@ def _write_chunks(
 ) -> None:
     """Write every chunk not yet committed, *parallel* at a time, in order of submission."""
 
-    def task(chunk_id: str, build: Callable[[bool], Any], replay: bool) -> None:
-        chunk = build(replay)
-        ledger.started(chunk_id)
-        write(chunk)
-        ledger.committed(chunk_id)
-
     pool = ThreadPoolExecutor(max_workers=parallel, thread_name_prefix="graflo-bulk")
     pending: set[Future[None]] = set()
     try:
         for chunk_id, build in chunks:
-            state = ledger.chunk(chunk_id)
-            if state is ChunkState.COMMITTED:
+            if ledger.chunk(chunk_id) is ChunkState.COMMITTED:
                 continue
             while len(pending) >= 2 * parallel:
                 done, pending = wait(pending, return_when=FIRST_COMPLETED)
                 for future in done:
                     future.result()
-            pending.add(
-                pool.submit(task, chunk_id, build, state is ChunkState.UNCERTAIN)
-            )
+            pending.add(pool.submit(_write_one, chunk_id, build, write, ledger))
         for future in wait(pending).done:
             future.result()
     except BaseException:

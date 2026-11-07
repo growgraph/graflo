@@ -11,8 +11,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Bulk mode: `IngestionParams(mode="bulk", staging_dir=...)` / `ingest --bulk --staging-dir`
   stages the whole input, folds it by identity in DuckDB and writes it once into an empty
-  target; resumable. Needs the `bulk` extra. The file backend supports it.
+  target; resumable. Needs the `bulk` extra. Neo4j, FalkorDB, PostgreSQL, TigerGraph and the
+  file backend support it.
 - `Connection.bulk_begin` … `bulk_finish`, `supports_bulk_load`, `DBConfig.bulk`.
+- Bulk load on Neo4j: nodes created without lookups over parallel sessions, then identity
+  indexes, then edges in rounds of writers that share no node.
+- Bulk load on FalkorDB: `GRAPH.BULK` into a new graph; an existing empty graph is dropped first.
+- Bulk load on PostgreSQL: `COPY` into keyless tables, then primary keys, unique edge keys and
+  validated foreign keys.
+- Bulk load on TigerGraph: a loading job fed over REST++ (`POST /ddl`), one file per vertex type
+  and per edge; rejected lines fail the load. Nothing is read from the server's disk.
+- `fetch_all_docs` / `fetch_all_edges` on TigerGraph.
 
 ### Removed
 
@@ -34,6 +43,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   backends do.
 - The cast drops an edge whose endpoint has no key even when its other endpoint is blank or
   assigned.
+- Neo4j writes to the database named in its config, or the schema's namespace once it exists;
+  before, every session used the home database.
+- PostgreSQL: an edge table whose foreign keys cannot be created is created without them,
+  instead of failing with `InFailedSqlTransaction`.
+- FalkorDB `ensure_target_namespace(create=False)` refuses a missing graph, and the first-write
+  guard no longer reads a failed count as an empty graph.
 
 ## [1.25.1]
 

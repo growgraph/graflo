@@ -177,18 +177,21 @@ def assert_bulk_equals_upsert(
 ) -> dict[str, list[str]]:
     """Ingest the input in both modes into fresh targets; return the common graph.
 
+    The upsert graph is exported before the bulk target is asked for, so a
+    backend with one database may hand out the same one, emptied, twice.
+
     Args:
         fresh_target: Returns a new, empty target for the given label.
         staging_dir: A new directory for the bulk run.
         batch_size: Source rows per batch; small, so repeats span batches.
     """
     upsert_conf = fresh_target("upsert")
-    bulk_conf = fresh_target("bulk")
     ingest(upsert_conf, IngestionParams(batch_size=batch_size))
+    upserted = export(upsert_conf)
+    bulk_conf = fresh_target("bulk")
     ingest(
         bulk_conf,
         IngestionParams(mode="bulk", staging_dir=staging_dir, batch_size=batch_size),
     )
-    upserted = export(upsert_conf)
     assert export(bulk_conf) == upserted
     return upserted

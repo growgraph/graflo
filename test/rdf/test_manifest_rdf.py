@@ -187,7 +187,7 @@ def test_context_has_identity_mode_terms() -> None:
 
 
 def test_round_trip_example_16_secondary_identities() -> None:
-    original = _load_example_manifest("15-secondary-identities")
+    original = _load_example_manifest("16-secondary-identities")
     restored = _round_trip(original)
 
     assert _canonical(restored) == _canonical(original)
@@ -220,7 +220,7 @@ def test_round_trip_example_16_secondary_identities() -> None:
 )
 def test_round_trip_preserves_vertex_identity_modes(mutate, expected_mode) -> None:
     """All four identity modes survive RDF. Previously everything read back as natural."""
-    original = _load_example_manifest("15-secondary-identities")
+    original = _load_example_manifest("16-secondary-identities")
     vertex = original.graph_schema.core_schema.vertex_config.vertices[0]
     # blank and assigned vertices reject secondary identities.
     vertex.secondary_identities = []
@@ -236,7 +236,7 @@ def test_round_trip_preserves_vertex_identity_modes(mutate, expected_mode) -> No
 
 def test_round_trip_preserves_identity_funnel() -> None:
     """Branch order and conditions decide the key, so both must survive RDF."""
-    original = _load_example_manifest("15-secondary-identities")
+    original = _load_example_manifest("16-secondary-identities")
     vertex = original.graph_schema.core_schema.vertex_config.vertices[0]
     vertex.secondary_identities = []
     # A funnel stores its digest in a field no branch reads.
@@ -258,7 +258,7 @@ def test_round_trip_preserves_identity_funnel() -> None:
 
 def test_round_trip_preserves_identity_field_order() -> None:
     """Identity lists are positional; RDF triples are not, hence gf:artifactIndex."""
-    original = _load_example_manifest("15-secondary-identities")
+    original = _load_example_manifest("16-secondary-identities")
     vertex = original.graph_schema.core_schema.vertex_config.vertices[0]
     vertex.identity = ["sid", "isin", "name"]
 

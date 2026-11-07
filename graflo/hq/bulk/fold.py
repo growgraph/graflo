@@ -14,13 +14,15 @@ one row per field and reduced. Edges whose endpoint is not a folded vertex are
 rejected with their reason. DuckDB spills to the staging directory under the
 memory limit it is given.
 
-Output, in the staging directory: ``folded/<slot>.jsonl.zst`` sorted by key,
-``rejects/``, and ``counts.json``.
+Output, in the staging directory: ``folded/<slot>.jsonl.zst`` sorted by key
+(an edge run split into cells is a directory instead, see
+:func:`folded_cell`), ``rejects/``, and ``counts.json``.
 """
 
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +44,8 @@ class RunCounts(BaseModel):
     folded: int
     rejected: int
     dense: tuple[int, int] | None = None
+    buckets: int | None = None
+    """Buckets per endpoint of an edge run split into cells."""
 
 
 class FoldCounts(BaseModel):
@@ -64,10 +68,18 @@ def folded_path(staging_dir: Path, slot: str) -> Path:
     return Path(staging_dir) / FOLDED / f"{slot}.jsonl.zst"
 
 
+def folded_cell(staging_dir: Path, slot: str, cell: tuple[int, int]) -> list[Path]:
+    """The files of one cell ``(source bucket, target bucket)`` of an edge run."""
+    a, b = cell
+    directory = Path(staging_dir) / FOLDED / slot / f"sb={a}" / f"tb={b}"
+    return sorted(directory.glob("*.json*"))
+
+
 def fold(
     staging_dir: Path,
     *,
     dense_ids: bool = False,
+    edge_buckets: int | None = None,
     memory_limit: str | None = None,
     threads: int | None = None,
 ) -> FoldCounts:
@@ -77,6 +89,8 @@ def fold(
         staging_dir: A directory a :class:`~graflo.hq.bulk.stage.Stager` wrote.
         dense_ids: Number every folded vertex ``0..n-1`` across types, in type
             then key order, and carry the numbers onto edge endpoints.
+        edge_buckets: Split each edge run into cells by a hash of its source
+            and target keys into this many buckets each.
         memory_limit: DuckDB's memory limit (``"4GB"``); spills beyond it.
         threads: DuckDB worker threads; its default when omitted.
 
@@ -111,7 +125,9 @@ def fold(
             key_tables[str(run.name)] = table
             counts.append(result)
         for slot, run in edge_runs:
-            counts.append(_fold_edges(con, root, slot, run, key_tables, dense_ids))
+            counts.append(
+                _fold_edges(con, root, slot, run, key_tables, dense_ids, edge_buckets)
+            )
     finally:
         con.close()
     out = FoldCounts(runs=counts)
@@ -172,6 +188,7 @@ def _fold_edges(
     run: RunType,
     key_tables: dict[str, str],
     dense_ids: bool,
+    edge_buckets: int | None,
 ) -> RunCounts:
     columns = {
         "seq": "BIGINT[]",
@@ -212,11 +229,19 @@ def _fold_edges(
     )
     kept = "key, source, target, doc" + (", sdense, tdense" if dense else "")
     con.execute(
-        f"CREATE OR REPLACE TABLE kept AS SELECT {kept} FROM checked "
+        f"CREATE OR REPLACE TABLE kept AS SELECT {kept}, skey, tkey FROM checked "
         "WHERE has_source AND has_target"
     )
     folded = _count(con, "kept")
-    _copy(con, "SELECT * FROM kept ORDER BY key", folded_path(root, slot))
+    if edge_buckets:
+        n = int(edge_buckets)
+        _copy_cells(
+            con,
+            f"SELECT {kept}, hash(skey) % {n} AS sb, hash(tkey) % {n} AS tb FROM kept",
+            root / FOLDED / slot,
+        )
+    else:
+        _copy(con, f"SELECT {kept} FROM kept ORDER BY key", folded_path(root, slot))
     missing = _count(con, "checked") - folded
     return RunCounts(
         slot=slot,
@@ -224,6 +249,7 @@ def _fold_edges(
         staged=staged,
         folded=folded,
         rejected=_staged_rejects(con, root, slot) + missing,
+        buckets=edge_buckets or None,
     )
 
 
@@ -339,6 +365,20 @@ def _copy(con: Any, query: str, path: Path) -> None:
     tmp = path.with_name(path.name + ".tmp")
     con.execute(f"COPY ({query}) TO {_lit(str(tmp))} (FORMAT JSON, COMPRESSION ZSTD)")
     tmp.replace(path)
+
+
+def _copy_cells(con: Any, query: str, directory: Path) -> None:
+    """Write *query*'s rows under *directory*, one subdirectory per ``sb``, ``tb``."""
+    tmp = directory.with_name(directory.name + ".tmp")
+    for path in (tmp, directory):
+        if path.exists():
+            shutil.rmtree(path)
+    con.execute(
+        f"COPY ({query}) TO {_lit(str(tmp))} "
+        "(FORMAT JSON, COMPRESSION ZSTD, PARTITION_BY (sb, tb))"
+    )
+    tmp.mkdir(parents=True, exist_ok=True)
+    tmp.replace(directory)
 
 
 def _count(con: Any, table: str) -> int:

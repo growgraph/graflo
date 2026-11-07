@@ -83,6 +83,13 @@ def _ensure_graph_target_namespace(
         return
     if not _graph_target_namespace_unset(target_db_config):
         return
+    if (
+        graph_target_namespace is None
+        and target_db_config.connection_type == DBType.NEO4J
+    ):
+        # Neo4j uses the schema's namespace only where that database exists or
+        # can be created (not on Community); its connection decides.
+        return
     resolved = _resolve_graph_target_namespace(
         schema, graph_target_namespace, target_db_config.connection_type
     )

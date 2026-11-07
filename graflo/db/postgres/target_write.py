@@ -22,6 +22,7 @@ from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import (
     Field,
     FieldType,
+    Vertex,
     VertexConfig,
     field_type_value,
     is_list_field_type,
@@ -312,6 +313,61 @@ def delete_referencing_rows_query(
     )
 
 
+def edge_foreign_keys(
+    schema: str,
+    *,
+    source_table: str,
+    source_fields: Sequence[str],
+    target_table: str,
+    target_fields: Sequence[str],
+) -> list[str]:
+    """The ``FOREIGN KEY`` clauses of an edge table: source, then target."""
+
+    def foreign_key(side: str, vertex: str, fields: Sequence[str]) -> str:
+        columns = edge_endpoint_columns(side, fields)
+        return (
+            f"FOREIGN KEY ({', '.join(_quote_ident(c) for c in columns)}) "
+            f"REFERENCES {_quote_ident(schema)}.{_quote_ident(vertex)} "
+            f"({', '.join(_quote_ident(f) for f in list(fields) or ['id'])})"
+        )
+
+    return [
+        foreign_key("source", source_table, source_fields),
+        foreign_key("target", target_table, target_fields),
+    ]
+
+
+def vertex_table_columns(vertex: Vertex) -> dict[str, str]:
+    """Column name -> PostgreSQL type of *vertex*'s table."""
+    columns = {f.name: _pg_column_type_for_field(f) for f in vertex.properties}
+    for ident in vertex.identity:
+        columns.setdefault(ident, _PG_TEXT)
+    if not columns:
+        columns["id"] = _PG_TEXT
+    return columns
+
+
+def vertex_table_ddl(schema: str, vertex: Vertex) -> tuple[str, str]:
+    """``CREATE TABLE`` for a vertex table, and the same without its primary key."""
+    qualified = f"{_quote_ident(schema)}.{_quote_ident(vertex_table_name(vertex.name))}"
+    defs = ", ".join(
+        f"{_quote_ident(name)} {kind}"
+        for name, kind in vertex_table_columns(vertex).items()
+    )
+    pk = ", ".join(_quote_ident(i) for i in vertex.identity or ["id"])
+    return (
+        f"CREATE TABLE IF NOT EXISTS {qualified} ({defs}, PRIMARY KEY ({pk}))",
+        f"CREATE TABLE IF NOT EXISTS {qualified} ({defs})",
+    )
+
+
+def vertex_key_ddl(schema: str, vertex: Vertex) -> str:
+    """``ALTER TABLE ... ADD PRIMARY KEY``: the key :func:`vertex_table_ddl` defers."""
+    qualified = f"{_quote_ident(schema)}.{_quote_ident(vertex_table_name(vertex.name))}"
+    pk = ", ".join(_quote_ident(i) for i in vertex.identity or ["id"])
+    return f"ALTER TABLE {qualified} ADD PRIMARY KEY ({pk})"
+
+
 def edge_table_ddl(
     schema: str,
     table: str,
@@ -327,27 +383,26 @@ def edge_table_ddl(
     *properties* are ``(column, type)`` pairs. The table's unique key is
     built by :func:`edge_key_ddl`.
     """
-    source_columns = edge_endpoint_columns("source", source_fields)
-    target_columns = edge_endpoint_columns("target", target_fields)
     qualified = f"{_quote_ident(schema)}.{_quote_ident(table)}"
     column_defs = [
         f"{_quote_ident('id')} BIGSERIAL PRIMARY KEY",
-        *(f"{_quote_ident(c)} {_PG_TEXT} NOT NULL" for c in source_columns),
-        *(f"{_quote_ident(c)} {_PG_TEXT} NOT NULL" for c in target_columns),
+        *(
+            f"{_quote_ident(c)} {_PG_TEXT} NOT NULL"
+            for c in edge_endpoint_columns("source", source_fields)
+        ),
+        *(
+            f"{_quote_ident(c)} {_PG_TEXT} NOT NULL"
+            for c in edge_endpoint_columns("target", target_fields)
+        ),
         *(f"{_quote_ident(name)} {kind}" for name, kind in properties),
     ]
-
-    def foreign_key(columns: list[str], vertex: str, fields: Sequence[str]) -> str:
-        return (
-            f"FOREIGN KEY ({', '.join(_quote_ident(c) for c in columns)}) "
-            f"REFERENCES {_quote_ident(schema)}.{_quote_ident(vertex)} "
-            f"({', '.join(_quote_ident(f) for f in list(fields) or ['id'])})"
-        )
-
-    keys = [
-        foreign_key(source_columns, source_table, source_fields),
-        foreign_key(target_columns, target_table, target_fields),
-    ]
+    keys = edge_foreign_keys(
+        schema,
+        source_table=source_table,
+        source_fields=source_fields,
+        target_table=target_table,
+        target_fields=target_fields,
+    )
     create = (
         f"CREATE TABLE IF NOT EXISTS {qualified} ({', '.join([*column_defs, *keys])})"
     )
@@ -535,6 +590,15 @@ def _edge_key_columns(schema: Schema | None, edge: Edge) -> list[str]:
     if schema is None:
         return []
     return relationship_merge_properties(edge, DBType.POSTGRES)
+
+
+def edge_table_key(schema: Schema | None, edge: Edge) -> list[str]:
+    """Columns of *edge*'s unique key: its endpoint columns, then merge properties."""
+    return [
+        *edge_endpoint_columns("source", _identity_fields(schema, edge.source)),
+        *edge_endpoint_columns("target", _identity_fields(schema, edge.target)),
+        *_edge_key_columns(schema, edge),
+    ]
 
 
 def _key_text(value: Any) -> str | None:
@@ -838,6 +902,19 @@ class PostgresTargetWriteMixin:
     ) -> None:
         """Create vertex/edge tables for the schema."""
         self.report_edge_direction_support(schema)
+        self._guard_first_write(schema, recreate=recreate)
+        pg_schema = _pg_schema_name(self.config)
+        if create_namespace and not self._pg_schema_exists(pg_schema):
+            self.create_database(pg_schema)
+        self.define_schema(schema)
+        self.define_indexes(schema)
+
+    def _guard_first_write(self, schema: Schema, *, recreate: bool) -> None:
+        """Refuse a namespace holding any of *schema*'s tables, or drop them on *recreate*.
+
+        Raises:
+            SchemaExistsError: A table exists and *recreate* is off.
+        """
         pg_schema = _pg_schema_name(self.config)
         existing = {row["table_name"] for row in self.get_tables(schema_name=pg_schema)}
         expected_vertices = {
@@ -856,10 +933,6 @@ class PostgresTargetWriteMixin:
             )
         if recreate and overlap:
             self.delete_graph_structure(vertex_types=tuple(expected), delete_all=False)
-        if create_namespace and not self._pg_schema_exists(pg_schema):
-            self.create_database(pg_schema)
-        self.define_schema(schema)
-        self.define_indexes(schema)
 
     def init_db(
         self,
@@ -903,66 +976,53 @@ class PostgresTargetWriteMixin:
         self._define_vertex_tables(schema)
         self.define_edge_classes(list(schema.core_schema.edge_config.values()))
 
-    def _define_vertex_tables(self, schema: Schema) -> None:
+    def _define_vertex_tables(self, schema: Schema, *, keyed: bool = True) -> None:
+        """Create the vertex tables; without *keyed*, no primary keys."""
         pg_schema = _pg_schema_name(self.config)
         for vertex in schema.core_schema.vertex_config.vertices:
-            columns = {f.name: _pg_column_type_for_field(f) for f in vertex.properties}
-            for ident in vertex.identity:
-                columns.setdefault(ident, _PG_TEXT)
-            if not columns:
-                columns["id"] = _PG_TEXT
-            identity = vertex.identity or ["id"]
-            col_defs = [
-                sql.SQL("{} {}").format(sql.Identifier(name), sql.SQL(col_type))
-                for name, col_type in columns.items()
-            ]
-            pk = sql.SQL(", ").join(sql.Identifier(i) for i in identity)
-            create_q = sql.SQL(
-                "CREATE TABLE IF NOT EXISTS {}.{} ({}, PRIMARY KEY ({}))"
-            ).format(
-                sql.Identifier(pg_schema),
-                sql.Identifier(vertex_table_name(vertex.name)),
-                sql.SQL(", ").join(col_defs),
-                pk,
-            )
+            create, create_without_key = vertex_table_ddl(pg_schema, vertex)
             # One transaction per table: thousands of tables in one would
             # exceed the lock table (``max_locks_per_transaction``).
             with self.conn.cursor() as cursor:
-                cursor.execute(create_q)
+                cursor.execute(create if keyed else create_without_key)
             self.conn.commit()
 
-    def _create_edge_table(self, edge: Edge) -> None:
+    def _create_edge_table(self, edge: Edge, *, keyed: bool = True) -> None:
+        """Create *edge*'s table; without *keyed*, no foreign keys and no unique key."""
         pg_schema = _pg_schema_name(self.config)
         table = edge_table_name(edge.source, edge.target, edge.relation)
         schema = getattr(self, "_target_schema", None)
-        source_fields = _identity_fields(schema, edge.source)
-        target_fields = _identity_fields(schema, edge.target)
         create, create_without_keys = edge_table_ddl(
             pg_schema,
             table,
             source_table=vertex_table_name(edge.source),
-            source_fields=source_fields,
+            source_fields=_identity_fields(schema, edge.source),
             target_table=vertex_table_name(edge.target),
-            target_fields=target_fields,
+            target_fields=_identity_fields(schema, edge.target),
             properties=[
                 (field.name, _pg_column_type_for_field(field))
                 for field in edge.properties
             ],
         )
-        key = [
-            *edge_endpoint_columns("source", source_fields),
-            *edge_endpoint_columns("target", target_fields),
-            *_edge_key_columns(schema, edge),
-        ]
+        key = edge_table_key(schema, edge)
         with self.conn.cursor() as cursor:
-            try:
-                cursor.execute(create)
-            except Exception as exc:
-                logger.warning(
-                    "Edge table %s creation with FK failed: %s; creating without FK",
-                    table,
-                    exc,
-                )
+            if keyed:
+                # A failed statement aborts the transaction; the savepoint lets
+                # the fallback run in it.
+                cursor.execute("SAVEPOINT graflo_edge_table")
+                try:
+                    cursor.execute(create)
+                except Exception as exc:
+                    cursor.execute("ROLLBACK TO SAVEPOINT graflo_edge_table")
+                    logger.warning(
+                        "Edge table %s creation with FK failed: %s; creating without FK",
+                        table,
+                        exc,
+                    )
+                    cursor.execute(create_without_keys)
+                else:
+                    cursor.execute("RELEASE SAVEPOINT graflo_edge_table")
+            else:
                 cursor.execute(create_without_keys)
             _ensure_edge_comment(
                 cursor,
@@ -970,11 +1030,12 @@ class PostgresTargetWriteMixin:
                 table,
                 edge_table_comment(edge.source, edge.target, edge.relation),
             )
-            try:
-                _ensure_edge_key(cursor, pg_schema, table, key)
-            except Exception:
-                self.conn.rollback()
-                raise
+            if keyed:
+                try:
+                    _ensure_edge_key(cursor, pg_schema, table, key)
+                except Exception:
+                    self.conn.rollback()
+                    raise
         self.conn.commit()
 
     def upsert_docs_batch(

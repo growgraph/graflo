@@ -43,8 +43,8 @@ def test_an_interrupted_bulk_write_resumes_to_the_same_graph(
 
     real = GraFloBackendConnection.bulk_write_edges
 
-    def _fail(self, chunk) -> None:
-        real(self, chunk)
+    def _fail(self, schema, chunk) -> None:
+        real(self, schema, chunk)
         raise RuntimeError("connection lost")
 
     monkeypatch.setattr(GraFloBackendConnection, "bulk_write_edges", _fail)

@@ -27,7 +27,7 @@ from test.architecture.test_merge_manifests import (
     _right_customer_manifest,
 )
 
-EXAMPLE = Path(__file__).resolve().parents[2] / "examples" / "19-manifest-union"
+EXAMPLE = Path(__file__).resolve().parents[2] / "examples" / "20-manifest-union"
 
 
 def _manifest(path: Path) -> GraphManifest:

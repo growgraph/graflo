@@ -8,6 +8,7 @@ verification; a replayed chunk is merged.
 from __future__ import annotations
 
 import threading
+import time
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -49,6 +50,8 @@ class _Target:
         self.prepared = 0
         self.crash_after = crash_after
         self.drop_one = drop_one
+        self.in_flight: list[set] = []
+        self.overlaps = 0
 
     def _record(self, chunk: Any) -> None:
         with self.lock:
@@ -71,6 +74,17 @@ class _Target:
         self._record(chunk)
 
     def write_edges(self, chunk: BulkEdgeChunk) -> None:
+        ends = {
+            (side, end["id"])
+            for s, t, _ in chunk.rows
+            for side, end in ((0, s), (0, t))
+        }
+        with self.lock:
+            self.overlaps += sum(1 for other in self.in_flight if other & ends)
+            self.in_flight.append(ends)
+        time.sleep(0.01)
+        with self.lock:
+            self.in_flight.remove(ends)
         rows = self.edges.setdefault(chunk.stored_id, [])
         with self.lock:
             for row in chunk.rows:
@@ -83,19 +97,20 @@ class _Target:
 class _FakeBulkConnection:
     supports_bulk_load: ClassVar[bool] = True
     bulk_dense_ids: ClassVar[bool] = False
+    bulk_partition_edges: ClassVar[bool] = False
     target: ClassVar[_Target]
 
     def bulk_begin(self, schema, cfg, *, recreate=False, resume=False) -> BulkPlan:
         self.target.begun.append((recreate, resume))
         return BulkPlan()
 
-    def bulk_write_vertices(self, chunk: BulkVertexChunk) -> None:
+    def bulk_write_vertices(self, schema, chunk: BulkVertexChunk) -> None:
         self.target.write_vertices(chunk)
 
     def bulk_prepare_edges(self, schema) -> None:
         self.target.prepared += 1
 
-    def bulk_write_edges(self, chunk: BulkEdgeChunk) -> None:
+    def bulk_write_edges(self, schema, chunk: BulkEdgeChunk) -> None:
         self.target.write_edges(chunk)
 
     def bulk_finish(self, schema) -> BulkCounts:
@@ -105,9 +120,9 @@ class _FakeBulkConnection:
         )
 
 
-def _manager(target: _Target) -> type:
+def _manager(target: _Target, *, partition: bool = False) -> type:
     class _Conn(_FakeBulkConnection):
-        pass
+        bulk_partition_edges = partition
 
     _Conn.target = target
 
@@ -128,7 +143,7 @@ def _manager(target: _Target) -> type:
     return _Manager
 
 
-def _staged(root: Path) -> RunLedger:
+def _staged(root: Path, *, edge_buckets: int | None = None) -> RunLedger:
     ledger = open_staging(root)
     stager = Stager(
         SCHEMA, WriteContext.for_flavor(SCHEMA, DBType.GRAFLO_BACKEND), root
@@ -144,12 +159,16 @@ def _staged(root: Path) -> RunLedger:
         GraphContainer(vertices={"V": [{"id": 3, "a": "later"}]}), (0, 0, 1, 0)
     )
     ledger.mark(Phase.STAGED)
-    fold_staged(root, ledger, CFG, dense_ids=False)
+    fold_staged(root, ledger, CFG, dense_ids=False, edge_buckets=edge_buckets)
     return ledger
 
 
-def _run(root: Path, target: _Target, monkeypatch) -> BulkCounts:
-    monkeypatch.setattr("graflo.hq.bulk.run.ConnectionManager", _manager(target))
+def _run(
+    root: Path, target: _Target, monkeypatch, *, partition: bool = False
+) -> BulkCounts:
+    monkeypatch.setattr(
+        "graflo.hq.bulk.run.ConnectionManager", _manager(target, partition=partition)
+    )
     conf = GraFloBackendConfig(output_dir=root / "unused")
     return write_folded(SCHEMA, conf, root, RunLedger(root), CFG)
 
@@ -211,3 +230,54 @@ def test_a_run_stopped_while_staging_stages_again(tmp_path) -> None:
     ledger = open_staging(tmp_path)
 
     assert not (tmp_path / "stage").exists() and not ledger.has(Phase.STAGED)
+
+
+def test_edges_split_into_cells_are_written_in_rounds_that_share_no_vertex(
+    tmp_path, monkeypatch
+) -> None:
+    _staged(tmp_path, edge_buckets=CFG.parallelism)
+    target = _Target()
+
+    counts = _run(tmp_path, target, monkeypatch, partition=True)
+
+    assert counts.vertices == {"V": 7} and sum(counts.edges.values()) == 7
+    assert target.overlaps == 0
+    edge_chunks = [c for c in target.writes if c.count(":") == 2]
+    assert len(edge_chunks) == len(set(edge_chunks)) > 1
+
+
+def test_a_run_split_into_cells_resumes_and_replays_the_chunk_in_doubt(
+    tmp_path, monkeypatch
+) -> None:
+    _staged(tmp_path, edge_buckets=CFG.parallelism)
+    target = _Target(crash_after=5)
+
+    with pytest.raises(_Crash) as crashed:
+        _run(tmp_path, target, monkeypatch, partition=True)
+    counts = _run(tmp_path, target, monkeypatch, partition=True)
+
+    assert counts.vertices == {"V": 7} and sum(counts.edges.values()) == 7
+    assert target.replays == [str(crashed.value)]
+
+
+def test_a_target_that_lost_its_load_gets_every_chunk_again(
+    tmp_path, monkeypatch
+) -> None:
+    _staged(tmp_path)
+    target = _Target(crash_after=4)
+    with pytest.raises(_Crash):
+        _run(tmp_path, target, monkeypatch)
+
+    lost = _Target()
+    real = _FakeBulkConnection.bulk_begin
+
+    def _restart(self, schema, cfg, *, recreate=False, resume=False) -> BulkPlan:
+        real(self, schema, cfg, recreate=recreate, resume=resume)
+        return BulkPlan(restart=resume)
+
+    monkeypatch.setattr(_FakeBulkConnection, "bulk_begin", _restart)
+    counts = _run(tmp_path, lost, monkeypatch)
+
+    assert counts.vertices == {"V": 7} and sum(counts.edges.values()) == 7
+    assert lost.replays == [] and lost.prepared == 1
+    assert RunLedger(tmp_path).chunk(lost.writes[0]).value == "committed"

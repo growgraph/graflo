@@ -782,6 +782,7 @@ class Caster:
         from graflo.hq.bulk.ledger import Phase
         from graflo.hq.bulk.run import (
             dense_ids_for,
+            edge_buckets_for,
             fold_staged,
             open_staging,
             write_folded,
@@ -806,7 +807,13 @@ class Caster:
             finally:
                 self._stager = None
             ledger.mark(Phase.STAGED)
-        fold_staged(staging_dir, ledger, cfg, dense_ids=dense_ids_for(conn_conf))
+        fold_staged(
+            staging_dir,
+            ledger,
+            cfg,
+            dense_ids=dense_ids_for(conn_conf),
+            edge_buckets=edge_buckets_for(conn_conf, cfg),
+        )
         write_folded(
             self.schema, conn_conf, staging_dir, ledger, cfg, recreate=recreate_schema
         )

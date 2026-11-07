@@ -3,7 +3,7 @@
 The naming pass records which declaration wrote each attribute rename; the
 preview turns that, the composite relabel and each group's effective
 identity into edges and an identity block. The cases run on the derived
-identity of ``examples/19-manifest-union`` (``Asset`` and ``Device`` into
+identity of ``examples/20-manifest-union`` (``Asset`` and ``Device`` into
 ``Machine``, keyed by a derived ``match_key`` then a tagged ``local_key``)
 and on the ``merge_union`` fixtures.
 """
@@ -35,7 +35,7 @@ from test.architecture.test_naming_graph import (
     _register_manifest,
 )
 
-EXAMPLE = Path(__file__).resolve().parents[2] / "examples" / "19-manifest-union"
+EXAMPLE = Path(__file__).resolve().parents[2] / "examples" / "20-manifest-union"
 FIXTURES = Path(__file__).resolve().parents[1] / "data" / "merge_union"
 
 

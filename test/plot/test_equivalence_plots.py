@@ -35,8 +35,8 @@ from test.architecture.test_merge_manifests import (
 )
 
 ROOT = Path(__file__).resolve().parents[2] / "examples"
-UNION = ROOT / "19-manifest-union"
-ALIGNMENT = ROOT / "20-router-union-alignment"
+UNION = ROOT / "20-manifest-union"
+ALIGNMENT = ROOT / "21-router-union-alignment"
 
 
 def _preview(directory: Path, op: str) -> MergePreview:

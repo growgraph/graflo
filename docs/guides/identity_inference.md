@@ -19,7 +19,7 @@ and you know which proposals to distrust.
   because on a few records almost any column looks unique. The floor is
   `min_sample_size`.
 
-[The identity inference example (14)](../examples/identity-inference/index.md)
+[The identity inference example (15)](../examples/identity-inference/index.md)
 runs these steps on two CSV files.
 
 ## Steps

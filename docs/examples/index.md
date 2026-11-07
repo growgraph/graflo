@@ -40,41 +40,47 @@ clone of the repository. The repository has a Docker Compose setup under
 | 11 | [How do I keep database credentials out of the manifest?](connection-proxy/index.md) | PostgreSQL and ArangoDB |
 | 12 | [How do I configure several API sources from environment variables?](api-env-config/index.md) | Environment variables only; no API or database is contacted |
 
+## Bulk load
+
+| No. | Question | Needs to run |
+|---|---|---|
+| 13 | [How do I load a large graph into an empty database?](bulk-load/index.md) | Neo4j |
+
 ## File backend
 
 | No. | Question | Needs to run |
 |---|---|---|
-| 13 | [How do I try GraFlo without a database, and export a graph to files?](file-backend-export/index.md) | Nothing to write the graph to disk; Neo4j to export from, ArangoDB to move the graph into |
+| 14 | [How do I try GraFlo without a database, and export a graph to files?](file-backend-export/index.md) | Nothing to write the graph to disk; Neo4j to export from, ArangoDB to move the graph into |
 
 ## Identity
 
 | No. | Question | Needs to run |
 |---|---|---|
-| 14 | [My data has no obvious key. How do I find out what identifies a record?](identity-inference/index.md) | Nothing; the graph is written to disk |
-| 15 | [How do I link to a record when the source only knows its alternative identifier?](secondary-identities/index.md) | Nothing; the graph is written to disk |
-| 16 | [Records arrive with different identifiers filled in. How do I still get one vertex per thing?](identity-funnel/index.md) | Nothing; the graph is written to disk |
-| 17 | [Two systems describe the same customers. How do I find the columns that match them?](cross-resource-identity/index.md) | Nothing |
+| 15 | [My data has no obvious key. How do I find out what identifies a record?](identity-inference/index.md) | Nothing; the graph is written to disk |
+| 16 | [How do I link to a record when the source only knows its alternative identifier?](secondary-identities/index.md) | Nothing; the graph is written to disk |
+| 17 | [Records arrive with different identifiers filled in. How do I still get one vertex per thing?](identity-funnel/index.md) | Nothing; the graph is written to disk |
+| 18 | [Two systems describe the same customers. How do I find the columns that match them?](cross-resource-identity/index.md) | Nothing |
 
 ## Evolution
 
 [Evolving a manifest](../guides/evolving_a_manifest.md) walks through changing
-one manifest and recording the change; examples 18 and 21 go further, with
+one manifest and recording the change; examples 19 and 22 go further, with
 both directions of a relation and with two histories to reconcile.
 [Merging manifests](../concepts/schema/merging_manifests.md) explains the
-union behind examples 19 and 20.
+union behind examples 20 and 21.
 
 | No. | Question | Needs to run |
 |---|---|---|
-| 18 | [How do I get both directions of a relation without declaring every edge twice?](edge-inverses/index.md) | Nothing |
-| 19 | [Two teams modeled the same things under different names. How do I combine their manifests?](manifest-union/index.md) | Nothing |
-| 20 | [How do I combine manifests when one source decides the type per row?](router-union-alignment/index.md) | Nothing |
-| 21 | [Two people changed the same manifest. How do I merge their changes and keep the history?](version-control/index.md) | Nothing |
+| 19 | [How do I get both directions of a relation without declaring every edge twice?](edge-inverses/index.md) | Nothing |
+| 20 | [Two teams modeled the same things under different names. How do I combine their manifests?](manifest-union/index.md) | Nothing |
+| 21 | [How do I combine manifests when one source decides the type per row?](router-union-alignment/index.md) | Nothing |
+| 22 | [Two people changed the same manifest. How do I merge their changes and keep the history?](version-control/index.md) | Nothing |
 
 ## Aspects and profiles
 
 | No. | Question | Needs to run |
 |---|---|---|
-| 22 | [How do I turn a plain schema into one that tracks state and measurements over time?](lift-aspects/index.md) | Nothing |
+| 23 | [How do I turn a plain schema into one that tracks state and measurements over time?](lift-aspects/index.md) | Nothing |
 
 ## What to read next
 

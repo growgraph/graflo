@@ -71,8 +71,15 @@ starts, since an empty target has nothing to find:
 
 ## Which databases support it?
 
-A backend loads in bulk when its connection declares `supports_bulk_load`. The
-file backend does.
+A backend loads in bulk when its connection declares `supports_bulk_load`:
+
+| Backend | How it writes |
+|---|---|
+| Neo4j | Creates nodes with no lookups over parallel sessions, then builds the identity indexes. It then creates edges in rounds, where no two writers in a round touch the same node. |
+| FalkorDB | `GRAPH.BULK` into a new graph, one writer; an existing empty graph is dropped first. If a failed batch drops the graph, running again writes everything again. |
+| PostgreSQL | `COPY` into tables without keys, then primary keys, unique edge keys and validated foreign keys. |
+| TigerGraph | A loading job fed over REST++, one file per vertex type and per edge; a rejected line fails the load. |
+| File backend | Appends. |
 
 ## Tuning
 

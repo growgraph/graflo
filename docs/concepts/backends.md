@@ -27,7 +27,7 @@ flowchart TD
     SPAN_LEAF["<b>NebulaGraph</b><br/>no parallel edges or<br/>list properties"]
     FULLTEXT_LEAF["<b>ArangoDB</b><br/>free edition: 100 GiB,<br/>no commercial production"]
     TYPES_LEAF["<b>TigerGraph</b> or <b>NebulaGraph</b><br/>TigerGraph free edition:<br/>one server, 300 GB"]
-    DEFAULT_LEAF["<b>Neo4j</b><br/>one graph per server;<br/>free edition: no cluster"]
+    DEFAULT_LEAF["<b>Neo4j</b><br/>free edition: one graph<br/>per server, no cluster"]
     GUARD_LEAF["<b>FalkorDB</b><br/>all data in memory;<br/>read the licence file"]
     REPLICA_LEAF["<b>Memgraph</b><br/>one graph per server;<br/>in memory by default; BSL 1.1"]
 
@@ -54,8 +54,9 @@ flowchart TD
   index and no query language, every read scans the records it reads, and it
   cannot delete. Use it to save or move a graph and in tests, and load the graph
   into a database to use it.
-- **One graph per server:** GraFlo always uses the default database of a Neo4j or
-  Memgraph server, on every edition, so one server holds one schema. See
+- **One graph per server:** Neo4j Community and Memgraph hold one database for
+  your data, so one server holds one schema. Neo4j Enterprise holds one per
+  namespace. See
   [Neo4j and Memgraph](../guides/graph_namespace_and_schema.md#neo4j-and-memgraph).
 - **Memory:** FalkorDB [keeps its data in memory](https://docs.falkordb.com/design/),
   and Memgraph [does by default](https://memgraph.com/docs/fundamentals/storage-memory-usage);
@@ -126,12 +127,12 @@ cannot build. `no` means the target does not have the feature.
 | Backend | Read back whole | Schema introspection | Migration DDL | Delete | Delete a scope | Read guard | Union merge | Bulk load |
 |---|---|---|---|---|---|---|---|---|
 | ArangoDB | yes | sampled | yes | yes | no | no | no | no |
-| Neo4j | yes | sampled | yes | yes | yes | yes | yes | no |
+| Neo4j | yes | sampled | yes | yes | yes | yes | yes | yes |
 | Memgraph | no | sampled | no | yes | no | no | no | no |
-| FalkorDB | yes | sampled | no | yes | yes | yes | yes | no |
-| TigerGraph | no | catalog | no | yes | no | no | no | no |
+| FalkorDB | yes | sampled | no | yes | yes | yes | yes | yes |
+| TigerGraph | no | catalog | no | yes | no | no | no | yes |
 | NebulaGraph | no | sampled | no | yes | no | no | no | no |
-| PostgreSQL | yes | catalog | no | yes | no | no | no | no |
+| PostgreSQL | yes | catalog | no | yes | no | no | no | yes |
 | GraFlo file backend | yes | catalog | no | no | no | yes | yes | yes |
 
 - **Read back whole:** the target can be the source of `export_graph` and
@@ -162,8 +163,8 @@ change, so read the linked page and the licence before you rely on a row.
 | NebulaGraph | Community Edition, [Apache-2.0](https://docs.nebula-graph.io/3.8.0/1.introduction/1.what-is-nebula-graph/) | none in the licence | [yes](https://docs.nebula-graph.io/3.8.0/4.deployment-and-installation/2.compile-and-install-nebula-graph/deploy-nebula-graph-cluster/) | [yes, graph spaces](https://docs.nebula-graph.io/3.8.0/3.ngql-guide/9.space-statements/1.create-space/) | 3.8.0 |
 | PostgreSQL | [PostgreSQL License](https://www.postgresql.org/about/licence/) | none in the licence | [streaming replication](https://www.postgresql.org/docs/current/warm-standby.html) | [yes](https://www.postgresql.org/docs/current/managing-databases.html) | 18.6 |
 
-The `Multiple databases` column is what the server allows. On Neo4j and Memgraph,
-GraFlo does not use more than one, whatever the edition allows.
+The `Multiple databases` column is what the server allows. On Memgraph, GraFlo
+does not use more than one, whatever the edition allows.
 
 **Missing identity fields:** on [Neo4j](https://neo4j.com/docs/cypher-manual/current/schema/constraints/create-constraints/)
 and [FalkorDB](https://docs.falkordb.com/commands/graph.constraint-create.html),

@@ -415,14 +415,16 @@ def test_the_edge_table_is_keyed_on_the_schema_merge_properties() -> None:
 
     PostgresConnection._create_edge_table(cast(Any, pg), _edge(schema))
 
-    assert pg.conn.executed[1].startswith("SELECT obj_description(")
-    assert pg.conn.executed[2:5] == [
+    assert pg.conn.executed[0] == "SAVEPOINT graflo_edge_table"
+    assert pg.conn.executed[2] == "RELEASE SAVEPOINT graflo_edge_table"
+    assert pg.conn.executed[3].startswith("SELECT obj_description(")
+    assert pg.conn.executed[4:7] == [
         "SAVEPOINT graflo_edge_comment",
         f'COMMENT ON TABLE "g"."{EDGE_TABLE}" IS %s',
         "RELEASE SAVEPOINT graflo_edge_comment",
     ]
-    assert pg.conn.executed[5].startswith("SELECT to_regclass(")
-    assert pg.conn.executed[6:] == [
+    assert pg.conn.executed[7].startswith("SELECT to_regclass(")
+    assert pg.conn.executed[8:] == [
         f'LOCK TABLE "g"."{EDGE_TABLE}" IN SHARE ROW EXCLUSIVE MODE',
         f'DROP INDEX IF EXISTS "g"."{EDGE_TABLE}_edge_uniq"',
         (

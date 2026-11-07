@@ -5,7 +5,9 @@ exactly once and a writer never looks for an existing element. Rows are in the
 names the target stores. The order of calls is: ``bulk_begin``, every vertex
 chunk, ``bulk_prepare_edges``, every edge chunk, ``bulk_finish``. Chunks of one
 phase may be written concurrently, each through its own connection, so a
-writer keeps no state between calls beyond what the target holds.
+writer keeps no state between calls beyond what the target holds. A writer
+that declares ``bulk_partition_edges`` gets its edges in rounds: the chunks
+written at once share no endpoint vertex.
 
 A chunk with ``replay`` set may already be in the target (its commit was not
 recorded); the writer must make writing it again harmless.
@@ -28,6 +30,8 @@ class BulkPlan(BaseModel):
 
     max_parallel: int | None = None
     """Chunks the target takes at once; the configured parallelism when ``None``."""
+    restart: bool = False
+    """On resume: the target lost every chunk written before, so all are written again."""
 
 
 class BulkVertexChunk(BaseModel):
@@ -52,6 +56,8 @@ class BulkEdgeChunk(BaseModel):
     match_keys_source: list[str]
     match_keys_target: list[str]
     collection_name: str | None
+    merge_properties: list[str] = []
+    """Edge properties that, with the endpoints, tell parallel edges apart."""
     rows: list[tuple[dict[str, Any], dict[str, Any], dict[str, Any]]]
     dense: list[tuple[int, int]] | None = None
     """``(source, target)`` dense ids, when the writer declares ``bulk_dense_ids``."""
