@@ -17,6 +17,7 @@ from graflo.onto import (
 )
 
 from .resource import ResourceConfig
+from .sync import sync_errors
 from .transform import ProtoTransform
 
 if TYPE_CHECKING:
@@ -120,6 +121,14 @@ class IngestionModel(ConfigBaseModel):
                 target_db_flavor=target_db_flavor,
             )
         object.__setattr__(self, "_runtimes", runtimes)
+        if any(config.sync is not None for config in self.resources):
+            errors = sync_errors(
+                self.resources,
+                {name: rt.collect_vertex_names() for name, rt in runtimes.items()},
+                core_schema,
+            )
+            if errors:
+                raise ValueError("sync ownership: " + "; ".join(errors))
 
     def _rebuild_config_state(self) -> None:
         """Rebuild transform and resource lookup maps."""

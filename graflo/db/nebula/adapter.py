@@ -63,6 +63,17 @@ class NebulaResultSet:
         return list(self._raw.as_primitive_by_row())
 
 
+#: Characters of a failed statement quoted in its error; a bulk insert runs to
+#: megabytes.
+_STATEMENT_EXCERPT = 500
+
+
+def _excerpt(statement: str) -> str:
+    if len(statement) <= _STATEMENT_EXCERPT:
+        return statement
+    return f"{statement[:_STATEMENT_EXCERPT]}… ({len(statement)} characters)"
+
+
 class NebulaClientAdapter(abc.ABC):
     """Abstract adapter that hides driver differences."""
 
@@ -116,7 +127,8 @@ class NebulaV3Adapter(NebulaClientAdapter):
         rs = NebulaResultSet(result, is_v3=True)
         if not rs.is_succeeded():
             raise RuntimeError(
-                f"nGQL execution failed: {rs.error_msg()}\nStatement: {statement}"
+                f"nGQL execution failed: {rs.error_msg()}\n"
+                f"Statement: {_excerpt(statement)}"
             )
         return rs
 

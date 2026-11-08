@@ -1053,6 +1053,10 @@
                 {
                     "label": "fieldReserved",
                     "range": "boolean"
+                },
+                {
+                    "label": "fieldSetBy",
+                    "range": "string"
                 }
             ],
             "group": "schema",
@@ -1655,5 +1659,5 @@
         }
     ],
     "universalRoot": "https://ontology.growgraph.dev/graflo/GrafloArtifact",
-    "version": "1.10.0"
+    "version": "1.11.0"
 }

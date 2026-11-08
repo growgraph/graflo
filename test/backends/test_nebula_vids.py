@@ -5,8 +5,8 @@ from __future__ import annotations
 from typing import Any, cast
 
 from graflo.architecture.graph_types import EdgeDirection
+from graflo.connections.onto import NebulaConfig
 from graflo.db.nebula.conn import NebulaConnection
-from graflo.db.nebula.query import insert_vertices_ngql
 from graflo.db.nebula.util import make_vid, vertex_key
 
 
@@ -21,9 +21,11 @@ def test_the_address_leaves_the_tag_out() -> None:
 
 
 def test_vertices_are_inserted_under_tagged_vids() -> None:
-    statement = insert_vertices_ngql("person", [{"id": 1}], ["id"], ["id"])
+    fake = _Nebula()
 
-    assert '"person::1":(1)' in statement
+    NebulaConnection.upsert_docs_batch(cast(Any, fake), [{"id": 1}], "person", ["id"])
+
+    assert '"person::1":(1)' in fake.statements[0]
 
 
 class _Rows:
@@ -35,9 +37,17 @@ class _Rows:
 
 
 class _Nebula:
+    config = NebulaConfig()
+
     def __init__(self, rows: list[dict[str, Any]] | None = None) -> None:
         self.statements: list[str] = []
         self._rows = rows or []
+
+    def _tag_field_names(self, tag: str) -> list[str]:
+        return ["id"]
+
+    def _edge_field_names(self, edge_type: str) -> list[str]:
+        return []
 
     def _execute(self, statement: str) -> _Rows:
         self.statements.append(statement)
@@ -97,7 +107,7 @@ def test_vertices_are_removed_with_their_edges() -> None:
     ]
 
 
-def test_edges_are_removed_between_tagged_vids() -> None:
+def test_edges_are_removed_between_tagged_vids_at_every_rank() -> None:
     fake = _Nebula()
 
     NebulaConnection.delete_edges(
@@ -110,4 +120,10 @@ def test_edges_are_removed_between_tagged_vids() -> None:
         ("id",),
     )
 
-    assert fake.statements == ['DELETE EDGE `works_at` "person::1"->"org::9"']
+    assert fake.statements == [
+        (
+            'GO FROM "person::1" OVER `works_at` WHERE dst(edge) IN ["org::9"] '
+            "YIELD src(edge) AS s, dst(edge) AS d, rank(edge) AS r "
+            "| DELETE EDGE `works_at` $-.s -> $-.d @ $-.r"
+        )
+    ]

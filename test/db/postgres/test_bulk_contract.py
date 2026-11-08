@@ -6,11 +6,9 @@ without the union.
 
 from __future__ import annotations
 
-import copy
 import json
 import uuid
 from collections.abc import Callable, Iterator
-from typing import Any
 
 import pytest
 
@@ -22,18 +20,9 @@ from test.bulk.contract import assert_bulk_equals_upsert, export, ingest
 from test.db.backends import config_for
 
 
-def _postgres_manifest() -> dict[str, Any]:
-    manifest = copy.deepcopy(contract.MANIFEST)
-    for vertex in manifest["schema"]["core_schema"]["vertex_config"]["vertices"]:
-        for prop in vertex["properties"]:
-            if isinstance(prop, dict):
-                prop.pop("merge", None)
-    return manifest
-
-
 @pytest.fixture
 def postgres_contract(monkeypatch) -> None:
-    monkeypatch.setattr(contract, "MANIFEST", _postgres_manifest())
+    monkeypatch.setattr(contract, "MANIFEST", contract.without_union(contract.MANIFEST))
 
 
 @pytest.fixture

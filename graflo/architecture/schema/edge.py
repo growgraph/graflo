@@ -263,6 +263,12 @@ class Edge(ConfigBaseModel):
                 f"{owner}: match and derived are vertex field declarations, "
                 f"found on {declared}"
             )
+        synced = [f.name for f in self.properties if f.set_by == "sync"]
+        if synced:
+            # A sync hash describes an owner record, which is a vertex.
+            raise ValueError(
+                f"{owner}: set_by 'sync' is a vertex field, found on {synced}"
+            )
         object.__setattr__(
             self,
             "properties",

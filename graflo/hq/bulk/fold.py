@@ -11,7 +11,8 @@ read-side fold applies the same ones):
 
 Rows whose key occurs once pass through; only repeated keys are exploded into
 one row per field and reduced. Edges whose endpoint is not a folded vertex are
-rejected with their reason. DuckDB spills to the staging directory under the
+rejected with their reason, as are edges owned through an ``owner_field`` whose
+owner is not a folded vertex. DuckDB spills to the staging directory under the
 memory limit it is given.
 
 Output, in the staging directory: ``folded/<slot>.jsonl.zst`` sorted by key
@@ -195,42 +196,53 @@ def _fold_edges(
         "key": "VARCHAR",
         "skey": "VARCHAR",
         "tkey": "VARCHAR",
+        "okey": "VARCHAR",
         "source": "JSON",
         "target": "JSON",
         "doc": "JSON",
     }
     staged = _load(con, root, slot, columns)
-    _fold_table(con, ["source", "target", "doc"], run.union, extra=["skey", "tkey"])
+    _fold_table(
+        con, ["source", "target", "doc"], run.union, extra=["skey", "tkey", "okey"]
+    )
     assert run.edge_id is not None
     source_type, target_type, _ = run.edge_id
     src = key_tables.get(source_type)
     tgt = key_tables.get(target_type)
+    own = key_tables.get(run.owner) if run.owner_side == "field" and run.owner else None
     src_join = f"LEFT JOIN {src} s ON s.key = f.skey" if src else ""
     tgt_join = f"LEFT JOIN {tgt} t ON t.key = f.tkey" if tgt else ""
+    own_join = f"LEFT JOIN {own} o ON o.key = f.okey" if own else ""
     src_found = "s.key IS NOT NULL" if src else "false"
     tgt_found = "t.key IS NOT NULL" if tgt else "false"
+    own_found = (
+        "o.key IS NOT NULL" if own else "false" if run.owner_side == "field" else "true"
+    )
     dense = (
         ", s.dense AS sdense, t.dense AS tdense" if dense_ids and src and tgt else ""
     )
     con.execute(
         f"""CREATE OR REPLACE TABLE checked AS
-        SELECT f.*, {src_found} AS has_source, {tgt_found} AS has_target{dense}
-        FROM folded f {src_join} {tgt_join}"""
+        SELECT f.*, {src_found} AS has_source, {tgt_found} AS has_target,
+               {own_found} AS has_owner{dense}
+        FROM folded f {src_join} {tgt_join} {own_join}"""
     )
     _copy(
         con,
         """SELECT
             CASE WHEN NOT has_source AND NOT has_target THEN 'missing source and target'
                  WHEN NOT has_source THEN 'missing source'
-                 ELSE 'missing target' END AS reason,
+                 WHEN NOT has_target THEN 'missing target'
+                 ELSE 'missing owner' END AS reason,
             key, source, target, doc
-        FROM checked WHERE NOT (has_source AND has_target) ORDER BY key""",
+        FROM checked WHERE NOT (has_source AND has_target AND has_owner)
+        ORDER BY key""",
         root / REJECTS / f"{slot}.endpoints.jsonl.zst",
     )
-    kept = "key, source, target, doc" + (", sdense, tdense" if dense else "")
+    kept = "key, okey, source, target, doc" + (", sdense, tdense" if dense else "")
     con.execute(
         f"CREATE OR REPLACE TABLE kept AS SELECT {kept}, skey, tkey FROM checked "
-        "WHERE has_source AND has_target"
+        "WHERE has_source AND has_target AND has_owner"
     )
     folded = _count(con, "kept")
     if edge_buckets:

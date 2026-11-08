@@ -126,6 +126,7 @@ nav:
     -   Graph namespace and schema: guides/graph_namespace_and_schema.md
     -   Graph export and replay: guides/graph_export_and_replay.md
     -   Bulk load: guides/bulk_load.md
+    -   Record sync: guides/record_sync.md
     -   API env wiring: guides/api_env_wiring.md
     -   Finding a key for your data: guides/identity_inference.md
     -   Evolving a manifest: guides/evolving_a_manifest.md

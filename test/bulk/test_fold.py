@@ -262,3 +262,12 @@ def test_keys_compare_as_the_targets_compare_values() -> None:
         typed_key([None])
     with pytest.raises(IdentityKeyError):
         typed_key([""])
+    with pytest.raises(IdentityKeyError):
+        typed_key([None, ""])
+
+
+def test_a_composite_identity_keys_on_the_members_it_has() -> None:
+    assert typed_key(["x", None]) == '[["s","x"],null]'
+    assert typed_key(["x", None]) != typed_key(["x", ""])
+    with pytest.raises(IdentityKeyError):
+        typed_key(["x", float("nan")])

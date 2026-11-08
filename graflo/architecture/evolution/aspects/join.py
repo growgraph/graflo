@@ -148,6 +148,8 @@ def _join_fields(
             )
         if present.merge != field.merge:
             conflicts.append(f"{at} merges by {present.merge!r}, not {field.merge!r}")
+        if present.set_by != field.set_by:
+            conflicts.append(f"{at} is set by {present.set_by!r}, not {field.set_by!r}")
         for attribute in ("match", "derived"):
             have, wanted = getattr(present, attribute), getattr(field, attribute)
             if wanted is not None and have != wanted:

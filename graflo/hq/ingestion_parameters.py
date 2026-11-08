@@ -103,14 +103,16 @@ class IngestionParams(BaseModel):
             "``upsert`` merges each batch into the target. ``bulk`` loads an empty "
             "target: the whole input is staged in ``staging_dir``, folded by "
             "identity, then written once (needs the ``bulk`` extra). ``sync`` "
-            "replaces what changed records own in a loaded target."
+            "stages and folds the same way, then replaces what changed owner "
+            "records wrote in a loaded target (Neo4j, FalkorDB)."
         ),
     )
     staging_dir: Path | None = Field(
         default=None,
         description=(
-            "Where a bulk run keeps its staged and folded rows and its ledger; "
-            "required for ``bulk``. Giving it again resumes a stopped run."
+            "Where a bulk or sync run keeps its staged and folded rows and its "
+            "ledger; required for ``bulk`` and ``sync``. Giving it again resumes a "
+            "stopped run."
         ),
     )
     clear_data: bool = False
@@ -266,21 +268,23 @@ class IngestionParams(BaseModel):
     )
 
     @model_validator(mode="after")
-    def _staging_only_for_bulk(self) -> IngestionParams:
-        if self.mode == "bulk" and self.staging_dir is None:
-            raise ValueError("mode 'bulk' needs a staging_dir")
-        if self.mode != "bulk" and self.staging_dir is not None:
-            raise ValueError("staging_dir is only used by mode 'bulk'")
-        if self.mode == "bulk":
-            # A bulk run defines the schema itself, into an empty target.
+    def _staging_only_for_bulk_and_sync(self) -> IngestionParams:
+        staged = self.mode in ("bulk", "sync")
+        if staged and self.staging_dir is None:
+            raise ValueError(f"mode {self.mode!r} needs a staging_dir")
+        if not staged and self.staging_dir is not None:
+            raise ValueError("staging_dir is only used by modes 'bulk' and 'sync'")
+        if staged:
             unusable = [
                 name
                 for name in ("clear_data", "dry", "init_only")
                 if getattr(self, name)
             ]
             if unusable:
-                raise ValueError(
-                    f"mode 'bulk' does not take {unusable}; to replace an existing "
-                    "schema, ingest with recreate_schema"
+                hint = (
+                    "; to replace an existing schema, ingest with recreate_schema"
+                    if self.mode == "bulk"
+                    else ""
                 )
+                raise ValueError(f"mode {self.mode!r} does not take {unusable}{hint}")
         return self

@@ -11,17 +11,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Bulk mode: `IngestionParams(mode="bulk", staging_dir=...)` / `ingest --bulk --staging-dir`
   stages the whole input, folds it by identity in DuckDB and writes it once into an empty
-  target; resumable. Needs the `bulk` extra. Neo4j, FalkorDB, PostgreSQL, TigerGraph and the
-  file backend support it.
+  target; resumable. Needs the `bulk` extra. ArangoDB, Neo4j, FalkorDB, Memgraph, NebulaGraph,
+  PostgreSQL, TigerGraph and the file backend support it. A `merge: union` field is refused where
+  the target's upsert refuses one.
 - `Connection.bulk_begin` … `bulk_finish`, `supports_bulk_load`, `DBConfig.bulk`.
 - Bulk load on Neo4j: nodes created without lookups over parallel sessions, then identity
   indexes, then edges in rounds of writers that share no node.
 - Bulk load on FalkorDB: `GRAPH.BULK` into a new graph; an existing empty graph is dropped first.
+- Bulk load on Memgraph: identity indexes first, nodes created without lookups, edges in rounds of
+  writers that share no node; conflicting transactions are retried.
 - Bulk load on PostgreSQL: `COPY` into keyless tables, then primary keys, unique edge keys and
   validated foreign keys.
 - Bulk load on TigerGraph: a loading job fed over REST++ (`POST /ddl`), one file per vertex type
   and per edge; rejected lines fail the load. Nothing is read from the server's disk.
-- `fetch_all_docs` / `fetch_all_edges` on TigerGraph.
+- Bulk load on ArangoDB: JSON Lines through `/_api/import`, keys and `_from`/`_to` computed on the
+  client, identity indexes built after the load.
+- Bulk load on NebulaGraph: `INSERT` batches kept under the statement limit, indexes built after
+  the load, counts read from a STATS job.
+- `fetch_all_docs` / `fetch_all_edges` on TigerGraph, NebulaGraph and Memgraph.
+- `NebulaConfig.vid_string_length`, `storage_disks` and `max_statement_bytes`.
+- `ResourceConfig.sync`: the vertex type (`owns`) and the edges a resource's records replace in
+  sync mode; ownership is checked when the ingestion model initialises.
+- Sync mode: `IngestionParams(mode="sync", staging_dir=...)` / `ingest --sync` stages and folds
+  the input as bulk does, then rewrites only the owner records whose `sync_hash` changed: their
+  properties and the edges they own (Neo4j, FalkorDB). A bulk load writes the hashes; resumable.
+- `Connection.sync_begin` / `sync_ensure_vertices` / `sync_write_owners`, `supports_sync`.
+- `Field.set_by: stamp | sync` and the `sync` aspect (`graflo lift --aspect sync`), which adds a
+  reserved `sync_hash` to every owned type; an upsert writes it as null. Ontology 1.11.0 adds
+  `gf:fieldSetBy`.
 
 ### Removed
 
@@ -38,11 +55,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `graflo.hq.write_prepare`: the connection-free steps of a write; `DBWriter` runs them before
   taking a connection.
+- ArangoDB `_key` is derived from the whole identity: a single-field identity's value when it is a
+  valid key, otherwise a SHA-256 digest (a composite identity may lack members); an edge's from its
+  endpoints, relation and identity fields. Data written by an earlier version must be reloaded
+  before writing to it again.
+- ArangoDB edges are written by `_key` (`overwriteMode: "update"`) without looking up their
+  endpoints, and writes no longer take `exclusive`.
+- NebulaGraph spaces graflo creates get 20 partitions per storage disk, 3 replicas when at least 3
+  storage hosts are online, and a `FIXED_STRING` VID sized to the schema's identities;
+  `NebulaConfig.vid_type`, `partition_num` and `replica_factor` are derived when unset.
+- NebulaGraph writes a vertex or edge that carries every field with `INSERT` instead of `UPSERT`.
+  An edge whose identity has fields besides its endpoints is stored at a rank derived from them;
+  `delete_edges` removes every rank.
 
 ### Fixed
 
-- ArangoDB and PostgreSQL edge writes update an existing edge's non-identity properties; ArangoDB
-  no longer writes a second copy of an edge that declares no `identities`.
+- ArangoDB, PostgreSQL and NebulaGraph edge writes update an existing edge's non-identity
+  properties; ArangoDB no longer writes a second copy of an edge that declares no `identities`.
+- NebulaGraph no longer merges edges that differ only in an identity field into one.
+- A NebulaGraph edge type shared by several edges is created with all of their properties.
 - In-batch fusion of `merge: union` fields drops nulls and keeps earlier members, as the
   backends do.
 - The cast drops an edge whose endpoint has no key even when its other endpoint is blank or

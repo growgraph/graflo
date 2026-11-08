@@ -64,6 +64,7 @@
             "class_name": "Person",
             "docs": [
                 {
+                    "_key": "p9",
                     "name": "Bo",
                     "pid": "p9",
                     "zones": [
@@ -140,6 +141,7 @@
             "class_name": "Device",
             "docs": [
                 {
+                    "_key": "6f1c2a3b-0000-4000-8000-0000000000d1",
                     "model": "X1",
                     "uid": "6f1c2a3b-0000-4000-8000-0000000000d1"
                 }
@@ -213,6 +215,7 @@
             "class_name": "Person",
             "docs": [
                 {
+                    "_key": "p1",
                     "name": "Ann B.",
                     "pid": "p1",
                     "zones": [

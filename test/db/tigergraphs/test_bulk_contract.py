@@ -1,4 +1,8 @@
-"""The bulk contract on a live TigerGraph, resume, and edge types sharing a relation."""
+"""The bulk contract on a live TigerGraph, resume, and edge types sharing a relation.
+
+TigerGraph's upsert writes no ``merge: union`` field, so the contract manifest
+is run without the union.
+"""
 
 from __future__ import annotations
 
@@ -20,6 +24,7 @@ from graflo.db.tigergraph.conn import TigerGraphConnection
 from graflo.hq.graph_engine import GraphEngine
 from graflo.hq.ingestion_parameters import IngestionParams
 from graflo.hq.write_prepare import WriteContext, project_edges
+from test.bulk import contract
 from test.bulk.contract import assert_bulk_equals_upsert, export, ingest
 from test.db.backends import config_for
 from test.db.tigergraphs.conftest import (
@@ -29,6 +34,11 @@ from test.db.tigergraphs.conftest import (
 
 # Every test here needs a live TigerGraph, whose schema DDL runs 15-40s per graph.
 pytestmark = pytest.mark.tigergraph
+
+
+@pytest.fixture(autouse=True)
+def tigergraph_contract(monkeypatch) -> None:
+    monkeypatch.setattr(contract, "MANIFEST", contract.without_union(contract.MANIFEST))
 
 
 @pytest.fixture

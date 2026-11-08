@@ -394,6 +394,8 @@ class ManifestRdfSerializer:
             add_literal(graph, field_uri, ns.fieldReserved, True)
         if field_obj.merge != "replace":
             add_literal(graph, field_uri, ns.fieldMergeMode, field_obj.merge)
+        if field_obj.set_by != "stamp":
+            add_literal(graph, field_uri, ns.fieldSetBy, field_obj.set_by)
         self._emit_match(graph, field_uri, field_obj)
         if field_obj.derived is not None:
             add_literal(graph, field_uri, ns.derivedSource, field_obj.derived.source)

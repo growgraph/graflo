@@ -73,6 +73,7 @@ from graflo.db.resolve import (
     distinct_keys,
     index_matches_by_doc,
 )
+from graflo.db.sync import SyncEdgeType, SyncOwnerChunk, SyncWritten
 from graflo.filter.onto import FilterExpression, conjoin, parse_filter_expression
 from graflo.onto import (
     DB_TYPE_TO_EXPRESSION_FLAVOR,
@@ -158,6 +159,7 @@ class ConnectionCapability(Enum):
     SCOPED_DELETE = "supports_scoped_delete"
     MEMBERSHIP_READ = "supports_membership_read"
     BULK_LOAD = "supports_bulk_load"
+    SYNC = "supports_sync"
 
     @property
     def label(self) -> str:
@@ -173,6 +175,7 @@ class ConnectionCapability(Enum):
             ConnectionCapability.SCOPED_DELETE: "deleting the elements of a scope",
             ConnectionCapability.MEMBERSHIP_READ: "reading a list field by ANY_IN",
             ConnectionCapability.BULK_LOAD: "bulk loading an empty target",
+            ConnectionCapability.SYNC: "record sync into a loaded target",
         }[self]
 
 
@@ -302,6 +305,8 @@ class Connection(abc.ABC):
     #: written at once must share no endpoint: each edge type is then written in
     #: rounds of chunks split by a hash of their endpoints' keys.
     bulk_partition_edges: ClassVar[bool] = False
+    #: Implements :mod:`graflo.db.sync`: replacing what changed owner records wrote.
+    supports_sync: ClassVar[bool] = False
 
     def __init__(self):
         """Initialize the connection."""
@@ -462,6 +467,24 @@ class Connection(abc.ABC):
     def bulk_finish(self, schema: Schema) -> BulkCounts:
         """Build what the load deferred; return the elements the target holds."""
         raise NotImplementedError(f"{type(self).__name__} has no bulk writer")
+
+    # -- record sync (graflo.db.sync) -------------------------------------------
+
+    def sync_begin(self, schema: Schema, edge_types: list[SyncEdgeType]) -> None:
+        """Index every vertex identity, and the owner property of *edge_types*.
+
+        Raises:
+            NotImplementedError: The backend has no sync writer.
+        """
+        raise NotImplementedError(f"{type(self).__name__} has no sync writer")
+
+    def sync_ensure_vertices(self, schema: Schema, chunk: BulkVertexChunk) -> None:
+        """Create each vertex whose key is absent, from its row; leave the others."""
+        raise NotImplementedError(f"{type(self).__name__} has no sync writer")
+
+    def sync_write_owners(self, schema: Schema, chunk: SyncOwnerChunk) -> SyncWritten:
+        """Rewrite the chunk's owners whose stored hash differs, as one unit."""
+        raise NotImplementedError(f"{type(self).__name__} has no sync writer")
 
     @property
     def _reported_edge_directions(self) -> set["EdgeId"]:

@@ -5,8 +5,15 @@ from __future__ import annotations
 import copy
 from typing import Any
 
+import pytest
+
+from graflo.architecture.contract.bindings import Bindings
 from graflo.architecture.contract.manifest import GraphManifest
+from graflo.connections.onto import DBConfig, Neo4jConfig, PostgresConfig
 from graflo.hq.bulk.refusals import bulk_refusals
+from graflo.hq.caster import Caster
+from graflo.hq.ingestion_parameters import IngestionParams
+from test.bulk import contract
 from test.hq.test_write_goldens import MANIFEST
 
 
@@ -48,4 +55,30 @@ def test_only_the_named_resources_are_checked() -> None:
             manifest.require_schema(), manifest.require_ingestion_model(), ["topics"]
         )
         == []
+    )
+
+
+def _validate_bulk(conf: DBConfig, config: dict[str, Any]) -> None:
+    manifest = GraphManifest.from_config(copy.deepcopy(config))
+    manifest.finish_init()
+    params = IngestionParams(mode="bulk", staging_dir="unused")
+    Caster(
+        manifest.require_schema(),
+        manifest.require_ingestion_model(),
+        ingestion_params=params,
+    ).validate_run(conf, Bindings(), params)
+
+
+def test_a_union_field_is_refused_where_an_upsert_could_not_extend_it() -> None:
+    with pytest.raises(ValueError, match=r"union fields \['Person.tags'\]"):
+        _validate_bulk(
+            PostgresConfig(uri="postgresql://localhost/x"), contract.MANIFEST
+        )
+
+
+def test_a_union_field_is_loaded_where_an_upsert_writes_one() -> None:
+    _validate_bulk(Neo4jConfig(uri="bolt://localhost:7687"), contract.MANIFEST)
+    _validate_bulk(
+        PostgresConfig(uri="postgresql://localhost/x"),
+        contract.without_union(contract.MANIFEST),
     )

@@ -7,8 +7,8 @@
 @prefix prov: <http://www.w3.org/ns/prov#> .
 
 <https://ontology.growgraph.dev/graflo> a owl:Ontology ;
-    owl:versionIRI <https://ontology.growgraph.dev/graflo/1.10.0> ;
-    owl:versionInfo "1.10.0" ;
+    owl:versionIRI <https://ontology.growgraph.dev/graflo/1.11.0> ;
+    owl:versionInfo "1.11.0" ;
     rdfs:label "GraFlo Ontology"@en ;
     skos:prefLabel "GraFlo Ontology"@en ;
     rdfs:comment "OWL vocabulary describing GraFlo GraphManifest contracts: schema, ingestion, bindings, transforms, and pipeline actors."@en .
@@ -602,6 +602,11 @@ gf:fieldMergeMode a owl:DatatypeProperty ;
     rdfs:domain gf:Field ;
     rdfs:range xsd:string ;
     rdfs:comment "How an upsert combines a value with the stored one: `replace` or `union` (LIST fields). Absent means `replace`."@en .
+
+gf:fieldSetBy a owl:DatatypeProperty ;
+    rdfs:domain gf:Field ;
+    rdfs:range xsd:string ;
+    rdfs:comment "Who writes a reserved field: `stamp`, the writer from the caller's stamp, or `sync`, the bulk and sync writers from the record's sync hash. Absent means `stamp`."@en .
 
 gf:FieldMatch a owl:Class ;
     rdfs:label "Field match"@en ;

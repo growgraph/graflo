@@ -5,6 +5,7 @@ Type mapping, filter rendering, value escaping, and schema-propagation helpers.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import time
@@ -12,7 +13,7 @@ from collections.abc import Sequence
 from datetime import date, datetime
 from datetime import time as dt_time
 from decimal import Decimal
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from graflo.architecture.schema.vertex import Field, FieldType, is_list_field_type
 from graflo.db.field_type_support import (
@@ -22,6 +23,9 @@ from graflo.db.field_type_support import (
 from graflo.db.nebula.adapter import NebulaClientAdapter
 from graflo.filter.onto import FilterExpression
 from graflo.onto import DBType, ExpressionFlavor
+
+if TYPE_CHECKING:
+    from graflo.architecture.schema import Schema
 
 logger = logging.getLogger(__name__)
 
@@ -171,6 +175,62 @@ def tag_vid(tag: str, key: str) -> str:
 def make_vid(tag: str, doc: dict[str, Any], match_keys: Sequence[str]) -> str:
     """The VID of *doc* as a vertex of *tag*, keyed on *match_keys*."""
     return tag_vid(tag, vertex_key(doc, match_keys))
+
+
+def edge_rank(props: dict[str, Any], identity_fields: Sequence[str]) -> int | None:
+    """The rank of an edge whose identity holds *identity_fields* besides its endpoints.
+
+    NebulaGraph tells edges of one type between the same vertices apart by
+    rank alone, so such an edge takes a signed 64-bit digest of those values,
+    rendered as :func:`vertex_key` renders identities. ``None`` (rank 0) when
+    there are none.
+    """
+    if not identity_fields:
+        return None
+    digest = hashlib.sha256(vertex_key(props, identity_fields).encode()).digest()
+    return int.from_bytes(digest[:8], "big", signed=True)
+
+
+#: Longest ``str()`` of a value of each type that bounds it: int64 and uint64
+#: with sign, a float's repr, ``False``, a canonical UUID, an ISO datetime with
+#: microseconds and offset (rounded up).
+_VALUE_LENGTH: dict[FieldType, int] = {
+    FieldType.INT: 20,
+    FieldType.UINT: 20,
+    FieldType.FLOAT: 24,
+    FieldType.DOUBLE: 24,
+    FieldType.BOOL: 5,
+    FieldType.UUID: 36,
+    FieldType.DATETIME: 40,
+}
+
+#: Tag-name bytes assumed for a space created without a schema.
+_TAG_ALLOWANCE = 64
+
+
+def fitted_vid_length(schema: Schema | None, string_length: int) -> int:
+    """Bytes a ``FIXED_STRING`` VID needs for every vertex of *schema*.
+
+    A VID is ``tag::v1::v2…`` (:func:`make_vid`); a value whose type bounds its
+    text takes that bound, any other *string_length*. Rounded up to 8 bytes.
+    Without a schema: one string value under a tag of up to 64 bytes.
+    """
+
+    def value_length(ft: FieldType | None) -> int:
+        return string_length if ft is None else _VALUE_LENGTH.get(ft, string_length)
+
+    sep = len(VID_SEPARATOR)
+    lengths = [_TAG_ALLOWANCE + sep + string_length]
+    if schema is not None and schema.core_schema.vertex_config.vertex_set:
+        logical = schema.core_schema.vertex_config
+        db_aware = schema.resolve_db_aware(DBType.NEBULA).vertex_config
+        lengths = []
+        for vertex in logical.vertex_set:
+            types = {f.name: f.type for f in logical.properties(vertex)}
+            fields = logical.identity_fields(vertex) or [""]
+            tag = len(db_aware.vertex_dbname(vertex).encode())
+            lengths.append(tag + sum(sep + value_length(types.get(f)) for f in fields))
+    return -(-max(lengths) // 8) * 8
 
 
 def key_of_vid(vid: str) -> str:

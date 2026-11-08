@@ -58,6 +58,8 @@ PropertiesInputType = list[str] | list["Field"] | list[dict[str, Any]]
 VertexName: TypeAlias = str
 IdentityMode: TypeAlias = Literal["natural", "hash", "blank", "assigned"]
 FieldMerge: TypeAlias = Literal["replace", "union"]
+#: Who writes a reserved field: the caller's stamp, or record sync.
+FieldSetBy: TypeAlias = Literal["stamp", "sync"]
 PartsOrder: TypeAlias = Literal["general_first", "specific_first", "unordered"]
 DerivedForm: TypeAlias = Literal["normal", "keys"]
 
@@ -310,6 +312,15 @@ class Field(ConfigBaseModel):
             "query that names it in a projection, filter or aggregate is refused."
         ),
     )
+    set_by: FieldSetBy = PydanticField(
+        default="stamp",
+        exclude_if=lambda value: value == "stamp",
+        description=(
+            "Who writes a reserved field: ``stamp``, the writer from the caller's "
+            "stamp; or ``sync``, the bulk and sync writers from the record's sync "
+            "hash, which an upsert sets to null."
+        ),
+    )
     merge: FieldMerge = PydanticField(
         default="replace",
         exclude_if=lambda value: value == "replace",
@@ -370,6 +381,11 @@ class Field(ConfigBaseModel):
             raise ValueError(
                 f"Field '{self.name}': merge 'union' needs type LIST, got "
                 f"{type_val or 'untyped'}"
+            )
+        if self.set_by == "sync" and (not self.reserved or self.merge == "union"):
+            raise ValueError(
+                f"Field '{self.name}': set_by 'sync' needs a reserved field that "
+                "merges by replace"
             )
         if self.derived is not None:
             self._check_derived(self.derived, type_val, item_val)
@@ -689,12 +705,13 @@ def merge_fields(
     else:
         base, other = a, b
 
-    if (a.reserved, a.merge) != (b.reserved, b.merge):
+    if (a.reserved, a.merge, a.set_by) != (b.reserved, b.merge, b.set_by):
         # A writer-only field must not turn into a readable one by a merge.
         raise FieldMergeConflict(
             owner,
-            f"property {a.name!r}: reserved={a.reserved}, merge={a.merge!r} vs "
-            f"reserved={b.reserved}, merge={b.merge!r}",
+            f"property {a.name!r}: reserved={a.reserved}, merge={a.merge!r}, "
+            f"set_by={a.set_by!r} vs reserved={b.reserved}, merge={b.merge!r}, "
+            f"set_by={b.set_by!r}",
             "Declare the property the same way on both sides before merging.",
             field=a.name,
         )

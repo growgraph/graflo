@@ -127,23 +127,26 @@ def _assigned_writer(identity: list[str]) -> DBWriter:
 
 
 @pytest.mark.parametrize(
-    ("identity", "conn_conf", "default_field"),
+    ("identity", "conn_conf", "default_field", "own_kept"),
     [
         (
             [],
             ArangoConfig(uri="http://localhost:8529", username="root", password="x"),
             "_key",
+            False,
         ),
         (
             ["uid"],
             Neo4jConfig(uri="bolt://localhost:7687", username="u", password="p"),
             "id",
+            True,
         ),
     ],
 )
 def test_an_assigned_vertex_mirrors_its_uuid_into_the_default_key(
-    identity, conn_conf, default_field
+    identity, conn_conf, default_field, own_kept
 ):
+    """ArangoDB's ``_key`` is always derived from the identity; ``id`` is never overwritten."""
     writer = _assigned_writer(identity)
     (preferred,) = writer.schema.core_schema.vertex_config.identity_fields("event")
     kept = "00000000-0000-4000-8000-000000000001"
@@ -152,7 +155,7 @@ def test_an_assigned_vertex_mirrors_its_uuid_into_the_default_key(
     mint_identities(writer.context(conn_conf), "event", docs)
 
     assert docs[0][default_field] == docs[0][preferred]
-    assert docs[1] == {preferred: kept, default_field: "own"}
+    assert docs[1] == {preferred: kept, default_field: "own" if own_kept else kept}
 
 
 def test_resolve_blank_edges_prefers_identity_join_over_zip():

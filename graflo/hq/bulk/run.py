@@ -42,22 +42,22 @@ from graflo.hq.write_prepare import WriteContext, project_edges, project_vertice
 
 logger = logging.getLogger(__name__)
 
-_OWN = (STAGE, REJECTS, FOLDED, COUNTS, "duckdb.tmp")
+_OWN = (STAGE, REJECTS, FOLDED, COUNTS, "owners", "duckdb.tmp")
 
 
 class BulkVerifyError(RuntimeError):
     """The target does not hold what the fold produced."""
 
 
-def open_staging(staging_dir: Path) -> RunLedger:
-    """The ledger of a new or resumable bulk run in *staging_dir*.
+def open_staging(staging_dir: Path, mode: str = "bulk") -> RunLedger:
+    """The ledger of a new or resumable *mode* run (``bulk`` or ``sync``) in *staging_dir*.
 
     A run stopped while staging is staged again from the start; one stopped
     later resumes.
 
     Raises:
         RuntimeError: The ``bulk`` extra is not installed.
-        ValueError: *staging_dir* holds files but no bulk run.
+        ValueError: *staging_dir* holds files but no run, or a run of the other mode.
     """
     _deps.require()
     root = Path(staging_dir)
@@ -66,10 +66,16 @@ def open_staging(staging_dir: Path) -> RunLedger:
     if not ledger.exists:
         if any(root.iterdir()):
             raise ValueError(
-                f"staging directory {root} is not empty and holds no bulk run; "
-                "give an empty or new directory"
+                f"staging directory {root} is not empty and holds no bulk or sync "
+                "run; give an empty or new directory"
             )
+        ledger.set_mode(mode)
         ledger.mark(Phase.OPENED)
+    elif (ledger.mode or "bulk") != mode:
+        raise ValueError(
+            f"staging directory {root} holds a {ledger.mode or 'bulk'} run; a "
+            f"{mode} run needs its own directory"
+        )
     elif not ledger.has(Phase.STAGED):
         for name in _OWN:
             path = root / name

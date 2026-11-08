@@ -13,6 +13,7 @@ identity field; and repeated edges whose properties change.
 
 from __future__ import annotations
 
+import copy
 import json
 from collections.abc import Callable
 from pathlib import Path
@@ -111,6 +112,16 @@ ROWS: list[dict[str, Any]] = [
     {"pid": "p3", "name": "Cy", "tags": ["w"], "cid": "c2", "label": "Lyon 2e",
      "role": "home", "since": 1999},
 ]  # fmt: skip
+
+
+def without_union(config: dict[str, Any]) -> dict[str, Any]:
+    """A copy of *config* with no ``merge: union``, for a target whose upsert refuses one."""
+    out = copy.deepcopy(config)
+    for vertex in out["schema"]["core_schema"]["vertex_config"]["vertices"]:
+        for prop in vertex["properties"]:
+            if isinstance(prop, dict):
+                prop.pop("merge", None)
+    return out
 
 
 def manifest() -> GraphManifest:

@@ -19,6 +19,7 @@ from suthing import Timer
 
 from graflo.architecture.contract.bindings import Bindings
 from graflo.architecture.contract.ingestion import IngestionModel
+from graflo.architecture.contract.ingestion.sync import owned_edges, owned_types
 from graflo.architecture.graph_types import EncodingType, GraphContainer
 from graflo.architecture.schema import Schema
 from graflo.connections.bulk import BulkConfig
@@ -758,6 +759,13 @@ class Caster:
                 recreate_schema=recreate_schema,
             )
             return
+        if ingestion_params.mode == "sync":
+            if recreate_schema:
+                raise ValueError("recreate_schema is for a bulk run")
+            self._ingest_sync(
+                registry, target_db_config, ingestion_params, allowed_resource_names
+            )
+            return
         if recreate_schema:
             raise ValueError("recreate_schema is for a bulk run; call define_schema")
         asyncio.run(
@@ -778,8 +786,11 @@ class Caster:
         *,
         recreate_schema: bool,
     ) -> None:
-        """Stage every batch, fold, then write once; resume a stopped run."""
-        from graflo.hq.bulk.ledger import Phase
+        """Stage every batch, fold, then write once; resume a stopped run.
+
+        Owned types carrying a field set by sync get their owners' hashes, so
+        the first sync after the load skips every unchanged record.
+        """
         from graflo.hq.bulk.run import (
             dense_ids_for,
             edge_buckets_for,
@@ -787,36 +798,118 @@ class Caster:
             open_staging,
             write_folded,
         )
-        from graflo.hq.bulk.stage import Stager
 
         staging_dir = cast(Path, ingestion_params.staging_dir)
         cfg = conn_conf.bulk or BulkConfig()
-        ledger = open_staging(staging_dir)
-        if not ledger.has(Phase.STAGED):
-            ctx = WriteContext.for_flavor(self.schema, conn_conf.connection_type)
-            self._stager = Stager(self.schema, ctx, staging_dir)
-            try:
-                asyncio.run(
-                    self.ingest_data_sources(
-                        data_source_registry=registry,
-                        conn_conf=conn_conf,
-                        ingestion_params=ingestion_params,
-                        allowed_resource_names=allowed_resource_names,
-                    )
-                )
-            finally:
-                self._stager = None
-            ledger.mark(Phase.STAGED)
-        fold_staged(
+        ledger = open_staging(staging_dir, "bulk")
+        self._stage(
+            registry, conn_conf, ingestion_params, allowed_resource_names, ledger
+        )
+        counts = fold_staged(
             staging_dir,
             ledger,
             cfg,
             dense_ids=dense_ids_for(conn_conf),
             edge_buckets=edge_buckets_for(conn_conf, cfg),
         )
+        self._group(staging_dir, counts, ledger, allowed_resource_names)
         write_folded(
             self.schema, conn_conf, staging_dir, ledger, cfg, recreate=recreate_schema
         )
+
+    def _ingest_sync(
+        self,
+        registry: DataSourceRegistry,
+        conn_conf: DBConfig,
+        ingestion_params: IngestionParams,
+        allowed_resource_names: set[str] | None,
+    ) -> None:
+        """Stage, fold and group as a bulk run does, then rewrite changed owners."""
+        from graflo.hq.bulk.run import fold_staged, open_staging
+        from graflo.hq.sync.run import check_key_only, write_sync
+
+        staging_dir = cast(Path, ingestion_params.staging_dir)
+        cfg = conn_conf.bulk or BulkConfig()
+        ledger = open_staging(staging_dir, "sync")
+        self._stage(
+            registry, conn_conf, ingestion_params, allowed_resource_names, ledger
+        )
+        counts = fold_staged(staging_dir, ledger, cfg, dense_ids=False)
+        owner_runs = self._group(staging_dir, counts, ledger, allowed_resource_names)
+        check_key_only(
+            self.schema, staging_dir, counts, {run.owner for run in owner_runs}
+        )
+        write_sync(
+            self.schema,
+            conn_conf,
+            staging_dir,
+            ledger,
+            cfg,
+            owner_runs,
+            owned_edges(self._in_scope(allowed_resource_names)),
+        )
+
+    def _in_scope(self, allowed_resource_names: set[str] | None) -> list[Any]:
+        return [
+            r
+            for r in self.ingestion_model.resources
+            if allowed_resource_names is None or r.name in allowed_resource_names
+        ]
+
+    def _stage(
+        self,
+        registry: DataSourceRegistry,
+        conn_conf: DBConfig,
+        ingestion_params: IngestionParams,
+        allowed_resource_names: set[str] | None,
+        ledger: Any,
+    ) -> None:
+        """Cast every batch into the staging directory, unless it is staged."""
+        from graflo.hq.bulk.ledger import Phase
+        from graflo.hq.bulk.stage import Stager
+
+        if ledger.has(Phase.STAGED):
+            return
+        ctx = WriteContext.for_flavor(self.schema, conn_conf.connection_type)
+        self._stager = Stager(
+            self.schema,
+            ctx,
+            cast(Path, ingestion_params.staging_dir),
+            owned_edges(self._in_scope(allowed_resource_names)),
+        )
+        try:
+            asyncio.run(
+                self.ingest_data_sources(
+                    data_source_registry=registry,
+                    conn_conf=conn_conf,
+                    ingestion_params=ingestion_params,
+                    allowed_resource_names=allowed_resource_names,
+                )
+            )
+        finally:
+            self._stager = None
+        ledger.mark(Phase.STAGED)
+
+    def _group(
+        self,
+        staging_dir: Path,
+        counts: Any,
+        ledger: Any,
+        allowed_resource_names: set[str] | None,
+    ) -> list[Any]:
+        """Group the owned types that carry a hash field; set their owners' hashes."""
+        from graflo.hq.bulk.ledger import Phase
+        from graflo.hq.sync.group import group_owners, grouped_owners
+        from graflo.hq.sync.refusals import hash_fields
+
+        if ledger.has(Phase.GROUPED):
+            return grouped_owners(staging_dir)
+        fields = hash_fields(
+            self.schema, owned_types(self._in_scope(allowed_resource_names))
+        )
+        runs = group_owners(staging_dir, counts, fields)
+        ledger.mark(Phase.GROUPED)
+        return runs
 
     def validate_run(
         self,
@@ -846,11 +939,40 @@ class Caster:
             target_db_flavor=db_flavor,
         )
         self._document_caster = DocumentCaster(self.ingestion_model)
-        if ingestion_params.mode == "sync":
-            raise NotImplementedError("sync mode is not available yet")
         if ingestion_params.mode == "bulk":
             self._validate_bulk(target_db_config, allowed_resource_names)
+        if ingestion_params.mode == "sync":
+            self._validate_sync(target_db_config, allowed_resource_names)
         return allowed_resource_names
+
+    def _validate_sync(
+        self, target_db_config: DBConfig, allowed_resource_names: set[str] | None
+    ) -> None:
+        """Refuse a sync run that could not complete, before anything is read.
+
+        Raises:
+            RuntimeError: The ``bulk`` extra is not installed.
+            ValueError: The target has no sync writer, a resource in scope reads
+                the target while ingesting, or writes what no sync block owns.
+        """
+        from graflo.hq.bulk import _deps
+        from graflo.hq.bulk.refusals import bulk_refusals
+        from graflo.hq.sync.refusals import sync_refusals
+
+        _deps.require()
+        ConnectionManager.require(target_db_config, ConnectionCapability.SYNC)
+        scope = (
+            None if allowed_resource_names is None else sorted(allowed_resource_names)
+        )
+        reasons = bulk_refusals(self.schema, self.ingestion_model, scope)
+        if reasons:
+            raise ValueError(
+                "sync mode cannot run what reads the target while ingesting: "
+                + "; ".join(reasons)
+            )
+        reasons = sync_refusals(self.schema, self.ingestion_model, scope)
+        if reasons:
+            raise ValueError("sync mode: " + "; ".join(reasons))
 
     def _validate_bulk(
         self, target_db_config: DBConfig, allowed_resource_names: set[str] | None
@@ -859,14 +981,26 @@ class Caster:
 
         Raises:
             RuntimeError: The ``bulk`` extra is not installed.
-            ValueError: The target has no bulk writer, or a resource in scope
-                reads the target while ingesting.
+            ValueError: The target has no bulk writer, a resource in scope
+                reads the target while ingesting, or the schema has a union
+                field the target's upsert refuses.
         """
         from graflo.hq.bulk import _deps
-        from graflo.hq.bulk.refusals import bulk_refusals
+        from graflo.hq.bulk.refusals import bulk_refusals, union_fields
 
         _deps.require()
         ConnectionManager.require(target_db_config, ConnectionCapability.BULK_LOAD)
+        unions = union_fields(self.schema)
+        if unions:
+            try:
+                ConnectionManager.require(
+                    target_db_config, ConnectionCapability.UNION_MERGE
+                )
+            except ValueError as error:
+                raise ValueError(
+                    f"bulk mode cannot load union fields {unions}: no later upsert "
+                    f"could extend them. {error}"
+                ) from error
         reasons = bulk_refusals(
             self.schema,
             self.ingestion_model,

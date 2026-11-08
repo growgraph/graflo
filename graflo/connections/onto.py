@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Literal, Self, TypeVar, cast
 from urllib.parse import urlparse
 
-from pydantic import Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from graflo.connections.bulk import BulkConfig
@@ -1073,6 +1073,24 @@ class MemgraphConfig(DBConfig):
         return cls(**config_data)
 
 
+#: Partitions per storage disk of a created space: enough raft groups that
+#: concurrent writes spread over every disk.
+NEBULA_PARTITIONS_PER_DISK = 20
+#: Replicas of a created space when the cluster has that many storage hosts:
+#: an odd count, so a raft majority survives the loss of one.
+NEBULA_REPLICA_FACTOR = 3
+
+
+class NebulaSpaceOptions(BaseModel):
+    """What ``CREATE SPACE`` is given."""
+
+    model_config = ConfigDict(frozen=True)
+
+    vid_type: str
+    partition_num: int
+    replica_factor: int
+
+
 class NebulaConfig(DBConfig):
     """Configuration for NebulaGraph connections.
 
@@ -1092,17 +1110,47 @@ class NebulaConfig(DBConfig):
         default="3",
         description="Major NebulaGraph version: '3' for nGQL/nebula3-python, '5' for ISO GQL/nebula5-python",
     )
-    vid_type: str = Field(
-        default="FIXED_STRING(256)",
-        description="VID type for space creation (e.g. 'FIXED_STRING(256)' or 'INT64')",
+    # Space options. Each applies only to a space graflo creates; an existing
+    # space keeps its own. Unset ones are derived by `space_options`.
+    vid_type: str | None = Field(
+        default=None,
+        description=(
+            "VID type of a created space, e.g. 'FIXED_STRING(64)'. Unset: a "
+            "FIXED_STRING long enough for the schema's identities"
+        ),
     )
-    partition_num: int = Field(
-        default=1,
-        description="Number of partitions when creating a space",
+    vid_string_length: int = Field(
+        default=128,
+        gt=0,
+        description=(
+            "Bytes a VID reserves for an identity value whose type does not "
+            "bound its length (a string). A longer VID is refused on write"
+        ),
     )
-    replica_factor: int = Field(
-        default=1,
-        description="Replica factor when creating a space",
+    partition_num: int | None = Field(
+        default=None,
+        gt=0,
+        description="Partitions of a created space. Unset: 20 per storage disk",
+    )
+    storage_disks: int | None = Field(
+        default=None,
+        gt=0,
+        description="Data disks across the storage hosts. Unset: one per host",
+    )
+    replica_factor: int | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Replicas of a created space. Unset: 3 when at least 3 storage "
+            "hosts are online, else 1"
+        ),
+    )
+    max_statement_bytes: int = Field(
+        default=4 * 1024 * 1024,
+        gt=0,
+        description=(
+            "Largest statement sent, in bytes; graphd's max_allowed_query_size"
+        ),
     )
     storaged_addresses: list[str] = Field(
         default_factory=list,
@@ -1115,6 +1163,24 @@ class NebulaConfig(DBConfig):
     @property
     def is_v3(self) -> bool:
         return self.version.startswith("3")
+
+    def space_options(
+        self, *, storage_hosts: int, vid_length: int
+    ) -> NebulaSpaceOptions:
+        """The options of a space to create, set fields first, then derived.
+
+        Args:
+            storage_hosts: Storage hosts online (at least one is assumed).
+            vid_length: Bytes the schema's longest VID needs.
+        """
+        hosts = max(storage_hosts, 1)
+        disks = self.storage_disks or hosts
+        replicas = NEBULA_REPLICA_FACTOR if hosts >= NEBULA_REPLICA_FACTOR else 1
+        return NebulaSpaceOptions(
+            vid_type=self.vid_type or f"FIXED_STRING({vid_length})",
+            partition_num=self.partition_num or NEBULA_PARTITIONS_PER_DISK * disks,
+            replica_factor=self.replica_factor or replicas,
+        )
 
     def _get_default_port(self) -> int:
         """Get default NebulaGraph GraphD port."""

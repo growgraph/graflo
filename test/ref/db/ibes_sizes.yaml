@@ -1,6 +1,6 @@
 agencies: 138
 analysts: 476
-analysts->agencies->None: 1000
+analysts->agencies->None: 523
 analysts->publications->None: 1000
 publications: 1000
 publications->recommendations->None: 1000

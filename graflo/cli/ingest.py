@@ -109,13 +109,14 @@ logger = logging.getLogger(__name__)
     "--staging-dir",
     type=click.Path(file_okay=False, path_type=pathlib.Path),
     default=None,
-    help="Directory of a bulk run; giving it again resumes a stopped run.",
+    help="Directory of a bulk or sync run; giving it again resumes a stopped run.",
 )
 @click.option(
     "--sync",
     default=False,
     is_flag=True,
-    help="Replace what changed records own in a loaded target.",
+    help="Replace what changed owner records wrote in a loaded target (Neo4j, "
+    "FalkorDB; needs the `bulk` extra and --staging-dir).",
 )
 def ingest(
     db_config_path,

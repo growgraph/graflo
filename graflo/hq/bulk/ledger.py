@@ -1,4 +1,4 @@
-"""The run ledger: which phases and chunks of a bulk run are done, durably.
+"""The run ledger: which phases and chunks of a bulk or sync run are done, durably.
 
 One JSON line per event, flushed and synced before the call returns, so after a
 crash the ledger never claims more than happened. A chunk recorded as started
@@ -18,11 +18,12 @@ LEDGER = "ledger.jsonl"
 
 
 class Phase(StrEnum):
-    """Phases of a bulk run, in order."""
+    """Phases of a bulk or sync run, in order."""
 
     OPENED = "opened"
     STAGED = "staged"
     FOLDED = "folded"
+    GROUPED = "grouped"
     BEGINNING = "beginning"
     BEGUN = "begun"
     EDGES_PREPARED = "edges_prepared"
@@ -44,12 +45,15 @@ class RunLedger:
         self._phases: set[str] = set()
         self._started: set[str] = set()
         self._committed: set[str] = set()
+        self.mode: str | None = None
         if self.path.exists():
             for line in self.path.read_text().splitlines():
                 if not line.strip():
                     continue
                 event = json.loads(line)
-                if "phase" in event:
+                if "mode" in event:
+                    self.mode = event["mode"]
+                elif "phase" in event:
                     self._phases.add(event["phase"])
                 elif "restart" in event:
                     self._forget()
@@ -64,6 +68,11 @@ class RunLedger:
 
     def has(self, phase: Phase) -> bool:
         return phase.value in self._phases
+
+    def set_mode(self, mode: str) -> None:
+        """Record the run's mode, ``bulk`` or ``sync``; first, in a new ledger."""
+        self._append({"mode": mode})
+        self.mode = mode
 
     def mark(self, phase: Phase) -> None:
         if phase.value not in self._phases:

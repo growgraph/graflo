@@ -46,7 +46,9 @@ The target must hold no schema yet; `--fresh-start` (or
    a field a later row lacks keeps its value, and `merge: union` lists keep
    every member once. An edge whose endpoint is not among the folded vertices
    is rejected.
-3. **Write.** The backend writes the folded rows in chunks, vertices first.
+3. **Write.** The backend writes the folded rows in chunks, vertices first. A
+   type a resource owns for [record sync](record_sync.md) is written with each
+   record's `sync_hash`, when the manifest has the `sync` aspect.
 4. **Verify.** The run fails unless the target holds exactly as many elements
    of each type as the fold produced.
 
@@ -69,14 +71,20 @@ starts, since an empty target has nothing to find:
 - edges whose endpoints match by a secondary identity;
 - blank vertices.
 
+A `merge: union` field is refused on a backend whose upsert refuses one, so a
+later upsert can always extend the loaded graph.
+
 ## Which databases support it?
 
 A backend loads in bulk when its connection declares `supports_bulk_load`:
 
 | Backend | How it writes |
 |---|---|
+| ArangoDB | Imports JSON Lines through `/_api/import`, with each `_key`, `_from` and `_to` computed from the identities; builds the identity indexes after the load. |
 | Neo4j | Creates nodes with no lookups over parallel sessions, then builds the identity indexes. It then creates edges in rounds, where no two writers in a round touch the same node. |
 | FalkorDB | `GRAPH.BULK` into a new graph, one writer; an existing empty graph is dropped first. If a failed batch drops the graph, running again writes everything again. |
+| Memgraph | Builds the identity indexes first, then creates nodes with no lookups, then edges in rounds of writers that share no node; a write a transaction conflict aborts is retried. |
+| NebulaGraph | `INSERT VERTEX` and `INSERT EDGE` batches under the statement limit; builds the indexes after the load and counts with a STATS job. |
 | PostgreSQL | `COPY` into tables without keys, then primary keys, unique edge keys and validated foreign keys. |
 | TigerGraph | A loading job fed over REST++, one file per vertex type and per edge; a rejected line fails the load. |
 | File backend | Appends. |

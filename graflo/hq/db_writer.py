@@ -59,16 +59,15 @@ logger = logging.getLogger(__name__)
 _T = TypeVar("_T")
 
 # Backends whose upsert primitive is atomic per key under concurrency:
-# Postgres INSERT .. ON CONFLICT, Arango UPSERT with OPTIONS {exclusive: true}
-# (collection-level write lock), and the keyed REST/NGQL upserts of TigerGraph
+# Postgres INSERT .. ON CONFLICT and the keyed REST/NGQL upserts of TigerGraph
 # and Nebula cannot create duplicate vertices for the same identity. Cypher
 # MERGE, by contrast, is check-then-create per transaction: two concurrent
 # writers merging the same key can BOTH create a node, or, under the identity
-# constraint Neo4j and Memgraph get, one fails. Flavors not
-# listed here write each vertex type and each relation through one batch at a
-# time.
+# constraint Neo4j and Memgraph get, one fails; two Arango transactions writing
+# one document fail with a write-write conflict. Flavors not listed here write
+# each vertex type and each relation through one batch at a time.
 _CONCURRENT_UPSERT_SAFE_FLAVORS = frozenset(
-    {DBType.POSTGRES, DBType.ARANGO, DBType.TIGERGRAPH, DBType.NEBULA}
+    {DBType.POSTGRES, DBType.TIGERGRAPH, DBType.NEBULA}
 )
 
 # Flavors that write one edge type at a time: Memgraph aborts concurrent
@@ -707,9 +706,8 @@ class DBWriter:
         # a batch upsert may not touch the same row twice.
         ctx = self.context(conn_conf)
         filled = fuse_doc_basis(filled, tuple(identity_fields), union_fields(ctx, vcol))
-        if vc.is_hash_identity(vcol) or vc.is_assigned(vcol) or vc.is_blank(vcol):
-            # Owners of a generated key mirrored it the same way when written.
-            mirror_default_identity(ctx, vcol, filled)
+        # Keyed as their owners were when written.
+        mirror_default_identity(ctx, vcol, filled)
         return filled, stats
 
     def _upsert_attached(
@@ -1003,9 +1001,10 @@ class DBWriter:
             "dry": self.dry,
             "collection_name": stored.collection_name,
         }
-        if flavor in CYPHER_FLAVORS or flavor == DBType.POSTGRES:
+        if flavor in CYPHER_FLAVORS or flavor in (DBType.POSTGRES, DBType.NEBULA):
             # On PostgreSQL the conflict target must match the edge table's
-            # unique key, built from the same names.
+            # unique key, built from the same names; on NebulaGraph they rank
+            # the edge.
             if merge_props is not None:
                 edge_kw["relationship_merge_properties"] = merge_props
         elif flavor == DBType.ARANGO and merge_props is not None:
@@ -1218,7 +1217,9 @@ def apply_stamp(
     """Set every reserved field of the elements of *gc* from *stamp*, in place.
 
     A value a document carries is overwritten: only the caller's stamp may set
-    a reserved field. Edge attribute dicts are updated in place, so every
+    a reserved field. A field ``set_by: sync`` is set to null: only a bulk or
+    sync write knows the record's hash, and a null one makes the next sync
+    rewrite the record. Edge attribute dicts are updated in place, so every
     reference to them (extra weights, linear rows) sees the stamp.
 
     Raises:
@@ -1234,7 +1235,12 @@ def apply_stamp(
                 fields = [f for f in vc.properties(vcol) if f.reserved]
                 if not fields:
                     continue
-                values = _stamp_values(fields, stamp, f"vertex {vcol!r}")
+                values = _stamp_values(
+                    [f for f in fields if f.set_by == "stamp"],
+                    stamp,
+                    f"vertex {vcol!r}",
+                )
+                values.update({f.name: None for f in fields if f.set_by == "sync"})
                 for doc in docs:
                     target = doc.vertex if isinstance(doc, VertexRep) else doc
                     target.update(copy.deepcopy(values))
@@ -1306,7 +1312,9 @@ def _reserved_by_owner(
     for docs_by_type in (gc.vertices, gc.attached):
         for vcol, docs in docs_by_type.items():
             if vcol in vc.vertex_set and docs:
-                fields = [f for f in vc.properties(vcol) if f.reserved]
+                fields = [
+                    f for f in vc.properties(vcol) if f.reserved and f.set_by == "stamp"
+                ]
                 if fields:
                     yield f"vertex {vcol!r}", fields
     for edge_id, rows in gc.edges.items():

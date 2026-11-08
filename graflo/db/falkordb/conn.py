@@ -31,6 +31,7 @@ from urllib.parse import urlparse
 
 from falkordb import FalkorDB
 from falkordb.graph import Graph
+from falkordb.helpers import stringify_param_value
 
 from graflo.architecture.graph_types import EdgeDirection, GraphContainer, Index
 from graflo.architecture.schema import Schema
@@ -60,6 +61,14 @@ from graflo.db.cypher.delete import (
     delete_scoped_nodes,
     delete_scoped_relationships,
 )
+from graflo.db.cypher.scan import all_relationships_query
+from graflo.db.cypher.sync import (
+    changed_owners,
+    ensure_nodes_query,
+    hash_rows,
+    owner_statements,
+    stored_hashes_query,
+)
 from graflo.db.cypher.union import union_upsert_query, union_upsert_rows
 from graflo.db.falkordb.bulk import bulk_args, edge_blob, node_blob
 from graflo.db.field_type_support import assert_schema_supported
@@ -68,6 +77,7 @@ from graflo.db.graph_introspection import (
     strip_internal_properties,
 )
 from graflo.db.resolve import absent_documents, present_documents
+from graflo.db.sync import SyncEdgeType, SyncOwnerChunk, SyncWritten
 from graflo.db.util import serialize_value
 from graflo.filter.onto import (
     BoundParams,
@@ -108,6 +118,7 @@ class FalkordbConnection(Connection):
     supports_bulk_load = True
     # GRAPH.BULK addresses nodes by insertion order, which dense ids reproduce.
     bulk_dense_ids = True
+    supports_sync = True
 
     # Type annotations for instance attributes
     client: FalkorDB | None
@@ -764,6 +775,65 @@ class FalkordbConnection(Connection):
         self.define_indexes(schema)
         return bulk_counts(self._records)
 
+    # -- record sync ---------------------------------------------------------------
+
+    def sync_begin(self, schema: Schema, edge_types: list[SyncEdgeType]) -> None:
+        """Index every vertex identity, and each edge's owner property."""
+        assert_schema_supported(self.flavor, schema)
+        self._select_graph(self._resolve_graph_name(schema))
+        self.define_vertex_indexes(schema.core_schema.vertex_config, schema=schema)
+        for edge in edge_types:
+            if edge.owner_property is not None:
+                self._add_index(
+                    edge.relation_name,
+                    Index(fields=[edge.owner_property]),
+                    is_vertex_index=False,
+                )
+
+    def sync_ensure_vertices(self, schema: Schema, chunk: BulkVertexChunk) -> None:
+        """``MERGE`` each vertex on its key; only a created one takes the row."""
+        self.execute(
+            ensure_nodes_query(chunk.class_name, chunk.match_keys),
+            rows=self._sanitize_batch(chunk.rows, chunk.match_keys),
+        )
+
+    def sync_write_owners(self, schema: Schema, chunk: SyncOwnerChunk) -> SyncWritten:
+        """Rewrite the changed owners in one ``MULTI``/``EXEC``, then store their hashes.
+
+        FalkorDB has no transaction across queries, and Redis runs every queued
+        command even after one fails, so the hashes are sent only once the
+        rewrite succeeded. The rewrite clears each stored hash first, so an
+        owner whose rewrite failed differs from its new hash and is rewritten
+        by the next sync.
+        """
+        read = stored_hashes_query(chunk.class_name, chunk.match_keys, chunk.hash_field)
+        result = self.execute(read, rows=self._sanitize_value(hash_rows(chunk)))
+        stored = {int(row[0]): row[1] for row in result.result_set}
+        changed = changed_owners(chunk, stored)
+        statements = owner_statements(chunk, changed)
+        if statements:
+            *rewrite, hashes = statements
+            self._run_atomically(rewrite)
+            self.execute(hashes[0], **self._sanitize_value(hashes[1]))
+        return SyncWritten(
+            written=len(changed), skipped=len(chunk.owners) - len(changed)
+        )
+
+    def _run_atomically(self, statements: list[tuple[str, dict[str, Any]]]) -> None:
+        """Send *statements* in one ``MULTI``/``EXEC``; raise the first that failed."""
+        if self.client is None:
+            raise RuntimeError("Connection is closed")
+        pipe = self.client.connection.pipeline(transaction=True)
+        for query, params in statements:
+            header = "CYPHER " + "".join(
+                f"`{key}`={stringify_param_value(value)} "
+                for key, value in self._sanitize_value(params).items()
+            )
+            pipe.execute_command(
+                "GRAPH.QUERY", self._graph_name, header + query, "--compact"
+            )
+        pipe.execute(raise_on_error=True)
+
     def _graph_bulk(self, args: list[Any]) -> None:
         if self.client is None:
             raise RuntimeError("Connection is closed")
@@ -1218,14 +1288,11 @@ class FalkordbConnection(Connection):
         collection_name: str | None = None,
     ) -> list[list[dict[str, Any]]]:
         """Fetch all relationships between two labels, as ``[source, target, props]``."""
-        rel = f"[r:{cypher_name(relation_name)}]" if relation_name else "[r]"
-        limit_clause = f"LIMIT {limit}" if limit is not None else ""
-        query = (
-            f"MATCH (source:{cypher_name(source_class)})-{rel}->"
-            f"(target:{cypher_name(target_class)}) "
-            f"RETURN source, target, r {limit_clause}"
+        result = self.execute(
+            all_relationships_query(
+                source_class, target_class, relation_name, limit=limit
+            )
         )
-        result = self.execute(query)
         return [
             [
                 strip_internal_properties(self._node_to_dict(source)),

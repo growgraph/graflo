@@ -110,3 +110,23 @@ def bulk_counts(run: Run) -> BulkCounts:
         ):
             edges[(row["s"], rel, row["t"])] = int(row["c"])
     return BulkCounts(vertices={k: v for k, v in vertices.items() if v}, edges=edges)
+
+
+def scanned_counts(run: Run) -> BulkCounts:
+    """Nodes per label and relationships per (source label, type, target label), by a scan.
+
+    For a server without ``db.labels()`` or a count store; one pass over the
+    nodes and one over the relationships.
+    """
+    vertices = {
+        row["label"]: int(row["c"])
+        for row in run("MATCH (n) RETURN head(labels(n)) AS label, count(n) AS c")
+    }
+    edges: dict[StoredEdgeId, int] = {
+        (row["s"], row["r"], row["t"]): int(row["c"])
+        for row in run(
+            "MATCH (s)-[r]->(t) RETURN head(labels(s)) AS s, type(r) AS r, "
+            "head(labels(t)) AS t, count(r) AS c"
+        )
+    }
+    return BulkCounts(vertices=vertices, edges=edges)

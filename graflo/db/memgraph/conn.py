@@ -78,8 +78,10 @@ See Also
 
 import logging
 import math
+import random
+import time
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, ClassVar
 from urllib.parse import urlparse
 
 import mgclient
@@ -88,7 +90,9 @@ from graflo.architecture.graph_types import EdgeDirection, GraphContainer, Index
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import VertexConfig
+from graflo.connections.bulk import BulkConfig
 from graflo.connections.onto import MemgraphConfig
+from graflo.db.bulk import BulkCounts, BulkEdgeChunk, BulkPlan, BulkVertexChunk
 from graflo.db.conn import (
     DEFAULT_DELETE_CHUNK_SIZE,
     Connection,
@@ -102,9 +106,18 @@ from graflo.db.cypher import (
     rel_absent_upsert_clause,
     rel_merge_props_map_from_row_props,
 )
+from graflo.db.cypher.bulk import (
+    create_nodes_query,
+    create_relationships_query,
+    scanned_counts,
+)
 from graflo.db.cypher.delete import delete_nodes, delete_relationships
+from graflo.db.cypher.scan import all_relationships_query
 from graflo.db.field_type_support import assert_schema_supported, index_limit
-from graflo.db.graph_introspection import GraphSchemaInferencer
+from graflo.db.graph_introspection import (
+    GraphSchemaInferencer,
+    strip_internal_properties,
+)
 from graflo.db.resolve import absent_documents, present_documents
 from graflo.filter.onto import (
     BoundParams,
@@ -115,6 +128,10 @@ from graflo.filter.onto import (
 from graflo.onto import AggregationType, DBType
 
 logger = logging.getLogger(__name__)
+
+
+#: mgclient's query error; a C extension member the type checker cannot see.
+_DATABASE_ERROR: type[Exception] = mgclient.DatabaseError  # ty: ignore[unresolved-attribute]
 
 
 def _cursor_column_names(description: Any) -> list[str]:
@@ -266,6 +283,12 @@ class MemgraphConnection(Connection):
     flavor = DBType.MEMGRAPH
     supports_instance_delete = True
     supports_schema_introspection = True
+    supports_bulk_load = True
+    # Two transactions adding edges to one node conflict, and one aborts.
+    bulk_partition_edges = True
+
+    #: Attempts at a bulk write that a transaction conflict aborted.
+    BULK_ATTEMPTS: ClassVar[int] = 8
 
     # Type annotations for instance attributes.
     # Connection is exported from the C extension via star-import; ty cannot see it.
@@ -784,6 +807,106 @@ class MemgraphConnection(Connection):
         if vertex_types:
             self.delete_graph_structure(vertex_types=vertex_types)
 
+    # -- bulk load ---------------------------------------------------------------
+
+    def bulk_begin(
+        self,
+        schema: Schema,
+        cfg: BulkConfig,
+        *,
+        recreate: bool = False,
+        resume: bool = False,
+    ) -> BulkPlan:
+        """Guard the first write, then index every identity before the load.
+
+        Memgraph's storage mode is left as the operator set it.
+        """
+        assert_schema_supported(self.flavor, schema)
+        self.report_edge_direction_support(schema)
+        self.ensure_target_namespace(schema, create=True)
+        if not resume:
+            if recreate:
+                self.delete_graph_structure(delete_all=True)
+            elif self._node_count() > 0:
+                raise SchemaExistsError(
+                    "Schema/data already exists in Memgraph. "
+                    "Set recreate_schema=True to replace it."
+                )
+        self.define_vertex_indexes(schema.core_schema.vertex_config, schema=schema)
+        return BulkPlan()
+
+    def bulk_write_vertices(self, schema: Schema, chunk: BulkVertexChunk) -> None:
+        """``CREATE`` the chunk's nodes; a replay ``MERGE``s them on their identity."""
+        if chunk.replay:
+            self.upsert_docs_batch(chunk.rows, chunk.class_name, chunk.match_keys)
+            return
+        rows = self._sanitize_batch(chunk.rows, chunk.match_keys)
+        self._write_retrying(create_nodes_query(chunk.class_name), rows)
+
+    def bulk_prepare_edges(self, schema: Schema) -> None:
+        """Nothing to prepare: the identity indexes exist from the start."""
+
+    def bulk_write_edges(self, schema: Schema, chunk: BulkEdgeChunk) -> None:
+        """``CREATE`` the chunk's relationships; a replay ``MERGE``s them."""
+        relation = chunk.relation_name
+        if relation is None:
+            raise ValueError(f"edge chunk {chunk.chunk_id} has no relation name")
+        if chunk.replay:
+            self.insert_edges_batch(
+                [list(row) for row in chunk.rows],
+                chunk.source_class,
+                chunk.target_class,
+                relation,
+                tuple(chunk.match_keys_source),
+                tuple(chunk.match_keys_target),
+                relationship_merge_properties=chunk.merge_properties or None,
+            )
+            return
+        rows = [
+            [
+                self._sanitize_doc(source),
+                self._sanitize_doc(target),
+                self._sanitize_doc(props or {}),
+            ]
+            for source, target, props in chunk.rows
+        ]
+        query = create_relationships_query(
+            chunk.source_class,
+            chunk.target_class,
+            relation,
+            chunk.match_keys_source,
+            chunk.match_keys_target,
+        )
+        self._write_retrying(query, rows)
+
+    def bulk_finish(self, schema: Schema) -> BulkCounts:
+        """Build the edge indexes; count what the database holds."""
+        self.define_edge_indexes(
+            list(schema.core_schema.edge_config.values()), schema=schema
+        )
+        return scanned_counts(self._records)
+
+    def _write_retrying(self, query: str, rows: list[Any]) -> None:
+        """Run *query* over ``$rows``; retry a transaction a conflict aborted.
+
+        Each call is its own transaction (autocommit), so an aborted one wrote
+        nothing and running it again cannot duplicate a row.
+        """
+        for attempt in range(self.BULK_ATTEMPTS):
+            try:
+                self.execute(query, rows=rows)
+                return
+            except _DATABASE_ERROR as error:
+                if "conflict" not in str(error).lower() or (
+                    attempt == self.BULK_ATTEMPTS - 1
+                ):
+                    raise
+                time.sleep(min(2.0, 0.05 * 2**attempt) * (0.5 + random.random()))
+
+    def _records(self, query: str) -> list[dict[str, Any]]:
+        result = self.execute(query)
+        return [dict(zip(result.columns, row)) for row in result.result_set]
+
     def upsert_docs_batch(
         self,
         docs: list[dict[str, Any]],
@@ -1138,6 +1261,40 @@ class MemgraphConnection(Connection):
 
         cursor.close()
         return results
+
+    def fetch_all_docs(
+        self,
+        class_name: str,
+        *,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Every node of a label, as its properties."""
+        return [
+            strip_internal_properties(doc)
+            for doc in self.fetch_docs(class_name, limit=limit)
+        ]
+
+    def fetch_all_edges(
+        self,
+        source_class: str,
+        target_class: str,
+        relation_name: str | None,
+        *,
+        match_keys_source: tuple[str, ...] | None = None,
+        match_keys_target: tuple[str, ...] | None = None,
+        limit: int | None = None,
+        collection_name: str | None = None,
+    ) -> list[list[dict[str, Any]]]:
+        """Every relationship between two labels, as ``[source, target, properties]``."""
+        result = self.execute(
+            all_relationships_query(
+                source_class, target_class, relation_name, limit=limit
+            )
+        )
+        return [
+            [strip_internal_properties(entity) for entity in row]
+            for row in result.result_set
+        ]
 
     def fetch_edges(
         self,

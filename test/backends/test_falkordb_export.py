@@ -47,5 +47,5 @@ def test_all_relationships_between_two_labels() -> None:
 
     assert triples == [[{"id": "a"}, {"id": "o"}, {"since": 2020}]]
     assert conn.sent == [
-        "MATCH (source:Person)-[r:works_at]->(target:Org) RETURN source, target, r "
+        "MATCH (source:Person)-[r:works_at]->(target:Org) RETURN source, target, r"
     ]

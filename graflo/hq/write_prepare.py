@@ -130,7 +130,6 @@ def mint_identities(ctx: WriteContext, vcol: str, data: list[dict]) -> None:
         vertex = vc.logical._get_vertex_by_name(vcol)
         for doc in data:
             validate_uuid_typed_identity_fields(doc, vertex)
-        return
     mirror_default_identity(ctx, vcol, data)
 
 
@@ -172,10 +171,31 @@ def default_and_preferred(ctx: WriteContext, vcol: str) -> tuple[str, str]:
 
 
 def mirror_default_identity(ctx: WriteContext, vcol: str, data: list[dict]) -> None:
-    """Copy the first identity value into the flavor's default key field.
+    """Set the flavor's default key field from *vcol*'s identity.
 
-    A value already in the default field is never overwritten.
+    On ArangoDB, ``_key`` is derived from the whole identity
+    (:func:`graflo.db.arango.keys.vertex_key`) in every identity mode and
+    replaces a value already there, because edges derive it the same way from
+    their endpoints. Elsewhere, a generated identity's first value is copied
+    into ``id``, never over a value already there.
     """
+    vc = ctx.db_aware.vertex_config
+    if ctx.flavor == DBType.ARANGO:
+        fields = vc.identity_fields(vcol)
+        if not fields or "_key" in fields:
+            return
+        # Deferred: importing the ArangoDB package loads its driver.
+        from graflo.db.arango.keys import vertex_key
+
+        for doc in data:
+            key = vertex_key([doc.get(f) for f in fields])
+            if key is None:
+                doc.pop("_key", None)
+            else:
+                doc["_key"] = key
+        return
+    if not (vc.is_hash_identity(vcol) or vc.is_assigned(vcol) or vc.is_blank(vcol)):
+        return
     default_field, preferred = default_and_preferred(ctx, vcol)
     if default_field == preferred:
         return

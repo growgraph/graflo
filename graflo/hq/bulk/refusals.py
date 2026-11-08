@@ -55,3 +55,26 @@ def bulk_refusals(
                 f"{name}: blank vertices {sorted(produced)} are keyed by the target"
             )
     return reasons
+
+
+def union_fields(schema: Schema) -> list[str]:
+    """Every ``merge: union`` field of the schema, as ``type.field``.
+
+    A bulk run refuses them where the target's upsert does, so a later upsert
+    can always extend a bulk-loaded graph.
+    """
+    core = schema.core_schema
+    vc = core.vertex_config
+    found = [
+        f"{vertex}.{f.name}"
+        for vertex in vc.vertex_set
+        for f in vc.properties(vertex)
+        if f.merge == "union"
+    ]
+    found += [
+        f"{edge.edge_id}.{f.name}"
+        for edge in core.edge_config.values()
+        for f in edge.properties
+        if f.merge == "union"
+    ]
+    return sorted(found)

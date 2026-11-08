@@ -63,6 +63,13 @@ from graflo.db.cypher.delete import (
     delete_scoped_nodes,
     delete_scoped_relationships,
 )
+from graflo.db.cypher.sync import (
+    changed_owners,
+    ensure_nodes_query,
+    hash_rows,
+    owner_statements,
+    stored_hashes_query,
+)
 from graflo.db.cypher.traversal import cypher_graph_neighbors
 from graflo.db.cypher.union import union_upsert_query, union_upsert_rows
 from graflo.db.field_type_support import assert_schema_supported
@@ -71,6 +78,7 @@ from graflo.db.graph_introspection import (
     strip_internal_properties,
 )
 from graflo.db.resolve import absent_documents, present_documents
+from graflo.db.sync import SyncEdgeType, SyncOwnerChunk, SyncWritten
 from graflo.filter.onto import (
     BoundParams,
     FilterExpression,
@@ -155,6 +163,7 @@ class Neo4jConnection(Connection):
     supports_bulk_load = True
     # Creating a relationship locks both endpoint nodes.
     bulk_partition_edges = True
+    supports_sync = True
 
     def __init__(self, config: Neo4jConfig):
         """Initialize Neo4j connection.
@@ -699,6 +708,45 @@ class Neo4jConnection(Connection):
         self.define_indexes(schema)
         self._await_indexes()
         return bulk_counts(lambda query: _rows(self.execute(query)))
+
+    # -- record sync ---------------------------------------------------------------
+
+    def sync_begin(self, schema: Schema, edge_types: list[SyncEdgeType]) -> None:
+        """Index every vertex identity, and each edge's owner property."""
+        assert_schema_supported(self.flavor, schema)
+        self.bulk_prepare_edges(schema)
+        for edge in edge_types:
+            if edge.owner_property is not None:
+                self._add_index(
+                    edge.relation_name,
+                    Index(fields=[edge.owner_property]),
+                    is_vertex_index=False,
+                )
+        self._await_indexes()
+
+    def sync_ensure_vertices(self, schema: Schema, chunk: BulkVertexChunk) -> None:
+        """``MERGE`` each vertex on its key; only a created one takes the row."""
+        self._write(ensure_nodes_query(chunk.class_name, chunk.match_keys), chunk.rows)
+
+    def sync_write_owners(self, schema: Schema, chunk: SyncOwnerChunk) -> SyncWritten:
+        """Rewrite the changed owners in one write transaction."""
+        read = stored_hashes_query(chunk.class_name, chunk.match_keys, chunk.hash_field)
+        stored = {
+            row["i"]: row["h"]
+            for row in _rows(self.execute(read, rows=hash_rows(chunk)))
+        }
+        changed = changed_owners(chunk, stored)
+        statements = owner_statements(chunk, changed)
+        if statements:
+
+            def work(tx: Any) -> None:
+                for query, params in statements:
+                    tx.run(cast(LiteralString, query), **params).consume()
+
+            self.conn.execute_write(work)
+        return SyncWritten(
+            written=len(changed), skipped=len(chunk.owners) - len(changed)
+        )
 
     def _write(self, query: str, rows: list[Any]) -> None:
         """Run *query* over ``$rows`` in a write transaction the driver retries.

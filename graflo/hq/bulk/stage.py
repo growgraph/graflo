@@ -9,6 +9,7 @@ lands as one file per type it holds. Every row carries:
   one batch casts to, one per stamp);
 - ``key``: the typed identity (:func:`~graflo.hq.bulk.encode.typed_key`); for
   an edge, its endpoints' keys and the values of its identity fields;
+- for an edge a ``sync`` block owns, ``okey``: the key of its owner vertex;
 - the documents, logical names, values encoded losslessly.
 
 A row whose identity is incomplete cannot be folded or written and goes to the
@@ -28,7 +29,8 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 
-from graflo.architecture.graph_types import GraphContainer
+from graflo.architecture.contract.ingestion.sync import OwnedEdge
+from graflo.architecture.graph_types import EdgeId, GraphContainer
 from graflo.architecture.graph_types.merge import union_members
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.edge import Edge
@@ -36,7 +38,7 @@ from graflo.hq.bulk.encode import (
     IdentityKeyError,
     dumps,
     encode,
-    key_member,
+    identity_member,
     typed_key,
     write_rows,
 )
@@ -64,6 +66,10 @@ class RunType(BaseModel):
     name: str | None = None
     edge_id: tuple[str, str, str | None] | None = None
     union: list[str] = []
+    owner: str | None = None
+    """For an owned edge: the vertex type that owns it."""
+    owner_side: str | None = None
+    """For an owned edge: where its owner key is read (``source``, ``target``, ``field``)."""
 
     @property
     def label(self) -> str:
@@ -99,10 +105,13 @@ class Stager:
         schema: Schema,
         ctx: WriteContext,
         staging_dir: Path,
+        owners: Mapping[EdgeId, OwnedEdge] | None = None,
     ) -> None:
+        """*owners*: how each owned edge is owned, by declared edge id."""
         self.schema = schema
         self.ctx = ctx
         self.root = Path(staging_dir)
+        self.owners = dict(owners or {})
         self._known: set[str] = set()
 
     def stage(
@@ -183,8 +192,13 @@ class Stager:
         key_fields = list(ec.relationship_merge_property_names(edge))
         union = edge_union_fields(edge)
         source_type, target_type, relation = edge_id
+        owned = self.owners.get(edge.edge_id)
         run = RunType(
-            kind="edge", edge_id=(source_type, target_type, relation), union=union
+            kind="edge",
+            edge_id=(source_type, target_type, relation),
+            union=union,
+            owner=owned.owner if owned else None,
+            owner_side=owned.side if owned else None,
         )
         rows: list[bytes] = []
         rejects: list[bytes] = []
@@ -205,7 +219,20 @@ class Stager:
                     )
                 )
                 continue
-            extra = [_extra_member(props.get(f)) for f in key_fields]
+            okey: str | None = None
+            if owned is not None:
+                try:
+                    okey = _owner_key(owned, skey, tkey, props)
+                except IdentityKeyError as exc:
+                    rejects.append(
+                        _reject(
+                            row_seq,
+                            f"owner {owned.owner_field!r}: {exc}",
+                            {"source": source, "target": target, "doc": props},
+                        )
+                    )
+                    continue
+            extra = [identity_member(props.get(f)) for f in key_fields]
             key = json.dumps(
                 [json.loads(skey), json.loads(tkey), extra],
                 separators=(",", ":"),
@@ -218,6 +245,7 @@ class Stager:
                         "key": key,
                         "skey": skey,
                         "tkey": tkey,
+                        "okey": okey,
                         "source": encode(source),
                         "target": encode(target),
                         "doc": encode(props),
@@ -262,6 +290,16 @@ def staged_runs(staging_dir: Path) -> Iterator[tuple[str, RunType]]:
         )
 
 
+def _owner_key(owned: OwnedEdge, skey: str, tkey: str, props: Mapping[str, Any]) -> str:
+    """The key of the vertex that owns an edge, as its own key is written."""
+    if owned.side == "source":
+        return skey
+    if owned.side == "target":
+        return tkey
+    assert owned.owner_field is not None
+    return typed_key([props.get(owned.owner_field)])
+
+
 def _normalized(doc: dict[str, Any], union: Sequence[str]) -> dict[str, Any]:
     """*doc* with its union fields as an upsert onto nothing leaves them."""
     for field in union:
@@ -272,13 +310,3 @@ def _normalized(doc: dict[str, Any], union: Sequence[str]) -> dict[str, Any]:
 
 def _reject(seq: list[int], reason: str, row: dict[str, Any]) -> bytes:
     return dumps({"seq": seq, "reason": reason, "row": encode(row)})
-
-
-def _extra_member(value: Any) -> Any:
-    """An edge identity field's value as part of the edge key; absent is null."""
-    if value is None:
-        return None
-    try:
-        return key_member(value)
-    except IdentityKeyError:
-        return encode(value)

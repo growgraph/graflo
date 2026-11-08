@@ -216,7 +216,7 @@ def test_a_count_the_target_does_not_hold_fails_the_run(tmp_path, monkeypatch) -
 
 def test_a_directory_with_other_files_is_refused(tmp_path) -> None:
     (tmp_path / "notes.txt").write_text("mine")
-    with pytest.raises(ValueError, match="not empty and holds no bulk run"):
+    with pytest.raises(ValueError, match="not empty and holds no bulk or sync run"):
         open_staging(tmp_path)
 
 

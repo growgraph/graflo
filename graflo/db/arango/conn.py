@@ -30,6 +30,7 @@ from typing import Any, cast
 
 from arango import ArangoClient
 from arango.graph import Graph
+from arango.request import Request
 
 from graflo.architecture.graph_types import (
     EdgeDirection,
@@ -40,9 +41,26 @@ from graflo.architecture.graph_types import (
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import VertexConfig
+from graflo.connections.bulk import BulkConfig
 from graflo.connections.onto import ArangoConfig
+from graflo.db.arango.bulk import (
+    ArangoImportError,
+    check_import,
+    edge_collections,
+    edge_count_query,
+    import_bodies,
+    import_params,
+)
+from graflo.db.arango.keys import edge_documents, vertex_documents
 from graflo.db.arango.query import fetch_fields_query
 from graflo.db.arango.util import render_filters
+from graflo.db.bulk import (
+    BulkCounts,
+    BulkEdgeChunk,
+    BulkPlan,
+    BulkVertexChunk,
+    StoredEdgeId,
+)
 from graflo.db.conn import (
     DEFAULT_DELETE_CHUNK_SIZE,
     Connection,
@@ -72,33 +90,6 @@ logger = logging.getLogger(__name__)
 _json_serializer = json_serializer
 
 
-def _arango_edge_endpoint_aql(
-    vertex_class: str,
-    match_keys: tuple[str, ...],
-    slot: int,
-) -> tuple[str, str]:
-    """Build the endpoint _id expression and optional LET … FOR v IN … prefix."""
-    cell = f"edge[{slot}]"
-    if match_keys[0] == "_key":
-        return f'CONCAT("{vertex_class}/", {cell}._key)', ""
-    bind = "sources" if slot == 0 else "targets"
-    filt = " && ".join(f"v.{k} == {cell}.{k}" for k in match_keys)
-    prefix = f"LET {bind} = (FOR v IN {vertex_class} FILTER {filt} LIMIT 1 RETURN v)"
-    return f"{bind}[0]._id", prefix
-
-
-def _arango_edge_upsert_key_exprs(
-    result_from: str,
-    result_to: str,
-    source_prefix: str,
-    target_prefix: str,
-) -> tuple[str, str]:
-    """Use literal endpoint expressions when known; otherwise match on persisted doc."""
-    ups_from = result_from if source_prefix else "doc._from"
-    ups_to = result_to if target_prefix else "doc._to"
-    return ups_from, ups_to
-
-
 def _arango_edge_uniq_weight_keys(
     uniq_weight_fields: Any,
     uniq_weight_collections: Any,
@@ -111,52 +102,16 @@ def _arango_edge_uniq_weight_keys(
     return keys
 
 
-def _fuse_edge_rows(
-    rows: list[Any],
-    match_keys_source: tuple[str, ...],
-    match_keys_target: tuple[str, ...],
-    weight_keys: list[str],
-) -> list[list[Any]]:
-    """One ``[source, target, props]`` row per edge identity, later properties winning.
+def arango_upsert_edges_query(collection: str, docs_json: str) -> str:
+    """AQL writing edge documents that carry their ``_key``.
 
-    One ``UPSERT`` query does not find what it wrote itself, so two rows of
-    one edge in a batch would insert it twice.
+    A new edge is inserted; a stored one takes the document's attributes, as
+    ``UPDATE`` would. Keyed on ``_key``, the write is atomic per edge.
     """
-    fused: dict[str, list[Any]] = {}
-    for row in rows:
-        source, target = row[0], row[1]
-        props = row[2] if len(row) > 2 and isinstance(row[2], dict) else {}
-        ident = json.dumps(
-            [
-                [source.get(k) for k in match_keys_source],
-                [target.get(k) for k in match_keys_target],
-                [props.get(k) for k in weight_keys],
-            ],
-            sort_keys=True,
-            default=str,
-        )
-        earlier = fused.get(ident)
-        fused[ident] = [source, target, {**(earlier[2] if earlier else {}), **props}]
-    return list(fused.values())
-
-
-def _arango_edge_upsert_match_literal(
-    ups_from: str,
-    ups_to: str,
-    weight_keys: list[str],
-    relation_name: str | None,
-) -> str:
-    """The UPSERT search document. ``edge`` is the ``[source, target, weight]``
-    row, so weights are read from ``edge[2]``."""
-    inner = f"'_from': {ups_from}, '_to': {ups_to}"
-    if relation_name is not None:
-        # The relation is matched by the one being written, never as a weight.
-        weight_keys = [k for k in weight_keys if k != "relation"]
-    if weight_keys:
-        inner += ", " + ", ".join(f"'{k}': edge[2].{k}" for k in weight_keys)
-    if relation_name is not None:
-        inner += f", 'relation': '{relation_name}'"
-    return "{" + inner + "}"
+    return (
+        f"FOR doc IN {docs_json} INSERT doc INTO {collection} "
+        'OPTIONS {overwriteMode: "update"}'
+    )
 
 
 def _arango_edge_anchor_clause(
@@ -296,6 +251,7 @@ class ArangoConnection(Connection):
     # (graflo/migrate/executor.py); the other six have none.
     supports_schema_ddl = True
     supports_schema_introspection = True
+    supports_bulk_load = True
 
     def __init__(self, config: ArangoConfig):
         """Initialize ArangoDB connection.
@@ -555,19 +511,22 @@ class ArangoConnection(Connection):
                     self.conn.collection(cname).truncate()
                     logger.debug(f"Truncated edge collection '{cname}'")
 
-    def define_schema(self, schema: Schema) -> None:
+    def define_schema(self, schema: Schema, *, identity_indexes: bool = True) -> None:
         """Define ArangoDB collections based on schema.
 
         Args:
             schema: Schema containing collection definitions
+            identity_indexes: Index each new vertex collection on its identity.
         """
         assert_schema_supported(self.flavor, schema)
-        self.define_vertex_classes(schema)
+        self.define_vertex_classes(schema, identity_indexes=identity_indexes)
         self.define_edge_classes(
             list(schema.core_schema.edge_config.values()), schema=schema
         )
 
-    def define_vertex_classes(self, schema: Schema) -> None:
+    def define_vertex_classes(
+        self, schema: Schema, *, identity_indexes: bool = True
+    ) -> None:
         """Define vertex collections in ArangoDB.
 
         Creates vertex collections for both connected and disconnected vertices,
@@ -575,9 +534,14 @@ class ArangoConnection(Connection):
 
         Args:
             schema: Schema containing vertex definitions
+            identity_indexes: Index each new collection on its vertex identity.
         """
         db_schema = schema.resolve_db_aware(DBType.ARANGO)
         vertex_config = db_schema.vertex_config
+
+        def index(vertex: str) -> Index | None:
+            return vertex_config.index(vertex) if identity_indexes else None
+
         disconnected_vertex_collections = (
             set(vertex_config.vertex_set) - db_schema.edge_config.vertices
         )
@@ -604,17 +568,10 @@ class ArangoConnection(Connection):
                 logger.warning(f"Graph {gname} is not a Graph instance, skipping")
                 continue
 
-            _ = self.create_collection(
-                vertex_config.vertex_dbname(u), vertex_config.index(u), g
-            )
-
-            _ = self.create_collection(
-                vertex_config.vertex_dbname(v), vertex_config.index(v), g
-            )
+            _ = self.create_collection(vertex_config.vertex_dbname(u), index(u), g)
+            _ = self.create_collection(vertex_config.vertex_dbname(v), index(v), g)
         for v in disconnected_vertex_collections:
-            _ = self.create_collection(
-                vertex_config.vertex_dbname(v), vertex_config.index(v), None
-            )
+            _ = self.create_collection(vertex_config.vertex_dbname(v), index(v), None)
 
     def define_edge_classes(
         self, edges: list[Edge], schema: Schema | None = None
@@ -957,8 +914,9 @@ class ArangoConnection(Connection):
     ) -> None:
         """Upsert a batch of documents using AQL.
 
-        Performs an upsert operation on a batch of documents, using the specified
-        match keys to determine whether to update existing documents or insert new ones.
+        Documents are matched on *match_keys*; each gets the ``_key`` those
+        values determine (:func:`graflo.db.arango.keys.vertex_key`), so edges
+        can name it without a lookup.
 
         Args:
             docs: List of documents to upsert
@@ -977,6 +935,7 @@ class ArangoConnection(Connection):
             return
         if filter_uniques:
             docs = pick_unique_dict(docs)
+        docs = vertex_documents(docs, match_keys, strict=False)
         docs_json = json.dumps(docs, default=json_serializer)
         if not match_keys:
             upsert_clause = ""
@@ -994,7 +953,7 @@ class ArangoConnection(Connection):
                 update_clause = "{}"
             update_clause = f"UPDATE {update_clause}"
 
-        options = "OPTIONS {exclusive: true, ignoreErrors: true}"
+        options = "OPTIONS {ignoreErrors: true}"
 
         q_update = f"""FOR doc in {docs_json}
                             {upsert_clause}
@@ -1016,25 +975,28 @@ class ArangoConnection(Connection):
         head: int | None = None,
         **kwargs: Any,
     ) -> None:
-        """Insert a batch of edges using AQL.
+        """Upsert a batch of edges on their ``_key``.
 
-        Creates edges between source and target vertices, with support for
-        weight fields and unique constraints.
+        An edge is its endpoints, relation and identity fields, digested into
+        its ``_key``; a row with the same identity updates the edge's other
+        properties. ``_from`` and ``_to`` are built from the endpoints' match
+        key values, so no vertex is looked up and an absent endpoint is not
+        checked. Rows missing an endpoint value are dropped.
 
         Args:
-            docs_edges: List of edge documents in format [{_source_aux: source_doc, _target_aux: target_doc}]
-            source_class: Source vertex class name
-            target_class: Target vertex class name
-            relation_name: Optional relation name for the edges
-            match_keys_source: Keys to match source vertices
-            match_keys_target: Keys to match target vertices
-            filter_uniques: If True, filter duplicate edges
+            docs_edges: ``[source_doc, target_doc, props]`` rows
+            source_class: Source vertex collection
+            target_class: Target vertex collection
+            relation_name: Relation stored on each edge, if any
+            match_keys_source: The source's identity fields, in identity order
+            match_keys_target: The target's identity fields, in identity order
+            filter_uniques: If True, filter duplicate rows
             head: Optional limit on number of edges to insert
             **kwargs: Additional options:
                 - dry: If True, don't execute the query
                 - collection_name: Edge collection name (defaults to {source_class}_{target_class}_edges if not provided)
-                - uniq_weight_fields: Fields included in UPSERT match (parallel edges)
-                - uniq_weight_collections: Extra match keys (legacy; list of names)
+                - uniq_weight_fields: The edge's identity fields (parallel edges)
+                - uniq_weight_collections: Extra identity fields (legacy; list of names)
                 - relationship_merge_properties: Ignored (Cypher backends only)
         """
         opts = consume_insert_edges_kwargs(kwargs)
@@ -1042,55 +1004,144 @@ class ArangoConnection(Connection):
 
         if not isinstance(docs_edges, list):
             return
-        if docs_edges:
-            logger.debug(" docs_edges[0] = %s", docs_edges[0])
         if head is not None:
             docs_edges = docs_edges[:head]
         if filter_uniques:
             docs_edges = pick_unique_dict(docs_edges)
-        weight_keys = _arango_edge_uniq_weight_keys(
-            opts.uniq_weight_fields,
-            opts.uniq_weight_collections,
+        docs = edge_documents(
+            docs_edges,
+            source_class,
+            target_class,
+            match_keys_source,
+            match_keys_target,
+            relation_name,
+            _arango_edge_uniq_weight_keys(
+                opts.uniq_weight_fields, opts.uniq_weight_collections
+            ),
+            strict=False,
+            fuse=True,
         )
-        docs_edges = _fuse_edge_rows(
-            docs_edges, match_keys_source, match_keys_target, weight_keys
-        )
-        docs_edges_str = json.dumps(docs_edges, default=json_serializer)
-
-        result_from, source_filter = _arango_edge_endpoint_aql(
-            source_class, match_keys_source, 0
-        )
-        result_to, target_filter = _arango_edge_endpoint_aql(
-            target_class, match_keys_target, 1
-        )
-        doc_definition = f"MERGE({{_from : {result_from}, _to : {result_to}}}, edge[2])"
-        if relation_name is not None:
-            doc_definition = (
-                f"MERGE({doc_definition}, {{'relation': '{relation_name}'}})"
+        if not docs or opts.dry:
+            return
+        self.execute(
+            arango_upsert_edges_query(
+                collection_name, json.dumps(docs, default=json_serializer)
             )
-        logger.debug(" source_filter = %s", source_filter)
-        logger.debug(" target_filter = %s", target_filter)
-        logger.debug(" doc = %s", doc_definition)
-
-        # An edge is its endpoints, relation and identity fields: a row with
-        # the same identity updates the edge's other properties.
-        ups_from, ups_to = _arango_edge_upsert_key_exprs(
-            result_from, result_to, source_filter, target_filter
         )
-        upsert_literal = _arango_edge_upsert_match_literal(
-            ups_from, ups_to, weight_keys, relation_name
-        )
-        logger.debug(" upsert clause: %s", upsert_literal)
-        clauses = f"UPSERT {upsert_literal} INSERT doc UPDATE doc"
-        options = "OPTIONS {exclusive: true}"
 
-        q_update = f"""
-            FOR edge in {docs_edges_str} {source_filter} {target_filter}
-                LET doc = {doc_definition}
-                {clauses}
-                in {collection_name} {options}"""
-        if not opts.dry:
-            self.execute(q_update)
+    # -- bulk load ---------------------------------------------------------------
+
+    def bulk_begin(
+        self,
+        schema: Schema,
+        cfg: BulkConfig,
+        *,
+        recreate: bool = False,
+        resume: bool = False,
+    ) -> BulkPlan:
+        """Guard the first write and create the collections, without their indexes.
+
+        Identity and secondary indexes are built by :meth:`bulk_finish`; the
+        primary index on ``_key`` is all an import needs.
+
+        Raises:
+            SchemaExistsError: The database holds collections or graphs and
+                neither *recreate* nor *resume* is set.
+        """
+        assert_schema_supported(self.flavor, schema)
+        self.report_edge_direction_support(schema)
+        self.ensure_target_namespace(schema, create=True)
+        if not resume:
+            if recreate:
+                self.delete_graph_structure((), (), delete_all=True)
+            elif self._schema_has_artifacts():
+                raise SchemaExistsError(
+                    f"Schema already exists in database "
+                    f"'{self._resolve_db_name(schema)}'. Set recreate_schema=True "
+                    "to replace it."
+                )
+        self.define_schema(schema, identity_indexes=False)
+        return BulkPlan()
+
+    def bulk_write_vertices(self, schema: Schema, chunk: BulkVertexChunk) -> None:
+        """Import the chunk's documents, each under the ``_key`` its identity gives."""
+        docs = vertex_documents(chunk.rows, chunk.match_keys, strict=True)
+        self._bulk_import(chunk.class_name, docs, replay=chunk.replay)
+
+    def bulk_prepare_edges(self, schema: Schema) -> None:
+        """Nothing: edges carry ``_from`` and ``_to`` built from endpoint keys."""
+
+    def bulk_write_edges(self, schema: Schema, chunk: BulkEdgeChunk) -> None:
+        """Import the chunk's edges, each under the ``_key`` its identity gives."""
+        docs = edge_documents(
+            chunk.rows,
+            chunk.source_class,
+            chunk.target_class,
+            chunk.match_keys_source,
+            chunk.match_keys_target,
+            chunk.relation_name,
+            chunk.merge_properties,
+            strict=True,
+            fuse=False,
+        )
+        collection = (
+            chunk.collection_name or f"{chunk.source_class}_{chunk.target_class}_edges"
+        )
+        self._bulk_import(collection, docs, replay=chunk.replay)
+
+    def bulk_finish(self, schema: Schema) -> BulkCounts:
+        """Build the identity and secondary indexes; count what the database holds."""
+        vc = schema.resolve_db_aware(DBType.ARANGO).vertex_config
+        for vertex in vc.vertex_set:
+            index = vc.index(vertex)
+            if index.fields and index.fields != ["_key"]:
+                # Idempotent: ArangoDB returns an index that already exists.
+                self._add_index(self.conn.collection(vc.vertex_dbname(vertex)), index)
+        self.define_indexes(schema)
+        vertices = {
+            vc.vertex_dbname(vertex): int(
+                cast(int, self.conn.collection(vc.vertex_dbname(vertex)).count())
+            )
+            for vertex in vc.vertex_set
+        }
+        edges: dict[StoredEdgeId, int] = {}
+        for collection, stored in edge_collections(schema).items():
+            if len(stored) == 1 and stored[0][1] is not None:
+                count = cast(int, self.conn.collection(collection).count())
+                edges[stored[0]] = edges.get(stored[0], 0) + int(count)
+                continue
+            # Several edges, or a relation set per row, share the collection.
+            query = edge_count_query(_arango_safe_collection_name(collection))
+            for source, relation, target, n in get_data_from_cursor(
+                self.execute(query)
+            ):
+                key = (source, relation, target)
+                edges[key] = edges.get(key, 0) + int(n)
+        return BulkCounts(vertices=vertices, edges=edges)
+
+    def _bulk_import(
+        self, collection: str, docs: list[dict[str, Any]], *, replay: bool
+    ) -> None:
+        """POST *docs* to ``/_api/import`` as JSON Lines, a few MiB per request.
+
+        Raises:
+            ArangoImportError: A request did not store every document it sent.
+        """
+        for body, sent in import_bodies(docs):
+            request = Request(
+                method="post",
+                endpoint="/_api/import",
+                params=import_params(collection),
+                data=body,
+                write=collection,
+            )
+            response = self.conn.conn.send_request(request)
+            if not response.is_success:
+                raise ArangoImportError(
+                    f"import into {collection}: HTTP {response.status_code} "
+                    f"{response.error_message or response.body}"
+                )
+            check_import(response.body, sent=sent, replay=replay, collection=collection)
 
     def insert_return_batch(self, docs: list[dict[str, Any]], class_name: str) -> str:
         """Insert documents and return the AQL query string.
