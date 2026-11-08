@@ -590,7 +590,7 @@ wheels = [
 
 [[package]]
 name = "graflo"
-version = "1.25.1"
+version = "1.26.0"
 source = { editable = "." }
 dependencies = [
     { name = "boto3" },
@@ -700,7 +700,7 @@ requires-dist = [
     { name = "xmltodict", specifier = ">=0.14.2,<0.15" },
     { name = "zstandard", marker = "extra == 'bulk'", specifier = ">=0.23" },
 ]
-provides-extras = ["dev", "docs", "plot", "bulk"]
+provides-extras = ["bulk", "dev", "docs", "plot"]
 
 [[package]]
 name = "griffelib"

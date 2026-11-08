@@ -11,7 +11,7 @@ from graflo.object_storage.bucket import (
     ensure_bucket_exists,
     ensure_staging_bucket_for_config,
 )
-from graflo.object_storage.config import MinioConfig
+from graflo.object_storage.config import S3EndpointConfig
 
 
 def test_ensure_bucket_exists_already_present() -> None:
@@ -69,7 +69,7 @@ def test_ensure_bucket_exists_propagates_other_head_errors() -> None:
 
 
 def test_ensure_staging_bucket_for_config_wraps_endpoint_connection_error() -> None:
-    cfg = MinioConfig(
+    cfg = S3EndpointConfig(
         endpoint_url="http://127.0.0.1:9000",
         access_key="k",
         secret_key="s",
@@ -81,7 +81,7 @@ def test_ensure_staging_bucket_for_config_wraps_endpoint_connection_error() -> N
     )
     with (
         patch(
-            "graflo.object_storage.s3_client.boto3_s3_client_from_minio",
+            "graflo.object_storage.s3_client.boto3_s3_client_from_endpoint",
             return_value=mock_client,
         ),
         pytest.raises(RuntimeError, match="Cannot connect to"),

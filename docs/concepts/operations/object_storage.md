@@ -17,18 +17,18 @@ credentials are (see [connection proxy](../glossary.md#connection-proxy)).
 
 ```python
 from graflo.connections import InMemoryConnectionProvider
-from graflo.object_storage import MinioConfig
+from graflo.object_storage import S3EndpointConfig
 
-s3 = MinioConfig.from_docker_env()
+s3 = S3EndpointConfig.from_docker_env()
 provider = InMemoryConnectionProvider({"lake": s3.to_files_conn_config()})
 ```
 
 Pass `provider` as `connection_provider` to `GraphEngine.ingest` or
 `define_and_ingest`.
 
-## `MinioConfig`
+## `S3EndpointConfig`
 
-`MinioConfig` (also available as `S3EndpointConfig`) holds the endpoint and
+`S3EndpointConfig` holds the endpoint and
 credentials of an S3-compatible service. It is not a database config and is
 not used with `ConnectionManager`.
 
@@ -40,7 +40,7 @@ not used with `ConnectionManager`.
 | `bucket` | `graflo-staging` | Default bucket |
 | `region` | `us-east-1` | Region passed to boto3; keep the default for a local service |
 
-`MinioConfig.from_docker_env()` reads the settings of the S3 service shipped
+`S3EndpointConfig.from_docker_env()` reads the settings of the S3 service shipped
 under `docker/seaweedfs` (`S3_ENDPOINT` or `S3_PROTOCOL`, `S3_HOSTNAME`,
 `S3_API_PORT`; `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_BUCKET`, `AWS_REGION`).
 `to_files_conn_config()` turns it into the files connection (root
@@ -55,7 +55,7 @@ under `docker/seaweedfs` (`S3_ENDPOINT` or `S3_PROTOCOL`, `S3_HOSTNAME`,
 |---|---|
 | `ensure_staging_bucket_for_config(config)` | Creates the config's bucket if it does not exist; raises with a hint when the endpoint cannot be reached |
 | `ensure_bucket_exists(client, bucket)` | The same for any boto3 client |
-| `boto3_s3_client_from_minio(config)`, `boto3_s3_client(config)` | Build a boto3 S3 client from a `MinioConfig` or an `S3ConnConfig` |
+| `boto3_s3_client_from_endpoint(config)`, `boto3_s3_client(config)` | Build a boto3 S3 client from a `S3EndpointConfig` or an `S3ConnConfig` |
 
 ## What to read next
 

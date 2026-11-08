@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from graflo.connections.sources import S3ConnConfig
-    from graflo.object_storage.config import MinioConfig
+    from graflo.object_storage.config import S3EndpointConfig
 
 
 def boto3_s3_client(cfg: S3ConnConfig) -> Any:
@@ -22,8 +22,8 @@ def boto3_s3_client(cfg: S3ConnConfig) -> Any:
     )
 
 
-def boto3_s3_client_from_minio(cfg: MinioConfig) -> Any:
-    """Build a boto3 S3 client from :class:`~graflo.object_storage.config.MinioConfig`."""
+def boto3_s3_client_from_endpoint(cfg: S3EndpointConfig) -> Any:
+    """Build a boto3 S3 client from :class:`~graflo.object_storage.config.S3EndpointConfig`."""
     import boto3
 
     return boto3.client(

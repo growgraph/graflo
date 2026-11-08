@@ -70,7 +70,7 @@ A checkout of the GraFlo repository has a single-broker Kafka setup in `docker/k
 
 ```bash
 cd docker/kafka
-docker compose --env-file .env --profile graflo.kafka up -d
+docker compose --env-file .env.example --profile graflo.kafka up -d
 ```
 
 `docker/start-all.sh` starts it together with the other services in `docker/`.

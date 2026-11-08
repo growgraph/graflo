@@ -18,7 +18,7 @@ from test.db.cypher_cases.traits import CypherTraits
 
 @pytest.fixture(scope="function")
 def conn_conf():
-    """Load FalkorDB config from docker/falkordb/.env file."""
+    """Load FalkorDB config from docker/falkordb/.env.example."""
     conn_conf = FalkordbConfig.from_docker_env()
     return conn_conf
 

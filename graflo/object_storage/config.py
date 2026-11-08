@@ -1,9 +1,8 @@
 """S3-compatible endpoint configuration (SeaweedFS, AWS S3, MinIO, etc.).
 
-Used by boto3 S3 clients. Not a graph database target. :meth:`MinioConfig.from_docker_env` reads ``docker/seaweedfs``,
-the S3 service this repository ships.
-
-``S3EndpointConfig`` is an alias for :class:`MinioConfig` (name reflects any S3 API).
+Used by boto3 S3 clients. Not a graph database target.
+:meth:`S3EndpointConfig.from_docker_env` reads ``docker/seaweedfs``, the S3
+service this repository ships.
 """
 
 from __future__ import annotations
@@ -17,19 +16,7 @@ if TYPE_CHECKING:
     from graflo.connections.sources import FilesConnConfig
 
 
-def parse_dotenv_file(env_file: Path) -> dict[str, str]:
-    """Parse a simple ``KEY=value`` .env file (no shell expansion)."""
-    env_vars: dict[str, str] = {}
-    with open(env_file, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                key, value = line.split("=", 1)
-                env_vars[key.strip()] = value.strip().strip('"').strip("'")
-    return env_vars
-
-
-class MinioConfig(BaseModel):
+class S3EndpointConfig(BaseModel):
     """Credentials and endpoint for any S3-compatible API (boto3)."""
 
     model_config = ConfigDict(extra="forbid")
@@ -61,10 +48,10 @@ class MinioConfig(BaseModel):
         )
 
     @classmethod
-    def from_docker_env(cls, docker_dir: str | Path | None = None) -> MinioConfig:
+    def from_docker_env(cls, docker_dir: str | Path | None = None) -> S3EndpointConfig:
         """Load the S3 service settings of ``docker/seaweedfs``.
 
-        Reads ``<docker_dir>/.env`` when it exists; every setting has a default
+        Reads ``<docker_dir>/.env.example`` when it exists; every setting has a default
         matching the bundled compose file, whose S3 API accepts any key pair, so
         the file is optional.
 
@@ -72,15 +59,9 @@ class MinioConfig(BaseModel):
         ``S3_API_PORT``), ``S3_ACCESS_KEY``, ``S3_SECRET_KEY``, ``S3_BUCKET``
         and ``AWS_REGION``.
         """
-        if docker_dir is None:
-            docker_dir = (
-                Path(__file__).resolve().parent.parent.parent / "docker" / "seaweedfs"
-            )
-        else:
-            docker_dir = Path(docker_dir)
+        from graflo.connections.env import docker_env
 
-        env_file = docker_dir / ".env"
-        env_vars = parse_dotenv_file(env_file) if env_file.exists() else {}
+        env_vars = docker_env("seaweedfs", docker_dir, required=False)
         data: dict[str, Any] = {}
 
         if raw_endpoint := env_vars.get("S3_ENDPOINT"):
@@ -100,7 +81,3 @@ class MinioConfig(BaseModel):
             data["region"] = region
 
         return cls(**data)
-
-
-S3EndpointConfig = MinioConfig
-"""Alias: any S3-compatible endpoint, not only MinIO."""

@@ -11,13 +11,12 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from graflo.connections.bulk import BulkConfig
-from graflo.connections.env import proxy_env_prefix
+from graflo.connections.env import docker_env, proxy_env_prefix
 from graflo.onto import DBType
 
 logger = logging.getLogger(__name__)
 
 # Repository root (this file lives at <repo>/graflo/connections/onto.py).
-_DOCKER_ROOT = Path(__file__).resolve().parents[2] / "docker"
 
 # Type variable for DBConfig subclasses
 T = TypeVar("T", bound="DBConfig")
@@ -417,13 +416,13 @@ class DBConfig(BaseSettings, abc.ABC):
 
     @classmethod
     def from_docker_env(cls, docker_dir: str | Path | None = None) -> "DBConfig":
-        """Load config from docker .env file.
+        """Load config from the service's ``docker/<service>/.env.example``.
 
         Args:
             docker_dir: Path to docker directory. If None, uses default based on db type.
 
         Returns:
-            DBConfig instance loaded from .env file
+            DBConfig instance loaded from that .env.example file
         """
         raise NotImplementedError("Subclasses must implement from_docker_env")
 
@@ -559,9 +558,9 @@ class ArangoConfig(DBConfig):
 
     @classmethod
     def from_docker_env(cls, docker_dir: str | Path | None = None) -> "ArangoConfig":
-        """Load ArangoDB config from docker/arango/.env file.
+        """Load ArangoDB config from docker/arango/.env.example file.
 
-        The .env file structure is minimal and may contain:
+        The file may contain:
         - ARANGO_PORT: Port number (defaults hostname to localhost, protocol to http)
         - ARANGO_URI: Full URI (alternative to ARANGO_PORT)
         - ARANGO_HOSTNAME: Hostname (defaults to localhost)
@@ -571,38 +570,7 @@ class ArangoConfig(DBConfig):
         - ARANGO_PASSWORD: Password (fallback)
         - ARANGO_DATABASE: Database name (optional, can be set later)
         """
-        if docker_dir is None:
-            docker_dir = _DOCKER_ROOT / "arango"
-        else:
-            docker_dir = Path(docker_dir)
-
-        env_file = docker_dir / ".env"
-        if not env_file.exists():
-            raise FileNotFoundError(f"Environment file not found: {env_file}")
-
-        # Load .env file manually with simple variable expansion
-        env_vars: dict[str, str] = {}
-        with open(env_file, "r") as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    key, value = line.split("=", 1)
-                    key = key.strip()
-                    value = value.strip().strip('"').strip("'")
-                    env_vars[key] = value
-
-        # Expand variables (simple single-pass expansion)
-        # First pass: expand ${SPEC} references
-        for key, value in env_vars.items():
-            if "${SPEC}" in value and "SPEC" in env_vars:
-                env_vars[key] = value.replace("${SPEC}", env_vars["SPEC"])
-
-        # Second pass: expand other variables (like ${CONTAINER_NAME})
-        for key, value in env_vars.items():
-            for var_name, var_value in env_vars.items():
-                var_ref = f"${{{var_name}}}"
-                if var_ref in value:
-                    env_vars[key] = value.replace(var_ref, var_value)
+        env_vars = docker_env("arango", docker_dir)
 
         # Map environment variables to config
         config_data: dict[str, Any] = {}
@@ -675,24 +643,8 @@ class Neo4jConfig(DBConfig):
 
     @classmethod
     def from_docker_env(cls, docker_dir: str | Path | None = None) -> "Neo4jConfig":
-        """Load Neo4j config from docker/neo4j/.env file."""
-        if docker_dir is None:
-            docker_dir = _DOCKER_ROOT / "neo4j"
-        else:
-            docker_dir = Path(docker_dir)
-
-        env_file = docker_dir / ".env"
-        if not env_file.exists():
-            raise FileNotFoundError(f"Environment file not found: {env_file}")
-
-        # Load .env file manually
-        env_vars: dict[str, str] = {}
-        with open(env_file, "r") as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    key, value = line.split("=", 1)
-                    env_vars[key.strip()] = value.strip().strip('"').strip("'")
+        """Load Neo4j config from docker/neo4j/.env.example file."""
+        env_vars = docker_env("neo4j", docker_dir)
 
         # Map environment variables to config
         config_data: dict[str, Any] = {}
@@ -838,24 +790,8 @@ class TigergraphConfig(DBConfig):
     def from_docker_env(
         cls, docker_dir: str | Path | None = None
     ) -> "TigergraphConfig":
-        """Load TigerGraph config from docker/tigergraph/.env file."""
-        if docker_dir is None:
-            docker_dir = _DOCKER_ROOT / "tigergraph"
-        else:
-            docker_dir = Path(docker_dir)
-
-        env_file = docker_dir / ".env"
-        if not env_file.exists():
-            raise FileNotFoundError(f"Environment file not found: {env_file}")
-
-        # Load .env file manually
-        env_vars: dict[str, str] = {}
-        with open(env_file, "r") as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    key, value = line.split("=", 1)
-                    env_vars[key.strip()] = value.strip().strip('"').strip("'")
+        """Load TigerGraph config from docker/tigergraph/.env.example file."""
+        env_vars = docker_env("tigergraph", docker_dir)
 
         # Map environment variables to config
         config_data: dict[str, Any] = {}
@@ -877,7 +813,7 @@ class TigergraphConfig(DBConfig):
             config_data["gs_port"] = int(rest_port)
         else:
             raise ValueError(
-                "Either TG_WEB or TG_REST must be set in .env file. "
+                "Either TG_WEB or TG_REST must be set in docker/tigergraph/.env.example. "
                 "Standard ports: 14240 (GSQL), 9000 (REST++)."
             )
 
@@ -943,31 +879,15 @@ class FalkordbConfig(DBConfig):
 
     @classmethod
     def from_docker_env(cls, docker_dir: str | Path | None = None) -> "FalkordbConfig":
-        """Load FalkorDB config from docker/falkordb/.env file.
+        """Load FalkorDB config from docker/falkordb/.env.example file.
 
-        The .env file structure may contain:
+        The file may contain:
         - FALKORDB_HOST: Hostname (defaults to localhost)
         - FALKORDB_PORT: Port number (defaults to 6379)
         - FALKORDB_PASSWORD: Redis AUTH password (optional)
         - FALKORDB_DATABASE: Graph name (optional, can be set later)
         """
-        if docker_dir is None:
-            docker_dir = _DOCKER_ROOT / "falkordb"
-        else:
-            docker_dir = Path(docker_dir)
-
-        env_file = docker_dir / ".env"
-        if not env_file.exists():
-            raise FileNotFoundError(f"Environment file not found: {env_file}")
-
-        # Load .env file manually
-        env_vars: dict[str, str] = {}
-        with open(env_file, "r") as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    key, value = line.split("=", 1)
-                    env_vars[key.strip()] = value.strip().strip('"').strip("'")
+        env_vars = docker_env("falkordb", docker_dir)
 
         # Map environment variables to config
         config_data: dict[str, Any] = {}
@@ -1022,32 +942,16 @@ class MemgraphConfig(DBConfig):
 
     @classmethod
     def from_docker_env(cls, docker_dir: str | Path | None = None) -> "MemgraphConfig":
-        """Load Memgraph config from docker/memgraph/.env file.
+        """Load Memgraph config from docker/memgraph/.env.example file.
 
-        The .env file structure may contain:
+        The file may contain:
         - MEMGRAPH_HOST: Hostname (defaults to localhost)
         - MEMGRAPH_PORT: Port number (defaults to 7687)
         - MEMGRAPH_USER: Username (optional)
         - MEMGRAPH_PASSWORD: Password (optional)
         - MEMGRAPH_DATABASE: Database name (optional)
         """
-        if docker_dir is None:
-            docker_dir = _DOCKER_ROOT / "memgraph"
-        else:
-            docker_dir = Path(docker_dir)
-
-        env_file = docker_dir / ".env"
-        if not env_file.exists():
-            raise FileNotFoundError(f"Environment file not found: {env_file}")
-
-        # Load .env file manually
-        env_vars: dict[str, str] = {}
-        with open(env_file, "r") as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    key, value = line.split("=", 1)
-                    env_vars[key.strip()] = value.strip().strip('"').strip("'")
+        env_vars = docker_env("memgraph", docker_dir)
 
         # Map environment variables to config
         config_data: dict[str, Any] = {}
@@ -1200,23 +1104,8 @@ class NebulaConfig(DBConfig):
 
     @classmethod
     def from_docker_env(cls, docker_dir: str | Path | None = None) -> "NebulaConfig":
-        """Load NebulaGraph config from docker/nebula/.env file."""
-        if docker_dir is None:
-            docker_dir = _DOCKER_ROOT / "nebula"
-        else:
-            docker_dir = Path(docker_dir)
-
-        env_file = docker_dir / ".env"
-        if not env_file.exists():
-            raise FileNotFoundError(f"Environment file not found: {env_file}")
-
-        env_vars: dict[str, str] = {}
-        with open(env_file, "r") as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    key, value = line.split("=", 1)
-                    env_vars[key.strip()] = value.strip().strip('"').strip("'")
+        """Load NebulaGraph config from docker/nebula/.env.example file."""
+        env_vars = docker_env("nebula", docker_dir)
 
         config_data: dict[str, Any] = {}
         if "NEBULA_URI" in env_vars:
@@ -1367,24 +1256,8 @@ class PostgresConfig(DBConfig):
 
     @classmethod
     def from_docker_env(cls, docker_dir: str | Path | None = None) -> "PostgresConfig":
-        """Load PostgreSQL config from docker/postgres/.env file."""
-        if docker_dir is None:
-            docker_dir = _DOCKER_ROOT / "postgres"
-        else:
-            docker_dir = Path(docker_dir)
-
-        env_file = docker_dir / ".env"
-        if not env_file.exists():
-            raise FileNotFoundError(f"Environment file not found: {env_file}")
-
-        # Load .env file manually
-        env_vars: dict[str, str] = {}
-        with open(env_file, "r") as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    key, value = line.split("=", 1)
-                    env_vars[key.strip()] = value.strip().strip('"').strip("'")
+        """Load PostgreSQL config from docker/postgres/.env.example file."""
+        env_vars = docker_env("postgres", docker_dir)
 
         # Map environment variables to config
         config_data: dict[str, Any] = {}
@@ -1502,31 +1375,16 @@ class SparqlEndpointConfig(DBConfig):
     def from_docker_env(
         cls, docker_dir: str | Path | None = None
     ) -> "SparqlEndpointConfig":
-        """Load SPARQL / Fuseki config from ``docker/fuseki/.env``.
+        """Load SPARQL / Fuseki config from ``docker/fuseki/.env.example``.
 
-        Expected env vars (see ``docker/fuseki/.env``):
+        Expected env vars (see ``docker/fuseki/.env.example``):
 
         - ``TS_PORT``      – mapped host port (default 3030)
         - ``TS_USERNAME``   – admin user (default ``admin``)
         - ``TS_PASSWORD``   – admin password
         - ``TS_DATASET``    – dataset name (optional)
         """
-        if docker_dir is None:
-            docker_dir = _DOCKER_ROOT / "fuseki"
-        else:
-            docker_dir = Path(docker_dir)
-
-        env_file = docker_dir / ".env"
-        if not env_file.exists():
-            raise FileNotFoundError(f"Environment file not found: {env_file}")
-
-        env_vars: dict[str, str] = {}
-        with open(env_file, "r") as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    key, value = line.split("=", 1)
-                    env_vars[key.strip()] = value.strip().strip('"').strip("'")
+        env_vars = docker_env("fuseki", docker_dir)
 
         config_data: dict[str, Any] = {}
 

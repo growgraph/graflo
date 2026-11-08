@@ -9,7 +9,7 @@ from graflo.db.manager import ConnectionManager
 
 @pytest.fixture(scope="function")
 def conn_conf():
-    """Load Neo4j config from docker/neo4j/.env file."""
+    """Load Neo4j config from docker/neo4j/.env.example."""
     conn_conf = Neo4jConfig.from_docker_env()
     return conn_conf
 

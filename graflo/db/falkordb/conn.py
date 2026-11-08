@@ -25,6 +25,7 @@ Example:
 """
 
 import logging
+import sys
 from collections.abc import Sequence
 from typing import Any
 from urllib.parse import urlparse
@@ -263,7 +264,30 @@ class FalkordbConnection(Connection):
             if isinstance(serialized, str):
                 serialized = self._sanitize_string_value(serialized)
 
+            self._check_parameter_number(serialized)
             return serialized
+
+    @staticmethod
+    def _check_parameter_number(value: Any) -> None:
+        """Reject numbers FalkorDB cannot parse from a query parameter.
+
+        The server reads parameters as literals: an integer outside the signed
+        64-bit range, or a subnormal float (non-zero, below
+        ``sys.float_info.min``), fails to parse and aborts the whole batch.
+
+        Raises:
+            ValueError: If ``value`` is such a number.
+        """
+        if isinstance(value, bool):
+            return
+        if isinstance(value, int) and not -(2**63) <= value <= 2**63 - 1:
+            raise ValueError(f"integer out of 64-bit range: {value}")
+        if (
+            isinstance(value, float)
+            and value != 0.0
+            and abs(value) < sys.float_info.min
+        ):
+            raise ValueError(f"a subnormal float cannot be stored: {value!r}")
 
     def _sanitize_document(
         self, doc: dict, match_keys: list[str] | None = None

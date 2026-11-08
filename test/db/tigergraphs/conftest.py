@@ -74,9 +74,9 @@ def _delete_test_graph_best_effort(
 
 @pytest.fixture(scope="function")
 def conn_conf():
-    """Load TigerGraph config from docker/tigergraph/.env file."""
+    """Load TigerGraph config from docker/tigergraph/.env.example."""
     conn_conf = TigergraphConfig.from_docker_env()
-    # Ensure password is set from environment if not in .env
+    # Ensure password is set from environment if not in .env.example
     if not conn_conf.password:
         conn_conf.password = os.environ.get("GSQL_PASSWORD", "tigergraph")
     return conn_conf
