@@ -16,9 +16,9 @@ assume you have a manifest or a graph to work with.
 | Get a first manifest from a SQL database I already have | [SQL schema inference](sql_schema_inference.md) | [A graph from a PostgreSQL database (09)](../examples/infer-from-postgres/index.md) |
 | Change my manifest: rename, add, re-key or remove a type or a property | [Evolving a manifest](evolving_a_manifest.md) | [Version control for a manifest (22)](../examples/version-control/index.md) |
 | Read REST API addresses and credentials from environment variables | [API env wiring](api_env_wiring.md) | [API sources from environment variables (12)](../examples/api-env-config/index.md) |
-| Load a large graph into TigerGraph quickly | [TigerGraph bulk load](tigergraph_bulk_load.md) | [Bulk load into TigerGraph (13)](../examples/tigergraph-bulk-s3/index.md) |
 | Move a graph from one database to another | [Graph DB migration](graph_db_migration.md) | [A graph on disk, without a database (14)](../examples/file-backend-export/index.md) |
 | Save a graph to files and load it back | [Graph export and replay](graph_export_and_replay.md) | [A graph on disk, without a database (14)](../examples/file-backend-export/index.md) |
+| Load a large graph into an empty database | [Bulk load](bulk_load.md) | [Load a large graph in bulk (13)](../examples/bulk-load/index.md) |
 | Draw my manifest and read its colours and shapes | [Drawing a manifest](drawing_a_manifest.md) | — |
 | Import only the parts of GraFlo I use, and know which layer my code belongs to | [Importing and layering](importing.md) | — |
 | Add support for a new database | [Adding a database backend](adding_a_backend.md) | — |

@@ -11,16 +11,17 @@ do not copy it into your schema; you **lift** your manifest with it, and the
 lift writes the change as [ops](manifest_evolution.md) you review before
 anything is applied.
 
-Three aspects ship with GraFlo:
+Four aspects ship with GraFlo:
 
 | Aspect | Adds | Answers | Standard | Needs a spec |
 |---|---|---|---|---|
 | `provenance` | `SourceRecord`, `Agent`, `wasDerivedFrom`, `wasAttributedTo` | where a fact was read from, and who produced that record | PROV-O | no |
 | `state` | `<Type>State`, `<Type>Observation`, `specializationOf`, `hasFeatureOfInterest` | how a fact changed over time, and what was measured in which unit | PROV-O, SOSA, QUDT | yes |
 | `access` | a reserved `access_zones` label on the types you name | which readers may see each element | — | yes |
+| `sync` | a reserved `sync_hash` on the types a resource's `sync` block owns | whether a record changed since it was last written | — | no |
 
 They are independent. `provenance` and `state` are lifted by default; `access`
-only when you name it.
+and `sync` only when you name them.
 
 ## Lifting a manifest
 
@@ -283,6 +284,19 @@ service decides both. Combine several conditions with `conjoin()`. Guards and
 backends refuse them. The guard
 names the field as stored, so do not rename `access_zones` in `db_profile`. A
 reserved field cannot be part of an identity.
+
+## The sync aspect
+
+The lift adds `sync_hash: STRING` to each vertex type a resource's `sync` block
+owns (`owns:`). The field is reserved and `set_by: sync`: no document and no
+stamp sets it. A bulk load and a sync run write a digest of what the owner
+record wrote, its vertex properties and its owned edges, and a sync run skips a
+record whose digest is unchanged. An upsert writes null, so the next sync
+rewrites that record.
+
+```bash
+graflo lift manifest.yaml --aspect sync -o lifted.yaml
+```
 
 ## The lift spec
 

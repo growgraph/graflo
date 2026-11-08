@@ -35,6 +35,7 @@ from typing import Any, Literal
 from pydantic import Field as PydanticField
 
 from graflo.architecture.base import ConfigBaseModel
+from graflo.architecture.contract.ingestion.emits import inference_feeds
 from graflo.architecture.contract.ingestion.model import IngestionModel
 from graflo.architecture.contract.ingestion.resource import ResourceConfig
 from graflo.architecture.contract.ingestion.steps.ref import (
@@ -181,31 +182,6 @@ def _endpoints_may_match(view: EdgeStepView, edge_id: EdgeId) -> bool:
     return view.source in (None, source) and view.target in (None, target)
 
 
-def _inference_feeds(resource: ResourceConfig, edge_id: EdgeId) -> bool:
-    """Whether edge inference in *resource* would write ``edge_id``.
-
-    Mirrors the runtime's rule: inference is on, the edge passes the resource's
-    ``infer_edge_only`` / ``infer_edge_except`` selectors, and -- unless an
-    allow-list is given -- no fixed-endpoint step already owns the pair.
-    """
-    if not resource.infer_edges:
-        return False
-    if resource.infer_edge_only:
-        return any(spec.matches(edge_id) for spec in resource.infer_edge_only)
-    if any(spec.matches(edge_id) for spec in resource.infer_edge_except):
-        return False
-    source, target, _relation = edge_id
-    for view in iter_edge_steps(resource.pipeline):
-        if view.source is None or view.target is None:
-            continue
-        owned = {(view.source, view.target)}
-        if view.emit_inverse:
-            owned.add((view.target, view.source))
-        if (source, target) in owned:
-            return False
-    return True
-
-
 def _feeding(
     resource: ResourceConfig,
     forward_ids: list[EdgeId],
@@ -240,7 +216,7 @@ def _feeding(
     )
     if own_step:
         return "step", []
-    if any(_inference_feeds(resource, mirror) for mirror in mirror_ids):
+    if any(inference_feeds(resource, mirror) for mirror in mirror_ids):
         return "inference", []
     return "none", forward_steps
 

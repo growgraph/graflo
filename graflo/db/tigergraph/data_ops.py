@@ -509,7 +509,6 @@ class TigerGraphDataOps:
                 - collection_name: Alternative edge type name (used if relation_name is None)
                 - uniq_weight_fields: Unused in TigerGraph (ArangoDB-specific)
                 - uniq_weight_collections: Unused in TigerGraph (ArangoDB-specific)
-                - on_duplicate: Unused in TigerGraph (ArangoDB-specific AQL policy)
                 - relationship_merge_properties: Unused (Cypher property-graph backends only)
         """
         opts = consume_insert_edges_kwargs(kwargs)
@@ -821,6 +820,70 @@ class TigerGraphDataOps:
         except Exception as e:
             logger.error(f"Error fetching documents from {class_name} via REST++: {e}")
             raise
+
+    def _vertices_by_id(
+        self, vertex_type: str, limit: int | None = None
+    ) -> dict[str, dict[str, Any]]:
+        """Every vertex of *vertex_type*: primary id to stored attributes."""
+        graph_name = self._conn._require_configured_graph_name()
+        params = {"limit": str(limit)} if limit is not None else None
+        response = self._conn._call_restpp_api(
+            f"/graph/{graph_name}/vertices/{vertex_type}", params=params
+        )
+        if isinstance(response, dict):
+            if response.get("error"):
+                raise RuntimeError(
+                    f"REST++ API error: {response.get('message', response)}"
+                )
+            rows = response.get("results") or []
+        else:
+            rows = response
+        return {
+            str(row.get("v_id")): dict(row.get("attributes") or {})
+            for row in rows
+            if isinstance(row, dict)
+        }
+
+    def fetch_all_docs(
+        self, class_name: str, *, limit: int | None = None
+    ) -> list[dict[str, Any]]:
+        """Every vertex of *class_name*, as its stored attributes."""
+        return list(self._vertices_by_id(class_name, limit).values())
+
+    def fetch_all_edges(
+        self,
+        source_class: str,
+        target_class: str,
+        edge_type: str | None,
+        *,
+        limit: int | None = None,
+    ) -> list[list[dict[str, Any]]]:
+        """Every *edge_type* edge from *source_class* to *target_class*.
+
+        One REST++ read per source vertex: edges are reached from a known
+        endpoint only.
+
+        Returns:
+            ``[source attributes, target attributes, edge attributes]`` triples.
+        """
+        sources = self._vertices_by_id(source_class)
+        targets = (
+            sources
+            if target_class == source_class
+            else self._vertices_by_id(target_class)
+        )
+        out: list[list[dict[str, Any]]] = []
+        for source_id, source_doc in sources.items():
+            for edge in self._conn._get_edges(source_class, source_id, edge_type):
+                if edge.get("to_type") != target_class:
+                    continue
+                target_doc = targets.get(str(edge.get("to_id")))
+                if target_doc is None:
+                    continue
+                out.append([source_doc, target_doc, dict(edge.get("attributes") or {})])
+                if limit is not None and len(out) >= limit:
+                    return out
+        return out
 
     def fetch_edges(
         self,

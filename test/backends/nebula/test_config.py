@@ -17,8 +17,9 @@ def test_nebula_config_defaults():
     cfg = NebulaConfig(uri="nebula://localhost:9669")
     assert cfg.version == "3"
     assert cfg.is_v3 is True
-    assert cfg.vid_type == "FIXED_STRING(256)"
-    assert cfg.partition_num == 1
+    assert cfg.vid_type is None
+    assert cfg.partition_num is None
+    assert cfg.replica_factor is None
 
 
 def test_nebula_config_v5():

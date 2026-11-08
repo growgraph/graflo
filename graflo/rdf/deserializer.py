@@ -293,6 +293,7 @@ class ManifestRdfDeserializer:
         semantics = self._read_semantics(graph, field_uri)
         reserved = self._literal(graph, field_uri, ns.fieldReserved)
         merge_mode = self._literal(graph, field_uri, ns.fieldMergeMode)
+        set_by = self._literal(graph, field_uri, ns.fieldSetBy)
         match = self._read_match(graph, field_uri)
         derived_source = self._literal(graph, field_uri, ns.derivedSource)
         derived_form = self._literal(graph, field_uri, ns.derivedForm)
@@ -306,6 +307,7 @@ class ManifestRdfDeserializer:
             and semantics is None
             and reserved is None
             and merge_mode is None
+            and set_by is None
             and match is None
             and derived_source is None
         ):
@@ -327,6 +329,8 @@ class ManifestRdfDeserializer:
             field["reserved"] = reserved.lower() == "true"
         if merge_mode is not None:
             field["merge"] = merge_mode
+        if set_by is not None:
+            field["set_by"] = set_by
         if match is not None:
             field["match"] = match
         if derived_source is not None:
@@ -595,13 +599,6 @@ class ManifestRdfDeserializer:
         self, graph: Graph, ingestion_uri: URIRef | BNode
     ) -> dict[str, Any]:
         model: dict[str, Any] = {}
-        duplicate_uri = self._object(graph, ingestion_uri, ns.edgesOnDuplicate)
-        if duplicate_uri is not None:
-            duplicate = reverse_enum(
-                ns.ENUM_REGISTRIES["edge_duplicate_policy"], duplicate_uri
-            )
-            if duplicate is not None:
-                model["edges_on_duplicate"] = duplicate
 
         transforms = self._ordered_nodes(
             graph,
@@ -804,19 +801,6 @@ class ManifestRdfDeserializer:
             )
         if connector_connection:
             bindings["connector_connection"] = connector_connection
-
-        staging_proxy = []
-        for binding_node in self._related_nodes(
-            graph, bindings_uri, ns.hasStagingProxy
-        ):
-            staging_proxy.append(
-                {
-                    "name": self._literal(graph, binding_node, ns.name),
-                    "conn_proxy": self._literal(graph, binding_node, ns.connProxy),
-                }
-            )
-        if staging_proxy:
-            bindings["staging_proxy"] = staging_proxy
 
         return bindings
 

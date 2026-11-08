@@ -97,7 +97,7 @@ Full documentation: [growgraph.github.io/graflo](https://growgraph.github.io/gra
 - [Creating a manifest](https://growgraph.github.io/graflo/getting_started/creating_manifest/): the three blocks of a manifest
 - [Examples](https://growgraph.github.io/graflo/examples/): runnable examples, one question each, with their data under [`examples/`](https://github.com/growgraph/graflo/tree/main/examples)
 - [Concepts](https://growgraph.github.io/graflo/concepts/): schema, identity, ingestion, connectors, evolution and version control
-- [Guides](https://growgraph.github.io/graflo/guides/): database connections, graph migration, schema inference, API wiring, bulk load
+- [Guides](https://growgraph.github.io/graflo/guides/): database connections, graph migration, schema inference, API wiring
 - [GraFlo ontology](https://growgraph.github.io/graflo/concepts/schema/ontology/): a manifest as RDF (`graflo manifest-to-rdf`, `graflo rdf-to-manifest`)
 
 ## Installation

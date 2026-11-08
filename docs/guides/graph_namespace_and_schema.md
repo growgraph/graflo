@@ -5,8 +5,8 @@ it? This guide answers both. It shows how GraFlo chooses the name of the
 [namespace](../concepts/glossary.md#namespace) (the ArangoDB database, the
 TigerGraph graph, the NebulaGraph space), how to pin that name, and how to run
 GraFlo against a namespace that an administrator created, with no right to
-create databases yourself. On Neo4j and Memgraph the name does not decide where
-the data goes; see [Neo4j and Memgraph](#neo4j-and-memgraph).
+create databases yourself. On Neo4j Community and Memgraph the name does not
+decide where the data goes; see [Neo4j and Memgraph](#neo4j-and-memgraph).
 
 ## What you need
 
@@ -141,17 +141,17 @@ existing schema: GraFlo defines the types in it.
 
 ## Neo4j and Memgraph
 
-GraFlo connects to the server's default database and never selects another, so
-one server holds one schema, on every edition.
+On Neo4j, GraFlo writes to the database named by `database` in the connection
+config. When that is unset, it uses the name from step 1 if the database exists
+or the server can create it, and the user's home database otherwise.
 
-- On Neo4j Enterprise, `define_schema` creates a database under the name from
-  step 1 when it is missing, but the graph is still written to the default
-  database.
+- On Neo4j Enterprise, `define_schema` creates the database when it is missing,
+  and the graph is written there.
 - On Neo4j Community, which has one database for your data, `define_schema` logs
-  that it cannot create one and carries on.
+  that it cannot create one and uses the home database.
 - On Memgraph, the name is only recorded.
 
-What this means when two manifests share a server:
+What this means when two manifests share a Neo4j Community or Memgraph server:
 
 - `define_schema` raises `SchemaExistsError` as soon as the server holds any
   node, whichever manifest wrote it.

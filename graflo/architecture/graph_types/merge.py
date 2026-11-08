@@ -8,6 +8,7 @@ fields they will be matched on, preserving order and handling both dict and
 
 Key Functions:
     - fuse_doc_basis: fold documents sharing an index key, preserving order
+    - union_members: the members a ``merge: union`` field holds after an upsert
 
 """
 
@@ -56,8 +57,9 @@ def fuse_doc_basis(
     Args:
         docs: Homogeneous list of documents (all dict or all VertexRep) to merge
         index_keys: Tuple of key names to use for merging
-        union_fields: List fields fused as the union of every document's
-            members, in first-seen order; every other field is later-wins.
+        union_fields: List fields fused as :func:`union_members` of every
+            document's value, the first included; every other field is
+            later-wins.
 
     Returns:
         Merged documents in order of first occurrence (same type as input)
@@ -79,17 +81,40 @@ def fuse_doc_basis(
     return _fuse_group(docs, index_keys, union_fields)
 
 
+def union_members(stored: Any, written: Any) -> list[Any]:
+    """What a ``merge: union`` field holds once *written* is upserted onto *stored*.
+
+    Stored members first, then new ones, each once, in first-seen order. Null
+    members are dropped, a null value adds nothing and a scalar is one member:
+    the union every backend that writes one applies.
+    """
+    out: list[Any] = []
+    for value in (stored, written):
+        if value is None:
+            continue
+        for member in value if isinstance(value, list) else [value]:
+            if member is not None and member not in out:
+                out.append(member)
+    return out
+
+
 def _union_update(
     target: dict[str, Any], source: dict[str, Any], union_fields: Collection[str]
 ) -> None:
-    """``target.update(source)``, but *union_fields* keep both sides' members."""
+    """``target.update(source)``, but *union_fields* take :func:`union_members`."""
     for key, value in source.items():
-        if key in union_fields and isinstance(value, list):
-            held = target.get(key)
-            members = [*(held if isinstance(held, list) else []), *value]
-            target[key] = list(dict.fromkeys(members))
+        if key in union_fields:
+            target[key] = union_members(target.get(key), value)
         else:
             target[key] = value
+
+
+def _union_first(doc: dict[str, Any], union_fields: Collection[str]) -> dict[str, Any]:
+    """*doc*, its union fields already as an upsert onto nothing leaves them."""
+    for key in union_fields:
+        if key in doc:
+            doc[key] = union_members(None, doc[key])
+    return doc
 
 
 def _fuse_group(
@@ -151,11 +176,12 @@ def _fuse_group(
                 raise TypeError(f"expected VertexRep, got {type(doc).__name__}")
             # Copy via the model so observation-level flags (lookup_only) are
             # carried over rather than silently reset to their defaults.
-            return doc.model_copy(update={"vertex": doc.vertex.copy()})
+            vertex = _union_first(doc.vertex.copy(), union_fields)
+            return doc.model_copy(update={"vertex": vertex})
         else:
             if not isinstance(doc, dict):
                 raise TypeError(f"expected dict, got {type(doc).__name__}")
-            return doc.copy()
+            return _union_first(doc.copy(), union_fields)
 
     for doc in docs:
         if has_index_keys(doc):

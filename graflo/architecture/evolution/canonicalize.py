@@ -145,6 +145,8 @@ LIST_ORDER: dict[tuple[str, str], ListOrder] = {
     ("ResourceConfig", "infer_edge_except"): SORTED,
     ("ResourceConfig", "extra_weights"): SORTED,
     ("ResourceExtraWeightEntry", "vertex_weights"): SORTED,
+    # Owned edges: a set; each names its edge and owner, so order says nothing.
+    ("ResourceSync", "edges"): SORTED,
     # Vertex fields copied onto an edge under their own names: a set.
     ("Weight", "fields"): SORTED,
     # A transform's argument binding: these name the doc fields fed to a
@@ -171,7 +173,6 @@ LIST_ORDER: dict[tuple[str, str], ListOrder] = {
     ("BindingsRegistry", "connector_templates"): SORTED,
     ("BindingsRegistry", "connector_connection"): SORTED,
     ("BindingsRegistry", "resource_connector"): SORTED,
-    ("BindingsRegistry", "staging_proxy"): SORTED,
     # Membership sets on a connector.
     ("KafkaConnector", "topics"): SORTED,
     ("APIConnector", "retry_status_forcelist"): SORTED,

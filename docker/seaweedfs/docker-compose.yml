@@ -1,6 +1,6 @@
 services:
     seaweedfs:
-        image: ${IMAGE_VERSION:-chrislusf/seaweedfs:4.48}
+        image: ${IMAGE_VERSION:-chrislusf/seaweedfs:4.52}
         container_name: ${CONTAINER_NAME:-graflo.seaweedfs}
         restart: "no"
         profiles: ["${SPEC:-graflo}.seaweedfs"]

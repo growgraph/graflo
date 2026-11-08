@@ -26,9 +26,13 @@ from graflo.db.nebula.query import (
 
 
 def test_create_space():
-    q = create_space_ngql("myspace")
-    assert "CREATE SPACE IF NOT EXISTS `myspace`" in q
-    assert "vid_type=FIXED_STRING(256)" in q
+    q = create_space_ngql(
+        "myspace", vid_type="FIXED_STRING(64)", partition_num=20, replica_factor=1
+    )
+    assert q == (
+        "CREATE SPACE IF NOT EXISTS `myspace` "
+        "(vid_type=FIXED_STRING(64), partition_num=20, replica_factor=1)"
+    )
 
 
 def test_create_space_custom_vid():
@@ -122,15 +126,14 @@ def test_batch_upsert_vertices_multiple():
 
 
 def test_insert_vertices():
-    docs = [{"name": "Alice", "age": 30}]
-    q = insert_vertices_ngql("Person", docs, ["name"], ["name", "age"])
-    assert "INSERT VERTEX IF NOT EXISTS `Person`" in q
-    assert '"Alice"' in q
+    rows = [("Person::Alice", {"name": "Alice", "age": 30})]
+    assert insert_vertices_ngql("Person", ["name", "age"], rows, max_bytes=1 << 20) == [
+        'INSERT VERTEX `Person` (`name`, `age`) VALUES "Person::Alice":("Alice", 30)'
+    ]
 
 
 def test_insert_vertices_empty():
-    q = insert_vertices_ngql("Person", [], ["name"], ["name", "age"])
-    assert q == ""
+    assert insert_vertices_ngql("Person", ["name"], [], max_bytes=1 << 20) == []
 
 
 def test_upsert_vertex_gql_delegates():
@@ -145,22 +148,20 @@ def test_upsert_vertex_gql_delegates():
 
 
 def test_insert_edges():
-    edges = [("Alice", "Berlin", {"since": 2020})]
-    q = insert_edges_ngql("lives_in", edges, ["since"])
-    assert "INSERT EDGE IF NOT EXISTS `lives_in`" in q
-    assert '"Alice"->"Berlin"' in q
+    edges = [("Alice", "Berlin", None, {"since": 2020})]
+    assert insert_edges_ngql("lives_in", ["since"], edges, max_bytes=1 << 20) == [
+        'INSERT EDGE `lives_in` (`since`) VALUES "Alice"->"Berlin":(2020)'
+    ]
 
 
 def test_insert_edges_no_props():
-    edges = [("Alice", "Berlin", {})]
-    q = insert_edges_ngql("lives_in", edges)
-    assert "INSERT EDGE IF NOT EXISTS `lives_in`" in q
-    assert '"Alice"->"Berlin"' in q
+    edges = [("Alice", "Berlin", None, {})]
+    q = insert_edges_ngql("lives_in", [], edges, max_bytes=1 << 20, if_not_exists=True)
+    assert q == ['INSERT EDGE IF NOT EXISTS `lives_in` () VALUES "Alice"->"Berlin":()']
 
 
 def test_insert_edges_empty():
-    q = insert_edges_ngql("lives_in", [])
-    assert q == ""
+    assert insert_edges_ngql("lives_in", [], [], max_bytes=1 << 20) == []
 
 
 # ── DQL: fetch queries (nGQL) ────────────────────────────────────────────

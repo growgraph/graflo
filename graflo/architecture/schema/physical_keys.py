@@ -150,32 +150,6 @@ class PhysicalKeys:
             )
         return out
 
-    # -- whole containers -------------------------------------------------
-
-    def container(self, gc: GraphContainer, edge_config: EdgeConfig) -> GraphContainer:
-        """*gc* with every vertex and edge document keyed by stored names.
-
-        For backends that take a whole container (native bulk load). Edge keys
-        whose schema edge cannot be found are passed through: the writer skips
-        them the same way.
-        """
-        if not self.active:
-            return gc
-        vertices = {
-            vertex: self.vertex_docs(vertex, docs)
-            for vertex, docs in gc.vertices.items()
-        }
-        edges: dict[EdgeId, list[Any]] = {}
-        for edge_id, triples in gc.edges.items():
-            source, target, _relation = edge_id
-            schema_id = schema_edge_id(edge_config, edge_id)
-            edges[edge_id] = (
-                self.edge_triples(schema_id, source, target, triples)
-                if schema_id is not None
-                else triples
-            )
-        return gc.model_copy(update={"vertices": vertices, "edges": edges})
-
     # -- schema-aware reads -----------------------------------------------
 
     def anchor_key(

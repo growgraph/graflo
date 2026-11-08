@@ -33,6 +33,7 @@ from graflo.db.field_type_support import tigergraph_type_for_field
 from graflo.db.nebula.util import nebula_type
 from graflo.hq.db_writer import DBWriter
 from graflo.hq.document_caster import filter_graph_container_drop_empty_identity_inplace
+from graflo.hq.write_prepare import mint_identities
 from graflo.onto import DBType
 
 _UUID_RE = re.compile(
@@ -264,7 +265,7 @@ def test_assign_assigned_vertex_ids_writer_net(monkeypatch) -> None:
     assert gc.vertices["event"][1]["id"] == known
 
     with pytest.raises(ValueError, match="invalid UUID"):
-        writer._assign_assigned_vertex_ids("event", [{"id": "bad"}], conn_conf)
+        mint_identities(writer.context(conn_conf), "event", [{"id": "bad"}])
 
 
 def test_assigned_vertices_not_in_blank_edge_resolution() -> None:
@@ -373,3 +374,20 @@ def test_uuid_pattern_shared_with_identity_inference() -> None:
     from graflo.db.identity_inference import _UUID_PATTERN
 
     assert _UUID_PATTERN is UUID_PATTERN
+
+
+def test_drop_empty_identity_still_checks_the_endpoint_beside_an_assigned_one() -> None:
+    vc = VertexConfig(
+        vertices=[
+            Vertex(name="event", properties=[], assigned=True),
+            Vertex(name="user", properties=[Field(name="uid")], identity=["uid"]),
+        ]
+    )
+    edge_id = ("user", "event", None)
+    gc = GraphContainer(
+        vertices={},
+        edges={edge_id: [({"uid": None}, {}, {}), ({"uid": "u1"}, {}, {})]},
+        linear=[],
+    )
+    filter_graph_container_drop_empty_identity_inplace(gc, vertex_config=vc)
+    assert gc.edges[edge_id] == [({"uid": "u1"}, {}, {})]

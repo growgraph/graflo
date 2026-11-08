@@ -5,6 +5,98 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.26.0]
+
+### Added
+
+- Bulk mode: `IngestionParams(mode="bulk", staging_dir=...)` / `ingest --bulk --staging-dir`
+  stages the whole input, folds it by identity in DuckDB and writes it once into an empty
+  target; resumable. Needs the `bulk` extra. ArangoDB, Neo4j, FalkorDB, Memgraph, NebulaGraph,
+  PostgreSQL, TigerGraph and the file backend support it. A resource whose steps read the target
+  (a `vertex` or `vertex_router` step with `lookup_only` or `find`) is refused, and so is a
+  `merge: union` field where the target's upsert refuses one.
+- `DBConfig.bulk` (`chunk_size`, `parallelism`, `memory_limit`, `fold_threads`);
+  `Connection.bulk_begin` … `bulk_finish` and `supports_bulk_load`.
+- Bulk load on Neo4j: nodes created without lookups over parallel sessions, then identity
+  indexes, then edges in rounds of writers that share no node.
+- Bulk load on FalkorDB: `GRAPH.BULK` into a new graph; an existing empty graph is dropped first.
+- Bulk load on Memgraph: identity indexes first, nodes created without lookups, edges in rounds of
+  writers that share no node; conflicting transactions are retried.
+- Bulk load on PostgreSQL: `COPY` into keyless tables, then primary keys, unique edge keys and
+  validated foreign keys.
+- Bulk load on TigerGraph: a loading job fed over REST++ (`POST /ddl`), one file per vertex type
+  and per edge; rejected lines fail the load. Nothing is read from the server's disk.
+- Bulk load on ArangoDB: JSON Lines through `/_api/import`, keys and `_from`/`_to` computed on the
+  client, identity indexes built after the load.
+- Bulk load on NebulaGraph: `INSERT` batches kept under the statement limit, indexes built after
+  the load, counts read from a STATS job.
+- `ResourceConfig.sync`: the vertex type (`owns`) and the edges a resource's records replace in
+  sync mode; ownership is checked when the ingestion model initialises.
+- Sync mode: `IngestionParams(mode="sync", staging_dir=...)` / `ingest --sync` stages and folds
+  the input as bulk does, then rewrites only the owner records whose `sync_hash` changed: their
+  properties and the edges they own (Neo4j, FalkorDB). A bulk load writes the hashes; resumable.
+  A run that writes an edge no `sync` block owns, or an owned type without a sync-set field, is
+  refused.
+- `Connection.sync_begin` / `sync_ensure_vertices` / `sync_write_owners`, `supports_sync`.
+- `Field.set_by: stamp | sync` and the `sync` aspect (`graflo lift --aspect sync`), which adds a
+  reserved `sync_hash` to every owned type; an upsert writes it as null. Ontology 1.11.0 adds
+  `gf:fieldSetBy`.
+- `fetch_all_docs` / `fetch_all_edges` on TigerGraph, NebulaGraph and Memgraph.
+- `NebulaConfig.vid_string_length`, `storage_disks` and `max_statement_bytes`.
+
+### Changed
+
+- **Breaking: ArangoDB `_key` is derived from the whole identity**: a single-field identity's
+  value when it is a valid key, otherwise a SHA-256 digest; an edge's from its endpoints,
+  relation and identity fields. Reload data written by an earlier version before writing to it
+  again.
+- ArangoDB edges are written by `_key` (`overwriteMode: "update"`) without looking up their
+  endpoints, and writes no longer take `exclusive`.
+- NebulaGraph spaces graflo creates get 20 partitions per storage disk, 3 replicas when at least 3
+  storage hosts are online, and a `FIXED_STRING` VID sized to the schema's identities;
+  `NebulaConfig.vid_type`, `partition_num` and `replica_factor` are derived when unset.
+- NebulaGraph writes a vertex or edge that carries every field with `INSERT` instead of `UPSERT`.
+  An edge whose identity has fields besides its endpoints is stored at a rank derived from them;
+  `delete_edges` removes every rank.
+- The docker test services and `from_docker_env()` read `docker/<service>/.env.example`;
+  `start-all.sh`, `stop-all.sh` and `cleanup-all.sh` take service names. Images move to Neo4j
+  2026.10.1 (without the APOC and GDS plugins), FalkorDB 6.0.4, ArangoDB 3.12.13, Kafka 4.4.0
+  and SeaweedFS 4.52; run `./cleanup-all.sh neo4j` before the first start.
+
+### Removed
+
+- **Breaking: `IngestionModel.edges_on_duplicate` and `Bindings.staging_proxy`** (with
+  `StagingProxyBinding`). An edge write always updates the stored edge with the same identity. A
+  manifest that sets either field is refused, including a dump from an earlier release, which
+  carries `edges_on_duplicate: ignore` and `staging_proxy: []`: delete both lines.
+- The TigerGraph-only bulk path: `Connection.bulk_load_*`, `TigergraphBulkLoadConfig`,
+  `TigergraphConfig.bulk_load`, `UnsupportedBulkLoad`, `upload_staged_csvs`,
+  `loader_endpoint_url`, `DBWriter.write(bulk_session_id=...)` and the `bulk_e2e` test marker.
+- `Caster.ingest_data_sources` no longer takes `bindings` or `connection_provider`;
+  `effective_in_flight` takes `(runtime, params)`.
+- `MinioConfig`, `boto3_s3_client_from_minio` and `parse_dotenv_file`: use `S3EndpointConfig`
+  and `boto3_s3_client_from_endpoint`. The `docker/minio` service is gone; SeaweedFS is the S3
+  service.
+
+### Fixed
+
+- ArangoDB, PostgreSQL and NebulaGraph edge writes update an existing edge's non-identity
+  properties; ArangoDB no longer writes a second copy of an edge that declares no `identities`.
+- NebulaGraph no longer merges edges that differ only in an identity field into one.
+- A NebulaGraph edge type shared by several edges is created with all of their properties.
+- FalkorDB writes raise `ValueError` for an integer outside the 64-bit range or a subnormal
+  float, which the server cannot parse, instead of failing the batch with a server error.
+- In-batch fusion of `merge: union` fields drops nulls and keeps earlier members, as the
+  backends do.
+- The cast drops an edge whose endpoint has no key even when its other endpoint is blank or
+  assigned.
+- Neo4j writes to the database named in its config, or the schema's namespace once it exists;
+  before, every session used the home database.
+- PostgreSQL: an edge table whose foreign keys cannot be created is created without them,
+  instead of failing with `InFailedSqlTransaction`.
+- FalkorDB `ensure_target_namespace(create=False)` refuses a missing graph, and the first-write
+  guard no longer reads a failed count as an empty graph.
+
 ## [1.25.1]
 
 ### Changed
@@ -20,7 +112,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   documents in a batch is skipped the same way.
 - Ingestion no longer opens a connection per batch to check for native bulk loading on targets
   without it.
-
 - A `select` view is a set of named columns: `all_base` already holds a base column named beside
   it, and a repeated entry is one column, so the query no longer returns a column twice (a
   limited read failed with "ambiguous column name"). Two different columns under one name are

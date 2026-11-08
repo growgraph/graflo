@@ -125,11 +125,12 @@ nav:
     -   Graph DB migration: guides/graph_db_migration.md
     -   Graph namespace and schema: guides/graph_namespace_and_schema.md
     -   Graph export and replay: guides/graph_export_and_replay.md
+    -   Bulk load: guides/bulk_load.md
+    -   Record sync: guides/record_sync.md
     -   API env wiring: guides/api_env_wiring.md
     -   Finding a key for your data: guides/identity_inference.md
     -   Evolving a manifest: guides/evolving_a_manifest.md
     -   Drawing a manifest: guides/drawing_a_manifest.md
-    -   TigerGraph bulk load: guides/tigergraph_bulk_load.md
     -   Inferring a graph from SQL: guides/sql_schema_inference.md
     -   Adding a database backend: guides/adding_a_backend.md
 -   Examples:
@@ -150,7 +151,8 @@ nav:
     -   Connections:
         -   11 - Credentials outside the manifest: examples/connection-proxy/index.md
         -   12 - API sources from environment variables: examples/api-env-config/index.md
-        -   13 - Bulk load into TigerGraph: examples/tigergraph-bulk-s3/index.md
+    -   Bulk load:
+        -   13 - Load a large graph in bulk: examples/bulk-load/index.md
     -   File backend:
         -   14 - A graph on disk, without a database: examples/file-backend-export/index.md
     -   Identity:

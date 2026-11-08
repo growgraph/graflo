@@ -45,10 +45,15 @@ license-files = ["LICENSE", "NOTICE"]
 name = "graflo"
 readme = "README.md"
 requires-python = ">=3.11"
-version = "1.25.1"
+version = "1.26.0"
 
 [project.optional-dependencies]
+bulk = [
+  "duckdb>=1.1",
+  "zstandard>=0.23"
+]
 dev = [
+  "graflo[bulk]",
   "hypothesis>=6.140.0",
   "jsonschema>=4.23.0",
   "pre-commit>=4.2.0",

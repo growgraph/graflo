@@ -230,6 +230,75 @@ class TigerGraphRestClient:
             params["filter"] = where
         return self._call_restpp_api(endpoint, method="DELETE", params=params)
 
+    def _post_loading_data(
+        self,
+        graph_name: str,
+        job: str,
+        file_var: str,
+        body: bytes,
+        *,
+        sep: str,
+        eol: str,
+        timeout: float = 3600,
+    ) -> dict[str, Any]:
+        """Feed *body* to file variable *file_var* of loading job *job*.
+
+        Raises:
+            RuntimeError: The request failed or the answer is not JSON.
+        """
+        url = f"{self._conn.restpp_url}/ddl/{graph_name}"
+        params = {"tag": job, "filename": file_var, "sep": sep, "eol": eol}
+
+        def post(use_basic_auth: bool) -> requests.Response:
+            headers = {
+                "Content-Type": "text/plain",
+                **self._conn._get_auth_headers(use_basic_auth=use_basic_auth),
+            }
+            return requests.post(
+                url,
+                headers=headers,
+                params=params,
+                data=body,
+                timeout=timeout,
+                verify=self._conn.ssl_verify,
+            )
+
+        response = post(use_basic_auth=False)
+        if (
+            response.status_code == 401
+            and self._conn.api_token
+            and self._conn.config.username
+            and self._conn.config.password
+        ):
+            if self._conn._token_cache_key:
+                _TigerGraphTokenCache.instance().invalidate(self._conn._token_cache_key)
+            response = post(use_basic_auth=True)
+        if not response.ok:
+            raise RuntimeError(
+                f"loading {file_var} of job {job} failed with HTTP "
+                f"{response.status_code}: {response.text[:2000]}"
+            )
+        try:
+            result = response.json()
+        except ValueError as e:
+            raise RuntimeError(
+                f"loading {file_var} of job {job} answered: {response.text[:2000]}"
+            ) from e
+        return result
+
+    def _builtin_count(self, graph_name: str, payload: dict[str, str]) -> int:
+        """Run a REST++ ``stat_*_number`` builtin and sum the counts it returns.
+
+        Raises:
+            RuntimeError: The builtin reports an error.
+        """
+        result = self._call_restpp_api(
+            f"/builtins/{graph_name}", method="POST", data=payload
+        )
+        if not isinstance(result, dict) or result.get("error"):
+            raise RuntimeError(f"builtin {payload} failed: {result}")
+        return sum(int(row.get("count", 0)) for row in result.get("results") or [])
+
     def _call_restpp_api(
         self,
         endpoint: str,

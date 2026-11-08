@@ -6,7 +6,7 @@ set -euo pipefail
 #   ./run-tests.sh memgraphs postgres
 #   ./run-tests.sh tigergraphs arangos
 #   ./run-tests.sh --run-performance
-#   ./run-tests.sh --run-bulk-e2e --run-nebula tigergraphs nebulas
+#   ./run-tests.sh --run-tigergraph --run-nebula tigergraphs nebulas
 
 ROOT="test/db"
 LOG_DIR="${TMPDIR:-/tmp}/graflo-test-logs-$$"
@@ -33,7 +33,7 @@ pytest_opts=()
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --run-bulk-e2e|--run-performance|--run-nebula|--run-kafka|--run-tigergraph|--reset)
+    --run-performance|--run-nebula|--run-kafka|--run-tigergraph|--reset)
       pytest_opts+=("$1")
       shift
       ;;
@@ -46,7 +46,6 @@ DB_SUITES:
   memgraphs postgres tigergraphs arangos falkordbs neo4js nebulas
 
 OPTIONS:
-  --run-bulk-e2e     Include tests marked bulk_e2e
   --run-performance  Include tests marked performance
   --run-nebula       Include tests marked nebula
   --run-kafka        Include tests marked kafka

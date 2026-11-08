@@ -6,7 +6,8 @@ adapter's ``execute`` method.
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Hashable, Iterable, Sequence
+from typing import Any, TypeVar
 
 from graflo.architecture.graph_types import EdgeDirection
 from graflo.architecture.schema.vertex import Field
@@ -18,6 +19,8 @@ from graflo.db.nebula.util import (
     serialize_nebula_value,
 )
 
+_K = TypeVar("_K", bound=Hashable)
+
 # ---------------------------------------------------------------------------
 # DDL helpers
 # ---------------------------------------------------------------------------
@@ -25,9 +28,10 @@ from graflo.db.nebula.util import (
 
 def create_space_ngql(
     space_name: str,
-    vid_type: str = "FIXED_STRING(256)",
-    partition_num: int = 1,
-    replica_factor: int = 1,
+    *,
+    vid_type: str,
+    partition_num: int,
+    replica_factor: int,
 ) -> str:
     return (
         f"CREATE SPACE IF NOT EXISTS `{space_name}` "
@@ -133,59 +137,136 @@ def batch_upsert_vertices_ngql(
     return statements
 
 
+def _values_statements(head: str, values: Iterable[str], max_bytes: int) -> list[str]:
+    """``head VALUES v1, v2, …`` split on value boundaries, each at most *max_bytes*.
+
+    Raises:
+        ValueError: One value alone does not fit.
+    """
+    prefix = f"{head} VALUES "
+    base = len(prefix.encode())
+    statements: list[str] = []
+    batch: list[str] = []
+    size = base
+    for value in values:
+        width = len(value.encode())
+        if base + width > max_bytes:
+            raise ValueError(
+                f"one row of {head!r} is {width} bytes, over the "
+                f"{max_bytes}-byte statement limit"
+            )
+        if batch and size + 2 + width > max_bytes:
+            statements.append(prefix + ", ".join(batch))
+            batch, size = [], base
+        size += width + (2 if batch else 0)
+        batch.append(value)
+    if batch:
+        statements.append(prefix + ", ".join(batch))
+    return statements
+
+
+def _columns(columns: Sequence[str]) -> str:
+    return ", ".join(f"`{c}`" for c in columns)
+
+
+def _tuple(doc: dict[str, Any], columns: Sequence[str]) -> str:
+    return "(" + ", ".join(serialize_nebula_value(doc.get(c)) for c in columns) + ")"
+
+
 def insert_vertices_ngql(
     tag_name: str,
-    docs: list[dict[str, Any]],
-    match_keys: list[str] | tuple[str, ...],
-    tag_fields: list[str],
-) -> str:
-    """Batch ``INSERT VERTEX IF NOT EXISTS tag(cols) VALUES "vid":(vals), ...``."""
-    if not docs or not tag_fields:
-        return ""
-    ordered_fields = [f for f in tag_fields]
-    cols = ", ".join(f"`{f}`" for f in ordered_fields)
-    value_parts: list[str] = []
-    for doc in docs:
-        vid = make_vid(tag_name, doc, match_keys)
-        escaped_vid = escape_nebula_string(vid)
-        vals = ", ".join(serialize_nebula_value(doc.get(f)) for f in ordered_fields)
-        value_parts.append(f'"{escaped_vid}":({vals})')
-    values_str = ", ".join(value_parts)
-    return f"INSERT VERTEX IF NOT EXISTS `{tag_name}` ({cols}) VALUES {values_str}"
+    columns: Sequence[str],
+    rows: Iterable[tuple[str, dict[str, Any]]],
+    *,
+    max_bytes: int,
+) -> list[str]:
+    """``INSERT VERTEX tag(cols) VALUES "vid":(vals), …`` for ``(vid, doc)`` rows.
+
+    Every column is written, a column the doc lacks as ``NULL``: an insert
+    replaces the vertex's whole tag, so writing it again is harmless.
+    """
+    head = f"INSERT VERTEX `{tag_name}` ({_columns(columns)})"
+    values = (
+        f'"{escape_nebula_string(vid)}":{_tuple(doc, columns)}' for vid, doc in rows
+    )
+    return _values_statements(head, values, max_bytes)
 
 
-# ---------------------------------------------------------------------------
-# DML – edge operations (nGQL)
-# ---------------------------------------------------------------------------
+#: ``(source VID, target VID, rank or None for 0, properties)``.
+EdgeRow = tuple[str, str, int | None, dict[str, Any]]
+
+
+def _edge_key(src_vid: str, dst_vid: str, rank: int | None) -> str:
+    key = f'"{escape_nebula_string(src_vid)}"->"{escape_nebula_string(dst_vid)}"'
+    return key if rank is None else f"{key}@{int(rank)}"
 
 
 def insert_edges_ngql(
     edge_type: str,
-    edges: list[tuple[str, str, dict[str, Any]]],
-    edge_fields: list[str] | None = None,
-) -> str:
-    """Batch ``INSERT EDGE IF NOT EXISTS type(cols) VALUES "src"->"dst":(vals), ...``."""
-    if not edges:
-        return ""
+    columns: Sequence[str],
+    edges: Iterable[EdgeRow],
+    *,
+    max_bytes: int,
+    if_not_exists: bool = False,
+) -> list[str]:
+    """``INSERT EDGE type(cols) VALUES "src"->"dst"[@rank]:(vals), …``.
 
-    if edge_fields:
-        cols = ", ".join(f"`{f}`" for f in edge_fields)
-        value_parts: list[str] = []
-        for src_vid, dst_vid, props in edges:
-            src = escape_nebula_string(src_vid)
-            dst = escape_nebula_string(dst_vid)
-            vals = ", ".join(serialize_nebula_value(props.get(f)) for f in edge_fields)
-            value_parts.append(f'"{src}"->"{dst}":({vals})')
-        values_str = ", ".join(value_parts)
-        return f"INSERT EDGE IF NOT EXISTS `{edge_type}` ({cols}) VALUES {values_str}"
-    else:
-        value_parts_simple: list[str] = []
-        for src_vid, dst_vid, _ in edges:
-            src = escape_nebula_string(src_vid)
-            dst = escape_nebula_string(dst_vid)
-            value_parts_simple.append(f'"{src}"->"{dst}":()')
-        values_str = ", ".join(value_parts_simple)
-        return f"INSERT EDGE IF NOT EXISTS `{edge_type}` () VALUES {values_str}"
+    Like :func:`insert_vertices_ngql`, an insert replaces the edge whole;
+    *if_not_exists* leaves an existing edge as it is instead.
+    """
+    guard = " IF NOT EXISTS" if if_not_exists else ""
+    head = f"INSERT EDGE{guard} `{edge_type}` ({_columns(columns)})"
+    values = (
+        f"{_edge_key(src, dst, rank)}:{_tuple(props, columns)}"
+        for src, dst, rank, props in edges
+    )
+    return _values_statements(head, values, max_bytes)
+
+
+def upsert_edge_ngql(
+    edge_type: str,
+    src_vid: str,
+    dst_vid: str,
+    props: dict[str, Any],
+    edge_fields: Sequence[str],
+    rank: int | None = None,
+) -> str:
+    """``UPSERT EDGE ON type "src"->"dst"[@rank] SET prop=val, …``; ``""`` if none set."""
+    set_parts = [
+        f"`{k}` = {serialize_nebula_value(v)}"
+        for k, v in props.items()
+        if k in edge_fields
+    ]
+    if not set_parts:
+        return ""
+    return (
+        f"UPSERT EDGE ON `{edge_type}` {_edge_key(src_vid, dst_vid, rank)} "
+        f"SET {', '.join(set_parts)}"
+    )
+
+
+def delete_edges_ngql(edge_type: str, src_vid: str, dst_vids: Sequence[str]) -> str:
+    """Delete every edge of *edge_type* from *src_vid* to any of *dst_vids*, at any rank."""
+    targets = ", ".join(f'"{escape_nebula_string(d)}"' for d in dst_vids)
+    return (
+        f'GO FROM "{escape_nebula_string(src_vid)}" OVER `{edge_type}` '
+        f"WHERE dst(edge) IN [{targets}] "
+        "YIELD src(edge) AS s, dst(edge) AS d, rank(edge) AS r "
+        f"| DELETE EDGE `{edge_type}` $-.s -> $-.d @ $-.r"
+    )
+
+
+def fold_rows(
+    rows: Iterable[tuple[_K, dict[str, Any]]],
+) -> dict[_K, dict[str, Any]]:
+    """One row per key, in order of first occurrence; per field the latest value.
+
+    A field a later row lacks keeps its earlier value, as an upsert would.
+    """
+    folded: dict[_K, dict[str, Any]] = {}
+    for key, row in rows:
+        folded.setdefault(key, {}).update(row)
+    return folded
 
 
 # ---------------------------------------------------------------------------

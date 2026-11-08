@@ -18,7 +18,7 @@ from test.db.cypher_cases.traits import CypherTraits
 
 @pytest.fixture(scope="function")
 def conn_conf():
-    """Load Memgraph config from docker/memgraph/.env file."""
+    """Load Memgraph config from docker/memgraph/.env.example."""
     conn_conf = MemgraphConfig.from_docker_env()
     return conn_conf
 

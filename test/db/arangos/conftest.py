@@ -12,7 +12,7 @@ def test_db_name():
 
 @pytest.fixture(scope="function")
 def conn_conf():
-    """Load ArangoDB config from docker/arango/.env file."""
+    """Load ArangoDB config from docker/arango/.env.example."""
     conn_conf = ArangoConfig.from_docker_env()
     if not conn_conf.database:
         conn_conf.database = "_system"

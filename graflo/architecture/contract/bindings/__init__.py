@@ -24,7 +24,6 @@ from .core import (
     BindingsRegistry,
     ConnectorTemplate,
     ResourceConnectorBinding,
-    StagingProxyBinding,
 )
 
 __all__ = [
@@ -46,7 +45,6 @@ __all__ = [
     "ResourceConnector",
     "ResourceConnectorBinding",
     "SparqlConnector",
-    "StagingProxyBinding",
     "TableConnector",
     "TemplatedConnector",
     "WatermarkConfig",

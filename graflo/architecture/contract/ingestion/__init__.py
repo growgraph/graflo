@@ -16,6 +16,7 @@ from .resource import (
     ResourceExtraWeightEntry,
     collect_vertex_names_from_pipeline,
 )
+from .sync import ResourceSync, SyncEdge
 from .transform import (
     DressConfig,
     KeySelectionConfig,
@@ -33,6 +34,8 @@ __all__ = [
     "Resource",
     "ResourceConfig",
     "ResourceExtraWeightEntry",
+    "ResourceSync",
+    "SyncEdge",
     "Transform",
     "TransformException",
     "collect_vertex_names_from_pipeline",

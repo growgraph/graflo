@@ -5,7 +5,7 @@ where a fact came from, how a fact changes over time -- grounded in a standard
 vocabulary, as a reviewable op list over the manifest. Each aspect plans on
 its own; :func:`plan_lift` composes the ones a caller names.
 
-Three ship today:
+Four ship today:
 
 - ``provenance``: ``SourceRecord`` and ``Agent`` with ``wasDerivedFrom`` and
   ``wasAttributedTo`` (PROV-O). Needs no spec.
@@ -15,6 +15,8 @@ Three ship today:
   planner can see structure but not meaning.
 - ``access``: a reserved ``access_zones`` label on the types a spec names, each
   with a merge mode. Needs a spec; not lifted by default.
+- ``sync``: a reserved ``sync_hash`` on every type a resource's ``sync`` block
+  owns, written by bulk and sync runs. Needs no spec; not lifted by default.
 
 The output is an op list, so the conversion is replayable, invertible and
 reviewable through the machinery every other manifest change already uses.
@@ -42,10 +44,12 @@ from .recipe import (
 )
 from .spec import EdgeGrounding, Grounding, LiftSpec
 from .state.plan import StatePlan, plan_state
+from .sync.plan import plan_sync
 
 PROVENANCE = "provenance"
 STATE = "state"
 ACCESS = "access"
+SYNC = "sync"
 
 ASPECTS: dict[str, Aspect] = {
     PROVENANCE: Aspect(
@@ -74,6 +78,15 @@ ASPECTS: dict[str, Aspect] = {
             "writer stamps and a read guard checks."
         ),
         needs_spec=True,
+        version=1,
+    ),
+    SYNC: Aspect(
+        name=SYNC,
+        description=(
+            "A reserved sync_hash on the types a resource's sync block owns: "
+            "what lets a sync run skip an unchanged record."
+        ),
+        needs_spec=False,
         version=1,
     ),
 }
@@ -173,6 +186,9 @@ def plan_lift(
     if ACCESS in chosen:
         _then(plan_access(lifted, vertices=spec.access_for, edges=spec.access_edges))
 
+    if SYNC in chosen:
+        _then(plan_sync(lifted))
+
     if state is not None:
         ops += state.retire
     return ops
@@ -184,6 +200,7 @@ __all__ = [
     "DEFAULT_ASPECTS",
     "PROVENANCE",
     "STATE",
+    "SYNC",
     "Aspect",
     "EdgeGrounding",
     "Grounding",
@@ -197,6 +214,7 @@ __all__ = [
     "plan_provenance",
     "plan_relift",
     "plan_state",
+    "plan_sync",
     "recipe_drift",
     "recorded_spec",
     "resolve_aspects",

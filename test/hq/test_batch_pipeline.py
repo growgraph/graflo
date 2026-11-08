@@ -44,8 +44,8 @@ class _BatchSpy:
         self.high_water = 0
         self.calls = 0
 
-    async def __call__(self, batch, resource_name=None, conn_conf=None):
-        del batch, resource_name, conn_conf
+    async def __call__(self, batch, resource_name=None, conn_conf=None, batch_seq=None):
+        del batch, resource_name, conn_conf, batch_seq
         self.calls += 1
         call_index = self.calls
         self.active += 1
@@ -167,7 +167,7 @@ class TestErrors:
     def test_doc_error_budget_type_survives(self) -> None:
         """Callers catch DocErrorBudgetExceeded directly; no ExceptionGroup."""
 
-        async def _fail(batch, resource_name=None, conn_conf=None):
+        async def _fail(batch, resource_name=None, conn_conf=None, batch_seq=None):
             raise DocErrorBudgetExceeded(
                 total_failures=3, limit=1, doc_error_sink_path=None
             )
@@ -221,7 +221,7 @@ class _AcknowledgedSource(_NBatchSource):
 
 
 #: A target, as far as the batch gate looks at one.
-_TARGET = SimpleNamespace(connection_type="neo4j", bulk_load=None)
+_TARGET = SimpleNamespace(connection_type="neo4j")
 
 
 def _process(caster: Caster, source: _AcknowledgedSource, spy, target=_TARGET) -> None:
@@ -249,8 +249,8 @@ class TestAcknowledgement:
         source = _AcknowledgedSource(3)
         seen: list[tuple[int, list[int]]] = []
 
-        async def _write(batch, resource_name=None, conn_conf=None):
-            del resource_name, conn_conf
+        async def _write(batch, resource_name=None, conn_conf=None, batch_seq=None):
+            del resource_name, conn_conf, batch_seq
             await asyncio.sleep(0.01)
             seen.append((batch[0]["id"], list(source.acknowledged)))
 
@@ -277,39 +277,22 @@ class TestAcknowledgement:
         assert source.acknowledged == []
         assert source.closed == 1
 
-    def test_a_bulk_session_acknowledges_after_it_is_loaded(self) -> None:
-        source = _AcknowledgedSource(3)
-        caster = _caster()
-        caster._bulk_coordinator._session_id = "session"
-        _process(caster, source, _BatchSpy())
-        assert (source.acknowledged, source.closed) == ([], 0)
-
-        asyncio.run(caster._release_staged_sources(loaded=True))
-        assert (sorted(source.acknowledged), source.closed) == ([0, 1, 2], 1)
-
-    def test_a_bulk_session_that_fails_to_load_acknowledges_nothing(self) -> None:
-        source = _AcknowledgedSource(3)
-        caster = _caster()
-        caster._bulk_coordinator._session_id = "session"
-        _process(caster, source, _BatchSpy())
-
-        asyncio.run(caster._release_staged_sources(loaded=False))
-        assert (source.acknowledged, source.closed) == ([], 1)
-
 
 class TestWriteResolutionLog:
     """The run's write-resolution counts are logged however the run ends."""
 
     @staticmethod
-    def _ingest(caster: Caster) -> None:
+    def _ingest(caster: Caster, *, fail: bool = False) -> None:
         from graflo.hq.endpoint_resolve import AttachStats, WriteStats
 
         stats = WriteStats()
         stats.add_attached("ci", AttachStats(documents=3, unmatched=2))
 
-        async def _write(batch, resource_name=None, conn_conf=None):
-            del batch, resource_name, conn_conf
+        async def _write(batch, resource_name=None, conn_conf=None, batch_seq=None):
+            del batch, resource_name, conn_conf, batch_seq
             caster._db_writer = SimpleNamespace(stats=stats, close=lambda: None)  # ty: ignore[invalid-assignment]
+            if fail:
+                raise ConnectionError("write failed")
 
         caster.process_batch = _write  # ty: ignore[invalid-assignment]
         caster.ingestion_model._resources = {"fake_resource": MagicMock()}
@@ -335,19 +318,12 @@ class TestWriteResolutionLog:
         (message,) = self._logged(caplog)
         assert "attached ci" in message and "unmatched=2" in message
 
-    def test_the_counts_are_logged_when_finalizing_fails(self, caplog) -> None:
-        caster = _caster()
-
-        async def _finalize(conn_conf) -> None:
-            del conn_conf
-            raise ConnectionError("bulk load failed")
-
-        caster._finalize_bulk_session = _finalize  # ty: ignore[invalid-assignment]
+    def test_the_counts_are_logged_when_a_write_fails(self, caplog) -> None:
         with (
             caplog.at_level("INFO", logger="graflo.hq.caster"),
-            pytest.raises(ConnectionError, match="bulk load failed"),
+            pytest.raises(ConnectionError, match="write failed"),
         ):
-            self._ingest(caster)
+            self._ingest(_caster(), fail=True)
 
         (message,) = self._logged(caplog)
         assert "attached ci" in message and "unmatched=2" in message
@@ -358,8 +334,8 @@ class TestWriterLifetime:
 
     @staticmethod
     def _ingest(caster: Caster, writer: MagicMock, *, fail: bool) -> None:
-        async def _write(batch, resource_name=None, conn_conf=None):
-            del batch, resource_name, conn_conf
+        async def _write(batch, resource_name=None, conn_conf=None, batch_seq=None):
+            del batch, resource_name, conn_conf, batch_seq
             caster._db_writer = writer
             if fail:
                 raise RuntimeError("write failed")
@@ -383,21 +359,6 @@ class TestWriterLifetime:
             self._ingest(caster, writer, fail=fail)
         except Exception:
             pass
-
-        writer.close.assert_called_once_with()
-
-    def test_a_run_whose_bulk_finalize_fails_closes_its_writer(self) -> None:
-        caster = _caster()
-        writer = MagicMock()
-        writer.stats.is_empty.return_value = True
-
-        async def _failing_finalize(conn_conf):
-            raise RuntimeError("finalize failed")
-
-        caster._finalize_bulk_session = _failing_finalize  # ty: ignore[invalid-assignment]
-
-        with pytest.raises(RuntimeError, match="finalize failed"):
-            self._ingest(caster, writer, fail=False)
 
         writer.close.assert_called_once_with()
 

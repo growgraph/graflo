@@ -94,7 +94,6 @@ settings above have no effect on that resource.
 | Blank vertices (`blank: true`) produced by the resource | Edges to blank vertices are matched to them by position within a batch |
 | `extra_weights` on the resource | Edge properties are read from the database between the vertex and edge writes of each batch |
 | Edge steps with `source_match` or `target_match` | Endpoints are found in the database, so a later batch's edges must not overtake an earlier batch's vertices |
-| A target with native bulk load enabled (TigerGraph) | Batches are appended to one ordered bulk load |
 
 Within each batch, the database writes (`max_concurrent_db_ops`) and the read
 ahead (`batch_prefetch`) stay concurrent even for these resources.

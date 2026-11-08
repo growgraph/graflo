@@ -36,12 +36,12 @@ from graflo.architecture.onto_sql import (
 from graflo.connections.onto import PostgresConfig
 from graflo.db import sql as sql_introspect
 from graflo.db.conn import Connection
-from graflo.db.postgres.target_write import PostgresTargetWriteMixin
+from graflo.db.postgres.bulk import PostgresBulkMixin
 
 logger = logging.getLogger(__name__)
 
 
-class PostgresConnection(PostgresTargetWriteMixin, Connection):
+class PostgresConnection(PostgresBulkMixin, Connection):
     """PostgreSQL connection for schema introspection and graph target writes.
 
     This class provides PostgreSQL-specific functionality for connecting to databases

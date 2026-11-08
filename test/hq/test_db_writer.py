@@ -25,6 +25,7 @@ from graflo.connections.onto import (
 )
 from graflo.hq.db_writer import DBWriter
 from graflo.hq.endpoint_resolve import AmbiguousEndpointError
+from graflo.hq.write_prepare import mint_identities
 from graflo.onto import DBType
 
 
@@ -126,32 +127,35 @@ def _assigned_writer(identity: list[str]) -> DBWriter:
 
 
 @pytest.mark.parametrize(
-    ("identity", "conn_conf", "default_field"),
+    ("identity", "conn_conf", "default_field", "own_kept"),
     [
         (
             [],
             ArangoConfig(uri="http://localhost:8529", username="root", password="x"),
             "_key",
+            False,
         ),
         (
             ["uid"],
             Neo4jConfig(uri="bolt://localhost:7687", username="u", password="p"),
             "id",
+            True,
         ),
     ],
 )
 def test_an_assigned_vertex_mirrors_its_uuid_into_the_default_key(
-    identity, conn_conf, default_field
+    identity, conn_conf, default_field, own_kept
 ):
+    """ArangoDB's ``_key`` is always derived from the identity; ``id`` is never overwritten."""
     writer = _assigned_writer(identity)
     (preferred,) = writer.schema.core_schema.vertex_config.identity_fields("event")
     kept = "00000000-0000-4000-8000-000000000001"
     docs: list[dict] = [{}, {preferred: kept, default_field: "own"}]
 
-    writer._assign_assigned_vertex_ids("event", docs, conn_conf)
+    mint_identities(writer.context(conn_conf), "event", docs)
 
     assert docs[0][default_field] == docs[0][preferred]
-    assert docs[1] == {preferred: kept, default_field: "own"}
+    assert docs[1] == {preferred: kept, default_field: "own" if own_kept else kept}
 
 
 def test_resolve_blank_edges_prefers_identity_join_over_zip():
@@ -1028,32 +1032,6 @@ class TestEdgeEndpointResolution:
         assert written == {"near": ["c3"], "at": ["c1"]}
 
 
-class TestAttachRefusedInBulk:
-    def test_a_resource_that_attaches_is_refused(self, monkeypatch):
-        with pytest.raises(ValueError, match="REST ingest"):
-            _attach_write_bulk(monkeypatch, GraphContainer(), "attach")
-
-    def test_attached_records_are_refused(self, monkeypatch):
-        gc = _attached([{"serial": "S1"}])
-        with pytest.raises(ValueError, match="REST ingest"):
-            _attach_write_bulk(monkeypatch, gc, None)
-
-
-def _attach_write_bulk(monkeypatch, gc: GraphContainer, resource_name) -> None:
-    schema = _cmdb_schema()
-    writer = DBWriter(schema=schema, ingestion_model=_cmdb_model(schema))
-
-    monkeypatch.setattr(
-        "graflo.hq.db_writer.ConnectionManager", _manager_for(_AttachDB())
-    )
-    conn_conf = Neo4jConfig(uri="bolt://localhost:7687", username="u", password="p")
-    asyncio.run(
-        writer.write(
-            gc=gc, conn_conf=conn_conf, resource_name=resource_name, bulk_session_id="s"
-        )
-    )
-
-
 def test_attached_records_are_resolved_and_written_under_stored_names(monkeypatch):
     """``from`` and ``type`` are TigerGraph reserved words, so both are renamed."""
     schema = Schema.model_validate(
@@ -1110,7 +1088,6 @@ class _EdgeWrites:
 
 def _postgres_edge_kwargs(
     monkeypatch,
-    edges_on_duplicate: str,
     identities: list[list[str]] | None = None,
 ) -> dict:
     schema = Schema.model_validate(
@@ -1142,9 +1119,7 @@ def _postgres_edge_kwargs(
             "db_profile": {"db_flavor": "postgres"},
         }
     )
-    model = IngestionModel.model_validate(
-        {"resources": [], "edges_on_duplicate": edges_on_duplicate}
-    )
+    model = IngestionModel.model_validate({"resources": []})
     model.finish_init(schema.core_schema)
     writer = DBWriter(schema=schema, ingestion_model=model)
     writes = _EdgeWrites()
@@ -1173,22 +1148,14 @@ def _postgres_edge_kwargs(
 
 
 def test_postgres_edges_are_written_on_their_merge_properties(monkeypatch):
-    call = _postgres_edge_kwargs(monkeypatch, "ignore")
+    call = _postgres_edge_kwargs(monkeypatch)
 
     assert call["relationship_merge_properties"] == ("since",)
-    assert "on_duplicate" not in call
-
-
-def test_postgres_edges_upsert_when_the_model_asks_for_it(monkeypatch):
-    call = _postgres_edge_kwargs(monkeypatch, "upsert")
-
-    assert call["relationship_merge_properties"] == ("since",)
-    assert call["on_duplicate"] == "upsert"
 
 
 def test_edges_without_an_identity_are_keyed_on_their_endpoints(monkeypatch):
     """Their properties are written, never matched on."""
-    call = _postgres_edge_kwargs(monkeypatch, "upsert", identities=[])
+    call = _postgres_edge_kwargs(monkeypatch, identities=[])
 
     assert call.get("relationship_merge_properties") is None
 
@@ -1196,7 +1163,7 @@ def test_edges_without_an_identity_are_keyed_on_their_endpoints(monkeypatch):
 def test_postgres_edges_keyed_by_relation_conflict_on_their_endpoints(monkeypatch):
     """The table name holds the relation, so it adds no key column."""
     call = _postgres_edge_kwargs(
-        monkeypatch, "upsert", identities=[["source", "target", "relation"]]
+        monkeypatch, identities=[["source", "target", "relation"]]
     )
 
     assert call.get("relationship_merge_properties") is None
@@ -1206,7 +1173,7 @@ def test_postgres_edges_keyed_by_relation_and_a_property_use_the_property(
     monkeypatch,
 ):
     call = _postgres_edge_kwargs(
-        monkeypatch, "upsert", identities=[["source", "target", "relation", "since"]]
+        monkeypatch, identities=[["source", "target", "relation", "since"]]
     )
 
     assert call["relationship_merge_properties"] == ("since",)

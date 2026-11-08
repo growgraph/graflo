@@ -52,8 +52,6 @@ Other methods have a default that you override for a capability or for speed:
 - `_graph_neighbors` walks the graph breadth-first through
   `graflo/db/traversal.py`. Override it, not the public `graph_neighbors`,
   which translates between logical and stored property names around it.
-- `bulk_load_begin`, `bulk_load_append` and `bulk_load_finalize` raise
-  `UnsupportedBulkLoad`, and ingestion then writes record by record.
 - `introspect_graph_schema`, `fetch_all_docs` and `fetch_all_edges` raise
   `NotImplementedError`. Implement them together with the matching capability
   flag below. `export_graph_container` reads the whole graph through the last

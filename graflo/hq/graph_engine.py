@@ -83,6 +83,13 @@ def _ensure_graph_target_namespace(
         return
     if not _graph_target_namespace_unset(target_db_config):
         return
+    if (
+        graph_target_namespace is None
+        and target_db_config.connection_type == DBType.NEO4J
+    ):
+        # Neo4j uses the schema's namespace only where that database exists or
+        # can be created (not on Community); its connection decides.
+        return
     resolved = _resolve_graph_target_namespace(
         schema, graph_target_namespace, target_db_config.connection_type
     )
@@ -457,6 +464,17 @@ class GraphEngine:
             recreate_schema = False
 
         self._validated_caster(manifest, target_db_config, ingestion_params)
+        if ingestion_params.mode == "bulk":
+            # A bulk run defines the schema itself, through the first-write guard.
+            self.ingest(
+                manifest=manifest,
+                target_db_config=target_db_config,
+                ingestion_params=ingestion_params,
+                connection_provider=connection_provider,
+                graph_target_namespace=graph_target_namespace,
+                recreate_schema=recreate_schema,
+            )
+            return
 
         # Define schema first (halts with SchemaExistsError if schema exists and recreate_schema is False)
         self.define_schema(
@@ -487,6 +505,8 @@ class GraphEngine:
         connection_provider: ConnectionProvider | None = None,
         graph_target_namespace: str | None = None,
         data_source_registry: DataSourceRegistry | None = None,
+        *,
+        recreate_schema: bool = False,
     ) -> None:
         """Ingest data into the graph database.
 
@@ -502,6 +522,8 @@ class GraphEngine:
                 calling ``ingest`` without a prior ``define_schema`` on this config.
             data_source_registry: Sources to read, by resource, instead of the
                 ones the manifest's bindings declare.
+            recreate_schema: Bulk mode only: drop the target's schema before the
+                run defines it, instead of refusing an existing one.
         """
         schema = manifest.require_schema()
         bindings = manifest.bindings
@@ -527,6 +549,7 @@ class GraphEngine:
             ingestion_params=ingestion_params,
             connection_provider=connection_provider or self.connection_provider,
             data_source_registry=data_source_registry,
+            recreate_schema=recreate_schema,
         )
 
     @staticmethod

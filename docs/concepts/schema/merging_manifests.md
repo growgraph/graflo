@@ -723,7 +723,6 @@ The limits:
 - The old key [no longer deduplicates](#the-old-key-no-longer-deduplicates).
 - Each batch looks each attached type up once by its key, and once more when
   its edges resolve their endpoints.
-- A `find` step is refused on the bulk ingest path.
 
 ## How definitions combine
 
@@ -748,8 +747,7 @@ combined:
   declarations for one field set or property are refused.
 - **Resources, transforms and bindings** are concatenated. A transform both
   sides register under one name must have the same body. The ingestion model's
-  write policies (`edges_on_duplicate`, `endpoints_on_ambiguous`) are the left
-  side's.
+  write policy, `endpoints_on_ambiguous`, is the left side's.
 
 ### How do I settle a property type the members disagree on?
 

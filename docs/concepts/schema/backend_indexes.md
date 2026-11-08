@@ -144,8 +144,8 @@ edge that lacks it too.
 PostgreSQL keys every edge table on the same properties, less a `relation`
 token, since each relation has its own table: a unique index over the endpoint
 columns and the identity properties, `NULLS NOT DISTINCT`, so it needs
-PostgreSQL 15 or later. An edge write that finds its key taken leaves the row
-as stored, or updates its other properties under `edges_on_duplicate: upsert`.
+PostgreSQL 15 or later. An edge write that finds its key taken updates the
+edge's other properties.
 An edge table whose key is missing or covers other columns, as one created by
 an earlier version, gets its key at schema definition or on its first ingest.
 That fails with a clear error if the table holds rows the key would merge,

@@ -122,8 +122,6 @@ def test_neo4j_creates_secondary_indexes() -> None:
     from graflo.connections.onto import Neo4jConfig
 
     config = Neo4jConfig.from_docker_env()
-    if not config.database:
-        config.database = "_system"
     try:
         manager = ConnectionManager(connection_config=config)
         db = manager.__enter__()

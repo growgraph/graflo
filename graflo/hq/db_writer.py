@@ -16,26 +16,13 @@ import threading
 from collections.abc import Coroutine, Generator, Iterator, Mapping, Sequence
 from contextlib import AsyncExitStack, contextmanager
 from typing import TYPE_CHECKING, Any, TypeVar, cast
-from uuid import uuid4
 
 from graflo.architecture.contract.ingestion import IngestionModel
-from graflo.architecture.evolution.sanitize import (
-    materialize_physical_schema,
-    with_physical_names,
-)
 from graflo.architecture.graph_types import EdgeId, GraphContainer, Weight
 from graflo.architecture.graph_types.merge import fuse_doc_basis
 from graflo.architecture.graph_types.transform import VertexRep
-from graflo.architecture.schema import EdgeRuntime, Schema, SchemaDBAware
-from graflo.architecture.schema.derive import derive_fields
+from graflo.architecture.schema import Schema, SchemaDBAware
 from graflo.architecture.schema.edge import Edge
-from graflo.architecture.schema.identity_digest import (
-    ensure_digest_identities_on_docs,
-)
-from graflo.architecture.schema.identity_uuid import (
-    ensure_assigned_uuids_on_docs,
-    validate_uuid_typed_identity_fields,
-)
 from graflo.architecture.schema.physical_keys import PhysicalKeys
 from graflo.architecture.schema.vertex import field_type_value, is_list_field_type
 from graflo.connections.onto import DBConfig
@@ -48,6 +35,20 @@ from graflo.hq.endpoint_resolve import (
     resolve_edge_endpoints,
     select_matches,
 )
+from graflo.hq.write_prepare import (
+    CYPHER_FLAVORS,
+    StoredEdges,
+    StoredVertices,
+    WriteContext,
+    derive_vertex_fields,
+    edge_union_fields,
+    mirror_default_identity,
+    prepare_vertices,
+    project_edge_docs,
+    project_edges,
+    project_vertices,
+    union_fields,
+)
 from graflo.onto import DBType, EndpointAmbiguityPolicy
 
 if TYPE_CHECKING:
@@ -58,19 +59,16 @@ logger = logging.getLogger(__name__)
 _T = TypeVar("_T")
 
 # Backends whose upsert primitive is atomic per key under concurrency:
-# Postgres INSERT .. ON CONFLICT, Arango UPSERT with OPTIONS {exclusive: true}
-# (collection-level write lock), and the keyed REST/NGQL upserts of TigerGraph
+# Postgres INSERT .. ON CONFLICT and the keyed REST/NGQL upserts of TigerGraph
 # and Nebula cannot create duplicate vertices for the same identity. Cypher
 # MERGE, by contrast, is check-then-create per transaction: two concurrent
 # writers merging the same key can BOTH create a node, or, under the identity
-# constraint Neo4j and Memgraph get, one fails. Flavors not
-# listed here write each vertex type and each relation through one batch at a
-# time.
+# constraint Neo4j and Memgraph get, one fails; two Arango transactions writing
+# one document fail with a write-write conflict. Flavors not listed here write
+# each vertex type and each relation through one batch at a time.
 _CONCURRENT_UPSERT_SAFE_FLAVORS = frozenset(
-    {DBType.POSTGRES, DBType.ARANGO, DBType.TIGERGRAPH, DBType.NEBULA}
+    {DBType.POSTGRES, DBType.TIGERGRAPH, DBType.NEBULA}
 )
-
-_CYPHER_FLAVORS = frozenset({DBType.NEO4J, DBType.MEMGRAPH, DBType.FALKORDB})
 
 # Flavors that write one edge type at a time: Memgraph aborts concurrent
 # transactions that change the edges of one node, and does not retry them.
@@ -109,11 +107,6 @@ def _weight_attributes(weight: Weight, doc: dict[str, Any]) -> dict[str, Any]:
     attributes = {weight.cfield(k): doc[k] for k in weight.fields if k in doc}
     attributes.update({q: doc[k] for k, q in weight.map.items() if k in doc})
     return attributes
-
-
-def _edge_union_fields(edge: Edge) -> list[str]:
-    """Logical names of *edge*'s ``merge: union`` fields."""
-    return [f.name for f in edge.properties if f.merge == "union"]
 
 
 def _document_edges(item: dict[Any, list], edge: Edge) -> list[tuple]:
@@ -174,10 +167,7 @@ class DBWriter:
         self.ingestion_model = ingestion_model
         self.dry = dry
         self.max_concurrent = max_concurrent
-        self._schema_db_aware: SchemaDBAware | None = None
-        self._schema_db_aware_flavor: DBType | None = None
-        self._named_schema: Schema | None = None
-        self._keys: PhysicalKeys | None = None
+        self._context: WriteContext | None = None
         self._semaphore: asyncio.Semaphore | None = None
         self._semaphore_loop: asyncio.AbstractEventLoop | None = None
         self._semaphore_bound: int | None = None
@@ -262,7 +252,6 @@ class DBWriter:
         conn_conf: DBConfig,
         resource_name: str | None,
         *,
-        bulk_session_id: str | None = None,
         stamp: Mapping[str, Any] | None = None,
         guard: FilterExpression | None = None,
     ) -> None:
@@ -277,22 +266,16 @@ class DBWriter:
         extra-weight vertices — so a write never links to, attaches onto or
         copies from a vertex the guard hides.
 
-        When *bulk_session_id* is provided, appends rows using the connection's
-        native bulk interface instead of using per-record writes.
-
         A container with no documents opens no connection and writes nothing;
         a class with no documents is skipped the same way.
 
         .. note::
-            *gc* is mutated in-place for the REST path: blank-vertex keys are
-            updated and blank edges are extended after the vertex round-trip.
-            The bulk path does not support blank vertices, attached records or
-            ``extra_weights``.
+            *gc* is mutated in-place: blank-vertex keys are updated and blank
+            edges are extended after the vertex round-trip.
 
         Raises:
-            ValueError: If *gc* carries attached records under a bulk session,
-                or an element of a type with a reserved field and *stamp* does
-                not set it.
+            ValueError: If an element of a type with a reserved field and
+                *stamp* does not set it.
             NotImplementedError: If *guard* is given and the backend does not
                 apply read guards; nothing is written.
         """
@@ -300,39 +283,11 @@ class DBWriter:
         # that cast to nothing is refused like any other.
         if guard is not None:
             require_read_guard(conn_conf)
-        if bulk_session_id:
-            self._validate_bulk_resource(resource_name)
         if gc.is_empty():
             return
         check_stamp(gc, self.schema, stamp)
         refuse_reserved_attributes(gc, self.schema)
         self._check_union(gc, conn_conf)
-        if bulk_session_id:
-            apply_stamp(gc, self.schema, stamp)
-            if any(gc.attached.values()):
-                raise ValueError(
-                    "Native bulk ingest does not support attached records "
-                    f"({sorted(gc.attached)}): finding the vertices they attach to "
-                    "needs DB round-trips. Use REST ingest."
-                )
-            if self.dry:
-                logger.debug(
-                    "Dry run: would append batch to bulk session %s",
-                    bulk_session_id,
-                )
-                return
-
-            keys = self._keys_for(conn_conf)
-            stored_gc = keys.container(gc, self.schema.core_schema.edge_config)
-            stored_schema = materialize_physical_schema(self._named_for(conn_conf))
-
-            def _append() -> None:
-                with self._connection(conn_conf) as db:
-                    db.bulk_load_append(bulk_session_id, stored_gc, stored_schema)
-
-            await asyncio.to_thread(_append)
-            return
-
         # A container that no resource produced (``migrate_graph`` writes an
         # exported graph through an empty ingestion model) has no resource to
         # consult, and needs none: extra weights, endpoint selections and the
@@ -408,11 +363,8 @@ class DBWriter:
         keys = self._keys_for(conn_conf)
         edge = core_ec.edge_for(edge_id)
         runtime = schema_db.edge_config.runtime(edge)
-        _, relation_name = self._project_edge_docs_for_db(
-            docs=[],
-            relation=edge.relation,
-            runtime=runtime,
-            conn_type=conn_conf.connection_type,
+        _, relation_name = project_edge_docs(
+            self.context(conn_conf), [], edge.relation, runtime
         )
         source_keys = vc.identity_fields(edge.source)
         target_keys = vc.identity_fields(edge.target)
@@ -478,11 +430,8 @@ class DBWriter:
             for edge_id in edges:
                 edge = core.edge_config.edge_for(edge_id)
                 runtime = schema_db.edge_config.runtime(edge)
-                _, relation_name = self._project_edge_docs_for_db(
-                    docs=[],
-                    relation=edge.relation,
-                    runtime=runtime,
-                    conn_type=conn_conf.connection_type,
+                _, relation_name = project_edge_docs(
+                    self.context(conn_conf), [], edge.relation, runtime
                 )
                 db.delete_scoped_edges(
                     vc.vertex_dbname(edge.source),
@@ -499,22 +448,6 @@ class DBWriter:
                     value,
                 )
 
-    def _validate_bulk_resource(self, resource_name: str | None) -> None:
-        if resource_name is None:
-            return
-        resource = self.ingestion_model.fetch_resource(resource_name)
-        if resource.config.extra_weights:
-            raise ValueError(
-                "Native bulk ingest does not support resources with extra_weights "
-                "(those require DB round-trips). Use REST ingest or disable extra_weights."
-            )
-        if resource.attached_selectors:
-            raise ValueError(
-                "Native bulk ingest does not support resources that attach records "
-                f"to existing vertices ({sorted(resource.attached_selectors)}; those "
-                "require DB round-trips). Use REST ingest."
-            )
-
     # ------------------------------------------------------------------
     # Vertices
     # ------------------------------------------------------------------
@@ -529,66 +462,39 @@ class DBWriter:
         ``natural`` vertices upsert directly on ``identity`` fields (one or many).
         UUID-typed natural identity fields are validated when present.
         """
-        vc = self._db_aware_for(conn_conf).vertex_config
-        keys = self._keys_for(conn_conf)
+        ctx = self.context(conn_conf)
+        vc = ctx.db_aware.vertex_config
 
-        async def _push_one(vcol: str, data: list[dict]):
+        def _prepare(vcol: str, data: list[dict]) -> StoredVertices:
+            writable = prepare_vertices(ctx, vcol, data)
+            identity_fields = vc.identity_fields(vcol)
+            if identity_fields:
+                # One row per vertex per batch, later wins: a backend that
+                # replaces a row or refuses a second touch would otherwise lose
+                # or fail on the earlier document.
+                writable = fuse_doc_basis(
+                    writable, tuple(identity_fields), union_fields(ctx, vcol)
+                )
+            return project_vertices(ctx, vcol, writable)
+
+        async def _push_one(vcol: str, data: list[dict]) -> None:
+            # Prepared before a write slot or a connection is taken: nothing in
+            # it reads the database.
+            batch = await asyncio.to_thread(_prepare, vcol, data)
             async with AsyncExitStack() as stack:
                 await self._acquire_write_slot(
                     stack, conn_conf, ("vertex", vc.vertex_dbname(vcol))
                 )
 
-                def _sync():
+                def _sync() -> None:
                     with self._connection(conn_conf) as db:
-                        self._derive_fields(vcol, data, conn_conf)
-                        if vc.is_hash_identity(vcol):
-                            self._assign_hash_identity_ids(
-                                vcol=vcol, data=data, conn_conf=conn_conf
-                            )
-                        elif vc.is_assigned(vcol):
-                            self._assign_assigned_vertex_ids(
-                                vcol=vcol, data=data, conn_conf=conn_conf
-                            )
-                        elif vc.is_blank(vcol):
-                            self._assign_blank_vertex_ids(
-                                vcol=vcol, data=data, conn_conf=conn_conf
-                            )
-                        else:
-                            self._validate_uuid_natural_identity(
-                                vcol=vcol, data=data, conn_conf=conn_conf
-                            )
-                        writable = self._drop_unkeyed_docs(
-                            vcol=vcol, data=data, conn_conf=conn_conf
-                        )
-                        identity_fields = vc.identity_fields(vcol)
-                        union = self._union_fields(vcol, conn_conf)
-                        if identity_fields:
-                            # One row per vertex per batch, later wins: a backend
-                            # that replaces a row or refuses a second touch would
-                            # otherwise lose or fail on the earlier document.
-                            writable = fuse_doc_basis(
-                                writable, tuple(identity_fields), union
-                            )
-                        db.upsert_docs_batch(
-                            keys.vertex_docs(vcol, writable),
-                            vc.vertex_dbname(vcol),
-                            keys.vertex_fields(vcol, vc.identity_fields(vcol)),
-                            update_keys="doc",
-                            filter_uniques=True,
-                            dry=self.dry,
-                            **self._union_kwargs(vcol, union, conn_conf),
-                        )
-                        return vcol, None
+                        self._upsert(db, batch, conn_conf)
 
-                return await asyncio.to_thread(_sync)
+                await asyncio.to_thread(_sync)
 
-        results = await asyncio.gather(
+        await asyncio.gather(
             *[_push_one(vcol, data) for vcol, data in gc.vertices.items() if data]
         )
-
-        for vcol, result in results:
-            if result is not None:
-                gc.vertices[vcol] = result
 
     def _check_union(self, gc: GraphContainer, conn_conf: DBConfig) -> None:
         """Refuse a write with ``merge: union`` fields the target cannot union.
@@ -611,161 +517,32 @@ class DBWriter:
         on_edges = any(
             rows
             and (edge := core.edge_config.declared(edge_id)) is not None
-            and _edge_union_fields(edge)
+            and edge_union_fields(edge)
             for edge_id, rows in gc.edges.items()
         )
         if on_vertices or on_edges:
             ConnectionManager.require(conn_conf, ConnectionCapability.UNION_MERGE)
 
-    def _union_fields(self, vcol: str, conn_conf: DBConfig) -> tuple[str, ...]:
-        """Logical names of *vcol*'s ``merge: union`` fields."""
-        vc = self._db_aware_for(conn_conf).vertex_config
-        return tuple(f.name for f in vc.properties(vcol) if f.merge == "union")
-
-    def _union_kwargs(
-        self, vcol: str, union: tuple[str, ...], conn_conf: DBConfig
-    ) -> dict[str, Any]:
-        """``union_fields`` for an upsert, in stored names, or nothing.
+    def _upsert(self, db: Any, batch: StoredVertices, conn_conf: DBConfig) -> None:
+        """Upsert one vertex type's stored documents on their identity.
 
         Raises:
-            ValueError: If the target cannot write a union, rather than writing
-                a replace in its place.
+            ValueError: If the batch has union fields the target cannot write
+                as a union, rather than writing a replace in its place.
         """
-        if not union:
-            return {}
-        ConnectionManager.require(conn_conf, ConnectionCapability.UNION_MERGE)
-        keys = self._keys_for(conn_conf)
-        return {"union_fields": tuple(keys.vertex_fields(vcol, list(union)))}
-
-    def _edge_union_kwargs(self, edge: Edge, conn_conf: DBConfig) -> dict[str, Any]:
-        """``union_fields`` for an edge insert, in stored names, or nothing.
-
-        Raises:
-            ValueError: If the target cannot write a union, rather than writing
-                a replace in its place.
-        """
-        union = _edge_union_fields(edge)
-        if not union:
-            return {}
-        ConnectionManager.require(conn_conf, ConnectionCapability.UNION_MERGE)
-        keys = self._keys_for(conn_conf)
-        return {"union_fields": tuple(keys.edge_fields(edge.edge_id, union))}
-
-    def _drop_unkeyed_docs(
-        self, vcol: str, data: list[dict], conn_conf: DBConfig
-    ) -> list[dict]:
-        """Drop documents that carry none of their vertex's identity fields.
-
-        Such a document cannot be upserted: with no key at all, every backend
-        either invents one or folds the whole batch onto a single keyless
-        vertex. It normally means the resource references the vertex rather than
-        owning it — declare ``lookup_only`` on that step to say so explicitly.
-
-        Runs after the blank/assigned/hash hooks, so generated identities count.
-        """
-        vc = self._db_aware_for(conn_conf).vertex_config
-        identity_fields = vc.identity_fields(vcol)
-        if not identity_fields:
-            return data
-
-        writable = [
-            doc
-            for doc in data
-            if any(doc.get(field) is not None for field in identity_fields)
-        ]
-        dropped = len(data) - len(writable)
-        if dropped:
-            logger.warning(
-                "Skipped %s '%s' document(s) with no identity value for %s; "
-                "they cannot be upserted. Mark the step lookup_only if the "
-                "resource only references this vertex.",
-                dropped,
-                vcol,
-                identity_fields,
-            )
-        return writable
-
-    def _assign_blank_vertex_ids(
-        self, vcol: str, data: list[dict], conn_conf: DBConfig
-    ) -> None:
-        """Assign deterministic in-memory IDs to blank vertices before persistence."""
-        _, preferred_field = self._default_and_preferred(vcol, conn_conf)
-        for doc in data:
-            current_value = doc.get(preferred_field)
-            if current_value is None or current_value == "":
-                doc[preferred_field] = str(uuid4())
-        self._mirror_default_identity(vcol=vcol, data=data, conn_conf=conn_conf)
-
-    def _assign_assigned_vertex_ids(
-        self, vcol: str, data: list[dict], conn_conf: DBConfig
-    ) -> None:
-        """Idempotent uuid4 fill for assigned vertices (assemble-time mint is primary)."""
-        _, preferred_field = self._default_and_preferred(vcol, conn_conf)
-        ensure_assigned_uuids_on_docs(data, preferred_field=preferred_field)
-        self._mirror_default_identity(vcol=vcol, data=data, conn_conf=conn_conf)
-
-    def _validate_uuid_natural_identity(
-        self, vcol: str, data: list[dict], conn_conf: DBConfig
-    ) -> None:
-        """Validate UUID-typed natural identity fields; do not invent values."""
-        vc = self._db_aware_for(conn_conf).vertex_config
-        vertex = vc.logical._get_vertex_by_name(vcol)
-        for doc in data:
-            validate_uuid_typed_identity_fields(doc, vertex)
-
-    def _derive_fields(self, vcol: str, data: list[dict], conn_conf: DBConfig) -> None:
-        """Set *vcol*'s derived fields on every doc, so no write path skips them."""
-        vertex = self._db_aware_for(
-            conn_conf
-        ).vertex_config.logical._get_vertex_by_name(vcol)
-        if vertex.derived_fields:
-            for doc in data:
-                derive_fields(vertex, doc)
-
-    def _assign_hash_identity_ids(
-        self, vcol: str, data: list[dict], conn_conf: DBConfig
-    ) -> None:
-        """Idempotent digest-identity fill for hash- and funnel-mode vertices.
-
-        Identities are normally materialized at assemble time
-        (``ensure_digest_identities_in_acc_vertex``); this is the safety net for
-        docs that reach the writer another way. Never overwrites a value, so an
-        assemble-time key survives. Docs where no branch fires keep an empty
-        identity and are dropped by ``_drop_unkeyed_docs``.
-        """
-        vc = self._db_aware_for(conn_conf).vertex_config
-        vertex = vc.logical._get_vertex_by_name(vcol)
-        _, preferred_field = self._default_and_preferred(vcol, conn_conf)
-        ensure_digest_identities_on_docs(data, vertex, preferred_field=preferred_field)
-        self._mirror_default_identity(vcol=vcol, data=data, conn_conf=conn_conf)
-
-    def _default_and_preferred(self, vcol: str, conn_conf: DBConfig) -> tuple[str, str]:
-        """The flavor's default key field and *vcol*'s first identity field.
-
-        The default is ``_key`` on Arango and ``id`` elsewhere; a vertex without
-        identity fields is keyed on the default itself.
-        """
-        identity_fields = self._db_aware_for(conn_conf).vertex_config.identity_fields(
-            vcol
+        union_kw: dict[str, Any] = {}
+        if batch.union_fields:
+            ConnectionManager.require(conn_conf, ConnectionCapability.UNION_MERGE)
+            union_kw["union_fields"] = batch.union_fields
+        db.upsert_docs_batch(
+            batch.docs,
+            batch.class_name,
+            batch.match_keys,
+            update_keys="doc",
+            filter_uniques=True,
+            dry=self.dry,
+            **union_kw,
         )
-        default_field = "_key" if conn_conf.connection_type == DBType.ARANGO else "id"
-        return default_field, identity_fields[0] if identity_fields else default_field
-
-    def _mirror_default_identity(
-        self, vcol: str, data: list[dict], conn_conf: DBConfig
-    ) -> None:
-        """Copy the first identity value into the flavor's default key field.
-
-        The default field is ``_key`` on Arango and ``id`` elsewhere; a value
-        already there is never overwritten.
-        """
-        default_field, preferred_field = self._default_and_preferred(vcol, conn_conf)
-        if default_field == preferred_field:
-            return
-        for doc in data:
-            value = doc.get(preferred_field)
-            if value is not None and value != "" and default_field not in doc:
-                doc[default_field] = value
 
     # ------------------------------------------------------------------
     # Attached records
@@ -927,31 +704,19 @@ class DBWriter:
             return filled, stats
         # Records landing on one vertex become one row, later records winning:
         # a batch upsert may not touch the same row twice.
-        filled = fuse_doc_basis(
-            filled, tuple(identity_fields), self._union_fields(vcol, conn_conf)
-        )
-        if vc.is_hash_identity(vcol) or vc.is_assigned(vcol) or vc.is_blank(vcol):
-            # Owners of a generated key mirrored it the same way when written.
-            self._mirror_default_identity(vcol=vcol, data=filled, conn_conf=conn_conf)
+        ctx = self.context(conn_conf)
+        filled = fuse_doc_basis(filled, tuple(identity_fields), union_fields(ctx, vcol))
+        # Keyed as their owners were when written.
+        mirror_default_identity(ctx, vcol, filled)
         return filled, stats
 
     def _upsert_attached(
         self, db: Any, vcol: str, filled: list[dict[str, Any]], *, conn_conf: DBConfig
     ) -> None:
         """Upsert one class's resolved attached rows on their primary identity."""
-        vc = self._db_aware_for(conn_conf).vertex_config
-        keys = self._keys_for(conn_conf)
-        union = self._union_fields(vcol, conn_conf)
-        self._derive_fields(vcol, filled, conn_conf)
-        db.upsert_docs_batch(
-            keys.vertex_docs(vcol, filled),
-            vc.vertex_dbname(vcol),
-            keys.vertex_fields(vcol, vc.identity_fields(vcol)),
-            update_keys="doc",
-            filter_uniques=True,
-            dry=self.dry,
-            **self._union_kwargs(vcol, union, conn_conf),
-        )
+        ctx = self.context(conn_conf)
+        derive_vertex_fields(ctx, vcol, filled)
+        self._upsert(db, project_vertices(ctx, vcol, filled), conn_conf)
 
     def _record_attach(self, vcol: str, selector: str, stats: AttachStats) -> None:
         self.stats.add_attached(vcol, stats)
@@ -1133,11 +898,9 @@ class DBWriter:
             AmbiguousEndpointError: on several matches under the ``error`` policy;
                 no edge of *gc* is inserted then.
         """
-        schema_db = self._db_aware_for(conn_conf)
-        vc = schema_db.vertex_config
-        ec = schema_db.edge_config
+        ctx = self.context(conn_conf)
+        vc = ctx.db_aware.vertex_config
         core_ec = self.schema.core_schema.edge_config
-        keys = self._keys_for(conn_conf)
 
         def _schema_edge_for(edge_id: tuple) -> Edge | None:
             """Return the schema Edge for a gc edge key, or None if not declared."""
@@ -1165,7 +928,7 @@ class DBWriter:
                             edge=edge,
                             edge_id=edge_id,
                             match=endpoint_match,
-                            vertex_config=vc,
+                            ctx=ctx,
                             guard=guard,
                         )
 
@@ -1173,13 +936,21 @@ class DBWriter:
             return (edge_id, edge, edge_docs) if edge_docs else None
 
         async def _insert_one(edge_id: tuple, edge: Edge, edge_docs: list) -> None:
+            source, target, relation = edge_id
+            # Projected before a write slot or a connection is taken.
+            stored = (
+                None
+                if self.dry
+                else await asyncio.to_thread(
+                    project_edges, ctx, edge, relation, edge_docs
+                )
+            )
             async with AsyncExitStack() as stack:
                 # Cypher relationship MERGE has the same concurrent
                 # check-then-create race as node MERGE. Two edge ids never MERGE
                 # one pattern (their labels or relation type differ), so the
                 # lock is per concrete id -- the container key, since a
                 # ``relation_field`` template's schema relation is None.
-                source, target, relation = edge_id
                 lock_key: tuple[str | None, ...] = (
                     ("edge",)
                     if conn_conf.connection_type in _SERIAL_EDGE_FLAVORS
@@ -1194,62 +965,15 @@ class DBWriter:
 
                 def _sync() -> None:
                     with self._connection(conn_conf) as db:
-                        runtime = ec.runtime(edge)
-                        source_keys = tuple(vc.identity_fields(edge.source))
-                        target_keys = tuple(vc.identity_fields(edge.target))
-                        merge_props: tuple[str, ...] | None = None
-                        mp = ec.relationship_merge_property_names(edge)
-                        if mp:
-                            merge_props = tuple(keys.edge_fields(edge.edge_id, mp))
-                        if not self.dry:
-                            data, relation_name = self._project_edge_docs_for_db(
-                                docs=edge_docs,
-                                relation=relation,
-                                runtime=runtime,
-                                conn_type=conn_conf.connection_type,
-                            )
-                            data = keys.edge_triples(
-                                edge.edge_id, edge.source, edge.target, data
-                            )
-                            edge_kw: dict = {
-                                "filter_uniques": False,
-                                "dry": self.dry,
-                                "collection_name": runtime.storage_name(),
-                            }
-                            if conn_conf.connection_type in _CYPHER_FLAVORS:
-                                if merge_props is not None:
-                                    edge_kw["relationship_merge_properties"] = (
-                                        merge_props
-                                    )
-                            elif conn_conf.connection_type == DBType.POSTGRES:
-                                # The conflict target must match the edge
-                                # table's unique key, built from the same names.
-                                if merge_props is not None:
-                                    edge_kw["relationship_merge_properties"] = (
-                                        merge_props
-                                    )
-                                if self.ingestion_model.edges_on_duplicate == "upsert":
-                                    edge_kw["on_duplicate"] = "upsert"
-                            elif (
-                                conn_conf.connection_type == DBType.ARANGO
-                                and self.ingestion_model.edges_on_duplicate == "upsert"
-                            ):
-                                edge_kw["on_duplicate"] = "upsert"
-                                if merge_props is not None:
-                                    edge_kw["uniq_weight_fields"] = list(merge_props)
-                            edge_kw.update(self._edge_union_kwargs(edge, conn_conf))
+                        if stored is not None:
                             db.insert_edges_batch(
-                                docs_edges=data,
-                                source_class=vc.vertex_dbname(edge.source),
-                                target_class=vc.vertex_dbname(edge.target),
-                                relation_name=relation_name,
-                                match_keys_source=tuple(
-                                    keys.vertex_fields(edge.source, source_keys)
-                                ),
-                                match_keys_target=tuple(
-                                    keys.vertex_fields(edge.target, target_keys)
-                                ),
-                                **edge_kw,
+                                docs_edges=stored.docs,
+                                source_class=stored.source_class,
+                                target_class=stored.target_class,
+                                relation_name=stored.relation_name,
+                                match_keys_source=stored.match_keys_source,
+                                match_keys_target=stored.match_keys_target,
+                                **self._edge_kwargs(stored, conn_conf),
                             )
 
                 await asyncio.to_thread(_sync)
@@ -1262,6 +986,33 @@ class DBWriter:
         await asyncio.gather(
             *[_insert_one(*entry) for entry in resolved if entry is not None]
         )
+
+    def _edge_kwargs(self, stored: StoredEdges, conn_conf: DBConfig) -> dict[str, Any]:
+        """The flavor's options for inserting *stored*.
+
+        Raises:
+            ValueError: If the edge has union fields the target cannot write as
+                a union, rather than writing a replace in its place.
+        """
+        merge_props = stored.merge_properties
+        flavor = conn_conf.connection_type
+        edge_kw: dict[str, Any] = {
+            "filter_uniques": False,
+            "dry": self.dry,
+            "collection_name": stored.collection_name,
+        }
+        if flavor in CYPHER_FLAVORS or flavor in (DBType.POSTGRES, DBType.NEBULA):
+            # On PostgreSQL the conflict target must match the edge table's
+            # unique key, built from the same names; on NebulaGraph they rank
+            # the edge.
+            if merge_props is not None:
+                edge_kw["relationship_merge_properties"] = merge_props
+        elif flavor == DBType.ARANGO and merge_props is not None:
+            edge_kw["uniq_weight_fields"] = list(merge_props)
+        if stored.union_fields:
+            ConnectionManager.require(conn_conf, ConnectionCapability.UNION_MERGE)
+            edge_kw["union_fields"] = stored.union_fields
+        return edge_kw
 
     def _report_undeclared_edge(self, edge_id: tuple, count: int) -> None:
         """Say, once per edge id, that its edges are not written."""
@@ -1295,21 +1046,22 @@ class DBWriter:
         edge: Edge,
         edge_id: tuple,
         match: Any,
-        vertex_config: Any,
+        ctx: WriteContext,
         guard: FilterExpression | None = None,
     ) -> list:
         """Map secondary-identity endpoints to primary identities before writing."""
+        vertex_config = ctx.db_aware.vertex_config
         source_fields = vertex_config.match_fields(edge.source, match.source)
         target_fields = vertex_config.match_fields(edge.target, match.target)
         source_identity = vertex_config.identity_fields(edge.source)
         target_identity = vertex_config.identity_fields(edge.target)
         policy = match.on_ambiguous or self.ingestion_model.endpoints_on_ambiguous
-        keys = self._keys
+        keys = ctx.keys
 
         # Resolution reads the database, so it runs on stored names; the
         # resolved endpoints come back to logical names for the rest of the write.
         stored_docs = docs
-        if keys is not None and keys.active:
+        if keys.active:
             stored_docs = [
                 (
                     keys.vertex_doc(edge.source, doc[0]),
@@ -1320,7 +1072,7 @@ class DBWriter:
             ]
 
         def _stored(vertex: str, fields: list[str]) -> list[str]:
-            return keys.vertex_fields(vertex, fields) if keys is not None else fields
+            return keys.vertex_fields(vertex, fields)
 
         resolved, stats = resolve_edge_endpoints(
             db,
@@ -1337,7 +1089,7 @@ class DBWriter:
             guard=guard,
         )
         self.stats.add_endpoints(edge_id, stats)
-        if keys is not None and keys.active:
+        if keys.active:
             resolved = [
                 (
                     keys.logical_vertex_doc(edge.source, doc[0]),
@@ -1398,67 +1150,23 @@ class DBWriter:
             await stack.enter_async_context(lock)
         await stack.enter_async_context(self._db_semaphore(conn_conf))
 
-    def _db_aware_for(self, conn_conf: DBConfig) -> SchemaDBAware:
-        """Return a cached :class:`SchemaDBAware` for *conn_conf*'s DB flavor.
+    def context(self, conn_conf: DBConfig) -> WriteContext:
+        """The schema resolved for *conn_conf*'s flavor, cached for the run.
 
-        Resolved over the schema with its physical names filled in, so the
-        storage and relation names written to are the ones DDL declared, and
-        the stored property names are known for :meth:`_keys_for`.
+        Physical names are filled in, so the storage and relation names written
+        to are the ones DDL declared. Resolve it before fanning out concurrent
+        :meth:`write` calls, so they never race the cache fill.
         """
         flavor = conn_conf.connection_type
-        if self._schema_db_aware is None or self._schema_db_aware_flavor != flavor:
-            named = with_physical_names(self.schema, flavor)
-            self._named_schema = named
-            self._keys = PhysicalKeys(named.db_profile)
-            self._schema_db_aware = named.resolve_db_aware(flavor)
-            self._schema_db_aware_flavor = flavor
-        return self._schema_db_aware
+        if self._context is None or self._context.flavor != flavor:
+            self._context = WriteContext.for_flavor(self.schema, flavor)
+        return self._context
 
-    def _named_for(self, conn_conf: DBConfig) -> Schema:
-        """The schema with physical names filled in for *conn_conf*'s flavor."""
-        self._db_aware_for(conn_conf)
-        assert self._named_schema is not None
-        return self._named_schema
+    def _db_aware_for(self, conn_conf: DBConfig) -> SchemaDBAware:
+        return self.context(conn_conf).db_aware
 
     def _keys_for(self, conn_conf: DBConfig) -> PhysicalKeys:
-        """Logical <-> stored key translation for *conn_conf*'s flavor."""
-        self._db_aware_for(conn_conf)
-        assert self._keys is not None
-        return self._keys
-
-    def _project_edge_docs_for_db(
-        self,
-        *,
-        docs: list,
-        relation: str | None,
-        runtime: EdgeRuntime,
-        conn_type: DBType,
-    ) -> tuple[list, str | None]:
-        """Project logical edge docs into DB-specific relation representation."""
-        if conn_type in _CYPHER_FLAVORS:
-            # The relationship type the profile names for this concrete relation,
-            # as the read path and index DDL resolve it.
-            edge = runtime.edge
-            return docs, runtime.db_profile.edge_relation_name(
-                (edge.source, edge.target, relation), default_relation=relation
-            )
-        if conn_type != DBType.TIGERGRAPH:
-            return docs, relation
-
-        relation_name = runtime.relation_name
-        relation_field = runtime.effective_relation_field
-        if not runtime.store_extracted_relation_as_weight or relation_field is None:
-            return docs, relation_name
-
-        # TigerGraph stores dynamic extracted relation as an edge attribute while
-        # keeping the edge type stable.
-        projected: list = []
-        for source_doc, target_doc, weight in docs:
-            next_weight = dict(weight)
-            if relation is not None:
-                next_weight[relation_field] = relation
-            projected.append((source_doc, target_doc, next_weight))
-        return projected, relation_name
+        return self.context(conn_conf).keys
 
 
 def require_read_guard(conn_conf: DBConfig) -> None:
@@ -1509,7 +1217,9 @@ def apply_stamp(
     """Set every reserved field of the elements of *gc* from *stamp*, in place.
 
     A value a document carries is overwritten: only the caller's stamp may set
-    a reserved field. Edge attribute dicts are updated in place, so every
+    a reserved field. A field ``set_by: sync`` is set to null: only a bulk or
+    sync write knows the record's hash, and a null one makes the next sync
+    rewrite the record. Edge attribute dicts are updated in place, so every
     reference to them (extra weights, linear rows) sees the stamp.
 
     Raises:
@@ -1525,7 +1235,12 @@ def apply_stamp(
                 fields = [f for f in vc.properties(vcol) if f.reserved]
                 if not fields:
                     continue
-                values = _stamp_values(fields, stamp, f"vertex {vcol!r}")
+                values = _stamp_values(
+                    [f for f in fields if f.set_by == "stamp"],
+                    stamp,
+                    f"vertex {vcol!r}",
+                )
+                values.update({f.name: None for f in fields if f.set_by == "sync"})
                 for doc in docs:
                     target = doc.vertex if isinstance(doc, VertexRep) else doc
                     target.update(copy.deepcopy(values))
@@ -1597,7 +1312,9 @@ def _reserved_by_owner(
     for docs_by_type in (gc.vertices, gc.attached):
         for vcol, docs in docs_by_type.items():
             if vcol in vc.vertex_set and docs:
-                fields = [f for f in vc.properties(vcol) if f.reserved]
+                fields = [
+                    f for f in vc.properties(vcol) if f.reserved and f.set_by == "stamp"
+                ]
                 if fields:
                     yield f"vertex {vcol!r}", fields
     for edge_id, rows in gc.edges.items():

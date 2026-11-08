@@ -1,55 +1,39 @@
 # Running docker images of various graph databases
 
-## Quick Start - All Services
+## Quick start
 
-The easiest way to run all graph databases at once is using the convenience scripts:
+Each service is a compose project in its own folder. Its settings (image, ports, credentials, `SPEC`) are in `<service>/.env.example`. The scripts pass that file to compose with `--env-file`, and `XConfig.from_docker_env()` reads the same file, so the containers and the tests agree.
 
-**Start all services:**
 ```shell
-./start-all.sh
+./start-all.sh                  # every service; waits for health checks
+./start-all.sh neo4j postgres   # just these
+./stop-all.sh [service ...]     # stop, keeping containers and volumes
+./cleanup-all.sh [service ...]  # remove containers and volumes (asks first; --yes skips)
+./cleanup-all.sh --images       # also remove the images
+./cleanup-all.sh --no-volumes   # containers only
 ```
 
-This will start all available graph database services:
-- ArangoDB (port 8535)
-- Neo4j (port 7475)
-- TigerGraph (port 14241)
-- FalkorDB (port 3001)
-- Memgraph (port 7687)
-- NebulaGraph (port 9669)
-- PostgreSQL (port 5432)
-- SeaweedFS (S3 API port 8333)
-- Kafka (bootstrap port 9092)
+After an image upgrade that changes a database's store format (Neo4j 5.26 to 2026.x, for instance), run `./cleanup-all.sh <service>` before starting it again.
 
-**Stop all services:**
-```shell
-./stop-all.sh
-```
+| Service | Host port |
+|---|---|
+| ArangoDB | 8535 |
+| Neo4j | 7475 (HTTP), 7688 (Bolt) |
+| TigerGraph | 14241 |
+| FalkorDB | 6379 (Redis), 3001 (browser) |
+| Memgraph | 7687 |
+| NebulaGraph | 9669 |
+| PostgreSQL | 5432 |
+| Fuseki | 3032 |
+| SeaweedFS | 8333 (S3 API) |
+| Kafka | 9092 |
 
-**Cleanup (remove containers, volumes, and optionally images):**
-```shell
-./cleanup-all.sh              # Remove containers and volumes
-./cleanup-all.sh --images     # Also remove docker images
-./cleanup-all.sh --no-volumes # Remove containers only (keep volumes)
-```
+## One service by hand
 
-These scripts will automatically:
-- Detect the `SPEC` variable from each `.env` file (defaults to `graflo`)
-- Use the appropriate profile for each service
-- Handle services with or without `.env` files
-- Start services in the correct order (e.g., NebulaGraph requires multiple services)
-
-## General instruction
-
-To run individual services, use:
+From the service's folder, with its profile (`<SPEC>.<service>`, e.g. `graflo.neo4j`):
 
 ```shell
-docker compose --env-file .env up <container_spec> -d
-```
-
-**Note:** For convenience, you can also use `./start-all.sh` to start all services at once (see Quick Start section above).
-
-```shell
-docker compose --env-file .env up <container_spec> -d
+docker compose --env-file .env.example --profile graflo.neo4j up -d
 ```
 
 to stop containers from docker compose
@@ -75,7 +59,7 @@ docker load -i ./tigergraph-4.2.0-community-docker-image.tar.gz
 After this, run TigerGraph in the same way as other DBs:
 
 ```shell
-docker compose --env-file .env up <container_spec> -d
+docker compose --env-file .env.example up <container_spec> -d
 ```
 
 NB: we only use default password `tigergraph` in this repo (our docker-compose script does not change default password).
@@ -99,14 +83,14 @@ NebulaGraph requires several services (metad, storaged, graphd, and graphstudio)
 
 ```shell
 cd nebula
-docker compose --env-file .env --profile graflo.nebula up -d
+docker compose --env-file .env.example --profile graflo.nebula up -d
 ```
 
 **Connection Details:**
-- GraphD port: `9669` (default, configurable via `NEBULA_PORT` in `.env`)
-- GraphStudio web interface: `http://localhost:7001` (configurable via `GRAPHSTUDIO_PORT` in `.env`)
+- GraphD port: `9669` (default, configurable via `NEBULA_PORT` in `.env.example`)
+- GraphStudio web interface: `http://localhost:7001` (configurable via `GRAPHSTUDIO_PORT` in `.env.example`)
 - Use `nebula-graphd` hostname to connect using GraphStudio or programmatically
-- Default credentials: `root` / `test!passfortesting` (configurable via `NEBULA_USER` and `NEBULA_PASSWORD` in `.env`)
+- Default credentials: `root` / `test!passfortesting` (configurable via `NEBULA_USER` and `NEBULA_PASSWORD` in `.env.example`)
 
 **Programmatic Connection:**
 You can use `NebulaConfig.from_docker_env()` in your Python code to connect:
@@ -121,7 +105,7 @@ config = NebulaConfig.from_docker_env()
 
 ArangoDB web interface: [http://localhost:8535](http://localhost:8535)
 
-NB: The standard ArangoDB port is 8529, but the `.env` config in graflo uses 8535.
+NB: The standard ArangoDB port is 8529, but the `.env.example` config in graflo uses 8535.
 
 **Programmatic Connection:**
 ```python
@@ -134,7 +118,7 @@ config = ArangoConfig.from_docker_env()
 
 Neo4j web interface: [http://localhost:7475](http://localhost:7475)
 
-NB: The standard Neo4j port is 7474, but the `.env` config in graflo uses 7475.
+NB: The standard Neo4j port is 7474, but the `.env.example` config in graflo uses 7475.
 
 **Programmatic Connection:**
 ```python
@@ -167,7 +151,7 @@ config = FalkordbConfig.from_docker_env()
 
 ## SeaweedFS (S3)
 
-SeaweedFS provides S3-compatible object storage ([Docker Hub image](https://hub.docker.com/r/chrislusf/seaweedfs)). Use it for bulk staging (e.g. TigerGraph examples that upload staged CSVs).
+SeaweedFS provides S3-compatible object storage ([Docker Hub image](https://hub.docker.com/r/chrislusf/seaweedfs)). Use it for file sources with an `s3://` root.
 
 **Run:**
 ```shell
@@ -177,21 +161,19 @@ docker compose --profile graflo.seaweedfs up -d
 
 **Endpoint:** S3 API at `http://127.0.0.1:8333` (host port `S3_API_PORT`). No identities are configured, so the API accepts any key pair; the bucket is created on first use.
 
-Settings are optional and go in `docker/seaweedfs/.env`: `S3_ENDPOINT` (or `S3_PROTOCOL`, `S3_HOSTNAME`, `S3_API_PORT`), `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_BUCKET` (default `graflo-staging`), `AWS_REGION`.
+Settings go in `docker/seaweedfs/.env.example`; every one is optional: `S3_ENDPOINT` (or `S3_PROTOCOL`, `S3_HOSTNAME`, `S3_API_PORT`), `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_BUCKET` (default `graflo-staging`), `AWS_REGION`.
 
-When TigerGraph runs in Docker and GraFlo uploads from the host, set **`S3_LOADER_ENDPOINT`** to the S3 URL **as seen from the TigerGraph container** (e.g. `http://172.17.0.1:8333` or `http://host.docker.internal:8333`). That value is used only in the GSQL `CREATE DATA_SOURCE` for bulk loads; boto3 on the host uses the endpoint above.
-
-**Programmatic connection (boto3 / bulk staging):**
+**Programmatic connection (boto3):**
 ```python
-from graflo.object_storage import MinioConfig
+from graflo.object_storage import S3EndpointConfig
 from graflo.object_storage import ensure_staging_bucket_for_config
 
-config = MinioConfig.from_docker_env()
+config = S3EndpointConfig.from_docker_env()
 ensure_staging_bucket_for_config(config)
 # config.endpoint_url, config.access_key, config.secret_key, config.bucket, …
 ```
 
-Implementation helpers (`upload_staged_csvs`, boto3 client factories, bucket ensure) live in **`graflo.object_storage`**. See **docs/concepts/operations/object_storage.md** in the repo for staging vs ingestion connectors.
+Boto3 client factories and bucket ensure live in **`graflo.object_storage`**. See **docs/concepts/operations/object_storage.md** in the repo.
 
 
 ## Kafka
@@ -201,11 +183,11 @@ Apache Kafka in KRaft combined mode ([Docker Hub image](https://hub.docker.com/r
 **Run:**
 ```shell
 cd kafka
-docker compose --env-file .env --profile graflo.kafka up -d
+docker compose --env-file .env.example --profile graflo.kafka up -d
 ```
 
 **Connection Details:**
-- Bootstrap servers: `localhost:9092` (host port via `KAFKA_PORT` in `.env`)
+- Bootstrap servers: `localhost:9092` (host port via `KAFKA_PORT` in `.env.example`)
 - Plaintext listener only (no auth) — local testing
 - Create a topic from the container:
   ```shell
@@ -213,7 +195,7 @@ docker compose --env-file .env --profile graflo.kafka up -d
     ./kafka-topics.sh --bootstrap-server localhost:9092 --create --topic test-topic
   ```
 
-**Port conflicts:** If `9092` is already allocated, set `KAFKA_PORT` (and matching `KAFKA_BOOTSTRAP_SERVERS` / advertised host port) in `docker/kafka/.env`, then recreate the container.
+**Port conflicts:** If `9092` is already allocated, set `KAFKA_PORT` (and matching `KAFKA_BOOTSTRAP_SERVERS` / advertised host port) in `docker/kafka/.env.example`, then recreate the container.
 
 ## Memgraph
 
@@ -222,9 +204,9 @@ Memgraph is a high-performance, in-memory graph database that supports OpenCyphe
 The default image is `memgraph/memgraph-mage:3.14.0`; GraFlo needs Memgraph 3.2 or later.
 
 **Connection Details:**
-- Bolt port: `7687` (default, configurable via `MEMGRAPH_PORT` in `.env`)
+- Bolt port: `7687` (default, configurable via `MEMGRAPH_PORT` in `.env.example`)
 - Uses Bolt protocol (bolt://) for connections
-- Optional authentication (configurable via `MEMGRAPH_USER` and `MEMGRAPH_PASSWORD` in `.env`)
+- Optional authentication (configurable via `MEMGRAPH_USER` and `MEMGRAPH_PASSWORD` in `.env.example`)
 
 **Programmatic Connection:**
 ```python

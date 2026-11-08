@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 @pytest.fixture(scope="function")
 def conn_conf():
-    """Load PostgreSQL config from docker/postgres/.env file."""
+    """Load PostgreSQL config from docker/postgres/.env.example."""
     conn_conf = PostgresConfig.from_docker_env()
     # Ensure database is set
     if not conn_conf.database:

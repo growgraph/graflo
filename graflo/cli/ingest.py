@@ -98,6 +98,26 @@ logger = logging.getLogger(__name__)
     default=None,
     help="Append gzip-compressed JSONL row failure records (.jsonl.gz) to this path (optional).",
 )
+@click.option(
+    "--bulk",
+    default=False,
+    is_flag=True,
+    help="Load an empty target in bulk: stage, fold by identity, write once "
+    "(needs the `bulk` extra and --staging-dir).",
+)
+@click.option(
+    "--staging-dir",
+    type=click.Path(file_okay=False, path_type=pathlib.Path),
+    default=None,
+    help="Directory of a bulk or sync run; giving it again resumes a stopped run.",
+)
+@click.option(
+    "--sync",
+    default=False,
+    is_flag=True,
+    help="Replace what changed owner records wrote in a loaded target (Neo4j, "
+    "FalkorDB; needs the `bulk` extra and --staging-dir).",
+)
 def ingest(
     db_config_path,
     schema_path,
@@ -111,6 +131,9 @@ def ingest(
     on_doc_error,
     doc_error_sink,
     no_create_namespace,
+    bulk,
+    staging_dir,
+    sync,
 ):
     """Ingest data into a graph database.
 
@@ -124,7 +147,8 @@ def ingest(
         limit_files: Optional limit on number of files to process
         batch_size: Number of source items to group per batch (default: IngestionParams.batch_size)
         n_cores: Degree of parallelism for casting (default: 1)
-        fresh_start: Whether to wipe existing database before ingestion
+        fresh_start: Whether to wipe existing database before ingestion (in a
+            bulk run, the bulk writer drops and defines the schema)
         init_only: Whether to only initialize the database without ingestion
         resource_connector_config_path: Optional path to resource connector configuration
         data_source_config_path: Optional path to a list of sources to read
@@ -164,18 +188,29 @@ def ingest(
 
     engine = GraphEngine(target_db_flavor=conn_conf.connection_type)
 
-    # Create ingestion params with CLI arguments
-    ingestion_params = IngestionParams(
-        n_cores=n_cores,
-        batch_size=batch_size,
-        init_only=init_only,
-        limit_files=limit_files,
-        on_doc_error=on_doc_error,
-        doc_error_sink_path=doc_error_sink,
-    )
+    if bulk and sync:
+        raise click.UsageError("--bulk and --sync are exclusive")
+    if bulk and init_only:
+        raise click.UsageError(
+            "--init-only is not a bulk run: a bulk run defines the schema"
+        )
+    mode = "bulk" if bulk else "sync" if sync else "upsert"
+    try:
+        ingestion_params = IngestionParams(
+            mode=mode,
+            staging_dir=staging_dir,
+            n_cores=n_cores,
+            batch_size=batch_size,
+            init_only=init_only,
+            limit_files=limit_files,
+            on_doc_error=on_doc_error,
+            doc_error_sink_path=doc_error_sink,
+        )
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from exc
 
-    # Define schema first (if recreate_schema is requested)
-    if fresh_start or init_only:
+    # Define schema first (if recreate_schema is requested); a bulk run does it itself.
+    if (fresh_start or init_only) and mode != "bulk":
         engine.define_schema(
             manifest=manifest,
             target_db_config=conn_conf,
@@ -217,6 +252,7 @@ def ingest(
         target_db_config=conn_conf,
         ingestion_params=ingestion_params,
         data_source_registry=registry,
+        recreate_schema=bool(fresh_start) and mode == "bulk",
     )
 
 

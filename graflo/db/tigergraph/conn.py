@@ -10,24 +10,21 @@ from __future__ import annotations
 import contextlib
 import logging
 import re
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from graflo.architecture.contract.bindings import Bindings
-from graflo.architecture.graph_types import GraphContainer, Index
+from graflo.architecture.graph_types import Index
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import FieldType, VertexConfig
-from graflo.connections.onto import TigergraphBulkLoadConfig, TigergraphConfig
+from graflo.connections.bulk import BulkConfig
+from graflo.connections.onto import TigergraphConfig
+from graflo.db.bulk import BulkCounts, BulkEdgeChunk, BulkPlan, BulkVertexChunk
 from graflo.db.conn import Connection
 from graflo.db.tigergraph import (
     compat,  # noqa: F401  # patch requests exceptions on import
 )
 from graflo.db.tigergraph.auth import TigerGraphAuth
-from graflo.db.tigergraph.bulk_session import (
-    bulk_load_append,
-    bulk_load_begin,
-    bulk_load_finalize,
-)
+from graflo.db.tigergraph.bulk import TigerGraphBulkWriter
 from graflo.db.tigergraph.data_ops import TigerGraphDataOps
 from graflo.db.tigergraph.document_utils import clean_document, extract_id
 from graflo.db.tigergraph.graph_admin import GraphAdmin
@@ -54,9 +51,6 @@ from graflo.db.util import (
 )
 from graflo.onto import DBType
 
-if TYPE_CHECKING:
-    from graflo.connections.provider import ConnectionProvider
-
 logger = logging.getLogger(__name__)
 
 
@@ -81,6 +75,7 @@ class TigerGraphConnection(Connection):
     # GSQL DDL is a real catalogue: the recovered schema is complete, not a
     # lower bound, so `sample_limit` has nothing to bound.
     schema_introspection_is_sampled = False
+    supports_bulk_load = True
 
     def __init__(self, config: TigergraphConfig):
         super().__init__()
@@ -470,32 +465,6 @@ class TigerGraphConnection(Connection):
     def close(self):
         pass
 
-    def bulk_load_begin(
-        self, schema: Schema, bulk_cfg: TigergraphBulkLoadConfig
-    ) -> str:
-        return bulk_load_begin(self, schema, bulk_cfg)
-
-    def bulk_load_append(
-        self, session_id: str, gc: GraphContainer, schema: Schema
-    ) -> None:
-        bulk_load_append(self, session_id, gc, schema)
-
-    def bulk_load_finalize(
-        self,
-        session_id: str,
-        schema: Schema,
-        *,
-        bindings: Bindings | None = None,
-        connection_provider: ConnectionProvider | None = None,
-    ) -> str:
-        return bulk_load_finalize(
-            self,
-            session_id,
-            schema,
-            bindings=bindings,
-            connection_provider=connection_provider,
-        )
-
     def init_db(
         self,
         schema: Schema,
@@ -564,6 +533,62 @@ class TigerGraphConnection(Connection):
 
     def fetch_edges(self, *args, **kwargs):
         return self._data.fetch_edges(*args, **kwargs)
+
+    def fetch_all_docs(
+        self,
+        class_name: str,
+        *,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._data.fetch_all_docs(class_name, limit=limit)
+
+    def fetch_all_edges(
+        self,
+        source_class: str,
+        target_class: str,
+        relation_name: str | None,
+        *,
+        match_keys_source: tuple[str, ...] | None = None,
+        match_keys_target: tuple[str, ...] | None = None,
+        limit: int | None = None,
+        collection_name: str | None = None,
+    ) -> list[list[dict[str, Any]]]:
+        return self._data.fetch_all_edges(
+            source_class,
+            target_class,
+            relation_name or collection_name,
+            limit=limit,
+        )
+
+    # -- bulk load (graflo.db.bulk) -------------------------------------------
+
+    def bulk_begin(
+        self,
+        schema: Schema,
+        cfg: BulkConfig,
+        *,
+        recreate: bool = False,
+        resume: bool = False,
+    ) -> BulkPlan:
+        """Apply the schema through the first-write guard; (re)create the loading job."""
+        return TigerGraphBulkWriter(self).begin(
+            schema, cfg, recreate=recreate, resume=resume
+        )
+
+    def bulk_write_vertices(self, schema: Schema, chunk: BulkVertexChunk) -> None:
+        """Post the chunk to the job; a replay leaves its vertices as they are."""
+        TigerGraphBulkWriter(self).write_vertices(schema, chunk)
+
+    def bulk_prepare_edges(self, schema: Schema) -> None:
+        """Nothing to prepare: an edge finds its endpoints by primary id."""
+
+    def bulk_write_edges(self, schema: Schema, chunk: BulkEdgeChunk) -> None:
+        """Post the chunk to the job; a replay upserts the same edges."""
+        TigerGraphBulkWriter(self).write_edges(schema, chunk)
+
+    def bulk_finish(self, schema: Schema) -> BulkCounts:
+        """Count vertices per type and edges per endpoint pair; drop the loading job."""
+        return TigerGraphBulkWriter(self).finish(schema)
 
     def fetch_present_documents(self, *args, **kwargs):
         return self._data.fetch_present_documents(*args, **kwargs)

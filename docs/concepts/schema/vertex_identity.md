@@ -349,9 +349,6 @@ or `assigned` applies to a vertex. A funnel reports `hash`;
 - Hash and assigned ids exist from the moment the records are cast, so edges
   built from the same records can use them. Blank ids exist only once the graph
   is written.
-- The TigerGraph bulk load path does not assign blank ids and does not add
-  edges to blank vertices. Load blank vertex types through the ordinary write
-  path.
 
 ## Checking what some values identify
 

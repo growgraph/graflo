@@ -13,6 +13,7 @@ from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.contract.ingestion.steps.normalize import (
     normalize_actor_step,
 )
+from graflo.architecture.contract.ingestion.sync import ResourceSync
 from graflo.architecture.graph_types.enums import EncodingType
 from graflo.architecture.graph_types.identifiers import EdgeId
 from graflo.architecture.graph_types.index_config import Weight
@@ -706,6 +707,13 @@ class ResourceConfig(ConfigBaseModel):
         description=(
             "If True, a failing transform step sets its declared output fields to None, "
             "records the error, and continues the pipeline."
+        ),
+    )
+    sync: ResourceSync | None = PydanticField(
+        default=None,
+        description=(
+            "Record sync ownership: the vertex type and the edges this resource's "
+            "records replace when re-ingested in sync mode."
         ),
     )
 

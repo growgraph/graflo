@@ -10,7 +10,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.json_schema import SkipJsonSchema
 
 from graflo.architecture.graph_types import GraphContainer
@@ -97,6 +97,24 @@ class IngestionParams(BaseModel):
     another record's elements.
     """
 
+    mode: Literal["upsert", "bulk", "sync"] = Field(
+        default="upsert",
+        description=(
+            "``upsert`` merges each batch into the target. ``bulk`` loads an empty "
+            "target: the whole input is staged in ``staging_dir``, folded by "
+            "identity, then written once (needs the ``bulk`` extra). ``sync`` "
+            "stages and folds the same way, then replaces what changed owner "
+            "records wrote in a loaded target (Neo4j, FalkorDB)."
+        ),
+    )
+    staging_dir: Path | None = Field(
+        default=None,
+        description=(
+            "Where a bulk or sync run keeps its staged and folded rows and its "
+            "ledger; required for ``bulk`` and ``sync``. Giving it again resumes a "
+            "stopped run."
+        ),
+    )
     clear_data: bool = False
     n_cores: int = Field(
         default=1,
@@ -164,7 +182,7 @@ class IngestionParams(BaseModel):
             "batch order is semantic are forced to 1 automatically and logged at "
             "INFO — see the 'Parallelism' concept page for the full list "
             "(dynamic_edges, blank vertices, extra_weights, secondary-identity "
-            "endpoints, native bulk load). Set to 1 to "
+            "endpoints). Set to 1 to "
             "disable overlap entirely."
         ),
     )
@@ -248,3 +266,25 @@ class IngestionParams(BaseModel):
             "backend without read guards."
         ),
     )
+
+    @model_validator(mode="after")
+    def _staging_only_for_bulk_and_sync(self) -> IngestionParams:
+        staged = self.mode in ("bulk", "sync")
+        if staged and self.staging_dir is None:
+            raise ValueError(f"mode {self.mode!r} needs a staging_dir")
+        if not staged and self.staging_dir is not None:
+            raise ValueError("staging_dir is only used by modes 'bulk' and 'sync'")
+        if staged:
+            unusable = [
+                name
+                for name in ("clear_data", "dry", "init_only")
+                if getattr(self, name)
+            ]
+            if unusable:
+                hint = (
+                    "; to replace an existing schema, ingest with recreate_schema"
+                    if self.mode == "bulk"
+                    else ""
+                )
+                raise ValueError(f"mode {self.mode!r} does not take {unusable}{hint}")
+        return self

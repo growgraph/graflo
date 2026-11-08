@@ -125,7 +125,7 @@ Per-engine compose files, ports, and env notes are in [`docker/README.md`](https
 uv run pytest test
 ```
 
-Tests marked `tigergraph`, `nebula`, `kafka`, `performance` or `bulk_e2e` are skipped unless you pass the matching option: `--run-tigergraph`, `--run-nebula`, `--run-kafka`, `--run-performance` or `--run-bulk-e2e`.
+Tests marked `tigergraph`, `nebula`, `kafka` or `performance` are skipped unless you pass the matching option: `--run-tigergraph`, `--run-nebula`, `--run-kafka` or `--run-performance`.
 
 The suites under `test/db` need the containers. The rest runs in-process — the live parts of `test/data_source` and `test/object_storage` skip when their service is unreachable — and CI runs exactly that part on every pull request:
 

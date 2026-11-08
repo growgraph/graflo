@@ -26,7 +26,7 @@ from graflo.architecture.contract.bindings.connectors import (
 )
 
 GF_ONTOLOGY_IRI = "https://ontology.growgraph.dev/graflo"
-GF_VERSION = "1.10.0"
+GF_VERSION = "1.11.0"
 GF_VERSION_IRI = f"{GF_ONTOLOGY_IRI}/{GF_VERSION}"
 GF_BASE = "https://ontology.growgraph.dev/graflo/"
 GF = Namespace(GF_BASE)
@@ -78,7 +78,6 @@ KafkaConnector = GF.KafkaConnector
 PushConnector = GF.PushConnector
 ResourceConnectorBinding = GF.ResourceConnectorBinding
 ConnectorConnectionBinding = GF.ConnectorConnectionBinding
-StagingProxyBinding = GF.StagingProxyBinding
 EdgePhysicalSpec = GF.EdgePhysicalSpec
 Index = GF.Index
 
@@ -117,7 +116,6 @@ hasKeySelection = GF.hasKeySelection
 hasConnector = GF.hasConnector
 bindsResourceToConnector = GF.bindsResourceToConnector
 bindsConnectorToConnProxy = GF.bindsConnectorToConnProxy
-hasStagingProxy = GF.hasStagingProxy
 hasVertexIndex = GF.hasVertexIndex
 hasEdgeSpec = GF.hasEdgeSpec
 refinesEdge = GF.refinesEdge
@@ -161,6 +159,7 @@ fieldType = GF.fieldType
 itemType = GF.itemType
 fieldReserved = GF.fieldReserved
 fieldMergeMode = GF.fieldMergeMode
+fieldSetBy = GF.fieldSetBy
 FieldMatch = GF.FieldMatch
 fieldMatch = GF.fieldMatch
 matchNormalizer = GF.matchNormalizer
@@ -175,7 +174,6 @@ identityName = GF.identityName
 relation = GF.relation
 blank = GF.blank
 assigned = GF.assigned
-edgesOnDuplicate = GF.edgesOnDuplicate
 resourceName = GF.resourceName
 connectorName = GF.connectorName
 connProxy = GF.connProxy
@@ -298,11 +296,6 @@ KEY_SELECTION_MODE_INDIVIDUALS: dict[str, object] = {
     "exclude": GF.ExcludeKeysMode,
 }
 
-EDGE_DUPLICATE_POLICY_INDIVIDUALS: dict[str, object] = {
-    "ignore": GF.IgnoreDuplicate,
-    "upsert": GF.UpsertDuplicate,
-}
-
 CONNECTOR_CLASSES: dict[str, object] = {
     "FileConnector": FileConnector,
     "TableConnector": TableConnector,
@@ -337,7 +330,6 @@ ENUM_REGISTRIES: dict[str, dict[str, object]] = {
     "transform_target": TRANSFORM_TARGET_INDIVIDUALS,
     "transform_strategy": TRANSFORM_STRATEGY_INDIVIDUALS,
     "key_selection_mode": KEY_SELECTION_MODE_INDIVIDUALS,
-    "edge_duplicate_policy": EDGE_DUPLICATE_POLICY_INDIVIDUALS,
 }
 
 MODEL_PAYLOAD_EXCLUDES: dict[str, set[str]] = {

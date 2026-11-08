@@ -394,6 +394,8 @@ class ManifestRdfSerializer:
             add_literal(graph, field_uri, ns.fieldReserved, True)
         if field_obj.merge != "replace":
             add_literal(graph, field_uri, ns.fieldMergeMode, field_obj.merge)
+        if field_obj.set_by != "stamp":
+            add_literal(graph, field_uri, ns.fieldSetBy, field_obj.set_by)
         self._emit_match(graph, field_uri, field_obj)
         if field_obj.derived is not None:
             add_literal(graph, field_uri, ns.derivedSource, field_obj.derived.source)
@@ -580,13 +582,6 @@ class ManifestRdfSerializer:
         edge_uri_by_id: dict[EdgeId, URIRef] | None = None,
     ) -> None:
         graph.add((ingestion_uri, RDF.type, ns.IngestionModel))
-        add_enum_individual(
-            graph,
-            ingestion_uri,
-            ns.edgesOnDuplicate,
-            ingestion_model.edges_on_duplicate,
-            ns.ENUM_REGISTRIES["edge_duplicate_policy"],
-        )
 
         transform_uri_by_name: dict[str, URIRef] = {}
         for index, transform in enumerate(ingestion_model.transforms):
@@ -894,19 +889,6 @@ class ManifestRdfSerializer:
                 else mapping["conn_proxy"]
             )
             add_literal(graph, binding_uri, ns.connectorName, connector)
-            add_literal(graph, binding_uri, ns.connProxy, proxy)
-
-        for mapping in bindings.staging_proxy:
-            binding_uri = BNode()
-            graph.add((bindings_uri, ns.hasStagingProxy, binding_uri))
-            graph.add((binding_uri, RDF.type, ns.StagingProxyBinding))
-            name = mapping.name if hasattr(mapping, "name") else mapping["name"]
-            proxy = (
-                mapping.conn_proxy
-                if hasattr(mapping, "conn_proxy")
-                else mapping["conn_proxy"]
-            )
-            add_literal(graph, binding_uri, ns.name, name)
             add_literal(graph, binding_uri, ns.connProxy, proxy)
 
     def _emit_connector(

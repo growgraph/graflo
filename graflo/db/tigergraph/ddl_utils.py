@@ -1,4 +1,4 @@
-"""TigerGraph DDL-aligned edge projections (shared by bulk CSV and conn)."""
+"""TigerGraph DDL-aligned edge projections."""
 
 from __future__ import annotations
 

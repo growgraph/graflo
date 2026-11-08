@@ -35,7 +35,9 @@ from graflo.architecture.graph_types import EdgeDirection, GraphContainer, Index
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import VertexConfig
+from graflo.connections.bulk import BulkConfig
 from graflo.connections.onto import Neo4jConfig
+from graflo.db.bulk import BulkCounts, BulkEdgeChunk, BulkPlan, BulkVertexChunk
 from graflo.db.conn import (
     DEFAULT_DELETE_CHUNK_SIZE,
     Connection,
@@ -50,11 +52,23 @@ from graflo.db.cypher import (
     rel_union_rows,
     rel_upsert_clause,
 )
+from graflo.db.cypher.bulk import (
+    bulk_counts,
+    create_nodes_query,
+    create_relationships_query,
+)
 from graflo.db.cypher.delete import (
     delete_nodes,
     delete_relationships,
     delete_scoped_nodes,
     delete_scoped_relationships,
+)
+from graflo.db.cypher.sync import (
+    changed_owners,
+    ensure_nodes_query,
+    hash_rows,
+    owner_statements,
+    stored_hashes_query,
 )
 from graflo.db.cypher.traversal import cypher_graph_neighbors
 from graflo.db.cypher.union import union_upsert_query, union_upsert_rows
@@ -64,6 +78,7 @@ from graflo.db.graph_introspection import (
     strip_internal_properties,
 )
 from graflo.db.resolve import absent_documents, present_documents
+from graflo.db.sync import SyncEdgeType, SyncOwnerChunk, SyncWritten
 from graflo.filter.onto import (
     BoundParams,
     FilterExpression,
@@ -145,6 +160,10 @@ class Neo4jConnection(Connection):
     supports_read_guard = True
     supports_union_merge = True
     supports_membership_read = True
+    supports_bulk_load = True
+    # Creating a relationship locks both endpoint nodes.
+    bulk_partition_edges = True
+    supports_sync = True
 
     def __init__(self, config: Neo4jConfig):
         """Initialize Neo4j connection.
@@ -172,7 +191,8 @@ class Neo4jConnection(Connection):
                 NotificationDisabledCategory.UNRECOGNIZED
             ],
         )
-        self.conn = self._driver.session()
+        # ``None`` is the user's home database.
+        self.conn = self._driver.session(database=config.database)
 
     def execute(self, query, **kwargs):
         """Execute a Cypher query.
@@ -190,7 +210,7 @@ class Neo4jConnection(Connection):
     def reset_after_use(self) -> None:
         """Start a fresh session: closing one finishes any result left pending."""
         self.conn.close()
-        self.conn = self._driver.session()
+        self.conn = self._driver.session(database=self.config.database)
 
     def close(self):
         """Close the Neo4j connection and session."""
@@ -469,11 +489,15 @@ class Neo4jConnection(Connection):
         logger.debug("No vertex_types provided and delete_all=False; no data deleted")
 
     def _resolve_db_name(self, schema: Schema) -> str:
-        db_name = self.config.database
-        if not db_name:
-            db_name = schema.effective_namespace(DBType.NEO4J)
-            self.config.database = db_name
-        return db_name
+        return self.config.database or schema.effective_namespace(DBType.NEO4J)
+
+    def _use_database(self, name: str) -> None:
+        """Send every later query, of this and of later connections, to *name*."""
+        if self.config.database == name:
+            return
+        self.config.database = name
+        self.conn.close()
+        self.conn = self._driver.session(database=name)
 
     def _list_databases(self) -> list[str] | None:
         try:
@@ -495,29 +519,43 @@ class Neo4jConnection(Connection):
             return None
 
     def ensure_target_namespace(self, schema: Schema, *, create: bool) -> None:
-        """Ensure the Neo4j database exists."""
+        """Ensure the Neo4j database exists, and use it.
+
+        An edition that cannot create it (Community) keeps the home database.
+        """
         db_name = self._resolve_db_name(schema)
         databases = self._list_databases()
-        if databases is not None:
-            if db_name not in databases:
-                if not create:
-                    raise NamespaceNotFoundError(
-                        f"Neo4j database '{db_name}' does not exist. "
-                        "Create it manually or call with create_namespace=True."
-                    )
-                logger.info(
-                    "Database '%s' does not exist, attempting to create it...",
-                    db_name,
-                )
+        if databases is None:
+            if create:
                 self.create_database(db_name)
-            return
-        if not create:
             logger.debug(
-                "Cannot verify Neo4j database existence (Community Edition); "
-                "assuming default database"
+                "Cannot list Neo4j databases; using the configured or home database"
             )
             return
-        self.create_database(db_name)
+        if db_name not in databases:
+            if not create:
+                raise NamespaceNotFoundError(
+                    f"Neo4j database '{db_name}' does not exist. "
+                    "Create it manually or call with create_namespace=True."
+                )
+            logger.info(
+                "Database '%s' does not exist, attempting to create it...", db_name
+            )
+            self.create_database(db_name)
+            databases = self._list_databases() or []
+        if db_name in databases:
+            self._use_database(db_name)
+        elif self.config.database == db_name:
+            raise NamespaceNotFoundError(
+                f"Neo4j database '{db_name}' does not exist and the server cannot "
+                "create it (Neo4j Community holds one database for your data); "
+                "leave the database unset to use the home database"
+            )
+        else:
+            logger.info(
+                "Neo4j database '%s' could not be created; using the home database",
+                db_name,
+            )
 
     def _node_count(self) -> int:
         result = self.execute("MATCH (n) RETURN count(n) AS c")
@@ -587,6 +625,141 @@ class Neo4jConnection(Connection):
         vertex_types = tuple(vc.vertex_dbname(v) for v in vc.vertex_set)
         if vertex_types:
             self.delete_graph_structure(vertex_types=vertex_types)
+
+    # -- bulk load ---------------------------------------------------------------
+
+    def bulk_begin(
+        self,
+        schema: Schema,
+        cfg: BulkConfig,
+        *,
+        recreate: bool = False,
+        resume: bool = False,
+    ) -> BulkPlan:
+        """Guard the first write; indexes wait until the vertices are written."""
+        assert_schema_supported(self.flavor, schema)
+        self.report_edge_direction_support(schema)
+        self.ensure_target_namespace(schema, create=True)
+        if resume:
+            return BulkPlan()
+        if recreate:
+            self.delete_database("")
+        elif self._node_count() > 0:
+            raise SchemaExistsError(
+                f"Schema/data already exists in database "
+                f"'{self._resolve_db_name(schema)}'. Set recreate_schema=True to "
+                "replace it."
+            )
+        return BulkPlan()
+
+    def bulk_write_vertices(self, schema: Schema, chunk: BulkVertexChunk) -> None:
+        """``CREATE`` the chunk's nodes; a replay ``MERGE``s them on their identity."""
+        if chunk.replay:
+            self._add_index(
+                chunk.class_name,
+                Index(fields=chunk.match_keys, unique=True),
+                is_identity=True,
+            )
+            self._await_indexes()
+            self.upsert_docs_batch(chunk.rows, chunk.class_name, chunk.match_keys)
+            return
+        self._write(create_nodes_query(chunk.class_name), chunk.rows)
+
+    def bulk_prepare_edges(self, schema: Schema) -> None:
+        """Index every vertex identity, so edges find their endpoints."""
+        vc = schema.resolve_db_aware(DBType.NEO4J).vertex_config
+        for vertex in vc.vertex_set:
+            fields = vc.identity_fields(vertex)
+            if fields:
+                self._add_index(
+                    vc.vertex_dbname(vertex),
+                    Index(fields=fields, unique=True),
+                    is_identity=True,
+                )
+        self._await_indexes()
+
+    def bulk_write_edges(self, schema: Schema, chunk: BulkEdgeChunk) -> None:
+        """``CREATE`` the chunk's relationships; a replay ``MERGE``s them."""
+        relation = chunk.relation_name
+        if relation is None:
+            raise ValueError(f"edge chunk {chunk.chunk_id} has no relation name")
+        if chunk.replay:
+            self.insert_edges_batch(
+                [list(row) for row in chunk.rows],
+                chunk.source_class,
+                chunk.target_class,
+                relation,
+                tuple(chunk.match_keys_source),
+                tuple(chunk.match_keys_target),
+                relationship_merge_properties=chunk.merge_properties or None,
+            )
+            return
+        query = create_relationships_query(
+            chunk.source_class,
+            chunk.target_class,
+            relation,
+            chunk.match_keys_source,
+            chunk.match_keys_target,
+        )
+        self._write(query, [list(row) for row in chunk.rows])
+
+    def bulk_finish(self, schema: Schema) -> BulkCounts:
+        """Build the remaining indexes; count what the database holds."""
+        self.define_indexes(schema)
+        self._await_indexes()
+        return bulk_counts(lambda query: _rows(self.execute(query)))
+
+    # -- record sync ---------------------------------------------------------------
+
+    def sync_begin(self, schema: Schema, edge_types: list[SyncEdgeType]) -> None:
+        """Index every vertex identity, and each edge's owner property."""
+        assert_schema_supported(self.flavor, schema)
+        self.bulk_prepare_edges(schema)
+        for edge in edge_types:
+            if edge.owner_property is not None:
+                self._add_index(
+                    edge.relation_name,
+                    Index(fields=[edge.owner_property]),
+                    is_vertex_index=False,
+                )
+        self._await_indexes()
+
+    def sync_ensure_vertices(self, schema: Schema, chunk: BulkVertexChunk) -> None:
+        """``MERGE`` each vertex on its key; only a created one takes the row."""
+        self._write(ensure_nodes_query(chunk.class_name, chunk.match_keys), chunk.rows)
+
+    def sync_write_owners(self, schema: Schema, chunk: SyncOwnerChunk) -> SyncWritten:
+        """Rewrite the changed owners in one write transaction."""
+        read = stored_hashes_query(chunk.class_name, chunk.match_keys, chunk.hash_field)
+        stored = {
+            row["i"]: row["h"]
+            for row in _rows(self.execute(read, rows=hash_rows(chunk)))
+        }
+        changed = changed_owners(chunk, stored)
+        statements = owner_statements(chunk, changed)
+        if statements:
+
+            def work(tx: Any) -> None:
+                for query, params in statements:
+                    tx.run(cast(LiteralString, query), **params).consume()
+
+            self.conn.execute_write(work)
+        return SyncWritten(
+            written=len(changed), skipped=len(chunk.owners) - len(changed)
+        )
+
+    def _write(self, query: str, rows: list[Any]) -> None:
+        """Run *query* over ``$rows`` in a write transaction the driver retries.
+
+        A transient error (a lock wait turned deadlock) rolls the transaction
+        back, so retrying a ``CREATE`` cannot duplicate it.
+        """
+        q = cast(LiteralString, query)
+        self.conn.execute_write(lambda tx: tx.run(q, rows=rows).consume())
+
+    def _await_indexes(self) -> None:
+        """Wait until every index is online; building one may take long."""
+        self.execute("CALL db.awaitIndexes(86400)").consume()
 
     def upsert_docs_batch(self, docs, class_name, match_keys, **kwargs):
         """Upsert a batch of nodes using Cypher.
@@ -662,7 +835,6 @@ class Neo4jConnection(Connection):
                 - collection_name: Unused in Neo4j (kept for interface compatibility)
                 - uniq_weight_fields: Unused (ArangoDB upsert); use relationship_merge_properties instead
                 - uniq_weight_collections: Unused in Neo4j (ArangoDB-specific)
-                - on_duplicate: Unused in Neo4j (ArangoDB-specific AQL policy)
                 - relationship_merge_properties: Property names included in ``MERGE`` so parallel
                   edges (same endpoints and type, different weights) are distinct.
                 - union_fields: List properties written as the union of the

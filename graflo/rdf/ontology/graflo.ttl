@@ -7,8 +7,8 @@
 @prefix prov: <http://www.w3.org/ns/prov#> .
 
 <https://ontology.growgraph.dev/graflo> a owl:Ontology ;
-    owl:versionIRI <https://ontology.growgraph.dev/graflo/1.10.0> ;
-    owl:versionInfo "1.10.0" ;
+    owl:versionIRI <https://ontology.growgraph.dev/graflo/1.11.0> ;
+    owl:versionInfo "1.11.0" ;
     rdfs:label "GraFlo Ontology"@en ;
     skos:prefLabel "GraFlo Ontology"@en ;
     rdfs:comment "OWL vocabulary describing GraFlo GraphManifest contracts: schema, ingestion, bindings, transforms, and pipeline actors."@en .
@@ -229,11 +229,6 @@ gf:ConnectorConnectionBinding a owl:Class ;
     rdfs:label "Connector connection binding"@en ;
     skos:prefLabel "ConnectorConnectionBinding"@en .
 
-gf:StagingProxyBinding a owl:Class ;
-    rdfs:subClassOf gf:GrafloArtifact ;
-    rdfs:label "Staging proxy binding"@en ;
-    skos:prefLabel "StagingProxyBinding"@en .
-
 gf:EdgePhysicalSpec a owl:Class ;
     rdfs:subClassOf gf:GrafloArtifact ;
     rdfs:label "Edge physical spec"@en ;
@@ -283,10 +278,6 @@ gf:TransformStrategy a owl:Class ;
 gf:KeySelectionMode a owl:Class ;
     rdfs:label "Key selection mode enumeration"@en ;
     skos:prefLabel "KeySelectionMode"@en .
-
-gf:EdgeDuplicatePolicy a owl:Class ;
-    rdfs:label "Edge duplicate policy enumeration"@en ;
-    skos:prefLabel "EdgeDuplicatePolicy"@en .
 
 #################################################################
 # Object properties
@@ -444,10 +435,6 @@ gf:bindsResourceToConnector a owl:ObjectProperty ;
 gf:bindsConnectorToConnProxy a owl:ObjectProperty ;
     rdfs:domain gf:Bindings ;
     rdfs:range gf:ConnectorConnectionBinding .
-
-gf:hasStagingProxy a owl:ObjectProperty ;
-    rdfs:domain gf:Bindings ;
-    rdfs:range gf:StagingProxyBinding .
 
 gf:hasVertexIndex a owl:ObjectProperty ;
     rdfs:domain gf:DatabaseProfile ;
@@ -616,6 +603,11 @@ gf:fieldMergeMode a owl:DatatypeProperty ;
     rdfs:range xsd:string ;
     rdfs:comment "How an upsert combines a value with the stored one: `replace` or `union` (LIST fields). Absent means `replace`."@en .
 
+gf:fieldSetBy a owl:DatatypeProperty ;
+    rdfs:domain gf:Field ;
+    rdfs:range xsd:string ;
+    rdfs:comment "Who writes a reserved field: `stamp`, the writer from the caller's stamp, or `sync`, the bulk and sync writers from the record's sync hash. Absent means `stamp`."@en .
+
 gf:FieldMatch a owl:Class ;
     rdfs:label "Field match"@en ;
     skos:prefLabel "FieldMatch"@en ;
@@ -678,10 +670,6 @@ gf:assigned a owl:DatatypeProperty ;
     rdfs:domain gf:Vertex ;
     rdfs:range xsd:boolean ;
     rdfs:comment "True when the vertex uses an intentional UUID primary key filled at assemble time. Mutually exclusive with gf:blank."@en .
-
-gf:edgesOnDuplicate a owl:ObjectProperty ;
-    rdfs:domain gf:IngestionModel ;
-    rdfs:range gf:EdgeDuplicatePolicy .
 
 gf:resourceName a owl:DatatypeProperty ;
     rdfs:range xsd:string .
@@ -975,10 +963,3 @@ gf:AllStrategy a gf:TransformStrategy ; gf:enumValue "all" ; rdfs:label "All str
 gf:AllKeysMode a gf:KeySelectionMode ; gf:enumValue "all" ; rdfs:label "All keys" ; skos:prefLabel "AllKeysMode" .
 gf:IncludeKeysMode a gf:KeySelectionMode ; gf:enumValue "include" ; rdfs:label "Include keys" ; skos:prefLabel "IncludeKeysMode" .
 gf:ExcludeKeysMode a gf:KeySelectionMode ; gf:enumValue "exclude" ; rdfs:label "Exclude keys" ; skos:prefLabel "ExcludeKeysMode" .
-
-#################################################################
-# EdgeDuplicatePolicy individuals
-#################################################################
-
-gf:IgnoreDuplicate a gf:EdgeDuplicatePolicy ; gf:enumValue "ignore" ; rdfs:label "Ignore duplicate" ; skos:prefLabel "IgnoreDuplicate" .
-gf:UpsertDuplicate a gf:EdgeDuplicatePolicy ; gf:enumValue "upsert" ; rdfs:label "Upsert duplicate" ; skos:prefLabel "UpsertDuplicate" .

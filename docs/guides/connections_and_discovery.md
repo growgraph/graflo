@@ -100,8 +100,6 @@ with `sample_resources`, or put it in a manifest and ingest it.
   `sub_path`.
 - A SPARQL connector without `endpoint_url` reads the endpoint of the SPARQL
   connection its `conn_proxy` names.
-- S3 staging for a TigerGraph bulk load is a files connection with an `s3://`
-  root; its prefix comes before `s3_key_prefix`.
 - A Kafka connector found by discovery reads in the consumer group
   `graflo-<name>`; change `group_id` before ingesting if another name is
   needed.

@@ -163,7 +163,8 @@ def relationship_merge_properties(edge: Edge, db_flavor: DBType) -> list[str]:
         if token in ("source", "target"):
             continue
         if token == "relation":
-            if db_flavor not in (DBType.TIGERGRAPH, DBType.POSTGRES):
+            # Where the relation is the stored edge type, it keys nothing more.
+            if db_flavor not in (DBType.TIGERGRAPH, DBType.POSTGRES, DBType.NEBULA):
                 fields.append("relation")
             continue
         fields.append(token)

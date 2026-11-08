@@ -121,6 +121,5 @@ Every label with a missing variable is listed in the one error.
 
 ## What to read next
 
-- [Bulk load into TigerGraph](../13-tigergraph-bulk-s3/README.md).
 - [API connector and pagination](../../docs/concepts/connectors/api_connector.md):
   paging through results, headers and authentication.

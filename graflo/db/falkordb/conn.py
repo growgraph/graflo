@@ -25,18 +25,22 @@ Example:
 """
 
 import logging
+import sys
 from collections.abc import Sequence
 from typing import Any
 from urllib.parse import urlparse
 
 from falkordb import FalkorDB
 from falkordb.graph import Graph
+from falkordb.helpers import stringify_param_value
 
 from graflo.architecture.graph_types import EdgeDirection, GraphContainer, Index
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import VertexConfig
+from graflo.connections.bulk import BulkConfig
 from graflo.connections.onto import FalkordbConfig
+from graflo.db.bulk import BulkCounts, BulkEdgeChunk, BulkPlan, BulkVertexChunk
 from graflo.db.conn import (
     DEFAULT_DELETE_CHUNK_SIZE,
     Connection,
@@ -51,19 +55,30 @@ from graflo.db.cypher import (
     rel_union_rows,
     rel_upsert_clause,
 )
+from graflo.db.cypher.bulk import bulk_counts
 from graflo.db.cypher.delete import (
     delete_nodes,
     delete_relationships,
     delete_scoped_nodes,
     delete_scoped_relationships,
 )
+from graflo.db.cypher.scan import all_relationships_query
+from graflo.db.cypher.sync import (
+    changed_owners,
+    ensure_nodes_query,
+    hash_rows,
+    owner_statements,
+    stored_hashes_query,
+)
 from graflo.db.cypher.union import union_upsert_query, union_upsert_rows
+from graflo.db.falkordb.bulk import bulk_args, edge_blob, node_blob
 from graflo.db.field_type_support import assert_schema_supported
 from graflo.db.graph_introspection import (
     GraphSchemaInferencer,
     strip_internal_properties,
 )
 from graflo.db.resolve import absent_documents, present_documents
+from graflo.db.sync import SyncEdgeType, SyncOwnerChunk, SyncWritten
 from graflo.db.util import serialize_value
 from graflo.filter.onto import (
     BoundParams,
@@ -101,6 +116,10 @@ class FalkordbConnection(Connection):
     supports_read_guard = True
     supports_union_merge = True
     supports_membership_read = True
+    supports_bulk_load = True
+    # GRAPH.BULK addresses nodes by insertion order, which dense ids reproduce.
+    bulk_dense_ids = True
+    supports_sync = True
 
     # Type annotations for instance attributes
     client: FalkorDB | None
@@ -245,7 +264,30 @@ class FalkordbConnection(Connection):
             if isinstance(serialized, str):
                 serialized = self._sanitize_string_value(serialized)
 
+            self._check_parameter_number(serialized)
             return serialized
+
+    @staticmethod
+    def _check_parameter_number(value: Any) -> None:
+        """Reject numbers FalkorDB cannot parse from a query parameter.
+
+        The server reads parameters as literals: an integer outside the signed
+        64-bit range, or a subnormal float (non-zero, below
+        ``sys.float_info.min``), fails to parse and aborts the whole batch.
+
+        Raises:
+            ValueError: If ``value`` is such a number.
+        """
+        if isinstance(value, bool):
+            return
+        if isinstance(value, int) and not -(2**63) <= value <= 2**63 - 1:
+            raise ValueError(f"integer out of 64-bit range: {value}")
+        if (
+            isinstance(value, float)
+            and value != 0.0
+            and abs(value) < sys.float_info.min
+        ):
+            raise ValueError(f"a subnormal float cannot be stored: {value!r}")
 
     def _sanitize_document(
         self, doc: dict, match_keys: list[str] | None = None
@@ -587,39 +629,40 @@ class FalkordbConnection(Connection):
         self._graph_name = graph_name
 
     def ensure_target_namespace(self, schema: Schema, *, create: bool) -> None:
-        """Ensure the FalkorDB graph namespace is selected."""
+        """Select the FalkorDB graph; without *create* it must exist.
+
+        A graph is created by its first write, so nothing is written here.
+        """
         graph_name = self._resolve_graph_name(schema)
-        if self.client is None:
-            raise RuntimeError("Connection is closed")
-        if not create:
-            try:
-                self._select_graph(graph_name)
-                return
-            except Exception as exc:
-                raise NamespaceNotFoundError(
-                    f"FalkorDB graph '{graph_name}' does not exist. "
-                    "Create it manually or call with create_namespace=True."
-                ) from exc
+        if not create and not self._graph_exists(graph_name):
+            raise NamespaceNotFoundError(
+                f"FalkorDB graph '{graph_name}' does not exist. "
+                "Create it manually or call with create_namespace=True."
+            )
         self._select_graph(graph_name)
         logger.info("Selected FalkorDB graph '%s'", graph_name)
 
-    def _node_count(self) -> int:
-        """Number of nodes in the graph, or 0 if it cannot be determined.
+    def _graph_exists(self, graph_name: str) -> bool:
+        """Whether the graph key exists; selecting a graph never tells."""
+        if self.client is None:
+            raise RuntimeError("Connection is closed")
+        names = self.client.list_graphs() or []
+        return graph_name in {
+            n.decode() if isinstance(n, bytes) else str(n) for n in names
+        }
 
-        Reads ``result_set`` the way every other query in this class does.
-        The driver's ``QueryResult`` exposes neither ``data()`` nor iteration,
-        so probing for those returned 0 for a populated graph — which silently
-        disabled the first-write guard in :meth:`apply_target_schema`.
+    def _node_count(self) -> int:
+        """Number of nodes in the graph; 0 when the graph does not exist.
+
+        A missing graph is checked first: a query would create its key.
         """
-        try:
-            result = self.execute("MATCH (n) RETURN count(n) AS c")
-            rows = getattr(result, "result_set", None)
-            if not rows or not rows[0]:
-                return 0
-            return int(rows[0][0] or 0)
-        except Exception as e:
-            logger.debug("Could not check graph node count: %s", e)
+        if not self._graph_exists(self._graph_name):
             return 0
+        result = self.execute("MATCH (n) RETURN count(n) AS c")
+        rows = getattr(result, "result_set", None)
+        if not rows or not rows[0]:
+            return 0
+        return int(rows[0][0] or 0)
 
     def apply_target_schema(
         self,
@@ -668,6 +711,185 @@ class FalkordbConnection(Connection):
         vertex_types = tuple(vc.vertex_dbname(v) for v in vc.vertex_set)
         if vertex_types:
             self.delete_graph_structure(vertex_types=vertex_types)
+
+    # -- bulk load: GRAPH.BULK into a new graph key ---------------------------
+
+    def bulk_begin(
+        self,
+        schema: Schema,
+        cfg: BulkConfig,
+        *,
+        recreate: bool = False,
+        resume: bool = False,
+    ) -> BulkPlan:
+        """Start a load into a new graph key: an empty graph is dropped first.
+
+        On resume, a missing graph means a failed batch dropped it (as
+        FalkorDB 4 does), so every chunk is written again.
+        """
+        assert_schema_supported(self.flavor, schema)
+        self.report_edge_direction_support(schema)
+        graph_name = self._resolve_graph_name(schema)
+        self._select_graph(graph_name)
+        exists = self._graph_exists(graph_name)
+        if resume:
+            return BulkPlan(max_parallel=1, restart=not exists)
+        if exists:
+            if self._node_count() > 0 and not recreate:
+                raise SchemaExistsError(
+                    f"Schema/data already exists in graph '{graph_name}'. "
+                    "Set recreate_schema=True to replace it."
+                )
+            self.delete_database(graph_name)
+        return BulkPlan(max_parallel=1)
+
+    def bulk_write_vertices(self, schema: Schema, chunk: BulkVertexChunk) -> None:
+        """Send the chunk's nodes, which must be the next ones by dense id.
+
+        A replayed chunk the graph already holds is skipped: node ids are
+        consecutive, so the node count says whether it was applied.
+        """
+        dense = chunk.dense
+        if dense is None:
+            raise ValueError(f"vertex chunk {chunk.chunk_id} carries no dense ids")
+        start, end = dense[0], dense[-1] + 1
+        if dense != list(range(start, end)):
+            raise ValueError(
+                f"vertex chunk {chunk.chunk_id}: dense ids not consecutive"
+            )
+        held = self._node_count()
+        if chunk.replay and held >= end:
+            return
+        if held != start:
+            raise RuntimeError(
+                f"graph '{self._graph_name}' holds {held} nodes; vertex chunk "
+                f"{chunk.chunk_id} starts at node {start}"
+            )
+        blob = node_blob(
+            chunk.class_name, self._sanitize_batch(chunk.rows, chunk.match_keys)
+        )
+        self._graph_bulk(
+            bulk_args(
+                begin=held == 0 and not self._graph_exists(self._graph_name),
+                nodes=[(blob, len(chunk.rows))],
+            )
+        )
+
+    def bulk_prepare_edges(self, schema: Schema) -> None:
+        """Nothing to prepare: edges name their endpoints by node id."""
+
+    def bulk_write_edges(self, schema: Schema, chunk: BulkEdgeChunk) -> None:
+        """Send the chunk's edges; a replay ``MERGE``s them by node id."""
+        if chunk.dense is None or chunk.relation_name is None:
+            raise ValueError(
+                f"edge chunk {chunk.chunk_id} needs dense ids and a relation name"
+            )
+        rows = [
+            (source, target, self._sanitize_document(row[2] or {}))
+            for (source, target), row in zip(chunk.dense, chunk.rows)
+        ]
+        if chunk.replay:
+            self._merge_edges_by_id(chunk.relation_name, rows, chunk.merge_properties)
+            return
+        blob = edge_blob(chunk.relation_name, rows)
+        self._graph_bulk(bulk_args(begin=False, edges=[(blob, len(rows))]))
+
+    def bulk_finish(self, schema: Schema) -> BulkCounts:
+        """Build the indexes; count what the graph holds."""
+        self.define_indexes(schema)
+        return bulk_counts(self._records)
+
+    # -- record sync ---------------------------------------------------------------
+
+    def sync_begin(self, schema: Schema, edge_types: list[SyncEdgeType]) -> None:
+        """Index every vertex identity, and each edge's owner property."""
+        assert_schema_supported(self.flavor, schema)
+        self._select_graph(self._resolve_graph_name(schema))
+        self.define_vertex_indexes(schema.core_schema.vertex_config, schema=schema)
+        for edge in edge_types:
+            if edge.owner_property is not None:
+                self._add_index(
+                    edge.relation_name,
+                    Index(fields=[edge.owner_property]),
+                    is_vertex_index=False,
+                )
+
+    def sync_ensure_vertices(self, schema: Schema, chunk: BulkVertexChunk) -> None:
+        """``MERGE`` each vertex on its key; only a created one takes the row."""
+        self.execute(
+            ensure_nodes_query(chunk.class_name, chunk.match_keys),
+            rows=self._sanitize_batch(chunk.rows, chunk.match_keys),
+        )
+
+    def sync_write_owners(self, schema: Schema, chunk: SyncOwnerChunk) -> SyncWritten:
+        """Rewrite the changed owners in one ``MULTI``/``EXEC``, then store their hashes.
+
+        FalkorDB has no transaction across queries, and Redis runs every queued
+        command even after one fails, so the hashes are sent only once the
+        rewrite succeeded. The rewrite clears each stored hash first, so an
+        owner whose rewrite failed differs from its new hash and is rewritten
+        by the next sync.
+        """
+        read = stored_hashes_query(chunk.class_name, chunk.match_keys, chunk.hash_field)
+        result = self.execute(read, rows=self._sanitize_value(hash_rows(chunk)))
+        stored = {int(row[0]): row[1] for row in result.result_set}
+        changed = changed_owners(chunk, stored)
+        statements = owner_statements(chunk, changed)
+        if statements:
+            *rewrite, hashes = statements
+            self._run_atomically(rewrite)
+            self.execute(hashes[0], **self._sanitize_value(hashes[1]))
+        return SyncWritten(
+            written=len(changed), skipped=len(chunk.owners) - len(changed)
+        )
+
+    def _run_atomically(self, statements: list[tuple[str, dict[str, Any]]]) -> None:
+        """Send *statements* in one ``MULTI``/``EXEC``; raise the first that failed."""
+        if self.client is None:
+            raise RuntimeError("Connection is closed")
+        pipe = self.client.connection.pipeline(transaction=True)
+        for query, params in statements:
+            header = "CYPHER " + "".join(
+                f"`{key}`={stringify_param_value(value)} "
+                for key, value in self._sanitize_value(params).items()
+            )
+            pipe.execute_command(
+                "GRAPH.QUERY", self._graph_name, header + query, "--compact"
+            )
+        pipe.execute(raise_on_error=True)
+
+    def _graph_bulk(self, args: list[Any]) -> None:
+        if self.client is None:
+            raise RuntimeError("Connection is closed")
+        self.client.execute_command("GRAPH.BULK", self._graph_name, *args)
+
+    def _merge_edges_by_id(
+        self,
+        relation: str,
+        rows: list[tuple[int, int, dict[str, Any]]],
+        merge_properties: list[str],
+    ) -> None:
+        groups = partition_by_absent_merge_props(
+            [list(row) for row in rows],
+            merge_properties,
+            props_of=lambda row: row[2],
+            ends_of=lambda row: (row[0], row[1]),
+        )
+        for absent, group in groups:
+            upsert = rel_upsert_clause(relation, merge_properties, absent)
+            self.execute(
+                "UNWIND $data AS row "
+                "MATCH (source) WHERE id(source) = row[0] "
+                "MATCH (target) WHERE id(target) = row[1] "
+                f"{upsert}",
+                data=group,
+            )
+
+    def _records(self, query: str) -> list[dict[str, Any]]:
+        result = self.execute(query)
+        names = [h[1] if isinstance(h, (list, tuple)) else h for h in result.header]
+        names = [n.decode() if isinstance(n, bytes) else str(n) for n in names]
+        return [dict(zip(names, row)) for row in result.result_set]
 
     def upsert_docs_batch(
         self,
@@ -1090,14 +1312,11 @@ class FalkordbConnection(Connection):
         collection_name: str | None = None,
     ) -> list[list[dict[str, Any]]]:
         """Fetch all relationships between two labels, as ``[source, target, props]``."""
-        rel = f"[r:{cypher_name(relation_name)}]" if relation_name else "[r]"
-        limit_clause = f"LIMIT {limit}" if limit is not None else ""
-        query = (
-            f"MATCH (source:{cypher_name(source_class)})-{rel}->"
-            f"(target:{cypher_name(target_class)}) "
-            f"RETURN source, target, r {limit_clause}"
+        result = self.execute(
+            all_relationships_query(
+                source_class, target_class, relation_name, limit=limit
+            )
         )
-        result = self.execute(query)
         return [
             [
                 strip_internal_properties(self._node_to_dict(source)),

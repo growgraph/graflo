@@ -42,7 +42,6 @@
         "EdgeInferSpec": "gf:EdgeInferSpec",
         "ResourceConnectorBinding": "gf:ResourceConnectorBinding",
         "ConnectorConnectionBinding": "gf:ConnectorConnectionBinding",
-        "StagingProxyBinding": "gf:StagingProxyBinding",
         "EdgePhysicalSpec": "gf:EdgePhysicalSpec",
         "Index": "gf:Index",
         "hasSchema": {
@@ -162,10 +161,6 @@
         },
         "bindsConnectorToConnProxy": {
             "@id": "gf:bindsConnectorToConnProxy",
-            "@type": "@id"
-        },
-        "hasStagingProxy": {
-            "@id": "gf:hasStagingProxy",
             "@type": "@id"
         },
         "hasVertexIndex": {
@@ -308,10 +303,6 @@
         "assigned": {
             "@id": "gf:assigned",
             "@type": "xsd:boolean"
-        },
-        "edgesOnDuplicate": {
-            "@id": "gf:edgesOnDuplicate",
-            "@type": "@id"
         },
         "resourceName": "gf:resourceName",
         "connectorName": "gf:connectorName",

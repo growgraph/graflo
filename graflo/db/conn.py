@@ -55,7 +55,7 @@ import logging
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 
 from suthing import batched
 
@@ -64,8 +64,8 @@ from graflo.architecture.schema import Schema
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.physical_keys import PhysicalKeys
 from graflo.architecture.schema.vertex import VertexConfig
-from graflo.connections.onto import TigergraphBulkLoadConfig
-from graflo.db.bulk_exc import UnsupportedBulkLoad
+from graflo.connections.bulk import BulkConfig
+from graflo.db.bulk import BulkCounts, BulkEdgeChunk, BulkPlan, BulkVertexChunk
 from graflo.db.resolve import (
     DEFAULT_RESOLVE_CHUNK_SIZE,
     bucket_by_key,
@@ -73,6 +73,7 @@ from graflo.db.resolve import (
     distinct_keys,
     index_matches_by_doc,
 )
+from graflo.db.sync import SyncEdgeType, SyncOwnerChunk, SyncWritten
 from graflo.filter.onto import FilterExpression, conjoin, parse_filter_expression
 from graflo.onto import (
     DB_TYPE_TO_EXPRESSION_FLAVOR,
@@ -82,26 +83,11 @@ from graflo.onto import (
 )
 
 if TYPE_CHECKING:
-    from graflo.architecture.contract.bindings import Bindings
     from graflo.architecture.graph_types import EdgeId
-    from graflo.connections.provider import ConnectionProvider
     from graflo.db.edge_direction_support import EdgeDirectionDiagnostic
 
 logger = logging.getLogger(__name__)
 ConnectionType = TypeVar("ConnectionType", bound="Connection")
-
-
-def _parse_on_duplicate(value: Any) -> Literal["upsert", "ignore"]:
-    if not isinstance(value, str):
-        raise TypeError(
-            "on_duplicate must be str ('upsert' or 'ignore'), "
-            f"got {type(value).__name__}"
-        )
-    if value == "upsert":
-        return "upsert"
-    if value == "ignore":
-        return "ignore"
-    raise ValueError(f"on_duplicate must be 'upsert' or 'ignore', got {value!r}")
 
 
 @dataclass(frozen=True)
@@ -112,7 +98,6 @@ class InsertEdgesKwArgs:
     collection_name: str | None
     uniq_weight_fields: Any
     uniq_weight_collections: Any
-    on_duplicate: Literal["upsert", "ignore"]
     relationship_merge_properties: Any
     #: Stored names of the list properties written as a union with what the
     #: edge holds; only a backend that declares ``supports_union_merge`` reads it.
@@ -131,7 +116,6 @@ def consume_insert_edges_kwargs(kwargs: dict[str, Any]) -> InsertEdgesKwArgs:
         collection_name=kwargs.pop("collection_name", None),
         uniq_weight_fields=kwargs.pop("uniq_weight_fields", None),
         uniq_weight_collections=kwargs.pop("uniq_weight_collections", None),
-        on_duplicate=_parse_on_duplicate(kwargs.pop("on_duplicate", "ignore")),
         relationship_merge_properties=kwargs.pop("relationship_merge_properties", None),
         union_fields=tuple(kwargs.pop("union_fields", ()) or ()),
     )
@@ -174,6 +158,8 @@ class ConnectionCapability(Enum):
     UNION_MERGE = "supports_union_merge"
     SCOPED_DELETE = "supports_scoped_delete"
     MEMBERSHIP_READ = "supports_membership_read"
+    BULK_LOAD = "supports_bulk_load"
+    SYNC = "supports_sync"
 
     @property
     def label(self) -> str:
@@ -188,6 +174,8 @@ class ConnectionCapability(Enum):
             ConnectionCapability.UNION_MERGE: "union-merged list fields",
             ConnectionCapability.SCOPED_DELETE: "deleting the elements of a scope",
             ConnectionCapability.MEMBERSHIP_READ: "reading a list field by ANY_IN",
+            ConnectionCapability.BULK_LOAD: "bulk loading an empty target",
+            ConnectionCapability.SYNC: "record sync into a loaded target",
         }[self]
 
 
@@ -308,6 +296,17 @@ class Connection(abc.ABC):
     supports_instance_delete: ClassVar[bool] = False
     #: Implements :meth:`delete_scoped_vertices` and :meth:`delete_scoped_edges`.
     supports_scoped_delete: ClassVar[bool] = False
+    #: Implements the bulk-load protocol (:mod:`graflo.db.bulk`): ``bulk_begin``
+    #: through ``bulk_finish``.
+    supports_bulk_load: ClassVar[bool] = False
+    #: Its bulk writer takes dense integer ids on every vertex and edge endpoint.
+    bulk_dense_ids: ClassVar[bool] = False
+    #: Its bulk writer locks both endpoints of an edge it creates, so the edges
+    #: written at once must share no endpoint: each edge type is then written in
+    #: rounds of chunks split by a hash of their endpoints' keys.
+    bulk_partition_edges: ClassVar[bool] = False
+    #: Implements :mod:`graflo.db.sync`: replacing what changed owner records wrote.
+    supports_sync: ClassVar[bool] = False
 
     def __init__(self):
         """Initialize the connection."""
@@ -431,6 +430,62 @@ class Connection(abc.ABC):
                 this during recreate to decide if the graph/db shell may be dropped.
         """
 
+    # -- bulk load (graflo.db.bulk) -------------------------------------------
+
+    def bulk_begin(
+        self,
+        schema: Schema,
+        cfg: BulkConfig,
+        *,
+        recreate: bool = False,
+        resume: bool = False,
+    ) -> BulkPlan:
+        """Start a bulk load into an empty target: namespace and schema DDL.
+
+        The schema is applied through the first-write guard, so a target that
+        already holds one is refused unless *recreate*. On *resume* the load
+        began before: the guard is skipped and DDL is applied only where missing.
+
+        Raises:
+            NotImplementedError: The backend has no bulk writer.
+            SchemaExistsError: The target holds a schema and *recreate* is off.
+        """
+        raise NotImplementedError(f"{type(self).__name__} has no bulk writer")
+
+    def bulk_write_vertices(self, schema: Schema, chunk: BulkVertexChunk) -> None:
+        """Create the chunk's vertices; none exists yet unless ``chunk.replay``."""
+        raise NotImplementedError(f"{type(self).__name__} has no bulk writer")
+
+    def bulk_prepare_edges(self, schema: Schema) -> None:
+        """Make edge endpoints quick to find, once every vertex is written."""
+        raise NotImplementedError(f"{type(self).__name__} has no bulk writer")
+
+    def bulk_write_edges(self, schema: Schema, chunk: BulkEdgeChunk) -> None:
+        """Create the chunk's edges between existing vertices."""
+        raise NotImplementedError(f"{type(self).__name__} has no bulk writer")
+
+    def bulk_finish(self, schema: Schema) -> BulkCounts:
+        """Build what the load deferred; return the elements the target holds."""
+        raise NotImplementedError(f"{type(self).__name__} has no bulk writer")
+
+    # -- record sync (graflo.db.sync) -------------------------------------------
+
+    def sync_begin(self, schema: Schema, edge_types: list[SyncEdgeType]) -> None:
+        """Index every vertex identity, and the owner property of *edge_types*.
+
+        Raises:
+            NotImplementedError: The backend has no sync writer.
+        """
+        raise NotImplementedError(f"{type(self).__name__} has no sync writer")
+
+    def sync_ensure_vertices(self, schema: Schema, chunk: BulkVertexChunk) -> None:
+        """Create each vertex whose key is absent, from its row; leave the others."""
+        raise NotImplementedError(f"{type(self).__name__} has no sync writer")
+
+    def sync_write_owners(self, schema: Schema, chunk: SyncOwnerChunk) -> SyncWritten:
+        """Rewrite the chunk's owners whose stored hash differs, as one unit."""
+        raise NotImplementedError(f"{type(self).__name__} has no sync writer")
+
     @property
     def _reported_edge_directions(self) -> set["EdgeId"]:
         """Edges already reported by :meth:`report_edge_direction_support`.
@@ -546,10 +601,6 @@ class Connection(abc.ABC):
                 - collection_name: Edge collection (ArangoDB) or unused type-specific name
                 - uniq_weight_fields: Uniqueness fields (ArangoDB UPSERT match)
                 - uniq_weight_collections: Uniqueness collections (ArangoDB UPSERT)
-                - on_duplicate: ArangoDB and PostgreSQL. ``\"ignore\"`` (default):
-                  an edge that already exists is left as stored; ``\"upsert\"``:
-                  it is updated (AQL ``UPSERT`` on ArangoDB -- align match keys with
-                  a unique index; ``ON CONFLICT DO UPDATE`` on PostgreSQL).
                 - relationship_merge_properties: Property names for Cypher MERGE
                   (Neo4j, FalkorDB, Memgraph) so parallel edges differ by weights;
                   on PostgreSQL, the edge table's key columns besides the endpoints
@@ -940,39 +991,6 @@ class Connection(abc.ABC):
         Args:
             edges: List of edge configurations to create
         """
-
-    def bulk_load_begin(
-        self, schema: Schema, bulk_cfg: TigergraphBulkLoadConfig
-    ) -> str:
-        """Start a native bulk-load session (CSV staging + LOADING JOB).
-
-        Raises:
-            UnsupportedBulkLoad: For backends that only support REST/document APIs.
-        """
-        raise UnsupportedBulkLoad(
-            f"Database flavor {self.flavor!r} does not support native bulk load"
-        )
-
-    def bulk_load_append(
-        self, session_id: str, gc: GraphContainer, schema: Schema
-    ) -> None:
-        """Append one cast batch to the active bulk-load session."""
-        raise UnsupportedBulkLoad(
-            f"Database flavor {self.flavor!r} does not support native bulk load"
-        )
-
-    def bulk_load_finalize(
-        self,
-        session_id: str,
-        schema: Schema,
-        *,
-        bindings: "Bindings | None" = None,
-        connection_provider: "ConnectionProvider | None" = None,
-    ) -> str:
-        """Close staging files, optionally upload to S3, run LOADING JOB, return GSQL log text."""
-        raise UnsupportedBulkLoad(
-            f"Database flavor {self.flavor!r} does not support native bulk load"
-        )
 
     def vertex_address(
         self, doc: dict[str, Any], identity_fields: Sequence[str]

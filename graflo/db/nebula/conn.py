@@ -7,14 +7,23 @@ Supports NebulaGraph 3.x (nGQL via ``nebula3-python``) and 5.x (ISO GQL via
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Sequence
 from typing import Any, ClassVar
 
 from graflo.architecture.graph_types import EdgeDirection, Index
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.edge import Edge
-from graflo.architecture.schema.vertex import FieldType, VertexConfig
+from graflo.architecture.schema.vertex import Field, FieldType, VertexConfig
+from graflo.connections.bulk import BulkConfig
 from graflo.connections.onto import NebulaConfig
+from graflo.db.bulk import (
+    BulkCounts,
+    BulkEdgeChunk,
+    BulkPlan,
+    BulkVertexChunk,
+    StoredEdgeId,
+)
 from graflo.db.conn import (
     DEFAULT_DELETE_CHUNK_SIZE,
     Connection,
@@ -31,6 +40,7 @@ from graflo.db.nebula.adapter import (
     create_adapter,
 )
 from graflo.db.nebula.query import (
+    EdgeRow,
     aggregate_gql,
     aggregate_ngql,
     batch_upsert_vertices_ngql,
@@ -39,15 +49,21 @@ from graflo.db.nebula.query import (
     create_space_ngql,
     create_tag_index_ngql,
     create_tag_ngql,
+    delete_edges_ngql,
     drop_space_ngql,
     fetch_docs_gql,
     fetch_docs_ngql,
     fetch_edges_ngql,
+    fold_rows,
     insert_edges_ngql,
+    insert_vertices_ngql,
+    upsert_edge_ngql,
 )
 from graflo.db.nebula.util import (
+    edge_rank,
     escape_nebula_string,
     field_type_from_nebula,
+    fitted_vid_length,
     is_nebula_string_field,
     key_of_vid,
     make_vid,
@@ -64,6 +80,103 @@ logger = logging.getLogger(__name__)
 
 _SCHEMA_WAIT_INTERVAL = 1.0
 _SCHEMA_WAIT_RETRIES = 30
+#: Times a job that ends FAILED or STOPPED is submitted again: a rebuild
+#: submitted before storaged knows a new index fails, and succeeds later.
+_JOB_ATTEMPTS = 5
+_JOB_DONE = "FINISHED"
+_JOB_ENDED = frozenset({"FINISHED", "FAILED", "STOPPED"})
+#: Statements joined into one request on the upsert path.
+_UPSERTS_PER_REQUEST = 50
+
+
+def edge_type_name(edge: Edge) -> str:
+    """The NebulaGraph edge type an edge is stored under."""
+    return edge.relation or f"{edge.source}_{edge.target}"
+
+
+def edge_types(edges: Sequence[Edge]) -> dict[str, list[Field]]:
+    """Every edge type with its fields: the union over the edges stored under it."""
+    types: dict[str, list[Field]] = {}
+    for edge in edges:
+        fields = types.setdefault(edge_type_name(edge), [])
+        known = {f.name for f in fields}
+        fields.extend(f for f in edge.properties if f.name not in known)
+    return types
+
+
+def tag_fields(schema: Schema) -> dict[str, list[str]]:
+    """Every tag of *schema*, by the name it is created under, with its fields."""
+    logical = schema.core_schema.vertex_config
+    db_aware = schema.resolve_db_aware(DBType.NEBULA).vertex_config
+    return {
+        db_aware.vertex_dbname(v): [f.name for f in logical.properties(v)]
+        for v in logical.vertex_set
+    }
+
+
+#: ``(tag or edge type, index name, CREATE statement)``.
+IndexSpec = tuple[str, str, str]
+
+
+def tag_index_specs(
+    vertex_config: VertexConfig, schema: Schema | None
+) -> list[IndexSpec]:
+    """The tag indexes of *vertex_config*: identity first, then declared ones.
+
+    NebulaGraph needs a tag index for ``LOOKUP`` and a label-only ``MATCH``,
+    so the identity is indexed even where no index is declared.
+    """
+    # Index the tag under the name it was created with; the db_profile
+    # lookups stay keyed on the logical name.
+    db_aware = (
+        schema.resolve_db_aware(DBType.NEBULA).vertex_config
+        if schema is not None
+        else None
+    )
+    specs: list[IndexSpec] = []
+    for vname in sorted(vertex_config.vertex_set):
+        tag = db_aware.vertex_dbname(vname) if db_aware is not None else vname
+        fields = vertex_config.properties(vname)
+        string_fields = {f.name for f in fields if is_nebula_string_field(f)}
+        declared = (
+            schema.db_profile.vertex_secondary_indexes(vname)
+            if schema is not None
+            else []
+        )
+        identity = Index(fields=vertex_config.identity_fields(vname), unique=True)
+        seen: set[tuple[str, ...]] = set()
+        for idx in [identity, *declared]:
+            key = tuple(str(f) for f in idx.fields)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            name = f"idx_{tag}_{'_'.join(key)}"
+            stmt = create_tag_index_ngql(
+                name, tag, list(key), string_fields=string_fields
+            )
+            specs.append((tag, name, stmt))
+    return specs
+
+
+def edge_index_specs(edges: list[Edge], schema: Schema | None) -> list[IndexSpec]:
+    """The declared edge indexes of *edges*, each index once."""
+    specs: list[IndexSpec] = []
+    seen: set[str] = set()
+    for edge in edges:
+        rel = edge_type_name(edge)
+        declared = (
+            schema.db_profile.edge_secondary_indexes(edge.edge_id)
+            if schema is not None
+            else []
+        )
+        for idx in declared:
+            key = [str(f) for f in idx.fields]
+            name = f"idx_{rel}_{'_'.join(key)}"
+            if name in seen:
+                continue
+            seen.add(name)
+            specs.append((rel, name, create_edge_index_ngql(name, rel, key)))
+    return specs
 
 
 class NebulaConnection(Connection):
@@ -84,6 +197,9 @@ class NebulaConnection(Connection):
     schema_introspection_is_sampled: ClassVar[bool] = True
     # A VID names its tag (`util.tag_vid`), so removing one removes one vertex.
     supports_instance_delete: ClassVar[bool] = True
+    # Edges address their endpoints by VID and lock nothing, so neither dense
+    # ids nor edge rounds are needed.
+    supports_bulk_load: ClassVar[bool] = True
 
     def __init__(self, config: NebulaConfig):
         super().__init__()
@@ -91,6 +207,7 @@ class NebulaConnection(Connection):
         self._adapter: NebulaClientAdapter = create_adapter(config)
         self._space_name: str | None = None
         self._tag_fields: dict[str, list[str]] = {}
+        self._edge_fields: dict[str, list[str]] = {}
         # Tags whose describe failure was already warned about on this connection.
         self._undescribed: set[str] = set()
 
@@ -134,6 +251,7 @@ class NebulaConnection(Connection):
         self._adapter.use_space(space_name)
         self._space_name = space_name
         self._tag_fields = {}
+        self._edge_fields = {}
 
     def _wait_for_dml_ready(self, tag_name: str) -> None:
         """Wait until DML operations are possible on a tag.
@@ -143,8 +261,6 @@ class NebulaConnection(Connection):
         ``DESCRIBE TAG`` succeeds immediately, but DML like ``FETCH PROP`` or
         ``UPSERT VERTEX`` fails until the storage cache is warm.
         """
-        import time
-
         check = f'FETCH PROP ON `{tag_name}` "__dml_check__" YIELD properties(vertex)'
         for attempt in range(_SCHEMA_WAIT_RETRIES):
             try:
@@ -165,8 +281,6 @@ class NebulaConnection(Connection):
 
     def _wait_for_edge_dml_ready(self, edge_type: str) -> None:
         """Wait until DML operations are possible on an edge type."""
-        import time
-
         check = (
             f'FETCH PROP ON `{edge_type}` "__src__"->"__dst__" YIELD properties(edge)'
         )
@@ -223,6 +337,25 @@ class NebulaConnection(Connection):
         self._tag_fields[tag_name] = fields
         return fields
 
+    def _edge_field_names(self, edge_type: str) -> list[str] | None:
+        """The fields of *edge_type*, cached; ``None`` when it cannot be described."""
+        fields = self._edge_fields.get(edge_type)
+        if fields is not None:
+            return fields
+        try:
+            desc = self._adapter.execute(f"DESCRIBE EDGE `{edge_type}`")
+        except Exception as e:
+            logger.warning(
+                "Could not describe edge type '%s' in space '%s': %s",
+                edge_type,
+                self._space_name,
+                e,
+            )
+            return None
+        fields = [r.get("Field", r.get("field", "")) for r in desc.rows_as_dicts()]
+        self._edge_fields[edge_type] = fields
+        return fields
+
     # ------------------------------------------------------------------
     # Connection ABC – lifecycle
     # ------------------------------------------------------------------
@@ -259,8 +392,6 @@ class NebulaConnection(Connection):
                 except Exception:
                     logger.debug("ADD HOSTS %s (may already exist)", addr)
 
-        import time
-
         for _ in range(30):
             try:
                 rs = self._adapter.execute("SHOW HOSTS")
@@ -272,15 +403,53 @@ class NebulaConnection(Connection):
             time.sleep(1)
         logger.warning("Storage hosts may not all be ONLINE yet")
 
-    def create_database(self, name: str) -> None:
-        self._ensure_storage_hosts()
-        stmt = create_space_ngql(
-            name,
-            vid_type=self.config.vid_type,
-            partition_num=self.config.partition_num,
-            replica_factor=self.config.replica_factor,
+    def _storage_host_count(self) -> int:
+        """Storage hosts online; 1 when ``SHOW HOSTS`` cannot be read."""
+        try:
+            rows = self._execute("SHOW HOSTS").rows_as_dicts()
+        except Exception:
+            logger.debug("SHOW HOSTS failed", exc_info=True)
+            return 1
+        return max(1, sum(1 for r in rows if str(r.get("Status", "")) == "ONLINE"))
+
+    def _wait_for_leaders(self) -> None:
+        """Wait until every partition of the current space has a leader.
+
+        A write to a partition without one fails, and a new space elects
+        them one by one.
+        """
+        for _ in range(_SCHEMA_WAIT_RETRIES):
+            try:
+                rows = self._execute("SHOW PARTS").rows_as_dicts()
+                if rows and all(r.get("Leader") for r in rows):
+                    return
+            except Exception:
+                logger.debug("SHOW PARTS failed", exc_info=True)
+            time.sleep(_SCHEMA_WAIT_INTERVAL)
+        logger.warning(
+            "Space '%s' may have partitions without a leader", self._space_name
         )
-        self._execute(stmt)
+
+    def create_database(self, name: str, *, schema: Schema | None = None) -> None:
+        """Create space *name* with :meth:`NebulaConfig.space_options`.
+
+        Args:
+            name: The space.
+            schema: Sizes the VID to its identities; without it, to one string.
+        """
+        self._ensure_storage_hosts()
+        options = self.config.space_options(
+            storage_hosts=self._storage_host_count(),
+            vid_length=fitted_vid_length(schema, self.config.vid_string_length),
+        )
+        self._execute(
+            create_space_ngql(
+                name,
+                vid_type=options.vid_type,
+                partition_num=options.partition_num,
+                replica_factor=options.replica_factor,
+            )
+        )
         wait_for_space_ready(
             self._adapter,
             name,
@@ -288,7 +457,8 @@ class NebulaConnection(Connection):
             interval=_SCHEMA_WAIT_INTERVAL,
         )
         self._use_space(name)
-        logger.info("Created NebulaGraph space '%s'", name)
+        self._wait_for_leaders()
+        logger.info("Created NebulaGraph space '%s' (%s)", name, options)
 
     def delete_database(self, name: str) -> None:
         self._execute(drop_space_ngql(name))
@@ -328,17 +498,10 @@ class NebulaConnection(Connection):
             self._wait_for_dml_ready(db_aware.vertex_dbname(sample))
 
     def define_edge_classes(self, edges: list[Edge]) -> None:
-        created: set[str] = set()
-        for edge in edges:
-            rel = edge.relation or f"{edge.source}_{edge.target}"
-            if rel in created:
-                continue
-            edge_fields = []
-            if edge.properties:
-                edge_fields = list(edge.properties)
-            stmt = create_edge_type_ngql(rel, edge_fields)
-            self._execute(stmt)
-            created.add(rel)
+        """Create one edge type per relation, with every field an edge of it has."""
+        created = edge_types(edges)
+        for rel, fields in created.items():
+            self._execute(create_edge_type_ngql(rel, fields))
             logger.debug("Created edge type '%s'", rel)
 
         if created:
@@ -356,99 +519,35 @@ class NebulaConnection(Connection):
             logger.warning(
                 "Schema is None: identity indexes cannot be ensured without schema"
             )
-        # Index the tag under the name it was actually created with; the
-        # db_profile lookups below stay keyed on the logical name.
-        db_aware = (
-            schema.resolve_db_aware(DBType.NEBULA).vertex_config
-            if schema is not None
-            else None
-        )
-        for vname in vertex_config.vertex_set:
-            tag = db_aware.vertex_dbname(vname) if db_aware is not None else vname
-            fields = vertex_config.properties(vname)
-            string_fields = {f.name for f in fields if is_nebula_string_field(f)}
-            index_list = (
-                schema.db_profile.vertex_secondary_indexes(vname)
-                if schema is not None
-                else []
-            )
-
-            # Nebula requires TAG indexes for LOOKUP and many property-filtered MATCH
-            # plans. Keep identity index creation implicit so schemas without
-            # explicit database_features remain queryable/clearable.
-            identity_idx = Index(
-                fields=vertex_config.identity_fields(vname), unique=True
-            )
-            all_indexes = [identity_idx, *index_list]
-
-            seen: set[tuple[str, ...]] = set()
-            for idx in all_indexes:
-                key = tuple(str(f) for f in idx.fields)
-                if not key or key in seen:
-                    continue
-                seen.add(key)
-                self._add_tag_index(tag, idx, string_fields=string_fields)
+        for tag, name, stmt in tag_index_specs(vertex_config, schema):
+            self._create_index("TAG", tag, name, stmt)
 
     def define_edge_indexes(
         self, edges: list[Edge], schema: Schema | None = None
     ) -> None:
-        for edge in edges:
-            rel = edge.relation or f"{edge.source}_{edge.target}"
-            index_list = (
-                schema.db_profile.edge_secondary_indexes(edge.edge_id)
-                if schema is not None
-                else []
-            )
-            for idx in index_list:
-                self._add_edge_index(rel, idx)
+        for edge_type, name, stmt in edge_index_specs(edges, schema):
+            self._create_index("EDGE", edge_type, name, stmt)
 
-    def _add_tag_index(
-        self,
-        tag_name: str,
-        index: Index,
-        string_fields: set[str] | None = None,
-    ) -> None:
-        idx_fields = [str(f) for f in index.fields]
-        idx_name = f"idx_{tag_name}_{'_'.join(idx_fields)}"
-        stmt = create_tag_index_ngql(
-            idx_name, tag_name, idx_fields, string_fields=string_fields
-        )
+    def _create_index(self, kind: str, owner: str, idx_name: str, stmt: str) -> None:
+        """Create and build one index; a failure is logged, not raised."""
         try:
             self._execute(stmt)
-            self._rebuild_index(idx_name, kind="TAG")
-            logger.debug("Created tag index '%s'", idx_name)
+            self._rebuild_index(idx_name, kind=kind)
+            logger.debug("Created %s index '%s'", kind.lower(), idx_name)
         except Exception as e:
-            # Not debug: without this index every filtered read on the tag fails
+            # Not debug: without this index every filtered read on it fails
             # with IndexNotFound, and the cause is three layers away.
             logger.warning(
-                "Tag index '%s' on '%s' was not created: %s. Filtered reads on "
+                "%s index '%s' on '%s' was not created: %s. Filtered reads on "
                 "these fields will fail with IndexNotFound.",
+                kind.capitalize(),
                 idx_name,
-                tag_name,
-                e,
-            )
-
-    def _add_edge_index(self, edge_type: str, index: Index) -> None:
-        idx_fields = [str(f) for f in index.fields]
-        idx_name = f"idx_{edge_type}_{'_'.join(idx_fields)}"
-        stmt = create_edge_index_ngql(idx_name, edge_type, idx_fields)
-        try:
-            self._execute(stmt)
-            self._rebuild_index(idx_name, kind="EDGE")
-            logger.debug("Created edge index '%s'", idx_name)
-        except Exception as e:
-            logger.warning(
-                "Edge index '%s' on '%s' was not created: %s. Filtered reads on "
-                "these fields will fail with IndexNotFound.",
-                idx_name,
-                edge_type,
+                owner,
                 e,
             )
 
     def _rebuild_index(self, idx_name: str, kind: str = "TAG") -> None:
         """Rebuild an index, waiting for propagation first, then for completion."""
-        import time
-
         rebuild_stmt = f"REBUILD {kind} INDEX `{idx_name}`"
         for attempt in range(_SCHEMA_WAIT_RETRIES):
             try:
@@ -513,7 +612,7 @@ class NebulaConnection(Connection):
                 f"NebulaGraph space '{space_name}' does not exist. "
                 "Create it manually or call with create_namespace=True."
             )
-        self.create_database(space_name)
+        self.create_database(space_name, schema=schema)
 
     def _schema_has_artifacts(self) -> bool:
         try:
@@ -538,7 +637,7 @@ class NebulaConnection(Connection):
                     self.delete_database(space_name)
                 except Exception:
                     pass
-                self.create_database(space_name)
+                self.create_database(space_name, schema=schema)
             else:
                 try:
                     rs = self._execute("SHOW TAGS")
@@ -568,6 +667,185 @@ class NebulaConnection(Connection):
         self.apply_target_schema(
             schema, recreate=recreate_schema, create_namespace=create_namespace
         )
+
+    # ------------------------------------------------------------------
+    # Bulk load (graflo.db.bulk)
+    # ------------------------------------------------------------------
+
+    def bulk_begin(
+        self,
+        schema: Schema,
+        cfg: BulkConfig,
+        *,
+        recreate: bool = False,
+        resume: bool = False,
+    ) -> BulkPlan:
+        """Space, tags and edge types; indexes wait for :meth:`bulk_finish`.
+
+        Writes take no lock and read nothing, so the load runs at the
+        configured parallelism.
+        """
+        assert_schema_supported(self.flavor, schema)
+        self.report_edge_direction_support(schema)
+        space_name = self._resolve_space_name(schema)
+        if recreate and not resume:
+            self.delete_database(space_name)
+            self.create_database(space_name, schema=schema)
+        else:
+            self.ensure_target_namespace(schema, create=True)
+            if not resume and self._schema_has_artifacts():
+                raise SchemaExistsError(
+                    f"Schema already exists in space '{space_name}'. "
+                    "Set recreate_schema=True to replace."
+                )
+        # IF NOT EXISTS throughout: on resume only what is missing is created.
+        self.define_schema(schema)
+        for tag in tag_fields(schema):
+            self._wait_for_dml_ready(tag)
+        for edge_type in edge_types(list(schema.core_schema.edge_config.values())):
+            self._wait_for_edge_dml_ready(edge_type)
+        return BulkPlan()
+
+    def _use_schema_space(self, schema: Schema) -> None:
+        if self._space_name is None:
+            self._use_space(self._resolve_space_name(schema))
+
+    def bulk_write_vertices(self, schema: Schema, chunk: BulkVertexChunk) -> None:
+        """``INSERT VERTEX`` the chunk; an insert overwrites, so a replay is harmless."""
+        self._use_schema_space(schema)
+        columns = tag_fields(schema).get(chunk.class_name)
+        if columns is None:
+            raise ValueError(
+                f"vertex chunk {chunk.chunk_id}: no tag {chunk.class_name!r}"
+            )
+        rows = [
+            (make_vid(chunk.class_name, row, chunk.match_keys), row)
+            for row in chunk.rows
+        ]
+        for stmt in insert_vertices_ngql(
+            chunk.class_name, columns, rows, max_bytes=self.config.max_statement_bytes
+        ):
+            self._execute(stmt)
+
+    def bulk_prepare_edges(self, schema: Schema) -> None:
+        """Nothing: an edge names its endpoints by VID, computed from their identity."""
+
+    def bulk_write_edges(self, schema: Schema, chunk: BulkEdgeChunk) -> None:
+        """``INSERT EDGE`` the chunk, ranked as the upsert path ranks edges."""
+        relation = chunk.relation_name
+        if relation is None:
+            raise ValueError(f"edge chunk {chunk.chunk_id} has no relation name")
+        self._use_schema_space(schema)
+        fields = edge_types(list(schema.core_schema.edge_config.values())).get(relation)
+        if fields is None:
+            raise ValueError(f"edge chunk {chunk.chunk_id}: no edge type {relation!r}")
+        edges: list[EdgeRow] = [
+            (
+                make_vid(chunk.source_class, source, chunk.match_keys_source),
+                make_vid(chunk.target_class, target, chunk.match_keys_target),
+                edge_rank(props, chunk.merge_properties),
+                props,
+            )
+            for source, target, props in chunk.rows
+        ]
+        for stmt in insert_edges_ngql(
+            relation,
+            [f.name for f in fields],
+            edges,
+            max_bytes=self.config.max_statement_bytes,
+        ):
+            self._execute(stmt)
+
+    def bulk_finish(self, schema: Schema) -> BulkCounts:
+        """Create the indexes, build them over the load, and count what is stored."""
+        self._use_schema_space(schema)
+        edges = list(schema.core_schema.edge_config.values())
+        tag_specs = tag_index_specs(schema.core_schema.vertex_config, schema)
+        edge_specs = edge_index_specs(edges, schema)
+        for _, _, stmt in [*tag_specs, *edge_specs]:
+            self._execute(stmt)
+        if tag_specs:
+            names = ", ".join(f"`{name}`" for _, name, _ in tag_specs)
+            self._run_job(f"REBUILD TAG INDEX {names}")
+        if edge_specs:
+            names = ", ".join(f"`{name}`" for _, name, _ in edge_specs)
+            self._run_job(f"REBUILD EDGE INDEX {names}")
+        self._run_job("SUBMIT JOB STATS")
+        return self._stored_counts(schema)
+
+    def _submit_job(self, statement: str) -> int:
+        """Submit a job; retried while a new index has not yet reached graphd."""
+        for attempt in range(_SCHEMA_WAIT_RETRIES):
+            try:
+                rows = self._execute(statement).rows_as_dicts()
+                return int(rows[0]["New Job Id"])
+            except Exception:
+                if attempt == _SCHEMA_WAIT_RETRIES - 1:
+                    raise
+                time.sleep(_SCHEMA_WAIT_INTERVAL)
+        raise AssertionError("unreachable")
+
+    def _await_job(self, job_id: int) -> str:
+        """Poll ``SHOW JOB`` until the job ends; return its status."""
+        while True:
+            rows = self._execute(f"SHOW JOB {job_id}").rows_as_dicts()
+            status = str(rows[0].get("Status", "")).upper() if rows else ""
+            if status in _JOB_ENDED:
+                return status
+            time.sleep(_SCHEMA_WAIT_INTERVAL)
+
+    def _run_job(self, statement: str) -> None:
+        """Run a job to completion, submitting it again if it fails.
+
+        Raises:
+            RuntimeError: It did not finish within the allowed attempts.
+        """
+        status = ""
+        for _ in range(_JOB_ATTEMPTS):
+            job_id = self._submit_job(statement)
+            status = self._await_job(job_id)
+            if status == _JOB_DONE:
+                return
+            logger.warning(
+                "Job %s (%s) ended %s; submitting again", job_id, statement, status
+            )
+            time.sleep(_SCHEMA_WAIT_INTERVAL)
+        raise RuntimeError(f"{statement} ended {status} {_JOB_ATTEMPTS} times")
+
+    def _stored_counts(self, schema: Schema) -> BulkCounts:
+        """Vertices per tag and edges per stored edge id, from the last STATS job.
+
+        An edge type that joins several tag pairs is counted per pair by
+        ``MATCH``, which needs the source tag's identity index.
+        """
+        stats: dict[tuple[str, str], int] = {}
+        for row in self._execute("SHOW STATS").rows_as_dicts():
+            kind = str(row.get("Type", "")).lower()
+            stats[(kind, str(row.get("Name", "")))] = int(row.get("Count") or 0)
+        vertices = {tag: stats.get(("tag", tag), 0) for tag in tag_fields(schema)}
+        db_aware = schema.resolve_db_aware(DBType.NEBULA).vertex_config
+        pairs: dict[str, list[StoredEdgeId]] = {}
+        for edge in schema.core_schema.edge_config.values():
+            stored = (
+                db_aware.vertex_dbname(edge.source),
+                edge.relation,
+                db_aware.vertex_dbname(edge.target),
+            )
+            joined = pairs.setdefault(edge_type_name(edge), [])
+            if stored not in joined:
+                joined.append(stored)
+        edges: dict[StoredEdgeId, int] = {}
+        for edge_type, stored_ids in pairs.items():
+            if len(stored_ids) == 1:
+                edges[stored_ids[0]] = stats.get(("edge", edge_type), 0)
+                continue
+            for source, relation, target in stored_ids:
+                rows = self._execute(
+                    f"MATCH (:`{source}`)-[e:`{edge_type}`]->(:`{target}`) "
+                    "RETURN count(e) AS n"
+                ).rows_as_dicts()
+                edges[(source, relation, target)] = int(rows[0]["n"]) if rows else 0
+        return BulkCounts(vertices=vertices, edges=edges)
 
     # ------------------------------------------------------------------
     # Data clearing
@@ -620,27 +898,38 @@ class NebulaConnection(Connection):
         match_keys: list[str] | tuple[str, ...],
         **kwargs: Any,
     ) -> None:
+        """Upsert vertices of one tag; a field a document lacks keeps its value.
+
+        Documents are folded by VID first. One that carries every field of the
+        tag is written by ``INSERT``, which replaces the tag whole and so equals
+        the upsert, without reading; any other by ``UPSERT VERTEX``.
+        """
         dry = kwargs.pop("dry", False)
         if not docs:
             return
-
-        match_keys_list = list(match_keys)
-        tag_fields = self._tag_field_names(class_name)
-        if not tag_fields:
-            tag_fields = list({k for doc in docs for k in doc})
-
-        statements = batch_upsert_vertices_ngql(
-            class_name, docs, match_keys_list, tag_fields
+        match = list(match_keys)
+        rows = fold_rows((make_vid(class_name, doc, match), doc) for doc in docs)
+        fields = self._tag_field_names(class_name)
+        # An undescribed tag has unknown fields: an INSERT could null stored ones.
+        complete = (
+            [(vid, doc) for vid, doc in rows.items() if all(f in doc for f in fields)]
+            if fields
+            else []
         )
-        if dry or not statements:
+        inserted = {vid for vid, _ in complete}
+        partial = [doc for vid, doc in rows.items() if vid not in inserted]
+        statements = insert_vertices_ngql(
+            class_name, fields, complete, max_bytes=self.config.max_statement_bytes
+        )
+        upserts = batch_upsert_vertices_ngql(
+            class_name, partial, match, fields or list({k for d in partial for k in d})
+        )
+        if dry:
             return
-
-        # Execute in batches to avoid hitting statement-size limits
-        batch_size = 50
-        for i in range(0, len(statements), batch_size):
-            chunk = statements[i : i + batch_size]
-            combined = "; ".join(chunk)
-            self._execute(combined)
+        for stmt in statements:
+            self._execute(stmt)
+        for i in range(0, len(upserts), _UPSERTS_PER_REQUEST):
+            self._execute("; ".join(upserts[i : i + _UPSERTS_PER_REQUEST]))
 
     def insert_edges_batch(
         self,
@@ -654,17 +943,21 @@ class NebulaConnection(Connection):
         head: int | None = None,
         **kwargs: Any,
     ) -> None:
-        opts = consume_insert_edges_kwargs(kwargs)
-        dry = opts.dry
+        """Upsert edges of one type; a property an edge lacks keeps its value.
 
+        As :meth:`upsert_docs_batch`: edges folded by identity, complete ones
+        written by ``INSERT EDGE``, the rest by ``UPSERT EDGE``. The identity
+        fields besides the endpoints (``relationship_merge_properties``) give
+        the rank (:func:`edge_rank`); without them every edge has rank 0.
+        """
+        opts = consume_insert_edges_kwargs(kwargs)
         if not docs_edges:
             return
-
         if head is not None:
             docs_edges = docs_edges[:head]
 
-        # Build (src_vid, dst_vid, props) tuples
-        edge_tuples: list[tuple[str, str, dict[str, Any]]] = []
+        identity = list(opts.relationship_merge_properties or ())
+        keyed: list[tuple[tuple[str, str, int | None], dict[str, Any]]] = []
         for edge_doc in docs_edges:
             if not isinstance(edge_doc, (list, tuple)) or len(edge_doc) < 2:
                 continue
@@ -675,26 +968,38 @@ class NebulaConnection(Connection):
                 if len(edge_doc) > 2 and isinstance(edge_doc[2], dict)
                 else {}
             )
-
             src_vid = make_vid(source_class, src_doc, match_keys_source)
             dst_vid = make_vid(target_class, dst_doc, match_keys_target)
-            edge_tuples.append((src_vid, dst_vid, props))
-
-        if dry or not edge_tuples:
+            keyed.append(((src_vid, dst_vid, edge_rank(props, identity)), props))
+        rows = fold_rows(keyed)
+        if opts.dry or not rows:
             return
 
-        # Determine edge property fields from schema or from data
-        all_prop_keys: set[str] = set()
-        for _, _, p in edge_tuples:
-            all_prop_keys.update(p.keys())
-        edge_fields = sorted(all_prop_keys) if all_prop_keys else None
-
-        batch_size = 200
-        for i in range(0, len(edge_tuples), batch_size):
-            chunk = edge_tuples[i : i + batch_size]
-            stmt = insert_edges_ngql(relation_name, chunk, edge_fields)
-            if stmt:
-                self._execute(stmt)
+        fields = self._edge_field_names(relation_name)
+        if fields is None:
+            # Undescribed: the type's fields are unknown, so write what is given.
+            fields = sorted({k for props in rows.values() for k in props})
+        complete: list[EdgeRow] = []
+        bare: list[EdgeRow] = []
+        upserts: list[str] = []
+        for (src, dst, rank), props in rows.items():
+            if all(f in props for f in fields):
+                complete.append((src, dst, rank, props))
+            elif stmt := upsert_edge_ngql(relation_name, src, dst, props, fields, rank):
+                upserts.append(stmt)
+            else:
+                # Nothing to set: create the edge if missing, else leave it.
+                bare.append((src, dst, rank, {}))
+        limit = self.config.max_statement_bytes
+        for stmt in [
+            *insert_edges_ngql(relation_name, fields, complete, max_bytes=limit),
+            *insert_edges_ngql(
+                relation_name, [], bare, max_bytes=limit, if_not_exists=True
+            ),
+        ]:
+            self._execute(stmt)
+        for i in range(0, len(upserts), _UPSERTS_PER_REQUEST):
+            self._execute("; ".join(upserts[i : i + _UPSERTS_PER_REQUEST]))
 
     def insert_return_batch(
         self, docs: list[dict[str, Any]], class_name: str
@@ -732,23 +1037,28 @@ class NebulaConnection(Connection):
         collection_name: str | None = None,
         chunk_size: int = DEFAULT_DELETE_CHUNK_SIZE,
     ) -> None:
-        """Remove edges of one type between VID pairs.
-
-        Every edge GraFlo writes has rank 0, the rank ``DELETE EDGE`` removes
-        when none is given.
-        """
+        """Remove every edge of one type between VID pairs, whatever its rank."""
         if relation_name is None:
             raise ValueError("NebulaGraph delete_edges requires the edge type")
         pairs = [
-            f'"{escape_nebula_string(make_vid(source_class, s, match_keys_source))}"'
-            f'->"{escape_nebula_string(make_vid(target_class, t, match_keys_target))}"'
+            (
+                make_vid(source_class, s, match_keys_source),
+                make_vid(target_class, t, match_keys_target),
+            )
             for s, t in deletable_endpoints(
                 endpoints, match_keys_source, match_keys_target
             )
         ]
         for start in range(0, len(pairs), chunk_size):
-            chunk = ", ".join(pairs[start : start + chunk_size])
-            self._execute(f"DELETE EDGE `{relation_name}` {chunk}")
+            targets: dict[str, list[str]] = {}
+            for src, dst in pairs[start : start + chunk_size]:
+                targets.setdefault(src, []).append(dst)
+            self._execute(
+                "; ".join(
+                    delete_edges_ngql(relation_name, src, dsts)
+                    for src, dsts in targets.items()
+                )
+            )
 
     # ------------------------------------------------------------------
     # Fetch operations
@@ -790,6 +1100,42 @@ class NebulaConnection(Connection):
             else:
                 result.append(row)
         return result
+
+    def fetch_all_docs(
+        self,
+        class_name: str,
+        *,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Every vertex of a tag, as its properties; needs a tag index on it."""
+        lim = f" LIMIT {int(limit)}" if limit is not None else ""
+        rows = self._execute(
+            f"MATCH (v:`{class_name}`) RETURN properties(v) AS props{lim}"
+        ).rows_as_dicts()
+        return [dict(row["props"] or {}) for row in rows]
+
+    def fetch_all_edges(
+        self,
+        source_class: str,
+        target_class: str,
+        relation_name: str | None,
+        *,
+        match_keys_source: tuple[str, ...] | None = None,
+        match_keys_target: tuple[str, ...] | None = None,
+        limit: int | None = None,
+        collection_name: str | None = None,
+    ) -> list[list[dict[str, Any]]]:
+        """Every edge between two tags, as ``[source, target, properties]``."""
+        rel = f"[e:`{relation_name}`]" if relation_name else "[e]"
+        lim = f" LIMIT {int(limit)}" if limit is not None else ""
+        rows = self._execute(
+            f"MATCH (a:`{source_class}`)-{rel}->(b:`{target_class}`) "
+            f"RETURN properties(a) AS s, properties(b) AS t, properties(e) AS p{lim}"
+        ).rows_as_dicts()
+        return [
+            [dict(row["s"] or {}), dict(row["t"] or {}), dict(row["p"] or {})]
+            for row in rows
+        ]
 
     def _describe_properties(
         self, kind: str, name: str

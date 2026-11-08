@@ -7,6 +7,7 @@ from typing import Any, cast
 
 import pytest
 
+from graflo.architecture.backend.fold import fold_vertices
 from graflo.architecture.contract.ingestion import IngestionModel
 from graflo.architecture.graph_types import GraphContainer
 from graflo.architecture.graph_types.merge import fuse_doc_basis
@@ -180,6 +181,39 @@ def test_in_batch_fusion_keeps_every_member_of_a_union_field() -> None:
     assert fuse_doc_basis(docs, ("sku",)) == [{"sku": "P", ZONES: [2, 3], "name": "b"}]
 
 
+@pytest.mark.parametrize(
+    ("values", "expected"),
+    [
+        ([[1, None, 1]], [1]),
+        ([[1, None], [None, 2]], [1, 2]),
+        ([[1], None], [1]),
+        ([None], []),
+        ([[1], 2], [1, 2]),
+        ([3], [3]),
+    ],
+    ids=[
+        "one-document",
+        "null-members",
+        "null-field",
+        "only-null",
+        "scalar-member",
+        "lone-scalar",
+    ],
+)
+def test_in_batch_fusion_unions_as_the_backends_do(values, expected) -> None:
+    """Null members drop, a null field adds nothing, a scalar is one member.
+
+    The file backend's read-side fold applies the same upserts, so the two agree.
+    """
+    docs = [{"sku": "P", ZONES: value} for value in values]
+
+    (fused,) = fuse_doc_basis(docs, ("sku",), (ZONES,))
+    (folded,) = fold_vertices(docs, ("sku",), (ZONES,))
+
+    assert fused == {"sku": "P", ZONES: expected}
+    assert folded == fused
+
+
 class _Execute:
     """Stands in for a connection whose session runs a managed write transaction."""
 
@@ -274,19 +308,6 @@ def test_a_missing_edge_stamp_is_refused_before_anything_is_written(
     with pytest.raises(ValueError, match="write it with a stamp"):
         asyncio.run(_writer(_schema()).write(gc, NEO4J, None))
     assert db.upserts == []
-
-
-def test_union_is_refused_up_front_on_the_bulk_path(monkeypatch) -> None:
-    db = _DB()
-    monkeypatch.setattr("graflo.hq.db_writer.ConnectionManager", _manager(db))
-    gc = GraphContainer(vertices={"Product": [{"sku": "P"}]})
-
-    with pytest.raises(ValueError, match="union-merged list fields"):
-        asyncio.run(
-            _writer(_schema()).write(
-                gc, ARANGO, None, bulk_session_id="s", stamp={ZONES: [3]}
-            )
-        )
 
 
 def _union_edge_schema() -> Schema:

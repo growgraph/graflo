@@ -5,6 +5,7 @@ from graflo.connections.onto import (
     ArangoConfig,
     MemgraphConfig,
     NebulaConfig,
+    Neo4jConfig,
     TigergraphConfig,
 )
 from graflo.hq.graph_engine import (
@@ -88,3 +89,14 @@ def test_ensure_derives_a_valid_namespace_from_a_merged_label() -> None:
     arango = ArangoConfig(uri="http://localhost:8529", username="u", password="p")
     _ensure_graph_target_namespace(schema, arango, None)
     assert arango.database == "maintenance_sensors"
+
+
+def test_ensure_leaves_neo4j_to_its_connection_unless_named() -> None:
+    """Neo4j Community cannot create the schema's database: only a name the
+    caller gives is written to the config."""
+    schema = _minimal_manifest("library").require_schema()
+    cfg = Neo4jConfig(uri="bolt://localhost:7687")
+    _ensure_graph_target_namespace(schema, cfg, None)
+    assert cfg.database is None
+    _ensure_graph_target_namespace(schema, cfg, "papers")
+    assert cfg.database == "papers"
