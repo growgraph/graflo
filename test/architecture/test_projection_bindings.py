@@ -321,8 +321,9 @@ def test_an_edge_removal_takes_its_step_and_only_its_step(spelling, by) -> None:
     (resource,) = [
         r for r in out.require_ingestion_model().resources if r.name == "rm_assignments"
     ]
+    # Every spelling dumps as the compact shorthand.
     assert resource.to_dict()["pipeline"] == [
         {"vertex": "employee"},
         {"vertex": "customer"},
-        step("employee", "department", "member_of"),
+        {"edge": {"from": "employee", "to": "department", "relation": "member_of"}},
     ]

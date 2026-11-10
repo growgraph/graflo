@@ -13,7 +13,6 @@ from __future__ import annotations
 import copy
 
 from graflo.architecture.contract.ingestion import IngestionModel
-from graflo.architecture.contract.ingestion.resource import router_reach
 from graflo.architecture.contract.ingestion.steps.models import TransformActorConfig
 from graflo.architecture.contract.ingestion.steps.normalize import (
     normalize_actor_step,
@@ -40,6 +39,12 @@ from .ops import (
     RemoveResourcesOp,
     ReplaceResourcesOp,
     SetInverseEmissionOp,
+)
+from .pipeline_dicts import (
+    pipeline_to_dicts,
+    resolve_pipeline_level,
+    router_of,
+    step_to_dict,
 )
 
 
@@ -148,9 +153,8 @@ def _union_transforms(
     return out
 
 
-def _step_use_name(step: dict) -> str | None:
-    config = TransformActorConfig.model_validate(step)
-    return config.call.use if config.call is not None else None
+def _step_use_name(step: TransformActorConfig) -> str | None:
+    return step.call.use if step.call is not None else None
 
 
 def apply_add_resource_transforms(
@@ -194,17 +198,14 @@ def apply_add_resource_transforms(
                     f"registered: {sorted(registry_names)}"
                 )
 
-    from graflo.architecture.contract.ingestion.resource import (
-        Resource,
-        resolve_pipeline_level,
-    )
+    from graflo.architecture.contract.ingestion.resource import Resource
 
     resources: list[Resource] = []
     for resource in im.resources:
         payload = resource.to_dict(skip_defaults=False)
         added = op.additions.get(resource.name)
         if added:
-            pipeline = copy.deepcopy(list(payload.get("pipeline") or []))
+            pipeline = pipeline_to_dicts(resource.pipeline)
             path = op.at.get(resource.name) or []
             try:
                 level = resolve_pipeline_level(pipeline, path)
@@ -212,7 +213,7 @@ def apply_add_resource_transforms(
                 raise ValueError(
                     f"add_resource_transforms: resource {resource.name!r}: {exc}"
                 ) from exc
-            level.extend(copy.deepcopy(step) for step in added)
+            level.extend(step_to_dict(step) for step in added)
             payload["pipeline"] = pipeline
         resources.append(Resource.model_validate(payload))
 
@@ -231,7 +232,7 @@ def _widen_router_projection(step: dict, vertex: str, fields: list[str]) -> dict
     ``None`` when nothing needs widening — a plain ``vertex`` step (it reads the
     transform buffer directly), a router that cannot produce *vertex*, or one
     that restricts neither ``keep_fields`` nor ``extraction_scope``. A router
-    produces *vertex* when it is in its :func:`router_reach` -- an open router
+    produces *vertex* when it is in its reach (:meth:`VertexRouterActorConfig.reach`) -- an open router
     without ``vertex_types`` routes an unmapped discriminator value as the
     class name, so one without an entry for *vertex* still produces it, and a
     derived field it does not keep is written and then discarded without a
@@ -240,7 +241,7 @@ def _widen_router_projection(step: dict, vertex: str, fields: list[str]) -> dict
     normalized = normalize_actor_step(dict(step))
     if normalized.get("type") != "vertex_router":
         return None
-    reach = router_reach(normalized)
+    reach = router_of(normalized).reach()
     if reach is not None and vertex not in reach:
         return None
 
@@ -293,17 +294,14 @@ def apply_ensure_extracted_fields(
             f"manifest defines {sorted(known)}"
         )
 
-    from graflo.architecture.contract.ingestion.resource import (
-        Resource,
-        resolve_pipeline_level,
-    )
+    from graflo.architecture.contract.ingestion.resource import Resource
 
     resources: list[Resource] = []
     for resource in im.resources:
         payload = resource.to_dict(skip_defaults=False)
         entries = op.additions.get(resource.name)
         if entries:
-            pipeline = copy.deepcopy(list(payload.get("pipeline") or []))
+            pipeline = pipeline_to_dicts(resource.pipeline)
             for entry in entries:
                 try:
                     level = resolve_pipeline_level(pipeline, entry.at)
@@ -351,7 +349,7 @@ def set_emit_inverse_flags(
         refs = steps.get(resource_payload.get("name"))
         if not refs:
             continue
-        pipeline = resource_payload.get("pipeline") or []
+        pipeline = by_name[resource_payload["name"]].pipeline
         for ref in refs:
             try:
                 pipeline = with_emit_inverse(pipeline, ref, enabled)

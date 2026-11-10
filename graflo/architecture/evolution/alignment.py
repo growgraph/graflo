@@ -63,16 +63,19 @@ from typing import Any, Literal, cast
 
 from graflo.architecture.contract.ingestion.resource import (
     find_vertex_producing_levels,
-    is_pass_through_router,
-    is_unbounded_router,
-    resolve_pipeline_level,
+    iter_steps,
+    pipeline_level,
     step_finds,
     step_looks_up,
     step_produces_vertices,
+    steps_producing,
 )
-from graflo.architecture.contract.ingestion.steps.models import TransformGuardConfig
-from graflo.architecture.contract.ingestion.steps.normalize import (
-    normalize_actor_step,
+from graflo.architecture.contract.ingestion.steps.models import (
+    ActorConfig,
+    TransformActorConfig,
+    TransformGuardConfig,
+    VertexActorConfig,
+    VertexRouterActorConfig,
 )
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.schema.identity_funnel import IdentityFunnel
@@ -226,7 +229,7 @@ def _canonical_rename_targets(canonical_maps: Sequence[VocabularyMap]) -> set[st
     return targets
 
 
-def _resource_pipelines(manifest: GraphManifest) -> dict[str, list]:
+def _resource_pipelines(manifest: GraphManifest) -> dict[str, list[ActorConfig]]:
     im = manifest.ingestion_model
     if im is None:
         return {}
@@ -245,21 +248,19 @@ def _guard_dict(guard: TransformGuardConfig) -> dict[str, Any]:
     return {"field": guard.field, "in": list(guard.values)}
 
 
-def _level_discriminators(steps: list[dict]) -> list[str] | None:
+def _level_discriminators(steps: Sequence[ActorConfig]) -> list[str] | None:
     """The discriminators the routers among *steps* read, sorted.
 
     ``None`` when a plain ``vertex`` step is among them: that step reads the
     buffer for every document at its level, so no discriminator guards it.
     """
-    if any(step.get("type") == "vertex" for step in steps):
+    if any(isinstance(step, VertexActorConfig) for step in steps):
         return None
-    return sorted(
-        {
-            str(step.get("type_field"))
-            for step in steps
-            if step.get("type") == "vertex_router"
-        }
-    )
+    return sorted({router.type_field for router in _routers(steps)})
+
+
+def _routers(steps: Sequence[ActorConfig]) -> list[VertexRouterActorConfig]:
+    return [step for step in steps if isinstance(step, VertexRouterActorConfig)]
 
 
 def _across_roles(
@@ -386,19 +387,12 @@ def _side_of(resource: str, sides: SideManifests) -> tuple[str, GraphManifest]:
 
 
 def _produced_vertices(
-    steps: list[Any], *, known_vertices: Collection[str] | None = None
+    steps: Sequence[ActorConfig], *, known_vertices: Collection[str] | None = None
 ) -> set[str]:
     """Every class any step of *steps* (recursively) produces."""
     out: set[str] = set()
-    for step in steps:
-        if not isinstance(step, dict):
-            continue
+    for step in iter_steps(steps):
         out |= step_produces_vertices(step, known_vertices=known_vertices)
-        normalized = normalize_actor_step(dict(step))
-        if normalized.get("type") == "descend":
-            sub = normalized.get("pipeline")
-            if isinstance(sub, list):
-                out |= _produced_vertices(sub, known_vertices=known_vertices)
     return out
 
 
@@ -447,9 +441,10 @@ def _resolve_member_production(
         return _MemberProduction(level=path, type_field=None, values=())
     if len(type_fields) != 1:
         raise _across_roles(resource, member, type_fields)
-    routers = [step for step in steps if step.get("type") == "vertex_router"]
     return _MemberProduction(
-        level=path, type_field=type_fields[0], values=_routed_values(routers, member)
+        level=path,
+        type_field=type_fields[0],
+        values=_routed_values(_routers(steps), member),
     )
 
 
@@ -587,7 +582,7 @@ def resolve_derivation_levels(
         if resource in plan.at:
             path = list(plan.at[resource])
             try:
-                level = resolve_pipeline_level(list(pipeline), path)
+                level = pipeline_level(pipeline, path)
             except ValueError as exc:
                 raise _conflict(
                     "unresolvable level",
@@ -598,8 +593,7 @@ def resolve_derivation_levels(
             # resolution exists to prevent: the derivations would be appended,
             # run, find no inputs, and skip without a word.
             if not any(
-                isinstance(step, dict)
-                and plan.vertex in step_produces_vertices(step, known_vertices=known)
+                plan.vertex in step_produces_vertices(step, known_vertices=known)
                 for step in level
             ):
                 candidates = find_vertex_producing_levels(
@@ -657,25 +651,23 @@ def _referenced_resources(plan: IdentityPlan) -> set[str]:
 
 def _producing_steps(
     manifest: GraphManifest, resource: str, path: list[int], vertex: str
-) -> list[dict]:
-    """Normalized steps at *path* in *resource* that produce *vertex*.
+) -> list[ActorConfig]:
+    """Steps at *path* in *resource* that produce *vertex*.
 
     The two tiers of :func:`find_vertex_producing_levels`, within one level:
     the steps naming the class explicitly when any does, else every open
     router there — each routes the raw discriminator value as the class name.
     """
-    pipeline = list(_resource_pipelines(manifest).get(resource, []))
-    level = resolve_pipeline_level(pipeline, list(path))
-    steps = [
-        normalize_actor_step(dict(step)) for step in level if isinstance(step, dict)
-    ]
-    explicit = [step for step in steps if vertex in step_produces_vertices(step)]
+    level = pipeline_level(_resource_pipelines(manifest).get(resource, []), path)
+    explicit = [step for step in level if vertex in step_produces_vertices(step)]
     if explicit or vertex not in _vertex_set(manifest):
         return explicit
-    return [step for step in steps if is_unbounded_router(step)]
+    return [router for router in _routers(level) if router.unbounded]
 
 
-def _routed_values(routers: list[dict], vertex: str) -> tuple[str, ...]:
+def _routed_values(
+    routers: Sequence[VertexRouterActorConfig], vertex: str
+) -> tuple[str, ...]:
     """Discriminator values *routers* send onto *vertex*.
 
     Per router: the ``type_map`` keys mapping to it, and -- for an open router
@@ -684,18 +676,17 @@ def _routed_values(routers: list[dict], vertex: str) -> tuple[str, ...]:
     table; one whose ``vertex_types`` leaves *vertex* out, not at all.
     """
     values: set[str] = set()
-    for step in routers:
-        bound = step.get("vertex_types")
-        if bound is not None and vertex not in bound:
+    for router in routers:
+        if not router.admits(vertex):
             continue
-        type_map = step.get("type_map") or {}
+        type_map = router.type_map or {}
         values.update(key for key, target in type_map.items() if target == vertex)
-        if is_pass_through_router(step) and vertex not in type_map:
+        if router.passes_through and vertex not in type_map:
             values.add(vertex)
     return tuple(sorted(values))
 
 
-def _class_guard(steps: list[dict], vertex: str) -> dict[str, Any] | None:
+def _class_guard(steps: Sequence[ActorConfig], vertex: str) -> dict[str, Any] | None:
     """Guard admitting only the documents *steps* route onto *vertex*.
 
     ``None`` when no single guard can say so: a plain ``vertex`` step among
@@ -707,8 +698,10 @@ def _class_guard(steps: list[dict], vertex: str) -> dict[str, Any] | None:
     type_fields = _level_discriminators(steps)
     if type_fields is None or len(type_fields) != 1:
         return None
-    routers = [step for step in steps if step.get("type") == "vertex_router"]
-    return {"field": type_fields[0], "in": list(_routed_values(routers, vertex))}
+    return {
+        "field": type_fields[0],
+        "in": list(_routed_values(_routers(steps), vertex)),
+    }
 
 
 def _unguarded_names(plan: IdentityPlan, resource: str) -> list[str]:
@@ -966,7 +959,7 @@ def uncovered_producers(
         if not any(
             not step_looks_up(step, plan.vertex)
             and step_finds(step, plan.vertex, known_vertices=known) is None
-            for step in _steps_producing_anywhere(pipeline, plan.vertex, known)
+            for step in steps_producing(pipeline, plan.vertex, known_vertices=known)
         ):
             continue
         if plan.raw and (
@@ -999,24 +992,6 @@ def _check_uncovered_producers(
             "that only references it `lookup_only`. Merge attaches it by its "
             "own key itself.",
         )
-
-
-def _steps_producing_anywhere(
-    pipeline: list[Any], vertex: str, known: Collection[str]
-) -> list[dict[str, Any]]:
-    """Normalized steps producing *vertex* at any level of *pipeline*."""
-    out: list[dict[str, Any]] = []
-    for step in pipeline:
-        if not isinstance(step, dict):
-            continue
-        normalized = normalize_actor_step(dict(step))
-        if vertex in step_produces_vertices(normalized, known_vertices=known):
-            out.append(normalized)
-        if normalized.get("type") == "descend":
-            nested = normalized.get("pipeline")
-            if isinstance(nested, list):
-                out.extend(_steps_producing_anywhere(nested, vertex, known))
-    return out
 
 
 def _check_derivation_signatures(plan: IdentityPlan) -> None:
@@ -1067,7 +1042,7 @@ def _check_derivation_signatures(plan: IdentityPlan) -> None:
 def _check_sibling_classes(
     plan: IdentityPlan,
     manifest: GraphManifest,
-    step: dict,
+    step: ActorConfig,
     resource: str,
     into_names: list[str],
 ) -> None:
@@ -1082,7 +1057,7 @@ def _check_sibling_classes(
     this class. A guarded derivation never runs for the sibling's documents
     and needs none of this.
     """
-    if step.get("type") != "vertex_router":
+    if not isinstance(step, VertexRouterActorConfig):
         return
     schema = manifest.graph_schema
     assert schema is not None
@@ -1106,16 +1081,16 @@ def _check_sibling_classes(
 
 
 def _warn_on_one_derivation_for_several_members(
-    plan: IdentityPlan, step: dict, resource: str
+    plan: IdentityPlan, step: ActorConfig, resource: str
 ) -> None:
     """Flag a router folding several members onto the class with one derivation.
 
     Legitimate when the members share a key column and a marker convention;
     wrong when each carries its own, which needs a derivation per member.
     """
-    if step.get("type") != "vertex_router":
+    if not isinstance(step, VertexRouterActorConfig):
         return
-    type_map = step.get("type_map") or {}
+    type_map = step.type_map or {}
     routed = sorted(k for k, v in type_map.items() if v == plan.vertex)
     if len(routed) < 2:
         return
@@ -1233,7 +1208,7 @@ def identity_to_ops(
             steps = _producing_steps(manifest, resource, path, plan.vertex)
             class_guards[resource] = _class_guard(steps, plan.vertex)
 
-    additions: dict[str, list[dict[str, Any]]] = {}
+    additions: dict[str, list[TransformActorConfig]] = {}
     for branch in plan.stepped:
         for resource in branch.sources:
             additions.setdefault(resource, []).extend(
@@ -1299,7 +1274,7 @@ def _call_step(
     output: str,
     input_fields: list[str],
     when: dict[str, Any] | None = None,
-) -> dict[str, Any]:
+) -> TransformActorConfig:
     call: dict[str, Any] = {
         "module": module,
         "foo": foo,
@@ -1310,7 +1285,7 @@ def _call_step(
     transform: dict[str, Any] = {"call": call}
     if when is not None:
         transform["when"] = when
-    return {"transform": transform}
+    return TransformActorConfig.model_validate(transform)
 
 
 def _origin_tag(
@@ -1336,7 +1311,7 @@ def _branch_steps(
     class_guard: dict[str, Any] | None,
     sides: SideManifests | None = None,
     origins: Mapping[Side, str] | None = None,
-) -> list[dict[str, Any]]:
+) -> list[TransformActorConfig]:
     """The steps *resource* derives *branch*'s attribute with, in order.
 
     One step per spec, each the single writer of the attribute for the
@@ -1356,7 +1331,7 @@ def _branch_steps(
             _guard_dict(spec.when) if spec.when is not None else class_guard
             for spec in specs
         ]
-    steps: list[dict[str, Any]] = []
+    steps: list[TransformActorConfig] = []
     for spec, guard in zip(specs, guards, strict=True):
         if isinstance(spec, DerivationSpec):
             steps.append(
@@ -1406,11 +1381,9 @@ def _ensure_extracted_fields_op(
     additions: dict[str, list[EnsureExtractedFields]] = {}
     for resource, path in sorted(levels.items()):
         for step in _producing_steps(manifest, resource, path, plan.vertex):
-            if step.get("type") != "vertex_router":
+            if not isinstance(step, VertexRouterActorConfig):
                 continue
-            if step.get("keep_fields") is None and (
-                step.get("extraction_scope") != "mapped_only"
-            ):
+            if step.keep_fields is None and step.extraction_scope != "mapped_only":
                 continue
             additions.setdefault(resource, []).append(
                 EnsureExtractedFields(

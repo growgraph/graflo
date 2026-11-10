@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any
+
+from .models import ActorConfig, EdgeActorConfig, VertexActorConfig
 
 #: ``(target vertex, relation, {target field: record field})``, optionally with a
 #: fourth element, the role the targets are read in (the relation by default).
@@ -20,7 +21,7 @@ def subject_role(relations: set[str]) -> str:
 
 def subject_with_references(
     vertex: str, references: Sequence[Reference]
-) -> list[dict[str, Any]]:
+) -> list[ActorConfig]:
     """Steps that read a record as *vertex* plus an edge per reference.
 
     The subject and the targets of each relation are kept in their own role,
@@ -32,31 +33,29 @@ def subject_with_references(
     these steps sets ``infer_edges=False``.
     """
     if not references:
-        return [{"vertex": vertex}]
+        return [VertexActorConfig(vertex=vertex)]
     resolved = [
         (ref[0], ref[1], ref[2], ref[3] if len(ref) > 3 else ref[1])
         for ref in references
     ]
     subject = subject_role({role for _, _, _, role in resolved})
-    pipeline: list[dict[str, Any]] = [{"vertex": vertex, "role": subject}]
+    pipeline: list[ActorConfig] = [VertexActorConfig(vertex=vertex, role=subject)]
     for target, relation, fields, role in resolved:
         pipeline.append(
-            {
-                "vertex": target,
-                "from": dict(fields),
-                "extraction_scope": "mapped_only",
-                "role": role,
-            }
+            VertexActorConfig(
+                vertex=target,
+                from_doc=dict(fields),
+                extraction_scope="mapped_only",
+                role=role,
+            )
         )
         pipeline.append(
-            {
-                "edge": {
-                    "from": vertex,
-                    "to": target,
-                    "relation": relation,
-                    "match_source": subject,
-                    "match_target": role,
-                }
-            }
+            EdgeActorConfig(
+                source=vertex,
+                target=target,
+                relation=relation,
+                match_source=subject,
+                match_target=role,
+            )
         )
     return pipeline

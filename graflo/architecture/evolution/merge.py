@@ -9,10 +9,10 @@ from typing import TYPE_CHECKING, Any, Literal
 from graflo.architecture.contract.bindings import Bindings
 from graflo.architecture.contract.ingestion import IngestionModel
 from graflo.architecture.contract.ingestion.resource import (
-    _steps_producing,
     pipeline_has_pass_through_router,
     step_finds,
     step_looks_up,
+    steps_producing,
 )
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.contract.provenance import ManifestMetadata
@@ -728,7 +728,7 @@ def _members_produced(
         return side, sorted(
             member
             for member in cluster.members(side)
-            if _steps_producing(pipeline, member, known_vertices=side_vertices)
+            if steps_producing(pipeline, member, known_vertices=side_vertices)
         )
     return None
 
@@ -921,7 +921,7 @@ def _key_owners(
     for cluster, plan in plans:
         for resource in sorted(_referenced_resources(plan)):
             pipeline = pipelines.get(resource)
-            if pipeline is None or not _steps_producing(
+            if pipeline is None or not steps_producing(
                 pipeline, plan.vertex, known_vertices=known
             ):
                 continue
@@ -1082,7 +1082,7 @@ def _pin_member_references(
         for cluster in index.vertices:
             if cluster.into not in rekeyed:
                 continue
-            steps = _steps_producing(
+            steps = steps_producing(
                 resource.pipeline, cluster.into, known_vertices=union_vertices
             )
             if (

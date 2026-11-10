@@ -11,12 +11,18 @@ from typing import Any
 
 from graflo.architecture.contract.ingestion.resource import (
     role_reach,
-    route_discriminator,
-    router_reach,
     step_produces_vertices,
 )
+from graflo.architecture.contract.ingestion.steps import as_actor_step
 from graflo.architecture.contract.ingestion.steps.normalize import (
     normalize_actor_step,
+)
+
+from .pipeline_dicts import (
+    pipeline_from_dicts,
+    reads_pipeline,
+    rewrites_pipeline,
+    router_of,
 )
 
 logger = logging.getLogger(__name__)
@@ -237,7 +243,7 @@ def evolve_router(
     """
     mapping = {old: new for old, new in classes.items() if old != new}
     before = _router_view(payload)
-    reach = router_reach(before, known_vertices=declared)
+    reach = router_of(before).reach(declared)
     known_before = (
         set(declared) if declared is not None else _assumed_declared(before, mapping)
     )
@@ -500,6 +506,17 @@ def _closed_router(payload: dict[str, Any], reach: frozenset[str]) -> dict[str, 
     return out
 
 
+def _route(router: dict[str, Any], raw: Any, declared: set[str]) -> str | None:
+    """Where *router* sends *raw*; a router rewritten to an empty ``vertex_types`` sends nothing.
+
+    A rewrite empties ``vertex_types`` when every class it listed is gone; that
+    router is dropped afterwards and never validated, so it is answered here.
+    """
+    if router.get("vertex_types") == []:
+        return None
+    return router_of(router).route(raw, declared)
+
+
 def _routes_as_before(
     before: dict[str, Any],
     after_payload: dict[str, Any],
@@ -524,8 +541,8 @@ def _routes_as_before(
         if new is not None:
             preimages.setdefault(new, set()).add(old)
     for value in witnesses:
-        was = route_discriminator(before, value, known_before)
-        now = route_discriminator(after, value, known_after)
+        was = _route(before, value, known_before)
+        now = _route(after, value, known_after)
         expected = None if was is None else mapping.get(was, was)
         if now == expected:
             continue
@@ -819,6 +836,7 @@ def _pin_endpoint_selectors_in_step(
             _pin_endpoint_selectors_in_step(nested, selectors, roles)
 
 
+@rewrites_pipeline
 def rewrite_endpoint_selectors_in_pipeline(
     pipeline: list[dict[str, Any]], selectors: dict[str, str]
 ) -> list[dict[str, Any]]:
@@ -833,10 +851,13 @@ def rewrite_endpoint_selectors_in_pipeline(
     out = deepcopy(pipeline)
     if not selectors:
         return out
-    _pin_endpoint_selectors_in_step(out, selectors, role_reach(out))
+    _pin_endpoint_selectors_in_step(
+        out, selectors, role_reach(pipeline_from_dicts(out))
+    )
     return out
 
 
+@rewrites_pipeline
 def close_routers_in_pipeline(
     pipeline: list[dict[str, Any]],
     vocabulary: Collection[str],
@@ -868,6 +889,7 @@ def close_routers_in_pipeline(
     return out
 
 
+@reads_pipeline
 def pass_through_classes(
     pipeline: list[dict[str, Any]], vocabulary: Collection[str]
 ) -> set[str]:
@@ -977,6 +999,7 @@ def _close_routers(
             _close_routers(step[key], vocabulary, declared_properties, pass_through)
 
 
+@rewrites_pipeline
 def mark_lookup_only_in_pipeline(
     pipeline: list[dict[str, Any]], vertex: str
 ) -> list[dict[str, Any]]:
@@ -986,7 +1009,7 @@ def mark_lookup_only_in_pipeline(
     ``vertex_router`` routes an unmapped value as the class name, so it can
     produce *vertex* unless its ``vertex_types`` leaves it out, and a closed
     one (``type_map_only``) can when its table routes to it -- its
-    :func:`router_reach`: such a router gains *vertex* in its ``lookup_only`` list,
+    reach (:meth:`VertexRouterActorConfig.reach`): such a router gains *vertex* in its ``lookup_only`` list,
     and the other classes it routes to are still written. Steps keep their
     authored spelling, at every level.
     """
@@ -1012,7 +1035,7 @@ def _mark_lookup_only(step: Any, vertex: str) -> None:
         nested = step.get("vertex_router")
         payload = nested if isinstance(nested, dict) else step
         current = payload.get("lookup_only")
-        reach = router_reach(normalized)
+        reach = router_of(normalized).reach()
         routes_to_vertex = reach is None or vertex in reach
         if routes_to_vertex and isinstance(current, list):
             if vertex not in current:
@@ -1029,13 +1052,14 @@ def _mark_lookup_only(step: Any, vertex: str) -> None:
             _mark_lookup_only(step[key], vertex)
 
 
+@rewrites_pipeline
 def mark_find_in_pipeline(
     pipeline: list[dict[str, Any]], vertex: str, selector: str
 ) -> list[dict[str, Any]]:
     """*pipeline* with every production of *vertex* found by *selector*.
 
     A ``vertex`` step for it gains ``find: <selector>``; a ``vertex_router``
-    whose :func:`router_reach` includes it gains ``{vertex: selector}`` in its
+    whose reach (:meth:`VertexRouterActorConfig.reach`) includes it gains ``{vertex: selector}`` in its
     ``find`` map, its other classes untouched. ``lookup_only`` is left as is:
     a step that wrote the class now attaches to the node it finds, one that
     only referenced it now references it by *selector*. Steps keep their
@@ -1058,7 +1082,7 @@ def _mark_find(step: Any, vertex: str, selector: str) -> None:
     if step_type == "vertex" and normalized.get("vertex") == vertex:
         step["find"] = selector
     elif step_type == "vertex_router":
-        reach = router_reach(normalized)
+        reach = router_of(normalized).reach()
         payload = router_payload(step)
         if payload is not None and (reach is None or vertex in reach):
             current = payload.get("find")
@@ -1152,6 +1176,7 @@ def _collect_endpoint_selectors_in_step(
             _collect_endpoint_selectors_in_step(nested, out)
 
 
+@reads_pipeline
 def collect_endpoint_selectors(
     pipeline: list[dict[str, Any]],
 ) -> list[tuple[str, str | list[str]]]:
@@ -1227,6 +1252,7 @@ def _retarget_edges_in_step(
             _retarget_edges_in_step(nested, mapping)
 
 
+@rewrites_pipeline
 def rewrite_edge_endpoints_in_pipeline(
     pipeline: list[dict[str, Any]],
     mapping: dict[tuple[str, str, str | None], tuple[str, str]],
@@ -1370,6 +1396,7 @@ def cast_step(x: Any) -> dict[str, Any]:
     return x
 
 
+@rewrites_pipeline
 def rewrite_vertex_names_in_pipeline(
     pipeline: list[dict[str, Any]],
     mapping: dict[str, str],
@@ -1485,7 +1512,7 @@ def _collect_level_vertices(
     out: set[str] = set()
     for step in steps:
         if isinstance(step, dict):
-            out |= step_produces_vertices(step, known_vertices=declared)
+            out |= step_produces_vertices(as_actor_step(step), known_vertices=declared)
     return out
 
 
@@ -1512,7 +1539,7 @@ def _rewrite_router_projections(
     payload = router_payload(out)
     if payload is None:
         return out
-    reach = router_reach(normalize_actor_step(dict(step)), known_vertices=declared)
+    reach = router_of(normalize_actor_step(dict(step))).reach(declared)
     vertex_from_map = dict(payload.get("vertex_from_map") or {})
     shared = _router_shared_from(payload)
     changed = False
@@ -1609,6 +1636,7 @@ def _rewrite_vertex_field_step(
     return out
 
 
+@rewrites_pipeline
 def rewrite_vertex_field_names_in_pipeline(
     pipeline: list[dict[str, Any]],
     renames: dict[str, dict[str, str]],
@@ -1648,6 +1676,7 @@ def rewrite_vertex_field_names_in_pipeline(
     ]
 
 
+@rewrites_pipeline
 def rewrite_remove_vertex_properties_in_pipeline(
     pipeline: list[dict[str, Any]],
     removals: dict[str, set[str]],
@@ -1824,6 +1853,7 @@ def _drop_edge_payloads(
     ]
 
 
+@rewrites_pipeline
 def rewrite_remove_relations_in_pipeline(
     pipeline: list[dict[str, Any]], removed_relations: set[str]
 ) -> list[dict[str, Any]]:
@@ -1893,6 +1923,7 @@ def _prune_relation_map_for_removed_edge_ids(
     }
 
 
+@rewrites_pipeline
 def rewrite_remove_edge_ids_in_pipeline(
     pipeline: list[dict[str, Any]],
     removed_edge_ids: set[tuple[str, str, str | None]],
@@ -2033,6 +2064,7 @@ def _per_edge_reach(
     return reached
 
 
+@rewrites_pipeline
 def rewrite_edge_properties_in_pipeline(
     pipeline: list[dict[str, Any]],
     *,
@@ -2092,6 +2124,7 @@ def rewrite_edge_properties_in_pipeline(
     return [_rewrite_step(step) for step in pipeline if isinstance(step, dict)]
 
 
+@rewrites_pipeline
 def rewrite_remove_vertices_in_pipeline(
     pipeline: list[dict[str, Any]],
     removed: set[str],
@@ -2169,8 +2202,10 @@ def rewrite_remove_vertices_in_pipeline(
         )
         if rewritten is not None
     ]
-    unfilled = set(role_reach(pipeline)) - {
-        role for role, held in role_reach(out).items() if held != frozenset()
+    unfilled = set(role_reach(pipeline_from_dicts(pipeline))) - {
+        role
+        for role, held in role_reach(pipeline_from_dicts(out)).items()
+        if held != frozenset()
     }
     return _drop_edges_on_roles(out, unfilled) if unfilled else out
 
@@ -2245,8 +2280,13 @@ def _drop_selector_classes(payload: dict[str, Any], removed: set[str]) -> None:
                 _drop_selector_classes(link, removed)
 
 
+@reads_pipeline
 def pipeline_mentions_any_vertex(steps: list[dict[str, Any]], names: set[str]) -> bool:
     """Return True if any pipeline step references a vertex name in *names*."""
+    return _mentions_any_vertex(steps, names)
+
+
+def _mentions_any_vertex(steps: list[dict[str, Any]], names: set[str]) -> bool:
     if not names:
         return False
     for step in steps:
@@ -2271,7 +2311,7 @@ def pipeline_mentions_any_vertex(steps: list[dict[str, Any]], names: set[str]) -
                 return True
         elif t == "descend":
             pl = s.get("pipeline") or []
-            if isinstance(pl, list) and pipeline_mentions_any_vertex(
+            if isinstance(pl, list) and _mentions_any_vertex(
                 [cast_step(x) for x in pl if isinstance(x, dict)], names
             ):
                 return True

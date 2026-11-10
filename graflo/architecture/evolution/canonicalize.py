@@ -139,6 +139,26 @@ LIST_ORDER: dict[tuple[str, str], ListOrder] = {
     # contract, and the reason a pipeline is one indivisible slot to three-way
     # merge as well.
     ("ResourceConfig", "pipeline"): PRESERVED,
+    # Inside a step. A pipeline's canonical form is its own
+    # (`ResourceConfig.canonical_field_payload`), taken whole, so these
+    # entries never reach a hash; each is kept as authored.
+    ("DescendActorConfig", "pipeline"): PRESERVED,
+    ("EdgeActorConfig", "links"): PRESERVED,
+    ("EdgeActorConfig", "properties"): PRESERVED,
+    ("EdgeActorConfig", "source_match"): PRESERVED,
+    ("EdgeActorConfig", "target_match"): PRESERVED,
+    ("EdgeActorConfig", "vertex_weights"): PRESERVED,
+    ("EdgeLinkConfig", "source_match"): PRESERVED,
+    ("EdgeLinkConfig", "target_match"): PRESERVED,
+    ("TransformCallConfig", "input"): PRESERVED,
+    ("TransformCallConfig", "input_groups"): PRESERVED,
+    ("TransformCallConfig", "output"): PRESERVED,
+    ("TransformCallConfig", "output_groups"): PRESERVED,
+    ("TransformGuardConfig", "values"): PRESERVED,
+    ("VertexActorConfig", "keep_fields"): PRESERVED,
+    ("VertexRouterActorConfig", "keep_fields"): PRESERVED,
+    ("VertexRouterActorConfig", "lookup_only"): PRESERVED,
+    ("VertexRouterActorConfig", "vertex_types"): PRESERVED,
     # Selector and membership sets.
     ("ResourceConfig", "merge_collections"): SORTED,
     ("ResourceConfig", "infer_edge_only"): SORTED,

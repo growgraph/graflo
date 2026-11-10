@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from pydantic import ValidationError
@@ -16,6 +16,7 @@ from graflo.architecture.contract.ingestion.resource import (
     pipeline_has_unbounded_router,
     role_reach,
 )
+from graflo.architecture.contract.ingestion.steps import ActorConfig
 from graflo.architecture.contract.ingestion.transform import ProtoTransform
 from graflo.architecture.graph_types.context import ResourceCastResult
 from graflo.architecture.graph_types.edge_derivation import EdgeDerivationRegistry
@@ -236,7 +237,7 @@ class ResourceRuntime:
         return self._root.count()
 
     @staticmethod
-    def edge_ids_from_pipeline(pipeline: list[dict[str, Any]]) -> set[EdgeId]:
+    def edge_ids_from_pipeline(pipeline: Sequence[ActorConfig]) -> set[EdgeId]:
         """Collect (source, target, None) for every static EdgeActor in *pipeline*.
 
         A step that also writes its inverse (``emit_inverse``) feeds the reversed

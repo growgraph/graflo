@@ -60,13 +60,14 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from typing import Any
 
 import suthing
 from pydantic import Field as PydanticField
 
 from graflo.architecture.base import ConfigBaseModel
+from graflo.architecture.contract.ingestion.steps import ActorConfig
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.graph_types import EdgeId
 from graflo.architecture.schema.edge import SuperProperty
@@ -769,26 +770,21 @@ def _pipeline_reads(resource: Any) -> set[Slot]:
     return reads
 
 
-def _mapped_fields(pipeline: list[Any]) -> set[tuple[str, str]]:
+def _mapped_fields(pipeline: Sequence[ActorConfig]) -> set[tuple[str, str]]:
     """``(vertex, property)`` for every property a step maps from a named column."""
-    from graflo.architecture.contract.ingestion.steps.normalize import (
-        normalize_actor_step,
+    from graflo.architecture.contract.ingestion.resource import iter_steps
+    from graflo.architecture.contract.ingestion.steps import (
+        VertexActorConfig,
+        VertexRouterActorConfig,
     )
 
     found: set[tuple[str, str]] = set()
-    for raw in pipeline:
-        if not isinstance(raw, dict):
-            continue
-        step = normalize_actor_step(dict(raw))
-        kind = step.get("type")
-        if kind == "vertex" and isinstance(step.get("from"), dict):
-            found |= {(step["vertex"], field) for field in step["from"]}
-        elif kind == "vertex_router" and isinstance(step.get("vertex_from_map"), dict):
-            for vertex, mapping in step["vertex_from_map"].items():
-                if isinstance(mapping, dict):
-                    found |= {(vertex, field) for field in mapping}
-        elif kind == "descend" and isinstance(step.get("pipeline"), list):
-            found |= _mapped_fields(step["pipeline"])
+    for step in iter_steps(pipeline):
+        if isinstance(step, VertexActorConfig) and step.from_doc is not None:
+            found |= {(step.vertex, field) for field in step.from_doc}
+        elif isinstance(step, VertexRouterActorConfig) and step.vertex_from_map:
+            for vertex, mapping in step.vertex_from_map.items():
+                found |= {(vertex, field) for field in mapping}
     return found
 
 

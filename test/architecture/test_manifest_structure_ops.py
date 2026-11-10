@@ -5,6 +5,7 @@ from typing import Any
 import pytest
 
 from graflo.architecture.contract import GraphManifest
+from graflo.architecture.contract.ingestion.steps import EdgeActorConfig
 from graflo.architecture.evolution import (
     AddEdgesOp,
     AddVerticesOp,
@@ -305,12 +306,12 @@ class TestRetargetEdges:
 
         assert out.ingestion_model is not None
         edge_steps = [
-            step["edge"]
+            step
             for step in out.ingestion_model.resources[0].pipeline
-            if "edge" in step
+            if isinstance(step, EdgeActorConfig)
         ]
-        assert edge_steps[0]["from"] == "legal_entity"
-        assert edge_steps[0]["to"] == "asset"
+        assert edge_steps[0].source == "legal_entity"
+        assert edge_steps[0].target == "asset"
 
     def test_a_different_relation_between_the_same_types_is_left_alone(self):
         manifest = _manifest(
@@ -351,12 +352,12 @@ class TestRetargetEdges:
         assert ("party", "asset", "sold") in _edge_ids(out)
         assert out.ingestion_model is not None
         by_relation = {
-            step["edge"]["relation"]: step["edge"]
+            step.relation: step
             for step in out.ingestion_model.resources[0].pipeline
-            if "edge" in step
+            if isinstance(step, EdgeActorConfig)
         }
-        assert by_relation["sold"]["from"] == "party"
-        assert by_relation["holds"]["from"] == "legal_entity"
+        assert by_relation["sold"].source == "party"
+        assert by_relation["holds"].source == "legal_entity"
 
     def test_unknown_edge_is_rejected(self):
         with pytest.raises(ValueError, match="unknown edges"):

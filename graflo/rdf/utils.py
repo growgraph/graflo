@@ -11,9 +11,6 @@ from rdflib import RDF, BNode, Graph, Literal, URIRef
 from rdflib.namespace import XSD
 from suthing import slugify
 
-from graflo.architecture.contract.ingestion.steps.normalize import (
-    normalize_actor_step,
-)
 from graflo.rdf import namespace as ns
 
 
@@ -108,15 +105,6 @@ def add_rdf_list(
             graph.add((current, RDF.rest, nxt))
             current = nxt
     return head
-
-
-def actor_step_type(step: dict[str, Any]) -> str:
-    """Return normalized actor step type."""
-    normalized = normalize_actor_step(dict(step))
-    step_type = normalized.get("type")
-    if not isinstance(step_type, str):
-        raise ValueError(f"Unsupported pipeline step: {step!r}")
-    return step_type
 
 
 def actor_step_class(step_type: str) -> object:

@@ -3,16 +3,27 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Sequence
 from typing import Any
 
-from pydantic import AliasChoices, model_validator
+from pydantic import (
+    AliasChoices,
+    SerializationInfo,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 from pydantic import Field as PydanticField
 
 from graflo.architecture.base import ConfigBaseModel
-from graflo.architecture.contract.ingestion.steps.normalize import (
-    normalize_actor_step,
+from graflo.architecture.contract.ingestion.steps.models import (
+    ActorConfig,
+    DescendActorConfig,
+    EdgeActorConfig,
+    VertexActorConfig,
+    VertexRouterActorConfig,
 )
+from graflo.architecture.contract.ingestion.steps.parse import as_actor_step
 from graflo.architecture.contract.ingestion.sync import ResourceSync
 from graflo.architecture.graph_types.enums import EncodingType
 from graflo.architecture.graph_types.identifiers import EdgeId
@@ -22,88 +33,67 @@ from graflo.architecture.schema.edge import Edge
 logger = logging.getLogger(__name__)
 
 
-def collect_vertex_names_from_pipeline(steps: list[Any]) -> set[str]:
-    """Collect vertex names referenced by pipeline steps (including nested descend)."""
+def collect_vertex_names_from_pipeline(steps: Sequence[ActorConfig]) -> set[str]:
+    """Vertex names the steps reference, at any level."""
     names: set[str] = set()
     for step in steps:
-        if not isinstance(step, dict):
-            continue
-        normalized = normalize_actor_step(dict(step))
-        step_type = normalized.get("type")
-        if step_type == "vertex" and isinstance(normalized.get("vertex"), str):
-            names.add(normalized["vertex"])
-        elif step_type == "vertex_router":
-            names |= _router_table_targets(normalized)
-            vertex_from_map = normalized.get("vertex_from_map")
-            if isinstance(vertex_from_map, dict):
-                names |= {key for key in vertex_from_map if isinstance(key, str)}
-            names |= _router_bound(normalized) or frozenset()
-        elif step_type == "edge":
-            links = normalized.get("links")
-            for payload in [
-                normalized,
-                *(link for link in links or [] if isinstance(link, dict)),
-            ]:
-                for key in ("source", "from", "target", "to"):
-                    if isinstance(endpoint := payload.get(key), str):
-                        names.add(endpoint)
-            vertex_weights = normalized.get("vertex_weights")
-            if isinstance(vertex_weights, list):
-                for weight in vertex_weights:
-                    if isinstance(weight, dict) and isinstance(weight.get("name"), str):
-                        names.add(weight["name"])
-        elif step_type == "descend":
-            sub_pipeline = normalized.get("pipeline")
-            if isinstance(sub_pipeline, list):
-                names |= collect_vertex_names_from_pipeline(sub_pipeline)
+        if isinstance(step, VertexActorConfig):
+            names.add(step.vertex)
+        elif isinstance(step, VertexRouterActorConfig):
+            names |= step.mapped_classes()
+            names |= set(step.vertex_from_map or {})
+            names |= set(step.vertex_types or ())
+        elif isinstance(step, EdgeActorConfig):
+            for intent in step.intents():
+                names |= {v for v in (intent.source, intent.target) if v is not None}
+            for weight in step.vertex_weights:
+                name = weight.get("name") if isinstance(weight, dict) else None
+                if isinstance(name, str):
+                    names.add(name)
+        elif isinstance(step, DescendActorConfig):
+            names |= collect_vertex_names_from_pipeline(step.pipeline)
     return names
 
 
 def step_produces_vertices(
-    step: dict[str, Any], *, known_vertices: Collection[str] | None = None
+    step: ActorConfig, *, known_vertices: Collection[str] | None = None
 ) -> set[str]:
     """Vertex names a single (non-recursive) actor step *produces*.
 
     Production, not reference: an ``edge`` step names endpoints it looks up, so
-    it is not counted. A ``vertex_router`` produces its :func:`router_reach`.
-    For an unbounded router without *known_vertices* that is unknown, and the
-    answer is its *explicit* targets -- the classes its ``type_map`` selects.
-    A ``vertex_from_map`` key is not one: it projects a class the router
-    reaches, and naming it does not make the router produce it.
+    it is not counted. A ``vertex_router`` produces its reach
+    (:meth:`VertexRouterActorConfig.reach`). For an unbounded router without
+    *known_vertices* that is unknown, and the answer is its *explicit* targets
+    -- the classes its ``type_map`` selects. A ``vertex_from_map`` key is not
+    one: it projects a class the router reaches, and naming it does not make
+    the router produce it.
     """
-    normalized = normalize_actor_step(dict(step))
-    step_type = normalized.get("type")
-    if step_type == "vertex" and isinstance(normalized.get("vertex"), str):
-        return {normalized["vertex"]}
-    if step_type == "vertex_router":
-        reach = router_reach(normalized, known_vertices=known_vertices)
-        if reach is None:
-            return _router_table_targets(normalized)
-        return set(reach)
+    if isinstance(step, VertexActorConfig):
+        return {step.vertex}
+    if isinstance(step, VertexRouterActorConfig):
+        reach = step.reach(known_vertices)
+        return set(step.mapped_classes() if reach is None else reach)
     return set()
 
 
-def step_looks_up(step: dict[str, Any], vertex: str) -> bool:
+def step_looks_up(step: ActorConfig, vertex: str) -> bool:
     """Whether *step* only looks *vertex* up -- matches it, never writes it.
 
     A ``vertex`` step says so with ``lookup_only: true``; a ``vertex_router``
-    with ``lookup_only: true`` (every class it routes to) or a list naming
-    *vertex*.
+    with ``lookup_only: true`` (every class it routes to, within its
+    ``vertex_types``) or a list naming *vertex*.
     """
-    normalized = normalize_actor_step(dict(step))
-    flag = normalized.get("lookup_only")
-    if normalized.get("type") == "vertex":
-        return normalized.get("vertex") == vertex and flag is True
-    if normalized.get("type") == "vertex_router":
-        if flag is True:
-            bound = _router_bound(normalized)
-            return bound is None or vertex in bound
-        return isinstance(flag, list) and vertex in flag
+    if isinstance(step, VertexActorConfig):
+        return step.vertex == vertex and step.lookup_only
+    if isinstance(step, VertexRouterActorConfig):
+        if step.lookup_only is True:
+            return step.admits(vertex)
+        return isinstance(step.lookup_only, list) and vertex in step.lookup_only
     return False
 
 
 def step_finds(
-    step: dict[str, Any],
+    step: ActorConfig,
     vertex: str,
     *,
     known_vertices: Collection[str] | None = None,
@@ -111,46 +101,35 @@ def step_finds(
     """The secondary identity *step* finds *vertex* by; ``None`` when it does not.
 
     A ``vertex`` step names it in ``find``; a ``vertex_router`` in its per-class
-    ``find`` map, for a class the router can reach (its :func:`router_reach`
-    over *known_vertices*, as in :func:`step_produces_vertices`).
+    ``find`` map, for a class the router can reach over *known_vertices*.
     """
-    normalized = normalize_actor_step(dict(step))
-    if normalized.get("type") == "vertex":
-        selector = normalized.get("find")
-        if normalized.get("vertex") == vertex and isinstance(selector, str):
-            return selector
-        return None
-    if normalized.get("type") == "vertex_router":
-        table = normalized.get("find")
-        selector = table.get(vertex) if isinstance(table, dict) else None
-        reach = router_reach(normalized, known_vertices=known_vertices)
-        if isinstance(selector, str) and (reach is None or vertex in reach):
+    if isinstance(step, VertexActorConfig):
+        return step.find if step.vertex == vertex else None
+    if isinstance(step, VertexRouterActorConfig):
+        selector = step.find_for(vertex)
+        reach = step.reach(known_vertices)
+        if selector is not None and (reach is None or vertex in reach):
             return selector
     return None
 
 
-def _steps_producing(
-    steps: Sequence[Any], vertex: str, *, known_vertices: Collection[str]
-) -> list[dict[str, Any]]:
-    """Every step at any level of *steps* that produces *vertex*, normalized."""
-    out: list[dict[str, Any]] = []
+def steps_producing(
+    steps: Sequence[ActorConfig], vertex: str, *, known_vertices: Collection[str]
+) -> list[ActorConfig]:
+    """Every step at any level of *steps* that produces *vertex*."""
+    out: list[ActorConfig] = []
     for step in steps:
-        if not isinstance(step, dict):
-            continue
-        normalized = normalize_actor_step(dict(step))
-        if vertex in step_produces_vertices(normalized, known_vertices=known_vertices):
-            out.append(normalized)
-        if normalized.get("type") == "descend":
-            nested = normalized.get("pipeline")
-            if isinstance(nested, list):
-                out.extend(
-                    _steps_producing(nested, vertex, known_vertices=known_vertices)
-                )
+        if vertex in step_produces_vertices(step, known_vertices=known_vertices):
+            out.append(step)
+        if isinstance(step, DescendActorConfig):
+            out.extend(
+                steps_producing(step.pipeline, vertex, known_vertices=known_vertices)
+            )
     return out
 
 
 def pipeline_find_selectors(
-    pipeline: Any, *, known_vertices: Collection[str] | None = None
+    pipeline: Sequence[ActorConfig], *, known_vertices: Collection[str] | None = None
 ) -> dict[str, str]:
     """The secondary identity each class is found by, over every level of *pipeline*.
 
@@ -162,24 +141,13 @@ def pipeline_find_selectors(
     """
     found: dict[str, set[str]] = {}
     plain: set[str] = set()
-
-    def walk(level: Any) -> None:
-        if not isinstance(level, list):
-            return
-        for item in level:
-            if not isinstance(item, dict):
-                continue
-            step = normalize_actor_step(dict(item))
-            for vertex in step_produces_vertices(step, known_vertices=known_vertices):
-                selector = step_finds(step, vertex, known_vertices=known_vertices)
-                if selector is None:
-                    plain.add(vertex)
-                else:
-                    found.setdefault(vertex, set()).add(selector)
-            if step.get("type") == "descend":
-                walk(step.get("pipeline"))
-
-    walk(pipeline)
+    for step in iter_steps(pipeline):
+        for vertex in step_produces_vertices(step, known_vertices=known_vertices):
+            selector = step_finds(step, vertex, known_vertices=known_vertices)
+            if selector is None:
+                plain.add(vertex)
+            else:
+                found.setdefault(vertex, set()).add(selector)
     for vertex, selectors in sorted(found.items()):
         if len(selectors) > 1:
             raise ValueError(
@@ -195,77 +163,22 @@ def pipeline_find_selectors(
     return {vertex: next(iter(sel)) for vertex, sel in found.items()}
 
 
-def route_discriminator(
-    step: dict[str, Any], raw: Any, declared: Collection[str]
-) -> str | None:
-    """The class a ``vertex_router`` sends a record with discriminator *raw* to.
-
-    The runtime's rule: a closed router (``type_map_only``) skips a value its
-    table lacks; ``type_map`` translates, and an unmapped value stands for the
-    class of that name; a class *declared* lacks, or ``vertex_types``
-    excludes, is skipped. ``None`` for a skipped record.
-    """
-    normalized = normalize_actor_step(dict(step))
-    table = _router_table(normalized)
-    if normalized.get("type_map_only") and raw not in table:
-        return None
-    vertex = table.get(raw, raw)
-    if not isinstance(vertex, str) or vertex not in declared:
-        return None
-    bound = _router_bound(normalized)
-    if bound is not None and vertex not in bound:
-        return None
-    return vertex
+def iter_steps(pipeline: Sequence[ActorConfig]) -> list[ActorConfig]:
+    """Every step of *pipeline*, depth first, each ``descend`` before its children."""
+    out: list[ActorConfig] = []
+    for step in pipeline:
+        out.append(step)
+        if isinstance(step, DescendActorConfig):
+            out.extend(iter_steps(step.pipeline))
+    return out
 
 
-def router_reach(
-    step: dict[str, Any], *, known_vertices: Collection[str] | None = None
-) -> frozenset[str] | None:
-    """The classes a ``vertex_router`` step can produce; ``None`` for any class.
-
-    A closed router (``type_map_only``) reaches the classes its table names.
-    An open one also routes an unmapped value as the class of that name, so it
-    reaches every class *known_vertices* declares -- or, without them, any
-    class. ``vertex_types`` bounds either: an open router with it reaches
-    exactly the listed classes, known or not.
-    """
-    normalized = normalize_actor_step(dict(step))
-    if normalized.get("type") != "vertex_router":
-        return frozenset()
-    bound = _router_bound(normalized)
-    if normalized.get("type_map_only"):
-        reach = frozenset(_router_table_targets(normalized))
-        return reach if bound is None else reach & bound
-    if bound is not None:
-        return bound
-    if known_vertices is None:
-        return None
-    return frozenset(_router_table_targets(normalized)) | frozenset(known_vertices)
-
-
-def is_pass_through_router(step: dict[str, Any]) -> bool:
-    """Whether *step* is a ``vertex_router`` routing an unmapped value as itself."""
-    normalized = normalize_actor_step(dict(step))
-    return normalized.get("type") == "vertex_router" and not normalized.get(
-        "type_map_only"
-    )
-
-
-def is_unbounded_router(step: dict[str, Any]) -> bool:
-    """Whether *step* is a ``vertex_router`` that can produce any declared class.
-
-    It passes unmapped values through and has no ``vertex_types``.
-    """
-    normalized = normalize_actor_step(dict(step))
-    return is_pass_through_router(normalized) and _router_bound(normalized) is None
-
-
-def role_reach(pipeline: Any) -> dict[str, frozenset[str] | None]:
+def role_reach(pipeline: Sequence[ActorConfig]) -> dict[str, frozenset[str] | None]:
     """What each accumulator role in *pipeline* can hold, at any level.
 
     A ``vertex`` step with a ``role`` holds its class; a router's role (its
-    ``role``, else its ``type_field``) holds its :func:`router_reach`, ``None``
-    when that is any class. Several producers of one role add up.
+    ``role``, else its ``type_field``) holds its reach, ``None`` when that is
+    any class. Several producers of one role add up.
     """
     roles: dict[str, frozenset[str] | None] = {}
 
@@ -276,192 +189,36 @@ def role_reach(pipeline: Any) -> dict[str, frozenset[str] | None]:
             None if classes is None else roles.get(role, frozenset()) | classes
         )
 
-    def walk(item: Any) -> None:
-        if isinstance(item, list):
-            for sub in item:
-                walk(sub)
-            return
-        if not isinstance(item, dict):
-            return
-        step = normalize_actor_step(dict(item))
-        step_type = step.get("type")
-        if step_type == "vertex" and isinstance(step.get("role"), str):
-            vertex = step.get("vertex")
-            hold(step["role"], frozenset({vertex} if isinstance(vertex, str) else ()))
-        elif step_type == "vertex_router":
-            role = step.get("role") or step.get("type_field")
-            if isinstance(role, str):
-                hold(role, router_reach(step))
-        elif step_type == "descend":
-            walk(step.get("pipeline"))
-
-    walk(pipeline)
+    for step in iter_steps(pipeline):
+        if isinstance(step, VertexActorConfig) and step.role is not None:
+            hold(step.role, frozenset({step.vertex}))
+        elif isinstance(step, VertexRouterActorConfig):
+            hold(step.slot, step.reach())
     return roles
 
 
-def transform_writes(step: Mapping[str, Any]) -> set[str] | None:
-    """Fields a normalized transform step may write; ``None`` when it does not say."""
-    writes: set[str] = set()
-    rename = step.get("rename")
-    if isinstance(rename, dict):
-        writes |= {name for name in rename.values() if isinstance(name, str)}
-    call = step.get("call")
-    if isinstance(call, dict):
-        output = call.get("output")
-        if isinstance(output, str):
-            writes.add(output)
-        elif isinstance(output, list):
-            writes |= {name for name in output if isinstance(name, str)}
-        else:
-            return None
-    return writes
+def _level_produces(level: Sequence[ActorConfig], vertex: str) -> bool:
+    return any(vertex in step_produces_vertices(step) for step in level)
 
 
-def level_rewrites(level: Sequence[Any]) -> set[str] | None:
-    """Fields the transforms of one pipeline level may write; ``None`` if one does not say.
-
-    Every transform of a level runs before the level's routers, whatever its
-    place in the list, so all of them count.
-    """
-    writes: set[str] = set()
-    for item in level:
-        if not isinstance(item, dict):
-            continue
-        step = normalize_actor_step(dict(item))
-        if step.get("type") != "transform":
-            continue
-        step_writes = transform_writes(step)
-        if step_writes is None:
-            return None
-        writes |= step_writes
-    return writes
-
-
-def router_accepted_values(
-    step: dict[str, Any], declared: Collection[str]
-) -> frozenset[Any]:
-    """Every discriminator value a ``vertex_router`` sends to some class.
-
-    An unmapped value routes as the class of that name, so the values that
-    can route are the ``type_map`` keys and the *declared* class names; each
-    is kept when :func:`route_discriminator` routes it.
-    """
-    normalized = normalize_actor_step(dict(step))
-    candidates = [*_router_table(normalized), *declared]
-    return frozenset(
-        raw
-        for raw in candidates
-        if route_discriminator(normalized, raw, declared) is not None
+def _level_has_unbounded_router(level: Sequence[ActorConfig]) -> bool:
+    return any(
+        isinstance(step, VertexRouterActorConfig) and step.unbounded for step in level
     )
 
 
-def router_keeps_subset(pipeline: Sequence[Any]) -> bool:
-    """Whether a top-level router of *pipeline* is closed or bounded by ``vertex_types``."""
-    for item in pipeline:
-        if not isinstance(item, dict):
-            continue
-        step = normalize_actor_step(dict(item))
-        if step.get("type") == "vertex_router" and not is_unbounded_router(step):
-            return True
-    return False
-
-
-def routed_row_condition(
-    pipeline: Sequence[Any], declared: Collection[str]
-) -> dict[str, frozenset[Any]] | None:
-    """The rows *pipeline* produces anything from, as routed values per field.
-
-    When every top-level step is a transform, a ``vertex_router``, or an
-    ``edge`` between router roles, a row produces something only if a router
-    routes its ``type_field`` value. The result maps each such field to the
-    values routed (routers on one field add up); a row counts when any field
-    holds one of its values. A field no value routes on is left out, so ``{}``
-    means no row produces anything.
-
-    ``None`` when a row may produce something without a router: another kind
-    of top-level step, an edge end that is not a router role, or a transform
-    of the level that may write a router's ``type_field``.
-    """
-    steps = [
-        normalize_actor_step(dict(item)) if isinstance(item, dict) else item
-        for item in pipeline
-    ]
-    if any(not isinstance(step, dict) for step in steps):
-        return None
-    routers = [step for step in steps if step.get("type") == "vertex_router"]
-    if not routers:
-        return None
-    rewritten = level_rewrites(steps)
-    roles = {step.get("role") or step.get("type_field") for step in routers}
-    values: dict[str, set[Any]] = {}
-    for step in steps:
-        kind = step.get("type")
-        if kind == "transform":
-            continue
-        if kind == "edge":
-            if not _edge_ends_in_roles(step, roles):
-                return None
-            continue
-        if kind != "vertex_router":
-            return None
-        field = step.get("type_field")
-        if not isinstance(field, str) or rewritten is None or field in rewritten:
-            return None
-        values.setdefault(field, set()).update(router_accepted_values(step, declared))
-    return {field: frozenset(vals) for field, vals in values.items() if vals}
-
-
-def _edge_ends_in_roles(step: Mapping[str, Any], roles: Collection[Any]) -> bool:
-    """Whether every end of a normalized edge step is one of *roles*."""
-    links = step.get("links")
-    intents = links if isinstance(links, list) else [step]
-    for intent in intents:
-        if not isinstance(intent, dict):
-            return False
-        for side, alias in (("source", "from"), ("target", "to")):
-            if intent.get(side) is not None or intent.get(alias) is not None:
-                return False
-            role = intent.get(f"{side}_role") or intent.get(f"{side}_type_field")
-            if role not in roles:
-                return False
-    return True
-
-
-def _router_table(normalized: dict[str, Any]) -> dict[Any, Any]:
-    type_map = normalized.get("type_map")
-    return type_map if isinstance(type_map, dict) else {}
-
-
-def _router_bound(normalized: dict[str, Any]) -> frozenset[str] | None:
-    bound = normalized.get("vertex_types")
-    if not isinstance(bound, list):
-        return None
-    return frozenset(v for v in bound if isinstance(v, str))
-
-
-def _router_table_targets(normalized: dict[str, Any]) -> set[str]:
-    return {v for v in _router_table(normalized).values() if isinstance(v, str)}
-
-
-def _level_produces(level: list[Any], vertex: str) -> bool:
+def _level_has_pass_through_router(level: Sequence[ActorConfig]) -> bool:
     return any(
-        isinstance(step, dict) and vertex in step_produces_vertices(step)
+        isinstance(step, VertexRouterActorConfig) and step.passes_through
         for step in level
     )
 
 
-def _level_has_unbounded_router(level: list[Any]) -> bool:
-    return any(isinstance(step, dict) and is_unbounded_router(step) for step in level)
-
-
-def _level_has_pass_through_router(level: list[Any]) -> bool:
-    return any(
-        isinstance(step, dict) and is_pass_through_router(step) for step in level
-    )
-
-
 def find_vertex_producing_levels(
-    steps: list[Any], vertex: str, *, known_vertices: Collection[str] | None = None
+    steps: Sequence[ActorConfig],
+    vertex: str,
+    *,
+    known_vertices: Collection[str] | None = None,
 ) -> list[list[int]]:
     """Index paths of every pipeline level with a step producing *vertex*.
 
@@ -489,7 +246,7 @@ def find_vertex_producing_levels(
     return _walk_levels(steps, _level_has_unbounded_router)
 
 
-def pipeline_has_unbounded_router(steps: list[Any]) -> bool:
+def pipeline_has_unbounded_router(steps: Sequence[ActorConfig]) -> bool:
     """Whether any level of *steps* holds a router that can produce any class.
 
     An unbounded router routes an unmapped discriminator value as the class
@@ -497,79 +254,58 @@ def pipeline_has_unbounded_router(steps: list[Any]) -> bool:
     — not only the names its steps state. Anything scoping a schema to a
     resource by the names its pipeline mentions must widen to every class when
     this is true, or the router silently drops each record whose class it did
-    not name. A closed or bounded router's classes are its
-    :func:`router_reach`, which the pipeline names.
+    not name. A closed or bounded router's classes are its reach, which the
+    pipeline names.
     """
     return bool(_walk_levels(steps, _level_has_unbounded_router))
 
 
-def pipeline_has_pass_through_router(steps: list[Any]) -> bool:
+def pipeline_has_pass_through_router(steps: Sequence[ActorConfig]) -> bool:
     """Whether any level of *steps* holds a router routing unmapped values as-is."""
     return bool(_walk_levels(steps, _level_has_pass_through_router))
 
 
+def pipeline_level(
+    steps: Sequence[ActorConfig], path: Sequence[int]
+) -> list[ActorConfig]:
+    """The steps of the level *path* addresses (see :func:`find_vertex_producing_levels`).
+
+    Raises:
+        ValueError: An index on the way is out of range or is not a ``descend``.
+    """
+    level = list(steps)
+    for depth, index in enumerate(path):
+        walked = list(path[:depth]) or "root"
+        if not 0 <= index < len(level):
+            raise ValueError(
+                f"pipeline path {list(path)} does not resolve: index {index} is out "
+                f"of range at level {walked}"
+            )
+        step = level[index]
+        if not isinstance(step, DescendActorConfig):
+            raise ValueError(
+                f"pipeline path {list(path)} does not resolve: step {index} at "
+                f"level {walked} is a {step.type!r} step, not a descend — only a "
+                "descend owns a nested level"
+            )
+        level = list(step.pipeline)
+    return level
+
+
 def _walk_levels(
-    steps: list[Any], matches: Callable[[list[Any]], bool]
+    steps: Sequence[ActorConfig], matches: Callable[[Sequence[ActorConfig]], bool]
 ) -> list[list[int]]:
     found: list[list[int]] = []
 
-    def walk(level: list[Any], path: list[int]) -> None:
+    def walk(level: Sequence[ActorConfig], path: list[int]) -> None:
         if matches(level):
             found.append(list(path))
         for index, step in enumerate(level):
-            if not isinstance(step, dict):
-                continue
-            normalized = normalize_actor_step(dict(step))
-            if normalized.get("type") != "descend":
-                continue
-            sub_pipeline = normalized.get("pipeline")
-            if isinstance(sub_pipeline, list):
-                walk(sub_pipeline, [*path, index])
+            if isinstance(step, DescendActorConfig):
+                walk(step.pipeline, [*path, index])
 
     walk(steps, [])
     return found
-
-
-def resolve_pipeline_level(steps: list[Any], path: list[int]) -> list[Any]:
-    """Return the live step list *path* addresses inside *steps*.
-
-    Mutating the returned list mutates *steps*. Getting that guarantee requires
-    rewriting each walked ``descend`` step into its normalized form and storing
-    it back: the shorthand spellings (``{descend: {apply: [...]}}``, a bare
-    ``{key, apply}``) keep their sub-steps under a different key, so returning
-    whatever ``normalize_actor_step`` built would hand back a list nothing
-    holds — and an append into it would vanish without a word. Steps off the
-    path, and the root level itself, are left exactly as authored.
-
-    Raises when the path does not resolve. Every index on the way must address
-    a ``descend`` step; those are the only steps that own a nested level.
-    """
-    level = steps
-    for depth, index in enumerate(path):
-        walked = path[:depth] or "root"
-        if not 0 <= index < len(level):
-            raise ValueError(
-                f"pipeline path {path} does not resolve: index {index} is out of "
-                f"range at level {walked}"
-            )
-        step = level[index]
-        if not isinstance(step, dict):
-            raise ValueError(
-                f"pipeline path {path} does not resolve: step {index} at level "
-                f"{walked} is not an actor step"
-            )
-        normalized = normalize_actor_step(dict(step))
-        if normalized.get("type") != "descend":
-            raise ValueError(
-                f"pipeline path {path} does not resolve: step {index} at level "
-                f"{walked} is a {normalized.get('type')!r} step, not a descend — "
-                "only a descend owns a nested level"
-            )
-        sub_pipeline = normalized.get("pipeline")
-        normalized["pipeline"] = sub_pipeline if isinstance(sub_pipeline, list) else []
-        level[index] = normalized
-        level = normalized["pipeline"]
-    return level
 
 
 class EdgeInferSpec(ConfigBaseModel):
@@ -640,10 +376,12 @@ class ResourceConfig(ConfigBaseModel):
         ...,
         description="Name of the resource (e.g. table or file identifier).",
     )
-    pipeline: list[dict[str, Any]] = PydanticField(
+    pipeline: list[ActorConfig] = PydanticField(
         ...,
-        description="Pipeline of actor steps to apply in sequence (vertex, edge, transform, descend). "
-        'Each step is a dict, e.g. {"vertex": "user"} or {"edge": {"from": "a", "to": "b"}}.',
+        description="Pipeline of actor steps to apply in sequence (vertex, edge, transform, "
+        "descend, vertex_router). Input accepts every step spelling, e.g. "
+        '{"vertex": "user"} or {"edge": {"from": "a", "to": "b"}}; a step that is not '
+        "valid on its own is refused. Dumped in that compact shorthand.",
         validation_alias=AliasChoices("pipeline", "apply"),
     )
     encoding: EncodingType = PydanticField(
@@ -717,6 +455,19 @@ class ResourceConfig(ConfigBaseModel):
         ),
     )
 
+    @field_validator("pipeline", mode="before")
+    @classmethod
+    def _steps_as_models(cls, value: Any) -> Any:
+        if not isinstance(value, list):
+            return value
+        return [as_actor_step(step) for step in value]
+
+    @field_serializer("pipeline", mode="plain")
+    def _dump_steps_as_shorthand(
+        self, pipeline: list[ActorConfig], info: SerializationInfo
+    ) -> list[dict[str, Any]]:
+        return [step.to_shorthand(info.mode) for step in pipeline]
+
     @model_validator(mode="after")
     def _validate_policy(self) -> ResourceConfig:
         if self.infer_edge_only and self.infer_edge_except:
@@ -758,11 +509,10 @@ class ResourceConfig(ConfigBaseModel):
         """
         if field_name != "pipeline":
             return None
-        from graflo.architecture.contract.ingestion.steps.parse import (
-            canonical_actor_step,
-        )
-
-        return [canonical_actor_step(step) for step in self.pipeline]
+        return [
+            {"type": step.type, **step.to_minimal_canonical_dict()}
+            for step in self.pipeline
+        ]
 
     def pipeline_actor_count(self) -> int:
         """Count actors in the pipeline without binding schema context."""

@@ -80,7 +80,7 @@ class TestRdfInferenceManager:
         )
 
         person = next(r for r in ingestion_model.resources if r.name == "Person")
-        assert person.pipeline == [
+        assert [step.to_shorthand() for step in person.pipeline] == [
             {"vertex": "Person", "role": "subject"},
             {
                 "vertex": "Person",
@@ -118,7 +118,9 @@ class TestRdfInferenceManager:
         organization = next(
             r for r in ingestion_model.resources if r.name == "Organization"
         )
-        assert organization.pipeline == [{"vertex": "Organization"}]
+        assert [step.to_shorthand() for step in organization.pipeline] == [
+            {"vertex": "Organization"}
+        ]
 
     def test_the_subject_role_avoids_a_relation_of_the_same_name(self, tmp_path: Path):
         _, ingestion_model = _infer_all(
@@ -133,7 +135,10 @@ ex:subject a owl:ObjectProperty ; rdfs:domain ex:Book ; rdfs:range ex:Topic .
         book = ingestion_model.fetch_resource("Book")
         entities = book({"_uri": EX + "b1", "_key": "b1", "subject": EX + "t1"})
 
-        assert book.config.pipeline[0] == {"vertex": "Book", "role": "_subject"}
+        assert book.config.pipeline[0].to_shorthand() == {
+            "vertex": "Book",
+            "role": "_subject",
+        }
         assert _edges(entities, "Book", "Topic", "subject") == [("b1", "t1")]
 
     def test_anonymous_classes_are_not_vertices(self, tmp_path: Path):

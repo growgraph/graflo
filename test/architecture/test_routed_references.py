@@ -17,6 +17,12 @@ from typing import Any
 
 import pytest
 
+from graflo.architecture.contract.ingestion.steps import as_actor_step
+from graflo.architecture.contract.ingestion.steps.models import (
+    EdgeActorConfig,
+    VertexActorConfig,
+    VertexRouterActorConfig,
+)
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.hq.document_caster import DocumentCaster
 from graflo.hq.ingestion_parameters import IngestionParams
@@ -258,14 +264,12 @@ def test_cast_logs_what_it_prunes_for_want_of_an_identity(
     assert "'ClassA'" in caplog.text and "['x_id']" in caplog.text
 
 
-def _router_and_edge(manifest: GraphManifest) -> tuple[dict[str, Any], dict[str, Any]]:
-    steps = [
-        s
-        for s in manifest.require_ingestion_model().resources[0].pipeline
-        if isinstance(s, dict)
-    ]
-    router = next(s for s in steps if s.get("type") == "vertex_router")
-    edge = next(s for s in steps if s.get("type") == "edge")
+def _router_and_edge(
+    manifest: GraphManifest,
+) -> tuple[VertexRouterActorConfig, EdgeActorConfig]:
+    steps = manifest.require_ingestion_model().resources[0].pipeline
+    router = next(s for s in steps if isinstance(s, VertexRouterActorConfig))
+    edge = next(s for s in steps if isinstance(s, EdgeActorConfig))
     return router, edge
 
 
@@ -286,8 +290,8 @@ class TestEvolutionKeepsRoutedReferences:
             self._referencing(), [RenameVerticesOp(renames={"ClassA": "Asset"})]
         )
         router, edge = _router_and_edge(renamed)
-        assert router["lookup_only"] == ["Asset"]
-        assert edge["target_match"] == {"Asset": "by_code"}
+        assert router.lookup_only == ["Asset"]
+        assert edge.target_match == {"Asset": "by_code"}
 
     def test_a_removal_drops_the_class_from_both(self) -> None:
         from graflo.architecture.evolution import RemoveVerticesOp, apply_evolution
@@ -296,8 +300,8 @@ class TestEvolutionKeepsRoutedReferences:
             self._referencing(), [RemoveVerticesOp(names=["ClassA"])]
         )
         router, edge = _router_and_edge(trimmed)
-        assert not router.get("lookup_only")
-        assert not edge.get("target_match")
+        assert not router.lookup_only
+        assert not edge.target_match
 
     def test_a_secondary_a_per_class_selector_uses_is_not_removed(self) -> None:
         from graflo.architecture.evolution import (
@@ -330,7 +334,7 @@ class TestEvolutionKeepsRoutedReferences:
             self._finding(), [RenameVerticesOp(renames={"ClassA": "Asset"})]
         )
         router, _edge = _router_and_edge(renamed)
-        assert router["find"] == {"Asset": "by_code"}
+        assert router.find == {"Asset": "by_code"}
 
     def test_a_rename_keeps_a_vertex_steps_find(self) -> None:
         from graflo.architecture.evolution import RenameVerticesOp, apply_evolution
@@ -339,7 +343,7 @@ class TestEvolutionKeepsRoutedReferences:
             self._vertex_finding(), [RenameVerticesOp(renames={"ClassA": "Asset"})]
         )
         step = renamed.require_ingestion_model().resources[0].pipeline[0]
-        assert step == {"vertex": "Asset", "find": "by_code"}
+        assert step.to_shorthand() == {"vertex": "Asset", "find": "by_code"}
 
     def test_renaming_the_secondarys_field_keeps_find_working(self) -> None:
         from graflo.architecture.evolution import (
@@ -352,7 +356,7 @@ class TestEvolutionKeepsRoutedReferences:
             [RenameVertexPropertiesOp(renames={"ClassA": {"code": "asset_code"}})],
         )
         router, _edge = _router_and_edge(renamed)
-        assert router["find"] == {"ClassA": "by_code"}
+        assert router.find == {"ClassA": "by_code"}
         assert _cast(renamed).attached["ClassA"] == [{"asset_code": "K1"}]
 
     def test_a_removal_drops_the_class_from_find(self) -> None:
@@ -360,7 +364,7 @@ class TestEvolutionKeepsRoutedReferences:
 
         trimmed = apply_evolution(self._finding(), [RemoveVerticesOp(names=["ClassA"])])
         router, _edge = _router_and_edge(trimmed)
-        assert not router.get("find")
+        assert not router.find
 
     @pytest.mark.parametrize("manifest", ["_finding", "_vertex_finding"])
     def test_a_secondary_a_find_uses_is_not_removed(self, manifest: str) -> None:
@@ -413,7 +417,7 @@ class TestEvolutionKeepsRoutedReferences:
             ],
         )
         _router, edge = _router_and_edge(replaced)
-        assert edge["target_match"] == {"ClassA": "by_x_id"}
+        assert edge.target_match == {"ClassA": "by_x_id"}
 
 
 #: Maps ``blaId`` into every routed class's key, so a routed row is writable.
@@ -456,8 +460,10 @@ class TestClosedRouters:
         )
 
         known = {"ClassA", "ClassC", "WorkOrder"}
-        opened = {**KEYED_ROUTER, "type_map": {"c": "ClassC"}}
-        closed = {**opened, "type_map_only": True}
+        opened = as_actor_step({**KEYED_ROUTER, "type_map": {"c": "ClassC"}})
+        closed = as_actor_step(
+            {**KEYED_ROUTER, "type_map": {"c": "ClassC"}, "type_map_only": True}
+        )
         assert step_produces_vertices(opened, known_vertices=known) == known
         assert step_produces_vertices(closed, known_vertices=known) == {"ClassC"}
         assert find_vertex_producing_levels(
@@ -482,7 +488,7 @@ class TestClosedRouters:
             closed, [RenameVerticesOp(renames={"ClassA": "Asset"})]
         )
         router, _edge = _router_and_edge(renamed)
-        assert router["type_map"] == {"a": "Asset", "c": "ClassC"}
+        assert router.type_map == {"a": "Asset", "c": "ClassC"}
 
     def test_a_removal_that_empties_the_table_drops_the_router_and_its_edges(
         self,
@@ -495,4 +501,6 @@ class TestClosedRouters:
         )
         trimmed = apply_evolution(closed, [RemoveVerticesOp(names=["ClassA"])])
         steps = trimmed.require_ingestion_model().resources[0].pipeline
-        assert [s.get("vertex") for s in steps] == ["WorkOrder"]
+        assert [
+            s.vertex if isinstance(s, VertexActorConfig) else s.type for s in steps
+        ] == ["WorkOrder"]

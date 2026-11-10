@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any, Never
+from typing import Any, Never, cast
 
 from pydantic import ValidationError
 
 from .models import (
+    ACTOR_CONFIG_TYPES,
     ActorConfig,
     DescendActorConfig,
     _actor_config_adapter,
@@ -33,16 +34,17 @@ _STEP_MODEL_NAMES = {
 }
 
 
-def _broken_rules(err: ValidationError, model_name: str) -> str:
-    """What *model_name* objected to, in the validator's own words.
+def _broken_rules(err: ValidationError, step_type: str, model_name: str) -> str:
+    """What the step's own model objected to, in the validator's own words.
 
-    A step is validated against every step kind, so *err* also carries the
-    complaints of the kinds it is not; only *model_name*'s say what to change.
+    The discriminated union reports a step under its ``type`` tag; a step
+    validated against every kind reports each under the model's name. Only the
+    step's own kind says what to change.
     """
     rules: dict[str, None] = {}
     for error in err.errors():
         loc = error["loc"]
-        if not loc or model_name not in str(loc[0]):
+        if not loc or (loc[0] != step_type and model_name not in str(loc[0])):
             continue
         message = str(error["msg"]).rstrip(".")
         if error["type"] == "value_error":
@@ -78,7 +80,7 @@ def _raise_step_validation_error(data: dict[str, Any], err: ValidationError) -> 
     if model_name is not None:
         # The step is recognised; what it broke is one of its own rules, and
         # the rule's wording says what to change.
-        rules = _broken_rules(err, model_name)
+        rules = _broken_rules(err, cast(str, step_type), model_name)
         if rules:
             raise ValueError(
                 f"Invalid {step_type} step: {rules}. Step keys: [{keys}]."
@@ -101,26 +103,37 @@ def validate_actor_step(
         _raise_step_validation_error(data, err)
 
 
-def canonical_actor_step(step: dict[str, Any]) -> dict[str, Any]:
+def as_actor_step(step: ActorConfig | dict[str, Any]) -> ActorConfig:
+    """*step* as its actor model: a model is returned as is, a dict in any spelling is validated.
+
+    Raises:
+        ValueError: A dict that is not a valid step, with the step's own rule
+            that it broke.
+        TypeError: Anything else.
+    """
+    if isinstance(step, ACTOR_CONFIG_TYPES):
+        return step
+    if isinstance(step, dict):
+        return validate_actor_step(normalize_actor_step(step))
+    raise TypeError(
+        f"a pipeline step is an actor config or a dict, not {type(step).__name__}"
+    )
+
+
+def canonical_actor_step(step: ActorConfig | dict[str, Any]) -> dict[str, Any]:
     """One spelling for a pipeline step, whatever spelling it was authored in.
 
     A step accepts several equivalent spellings -- ``{"vertex": v}`` with or
     without an explicit ``type``, ``{"edge": {...}}`` or its flat body,
     ``from``/``to`` or ``source``/``target``, a ``descend`` with ``apply`` or
-    ``pipeline``. Stored as authored, two manifests meaning the same thing
-    compare and hash differently. This validates the step into its actor model
-    and renders the minimal canonical dict with the discriminator made explicit.
+    ``pipeline``. This renders the minimal canonical dict of its actor model
+    with the discriminator made explicit; content hashes and the differ read
+    it.
 
     Lists inside a step keep their order: whether any of them is a set has not
     been established, and preserving is the safe direction for a content hash.
-
-    A step that does not validate on its own is returned unchanged, so a
-    canonical form never fails where the raw one would have been accepted.
     """
-    try:
-        model = _actor_config_adapter.validate_python(normalize_actor_step(step))
-    except (ValidationError, ValueError, TypeError):
-        return step
+    model = as_actor_step(step)
     return {"type": model.type, **model.to_minimal_canonical_dict()}
 
 
@@ -128,43 +141,28 @@ def parse_root_config(
     *args: Any,
     **kwargs: Any,
 ) -> ActorConfig:
-    """Parse root input into a single ActorConfig (single step or descend pipeline)."""
-    pipeline: list[dict[str, Any]] | None = None
-    single: dict[str, Any] | None = None
+    """Parse root input into a single ActorConfig (single step or descend pipeline).
 
+    Steps may be actor configs or dicts in any spelling. No input at all is an
+    empty pipeline.
+    """
+    if not args and not kwargs:
+        return DescendActorConfig(pipeline=[])
+    steps: list[Any] | None = None
     if kwargs and ("apply" in kwargs or "pipeline" in kwargs):
         raw = kwargs.get("pipeline") or kwargs.get("apply")
-        if raw is not None:
-            pipeline = list(raw) if isinstance(raw, list) else [raw]
-    elif args:
-        if len(args) == 1 and isinstance(args[0], list):
-            list_arg = args[0]
-            if not all(isinstance(item, dict) for item in list_arg):
-                raise ValueError("pipeline must be a list of dict actor steps")
-            pipeline = [dict(item) for item in list_arg]
-        elif len(args) == 1 and isinstance(args[0], dict):
-            single = dict(args[0])
-        elif args and all(isinstance(a, dict) for a in args):
-            pipeline = [dict(a) for a in args]
+        steps = [] if raw is None else list(raw) if isinstance(raw, list) else [raw]
+    elif len(args) == 1 and isinstance(args[0], list):
+        steps = list(args[0])
+    elif len(args) > 1:
+        steps = list(args)
+    elif len(args) == 1:
+        single = args[0]
+        if isinstance(single, dict):
+            single = {k: v for k, v in single.items() if k not in _STEP_STRIP_KEYS}
+        return as_actor_step(single)
 
-    if pipeline is not None:
-        configs = []
-        for step in pipeline:
-            normalized = normalize_actor_step(step)
-            try:
-                configs.append(_actor_config_adapter.validate_python(normalized))
-            except ValidationError as err:
-                _raise_step_validation_error(normalized, err)
-        return DescendActorConfig.model_validate(
-            {
-                "type": "descend",
-                "key": None,
-                "any_key": False,
-                "pipeline": configs,
-            }
-        )
-    if single is not None:
-        step_dict = {k: v for k, v in single.items() if k not in _STEP_STRIP_KEYS}
-        return validate_actor_step(normalize_actor_step(step_dict))
+    if steps is not None:
+        return DescendActorConfig(pipeline=[as_actor_step(step) for step in steps])
     step_kwargs = {k: v for k, v in kwargs.items() if k not in _STEP_STRIP_KEYS}
     return validate_actor_step(normalize_actor_step(step_kwargs))

@@ -18,19 +18,20 @@ from hypothesis import strategies as st
 
 from graflo.architecture.contract.ingestion.resource import (
     find_vertex_producing_levels,
-    is_pass_through_router,
-    is_unbounded_router,
     pipeline_has_unbounded_router,
     role_reach,
-    route_discriminator,
-    router_reach,
     step_looks_up,
     step_produces_vertices,
 )
 from graflo.architecture.contract.ingestion.steps.models import (
+    ActorConfig,
+    DescendActorConfig,
     VertexRouterActorConfig,
 )
-from graflo.architecture.contract.ingestion.steps.parse import canonical_actor_step
+from graflo.architecture.contract.ingestion.steps.parse import (
+    as_actor_step,
+    canonical_actor_step,
+)
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.evolution import (
     CanonicalizeOp,
@@ -122,12 +123,26 @@ def _cast(manifest: GraphManifest, rows: list[dict[str, Any]]) -> dict[str, list
     }
 
 
-def _pipeline(manifest: GraphManifest) -> list[dict[str, Any]]:
+def _pipeline(manifest: GraphManifest) -> list[ActorConfig]:
     return list(manifest.require_ingestion_model().resources[0].pipeline)
 
 
-def _router(manifest: GraphManifest, role: str) -> dict[str, Any]:
-    return next(s for s in _pipeline(manifest) if s.get("role") == role)
+def _router(manifest: GraphManifest, role: str) -> VertexRouterActorConfig:
+    return next(
+        s
+        for s in _pipeline(manifest)
+        if isinstance(s, VertexRouterActorConfig) and s.role == role
+    )
+
+
+def _steps(pipeline: list[dict[str, Any]]) -> list[ActorConfig]:
+    return [as_actor_step(step) for step in pipeline]
+
+
+def _as_router(step: dict[str, Any]) -> VertexRouterActorConfig:
+    router = as_actor_step(step)
+    assert isinstance(router, VertexRouterActorConfig)
+    return router
 
 
 def _rows(*kinds: str) -> list[dict[str, Any]]:
@@ -170,7 +185,7 @@ class TestRouting:
     )
     def test_the_static_rule_is_the_runtime_rule(self, router) -> None:
         for kind in ("Machine", "Line", "Sensor", "S", "Ghost"):
-            routed = route_discriminator(router, kind, CLASSES)
+            routed = _as_router(router).route(kind, CLASSES)
             cast = _cast(_manifest(router), _rows(kind))
             assert list(cast) == ([routed] if routed else [])
 
@@ -229,20 +244,21 @@ class TestReach:
         ],
     )
     def test_a_bounded_router_reaches_its_list(self, router, reach) -> None:
-        assert router_reach(router) == reach
-        assert router_reach(router, known_vertices=CLASSES) == reach
-        assert step_produces_vertices(router, known_vertices=CLASSES) == reach
-        assert not is_unbounded_router(router)
+        model = _as_router(router)
+        assert model.reach() == reach
+        assert model.reach(CLASSES) == reach
+        assert step_produces_vertices(model, known_vertices=CLASSES) == reach
+        assert not model.unbounded
 
     def test_an_unbounded_router_reaches_every_declared_class(self) -> None:
-        router = {"type": "vertex_router", "type_field": "kind"}
-        assert router_reach(router) is None
-        assert router_reach(router, known_vertices=CLASSES) == set(CLASSES)
-        assert is_unbounded_router(router) and is_pass_through_router(router)
+        router = _as_router({"type": "vertex_router", "type_field": "kind"})
+        assert router.reach() is None
+        assert router.reach(CLASSES) == set(CLASSES)
+        assert router.unbounded and router.passes_through
 
     def test_a_bounded_router_is_an_explicit_producer(self) -> None:
         bare = {"type": "vertex_router", "type_field": "kind"}
-        pipeline = [bare, {"descend": {"key": "parts", "pipeline": [PROBE]}}]
+        pipeline = _steps([bare, {"descend": {"key": "parts", "pipeline": [PROBE]}}])
         assert find_vertex_producing_levels(
             pipeline, "Sensor", known_vertices=CLASSES
         ) == [[1]]
@@ -251,16 +267,16 @@ class TestReach:
         ) == [[]]
 
     def test_a_pipeline_of_bounded_routers_does_not_widen(self) -> None:
-        assert not pipeline_has_unbounded_router([PLANT, PROBE])
+        assert not pipeline_has_unbounded_router(_steps([PLANT, PROBE]))
 
     def test_roles_hold_their_routers_reach(self) -> None:
-        assert role_reach([PLANT, PROBE]) == {
+        assert role_reach(_steps([PLANT, PROBE])) == {
             "plant": {"Machine", "Line"},
             "probe": {"Sensor"},
         }
 
     def test_lookup_only_true_covers_only_the_list(self) -> None:
-        router = {**PLANT, "lookup_only": True}
+        router = as_actor_step({**PLANT, "lookup_only": True})
         assert step_looks_up(router, "Machine")
         assert not step_looks_up(router, "Sensor")
 
@@ -309,9 +325,7 @@ def _class_maps(draw) -> dict[str, str | None]:
 def _projection(routers: list[dict[str, Any]], value: str, declared) -> Any:
     """The ``from`` map the router routing *value* applies to its class."""
     for router in routers:
-        routed = route_discriminator(
-            {"type": "vertex_router", **router}, value, declared
-        )
+        routed = _as_router({"type": "vertex_router", **router}).route(value, declared)
         if routed:
             return (router.get("vertex_from_map") or {}).get(routed, router.get("from"))
     return None
@@ -322,11 +336,7 @@ def _routes(routers: list[dict[str, Any]], value: str, declared) -> str | None:
     routed = [
         r
         for router in routers
-        if (
-            r := route_discriminator(
-                {"type": "vertex_router", **router}, value, declared
-            )
-        )
+        if (r := _as_router({"type": "vertex_router", **router}).route(value, declared))
     ]
     assert len(routed) <= 1, (value, routers)
     return routed[0] if routed else None
@@ -343,9 +353,7 @@ class TestEvolutionInvariant:
         evolved = evolve_router(router, mapping, declared=DECLARED)
         for piece in evolved:
             VertexRouterActorConfig.model_validate(piece)
-        reach = router_reach(
-            {"type": "vertex_router", **router}, known_vertices=DECLARED
-        )
+        reach = _as_router({"type": "vertex_router", **router}).reach(DECLARED)
         after = _after(DECLARED, mapping)
         for value in RAW:
             was = _routes([router], value, DECLARED)
@@ -390,9 +398,9 @@ class TestOps:
             _manifest(PLANT, PROBE), [RenameVerticesOp(renames={"Machine": "Asset"})]
         )
         plant = _router(renamed, "plant")
-        assert plant["vertex_types"] == ["Asset", "Line"]
-        assert plant["type_map"] == {"Machine": "Asset"}
-        assert "Machine" not in (_router(renamed, "probe").get("type_map") or {})
+        assert plant.vertex_types == ["Asset", "Line"]
+        assert plant.type_map == {"Machine": "Asset"}
+        assert "Machine" not in (_router(renamed, "probe").type_map or {})
         assert _cast(renamed, _rows("Machine")) == {"Asset": ["machine0"]}
 
     def test_the_shorthand_spelling_is_renamed_in_place(self) -> None:
@@ -407,7 +415,8 @@ class TestOps:
         renamed = apply_evolution(
             _manifest(shorthand), [RenameVerticesOp(renames={"Machine": "Asset"})]
         )
-        payload = _pipeline(renamed)[0]["vertex_router"]
+        dumped = renamed.require_ingestion_model().resources[0].to_dict()
+        payload = dumped["pipeline"][0]["vertex_router"]
         assert payload["vertex_types"] == ["Asset"]
         assert payload["vertex_from_map"] == {"Asset": {"id": "obj"}}
 
@@ -426,11 +435,11 @@ class TestOps:
                 )
             ],
         )
-        assert _router(merged, "plant")["vertex_types"] == ["Machine"]
-        assert not _router(merged, "plant").get("type_map_only")
+        assert _router(merged, "plant").vertex_types == ["Machine"]
+        assert not _router(merged, "plant").type_map_only
         closed = _router(merged, "line")
-        assert closed["type_map"] == {"Line": "Machine"}
-        assert closed["type_map_only"] is True
+        assert closed.type_map == {"Line": "Machine"}
+        assert closed.type_map_only is True
         # Each row is produced once: the routers still split the column.
         cast = _cast(merged, _rows("Machine", "Line"))
         assert cast == {"Machine": ["line1", "machine0"]}
@@ -445,9 +454,9 @@ class TestOps:
             ],
         )
         plant = _router(merged, "plant")
-        assert plant["vertex_types"] == ["Unit"]
-        assert plant["type_map"] == {"Machine": "Unit", "Line": "Unit"}
-        assert not plant.get("type_map_only")
+        assert plant.vertex_types == ["Unit"]
+        assert plant.type_map == {"Machine": "Unit", "Line": "Unit"}
+        assert not plant.type_map_only
 
     def test_merging_a_looked_up_class_with_a_written_one_is_refused(self) -> None:
         plant = {**PLANT, "lookup_only": ["Machine"]}
@@ -467,7 +476,7 @@ class TestOps:
         trimmed = apply_evolution(
             _manifest(PLANT, PROBE, MONITORS), [RemoveVerticesOp(names=["Line"])]
         )
-        assert _router(trimmed, "plant")["vertex_types"] == ["Machine"]
+        assert _router(trimmed, "plant").vertex_types == ["Machine"]
 
     def test_a_router_left_with_nothing_goes_with_the_edges_on_its_role(
         self,
@@ -475,7 +484,8 @@ class TestOps:
         trimmed = apply_evolution(
             _manifest(PLANT, PROBE, MONITORS), [RemoveVerticesOp(names=["Sensor"])]
         )
-        assert [step.get("role") for step in _pipeline(trimmed)] == ["plant"]
+        (step,) = _pipeline(trimmed)
+        assert isinstance(step, VertexRouterActorConfig) and step.role == "plant"
 
     def test_a_removed_table_entry_does_not_pass_its_key_through(self) -> None:
         router = {
@@ -496,7 +506,7 @@ class TestOps:
         kept = apply_evolution(
             _manifest(PROBE), [ProjectManifestOp(keep_vertices=["Sensor", "Machine"])]
         )
-        assert _router(kept, "probe")["vertex_types"] == ["Sensor"]
+        assert _router(kept, "probe").vertex_types == ["Sensor"]
         with pytest.raises(ValueError, match="resources empty"):
             apply_evolution(
                 _manifest(PROBE), [ProjectManifestOp(keep_vertices=["Machine", "Line"])]
@@ -513,14 +523,19 @@ class TestOps:
     def test_lookup_marking_skips_a_router_that_cannot_produce_the_class(
         self,
     ) -> None:
-        marked = mark_lookup_only_in_pipeline([PLANT, PROBE], "Sensor")
-        assert "lookup_only" not in marked[0]
-        assert marked[1]["lookup_only"] == ["Sensor"]
+        marked = mark_lookup_only_in_pipeline(_steps([PLANT, PROBE]), "Sensor")
+        assert isinstance(marked[0], VertexRouterActorConfig)
+        assert isinstance(marked[1], VertexRouterActorConfig)
+        assert marked[0].lookup_only is False
+        assert marked[1].lookup_only == ["Sensor"]
 
     def test_merge_closes_a_bounded_router_over_its_listed_classes(self) -> None:
-        closed = close_routers_in_pipeline([PLANT], ["Machine", "Line", "Sensor"])[0]
-        assert closed["type_map"] == {"Machine": "Machine", "Line": "Line"}
-        assert closed["type_map_only"] is True
+        (closed,) = close_routers_in_pipeline(
+            _steps([PLANT]), ["Machine", "Line", "Sensor"]
+        )
+        assert isinstance(closed, VertexRouterActorConfig)
+        assert closed.type_map == {"Machine": "Machine", "Line": "Line"}
+        assert closed.type_map_only is True
 
     def test_merging_classes_projected_differently_splits_the_router(self) -> None:
         router = {
@@ -537,12 +552,15 @@ class TestOps:
                 )
             ],
         )
-        routers = _pipeline(merged)
-        assert [(r["type_map"], r["vertex_from_map"]) for r in routers] == [
+        routers = [
+            r for r in _pipeline(merged) if isinstance(r, VertexRouterActorConfig)
+        ]
+        assert len(routers) == len(_pipeline(merged))
+        assert [(r.type_map, r.vertex_from_map) for r in routers] == [
             ({"Line": "Unit", "Sensor": "Sensor"}, {"Unit": {"id": "line_no"}}),
             ({"Machine": "Unit"}, {"Unit": {"id": "obj"}}),
         ]
-        assert {r["role"] for r in routers} == {"plant"}
+        assert {r.role for r in routers} == {"plant"}
         rows = [
             {"kind": "Machine", "obj": "m1", "line_no": "x"},
             {"kind": "Line", "obj": "x", "line_no": "l1"},
@@ -564,16 +582,30 @@ _DECLARED = {
 }
 
 
+def _close_one(
+    pipeline: list[dict[str, Any]], vocabulary: list[str], **kwargs: Any
+) -> ActorConfig:
+    return close_routers_in_pipeline(_steps(pipeline), vocabulary, **kwargs)[0]
+
+
+def _closed_router(
+    pipeline: list[dict[str, Any]], vocabulary: list[str], **kwargs: Any
+) -> VertexRouterActorConfig:
+    closed = _close_one(pipeline, vocabulary, **kwargs)
+    assert isinstance(closed, VertexRouterActorConfig)
+    return closed
+
+
 class TestClosingKeepsPassThroughProjections:
     """Closing never refuses a ``from`` target the open router skipped per class."""
 
     def test_a_class_lacking_a_target_keeps_the_part_it_declares(self) -> None:
-        closed = close_routers_in_pipeline(
+        closed = _closed_router(
             [_SHARED_FROM], sorted(_DECLARED), declared_properties=_DECLARED
-        )[0]
+        )
 
-        assert closed["type_map_only"] is True
-        assert closed["vertex_from_map"] == {
+        assert closed.type_map_only is True
+        assert closed.vertex_from_map == {
             "Rack": {"label": "name"},
             "Cable": {},
         }
@@ -581,20 +613,20 @@ class TestClosingKeepsPassThroughProjections:
     def test_a_class_the_table_already_names_is_left_alone(self) -> None:
         router = {**_SHARED_FROM, "type_map": {"rack": "Rack"}}
 
-        closed = close_routers_in_pipeline(
+        closed = _closed_router(
             [router], sorted(_DECLARED), declared_properties=_DECLARED
-        )[0]
+        )
 
-        assert closed["vertex_from_map"] == {"Cable": {}}
+        assert closed.vertex_from_map == {"Cable": {}}
 
     def test_an_authored_entry_is_kept(self) -> None:
         router = {**_SHARED_FROM, "vertex_from_map": {"Cable": {"cable_no": "id"}}}
 
-        closed = close_routers_in_pipeline(
+        closed = _closed_router(
             [router], sorted(_DECLARED), declared_properties=_DECLARED
-        )[0]
+        )
 
-        assert closed["vertex_from_map"] == {
+        assert closed.vertex_from_map == {
             "Cable": {"cable_no": "id"},
             "Rack": {"label": "name"},
         }
@@ -602,28 +634,29 @@ class TestClosingKeepsPassThroughProjections:
     def test_a_bounded_router_already_checked_its_classes(self) -> None:
         router = {**_SHARED_FROM, "vertex_types": ["Server", "Rack"]}
 
-        closed = close_routers_in_pipeline(
+        closed = _closed_router(
             [router], sorted(_DECLARED), declared_properties=_DECLARED
-        )[0]
+        )
 
-        assert "vertex_from_map" not in closed
+        assert closed.vertex_from_map is None
 
     def test_a_router_under_descend_is_closed_the_same_way(self) -> None:
         pipeline = [{"descend": {"key": "items", "apply": [dict(_SHARED_FROM)]}}]
 
-        closed = close_routers_in_pipeline(
+        closed = _close_one(
             pipeline, ["Server", "Cable"], declared_properties=_DECLARED
-        )[0]
+        )
 
-        nested = closed["descend"]
-        router = (nested.get("apply") or nested["pipeline"])[0]
-        assert router["vertex_from_map"] == {"Cable": {}}
+        assert isinstance(closed, DescendActorConfig)
+        (router,) = closed.pipeline
+        assert isinstance(router, VertexRouterActorConfig)
+        assert router.vertex_from_map == {"Cable": {}}
 
     def test_without_declared_properties_only_the_table_is_closed(self) -> None:
-        closed = close_routers_in_pipeline([_SHARED_FROM], sorted(_DECLARED))[0]
+        closed = _closed_router([_SHARED_FROM], sorted(_DECLARED))
 
-        assert "vertex_from_map" not in closed
-        assert closed["type_map"] == {name: name for name in sorted(_DECLARED)}
+        assert closed.vertex_from_map is None
+        assert closed.type_map == {name: name for name in sorted(_DECLARED)}
 
     def test_values_the_side_passed_through_are_followed_through_a_rename(
         self,
@@ -631,21 +664,21 @@ class TestClosingKeepsPassThroughProjections:
         router = {**_SHARED_FROM, "type_map": {"Rack": "Shelf"}}
         declared = {**_DECLARED, "Shelf": ["rack_no"]}
 
-        closed = close_routers_in_pipeline(
+        closed = _closed_router(
             [router],
             ["Server", "Rack"],
             declared_properties=declared,
             pass_through={"Server", "Rack"},
-        )[0]
+        )
 
-        assert closed["vertex_from_map"] == {"Shelf": {}}
+        assert closed.vertex_from_map == {"Shelf": {}}
 
     def test_the_side_pass_through_classes_exclude_named_ones(self) -> None:
         bounded = {**_SHARED_FROM, "vertex_types": ["Server"], "role": "b"}
         named = {**_SHARED_FROM, "type_map": {"rack": "Rack"}, "role": "a"}
 
-        assert pass_through_classes([named], sorted(_DECLARED)) == {
+        assert pass_through_classes(_steps([named]), sorted(_DECLARED)) == {
             "Server",
             "Cable",
         }
-        assert pass_through_classes([bounded], sorted(_DECLARED)) == set()
+        assert pass_through_classes(_steps([bounded]), sorted(_DECLARED)) == set()

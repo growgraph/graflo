@@ -13,6 +13,7 @@ from typing import Any
 import pytest
 
 from graflo.architecture.contract.bindings import APIConnector
+from graflo.architecture.contract.ingestion.steps import VertexRouterActorConfig
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.evolution import (
     ProjectManifestOp,
@@ -301,7 +302,8 @@ def test_a_rename_leaves_the_values_the_source_is_asked_with() -> None:
     found = _connector(out, "objects_api")
     assert found is not None and found.values == {"cls": list(CLASSES)}
     (router,) = out.require_ingestion_model().resources[0].pipeline
-    assert router["vertex_router"]["type_map"] == {"person": "individual"}
+    assert isinstance(router, VertexRouterActorConfig)
+    assert router.type_map == {"person": "individual"}
 
 
 @pytest.mark.parametrize(

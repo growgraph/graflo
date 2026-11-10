@@ -5,6 +5,11 @@ from graflo.architecture.contract.ingestion.resource import (
     EdgeInferSpec,
     ResourceExtraWeightEntry,
 )
+from graflo.architecture.contract.ingestion.steps import (
+    EdgeActorConfig,
+    VertexActorConfig,
+    as_actor_step,
+)
 from graflo.architecture.evolution import (
     AddEdgePropertiesOp,
     AddInverseEdgesOp,
@@ -172,11 +177,14 @@ def test_graph_manifest_rename_entities_updates_schema_ingestion_and_bindings() 
 
     resource = renamed.ingestion_model.resources[0]
     assert resource.name == "staff"
-    assert resource.pipeline[0]["vertex"] == "author"
-    edge_step = resource.pipeline[2]["edge"]
-    assert edge_step["from"] == "author"
-    assert edge_step["to"] == "institution"
-    assert edge_step["relation"] == "rel_works_at"
+    vertex_step = resource.pipeline[0]
+    assert isinstance(vertex_step, VertexActorConfig)
+    assert vertex_step.vertex == "author"
+    edge_step = resource.pipeline[2]
+    assert isinstance(edge_step, EdgeActorConfig)
+    assert edge_step.source == "author"
+    assert edge_step.target == "institution"
+    assert edge_step.relation == "rel_works_at"
     assert resource.infer_edge_only[0].edge_id == (
         "author",
         "institution",
@@ -433,8 +441,9 @@ def test_rename_and_remove_edge_properties_updates_schema_ingestion_and_profile(
     assert edge.identities == [["source", "target", "started_at"]]
     assert out.graph_schema.db_profile.edge_specs[0].indexes[0].fields == ["started_at"]
     assert out.ingestion_model is not None
-    edge_step = out.ingestion_model.resources[0].pipeline[2]["edge"]
-    assert edge_step["properties"] == [{"name": "started_at"}]
+    edge_step = out.ingestion_model.resources[0].pipeline[2]
+    assert isinstance(edge_step, EdgeActorConfig)
+    assert edge_step.properties == [{"name": "started_at"}]
 
 
 def test_add_vertex_and_edge_properties() -> None:
@@ -478,14 +487,16 @@ def test_add_inverse_edges_updates_schema_and_ingestion_with_dedup() -> None:
     # Existing inverse entries should be preserved and deduplicated.
     resource = manifest.ingestion_model.resources[0]
     resource.pipeline.append(
-        {
-            "edge": {
-                "from": "company",
-                "to": "person",
-                "relation": "employs",
-                "properties": [{"name": "since"}, {"name": "weight"}],
+        as_actor_step(
+            {
+                "edge": {
+                    "from": "company",
+                    "to": "person",
+                    "relation": "employs",
+                    "properties": [{"name": "since"}, {"name": "weight"}],
+                }
             }
-        }
+        )
     )
     resource.infer_edge_only.append(
         EdgeInferSpec(source="company", target="person", relation="employs")
@@ -517,13 +528,9 @@ def test_add_inverse_edges_updates_schema_and_ingestion_with_dedup() -> None:
     assert out.ingestion_model is not None
     out_resource = out.ingestion_model.resources[0]
     edge_steps = [
-        step["edge"]
-        for step in out_resource.pipeline
-        if isinstance(step, dict) and isinstance(step.get("edge"), dict)
+        step for step in out_resource.pipeline if isinstance(step, EdgeActorConfig)
     ]
-    pipeline_keys = [
-        (step.get("from"), step.get("to"), step.get("relation")) for step in edge_steps
-    ]
+    pipeline_keys = [(step.source, step.target, step.relation) for step in edge_steps]
     assert ("person", "company", "works_at") in pipeline_keys
     assert ("company", "person", "employs") in pipeline_keys
     assert pipeline_keys.count(("company", "person", "employs")) == 1

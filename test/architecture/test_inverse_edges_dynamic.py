@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 
 from graflo.architecture.contract import GraphManifest
+from graflo.architecture.contract.ingestion.steps import EdgeActorConfig
 from graflo.architecture.evolution import (
     AddInverseEdgesOp,
     DeclareEdgeInversesOp,
@@ -86,10 +87,12 @@ def _edge_ids(manifest: GraphManifest) -> list[tuple]:
     return [e.edge_id for e in manifest.graph_schema.core_schema.edge_config.edges]
 
 
-def _edge_steps(manifest: GraphManifest) -> list[dict[str, Any]]:
+def _edge_steps(manifest: GraphManifest) -> list[EdgeActorConfig]:
     assert manifest.ingestion_model is not None
     return [
-        s["edge"] for s in manifest.ingestion_model.resources[0].pipeline if "edge" in s
+        s
+        for s in manifest.ingestion_model.resources[0].pipeline
+        if isinstance(s, EdgeActorConfig)
     ]
 
 
@@ -108,9 +111,9 @@ def test_inverse_edges_dynamic_edge_actor() -> None:
     out = _apply(manifest, employed_by="employs")
 
     (step,) = _edge_steps(out)
-    assert step["emit_inverse"] is True
-    assert step["source_role"] == "source"
-    assert step["relation_map"] == {"EMPLOYED_BY": "employed_by"}
+    assert step.emit_inverse is True
+    assert step.source_role == "source"
+    assert step.relation_map == {"EMPLOYED_BY": "employed_by"}
     assert ("institution", "person", "employs") in _edge_ids(out)
 
     edges = _cast(out, {**ROW, "relation_type": "EMPLOYED_BY"})
@@ -246,8 +249,8 @@ def test_steps_that_name_their_relation_in_the_data_are_mirrored_too(
     """A generated step could not be restricted to the mapped relations; a flag need not be."""
     manifest = _manifest([FORWARD], [{"edge": step}])
     (flagged,) = _edge_steps(_apply(manifest, employed_by="employs"))
-    holder = flagged["links"][0] if "links" in flagged else flagged
-    assert holder["emit_inverse"] is True
+    holder = flagged.links[0] if flagged.links else flagged
+    assert holder.emit_inverse is True
 
 
 def test_undoing_the_op_restores_the_pipeline_exactly() -> None:
@@ -266,7 +269,7 @@ def test_undoing_the_op_restores_the_pipeline_exactly() -> None:
 
     restored = apply_evolution(applied, undo, bump_version=False)
     assert manifest_hash(restored) == manifest_hash(manifest)
-    assert "emit_inverse" not in _edge_steps(restored)[0]
+    assert _edge_steps(restored)[0].emit_inverse is False
 
 
 def test_the_inverse_spec_does_not_share_the_forward_physical_type() -> None:

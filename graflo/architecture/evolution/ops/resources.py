@@ -4,11 +4,21 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import AliasChoices, model_validator
+from pydantic import (
+    AliasChoices,
+    SerializationInfo,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 from pydantic import Field as PydanticField
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.contract.ingestion.resource import ResourceConfig
+from graflo.architecture.contract.ingestion.steps import (
+    TransformActorConfig,
+    as_actor_step,
+)
 from graflo.architecture.contract.ingestion.transform import ProtoTransform
 
 from .validation import validate_rename_map_is_injective
@@ -64,11 +74,12 @@ class AddResourceTransformsOp(ConfigBaseModel):
     """
 
     op: Literal["add_resource_transforms"] = "add_resource_transforms"
-    additions: dict[str, list[dict[str, Any]]] = PydanticField(
+    additions: dict[str, list[TransformActorConfig]] = PydanticField(
         ...,
         description=(
             "Per-resource transform steps to append: "
-            "``{resource_name: [step_dict, ...]}``."
+            "``{resource_name: [step, ...]}``, each a ``transform`` step in any "
+            "spelling. Dumped as ``{transform: {...}}``."
         ),
         min_length=1,
     )
@@ -90,32 +101,45 @@ class AddResourceTransformsOp(ConfigBaseModel):
         ),
     )
 
+    @field_validator("additions", mode="before")
+    @classmethod
+    def _steps_as_transforms(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        out: dict[str, Any] = {}
+        for resource_name, steps in value.items():
+            if not isinstance(steps, list):
+                out[resource_name] = steps
+                continue
+            typed = []
+            for step in steps:
+                model = as_actor_step(step)
+                if not isinstance(model, TransformActorConfig):
+                    raise ValueError(
+                        f"add_resource_transforms: step for resource "
+                        f"{resource_name!r} is not a transform step: {step!r}"
+                    )
+                typed.append(model)
+            out[resource_name] = typed
+        return out
+
+    @field_serializer("additions", mode="plain")
+    def _dump_steps_as_shorthand(
+        self, additions: dict[str, list[TransformActorConfig]], info: SerializationInfo
+    ) -> dict[str, list[dict[str, Any]]]:
+        return {
+            name: [step.to_shorthand(info.mode) for step in steps]
+            for name, steps in additions.items()
+        }
+
     @model_validator(mode="after")
     def _validate_steps(self) -> AddResourceTransformsOp:
-        from graflo.architecture.contract.ingestion.steps.models import (
-            TransformActorConfig,
-        )
-        from graflo.architecture.contract.ingestion.steps.normalize import (
-            normalize_actor_step,
-        )
-
         for resource_name, steps in self.additions.items():
             if not steps:
                 raise ValueError(
                     f"add_resource_transforms: empty step list for resource "
                     f"{resource_name!r}"
                 )
-            for step in steps:
-                normalized = normalize_actor_step(step)
-                if (
-                    not isinstance(normalized, dict)
-                    or normalized.get("type") != "transform"
-                ):
-                    raise ValueError(
-                        f"add_resource_transforms: step for resource "
-                        f"{resource_name!r} is not a transform step: {step!r}"
-                    )
-                TransformActorConfig.model_validate(normalized)
         stray = sorted(set(self.at) - set(self.additions))
         if stray:
             raise ValueError(

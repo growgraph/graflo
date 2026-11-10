@@ -138,17 +138,7 @@ class EdgeActor(Actor):
         self._static_target = config.target
         self._relation_map = config.relation_map or {}
         self._relation_map_only = config.relation_map_only
-        self._relations_written = relations_written(
-            config.model_dump(
-                include={
-                    "relation",
-                    "relation_field",
-                    "relation_from_key",
-                    "relation_map",
-                    "relation_map_only",
-                }
-            )
-        )
+        self._relations_written = relations_written(config)
         self._strict_edge_types = config.strict_edge_types
         self._rejected_edges = set()
         self._edge_cache = {}

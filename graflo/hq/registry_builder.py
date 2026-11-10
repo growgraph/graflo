@@ -23,10 +23,12 @@ from graflo.architecture.contract.bindings import (
     TemplatedConnector,
 )
 from graflo.architecture.contract.ingestion import IngestionModel
-from graflo.architecture.contract.ingestion.resource import (
-    routed_row_condition,
-    router_keeps_subset,
+from graflo.architecture.contract.ingestion.routing import (
+    RoutedRecordFilter,
+    routed_record_filter,
+    routers_keep_subset,
 )
+from graflo.architecture.contract.ingestion.steps import VertexRouterActorConfig
 from graflo.architecture.graph_types import EncodingType
 from graflo.architecture.schema import Schema
 from graflo.connections.onto import PostgresConfig, SparqlEndpointConfig
@@ -447,11 +449,11 @@ class RegistryBuilder:
                     vertex_config=self.schema.core_schema.vertex_config,
                 )
 
-            routed = self._routed_rows(resource_name)
+            routed = self._routed_records(resource_name).fields
             if routed == {}:
                 logger.warning(
                     "Connector '%s' is not read: resource '%s' routes no value "
-                    "of its rows to a class",
+                    "of its records to a class",
                     connector.name or connector.hash,
                     resource_name,
                 )
@@ -483,13 +485,15 @@ class RegistryBuilder:
                 if pushed is not None:
                     run_filters.append(pushed)
                     logger.info(
-                        "Connector '%s' reads only the rows resource '%s' routes: %s",
+                        "Connector '%s' reads only the records resource '%s' routes: %s",
                         connector.name or connector.hash,
                         resource_name,
                         _describe(routed),
                     )
                 else:
                     self._report_unnarrowed(resource_name, connector)
+            else:
+                self._report_unnarrowed(resource_name, connector)
 
             query = connector.build_query(effective_schema, extra_filters=run_filters)
 
@@ -515,14 +519,13 @@ class RegistryBuilder:
             )
             raise
 
-    def _routed_rows(self, resource_name: str) -> dict[str, frozenset[Any]] | None:
-        """The routed values per field a row of *resource_name* must hold to count.
-
-        See :func:`routed_row_condition`; ``None`` when a row may count anyway.
-        """
+    def _routed_records(self, resource_name: str) -> RoutedRecordFilter:
+        """Which records of *resource_name* its routers keep; see :func:`routed_record_filter`."""
         pipeline = self.ingestion_model.fetch_resource_config(resource_name).pipeline
-        return routed_row_condition(
-            pipeline, self.schema.core_schema.vertex_config.vertex_set
+        return routed_record_filter(
+            pipeline,
+            self.schema.core_schema.vertex_config.vertex_set,
+            self.ingestion_model.transforms_by_name,
         )
 
     @staticmethod
@@ -539,25 +542,40 @@ class RegistryBuilder:
         return values_in_filter(columns)
 
     def _report_unnarrowed(self, resource_name: str, connector: Any) -> None:
-        """Warn when *connector* reads rows its resource's routers drop.
+        """Say when *connector* reads records its resource's routers drop.
 
-        Said when a router keeps a chosen subset (closed, or bounded by
-        ``vertex_types``) and the connector fixes the routed fields on none of
-        its requests. A table connector reaches here only when its query
+        When routing cannot narrow the resource (a step produces records
+        without a router, or a transform writes or may write a routed
+        ``type_field``), the step that prevents it is named: at WARNING for a
+        router that keeps a chosen subset (closed, or bounded by
+        ``vertex_types``), at INFO otherwise. When it can, a warning is given
+        for a router keeping a subset whose fields the connector fixes on none
+        of its requests. A table connector reaches here only when its query
         cannot carry the condition.
         """
-        routed = self._routed_rows(resource_name)
-        if routed is None:
-            return
+        verdict = self._routed_records(resource_name)
         pipeline = self.ingestion_model.fetch_resource_config(resource_name).pipeline
-        if routed and not router_keeps_subset(pipeline):
+        if verdict.fields is None:
+            if not any(isinstance(s, VertexRouterActorConfig) for s in pipeline):
+                return
+            logger.log(
+                logging.WARNING if routers_keep_subset(pipeline) else logging.INFO,
+                "Connector '%s' reads every record of resource '%s': its routers "
+                "cannot narrow the read, because %s",
+                connector.name or connector.hash,
+                resource_name,
+                verdict.blocked_by,
+            )
+            return
+        routed = verdict.fields
+        if routed and not routers_keep_subset(pipeline):
             return
         if routed and not isinstance(connector, TableConnector):
             requests = connector.row_constants()
             if requests and all(set(routed) <= set(c) for c in requests):
                 return
         logger.warning(
-            "Connector '%s' reads every row, but resource '%s' keeps only rows "
+            "Connector '%s' reads every record, but resource '%s' keeps only records "
             "with %s; the others are read and dropped",
             connector.name or connector.hash,
             resource_name,

@@ -11,9 +11,9 @@ from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 
 from graflo.architecture.contract.ingestion.resource import (
-    _steps_producing,
     step_finds,
     step_looks_up,
+    steps_producing,
 )
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.schema.document import Schema
@@ -600,7 +600,7 @@ def ambiguous_reference_refusals(
                     member: steps
                     for member in cluster.members(side)
                     if (
-                        steps := _steps_producing(
+                        steps := steps_producing(
                             resource.pipeline, member, known_vertices=known
                         )
                     )

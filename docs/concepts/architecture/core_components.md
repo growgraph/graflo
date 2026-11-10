@@ -480,7 +480,7 @@ matching type.
 A router without `type_map_only` or `vertex_types` can produce any vertex type
 the schema declares, so GraFlo treats its resource as producing all of them.
 
-A table connector of a resource that only routes reads only the rows its
+A table connector of a resource that only routes reads only the records its
 routers keep ([A router's types reach the query](../connectors/table_views.md#a-routers-types-reach-the-query)).
 
 Two routers can split one column between them, each with its own `role`:

@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection, Mapping
 from typing import Annotated, Any, Literal, cast
 
 from pydantic import Field as PydanticField
 from pydantic import TypeAdapter, field_validator, model_validator
 
 from graflo.architecture.base import ConfigBaseModel
-from graflo.architecture.contract.ingestion.transform import DressConfig
+from graflo.architecture.contract.ingestion.transform import (
+    DressConfig,
+    KeySelectionConfig,
+    ProtoTransform,
+    effective_io,
+)
 from graflo.architecture.graph_types.edge_derivation import (
     EdgeDerivation,
     EndpointSelector,
@@ -17,6 +23,19 @@ from graflo.architecture.schema.vertex import VertexName
 from graflo.onto import EndpointAmbiguityPolicy
 
 from .normalize import normalize_actor_step
+
+
+def _minimal(
+    model: ConfigBaseModel, mode: str, exclude: set[str] | None = None
+) -> dict[str, Any]:
+    """*model*'s non-default fields by alias, without its ``type`` discriminator."""
+    return model.model_dump(
+        mode=mode,
+        by_alias=True,
+        exclude_defaults=True,
+        exclude_none=True,
+        exclude={"type", *(exclude or ())},
+    )
 
 
 class VertexExtractionOptionsConfig(ConfigBaseModel):
@@ -101,6 +120,10 @@ class VertexActorConfig(VertexExtractionOptionsConfig):
             data = dict(data)
             data["type"] = "vertex"
         return data
+
+    def to_shorthand(self, mode: str = "python") -> dict[str, Any]:
+        """``{vertex: name, ...}``, minimal."""
+        return {"vertex": self.vertex, **_minimal(self, mode, {"vertex"})}
 
 
 class TransformGuardConfig(ConfigBaseModel):
@@ -199,6 +222,46 @@ class TransformActorConfig(ConfigBaseModel):
                 "Transform step must define exactly one of rename or call."
             )
         return self
+
+    def fields_written(
+        self, transforms: Mapping[str, ProtoTransform]
+    ) -> frozenset[str] | None:
+        """The record fields this step writes; ``None`` when they cannot be known.
+
+        Resolved the way the runtime resolves the step: a ``use`` call against
+        *transforms* (``ingestion_model.transforms`` by name), then
+        :func:`effective_io` -- a ``dress`` writes its key and value, a call
+        without ``output`` writes back into its input fields. The ``when``
+        guard only reads. Unknown: a key-target call (it renames keys by a
+        function), a ``use`` naming no entry, and a call that declares no
+        field at all.
+        """
+        if self.rename is not None:
+            return frozenset(self.rename.values())
+        call = self.call
+        if call is None:
+            return None
+        named = transforms.get(call.use) if call.use is not None else None
+        if call.use is not None and named is None:
+            return None
+        kwargs = call.transform_kwargs(named)
+        if kwargs["target"] == "keys":
+            return None
+        _, output, _ = effective_io(
+            input=kwargs["input"],
+            output=kwargs["output"],
+            input_groups=kwargs["input_groups"],
+            output_groups=kwargs["output_groups"],
+            dress=kwargs["dress"],
+        )
+        written = set(output)
+        for group in kwargs["output_groups"]:
+            written.update(group)
+        return frozenset(written) or None
+
+    def to_shorthand(self, mode: str = "python") -> dict[str, Any]:
+        """``{transform: {...}}``, minimal."""
+        return {"transform": _minimal(self, mode)}
 
 
 class TransformCallConfig(ConfigBaseModel):
@@ -407,6 +470,118 @@ class TransformCallConfig(ConfigBaseModel):
         if self.strategy == "all" and self.input_groups:
             raise ValueError("call.strategy='all' does not accept call.input_groups.")
         return self
+
+    def transform_kwargs(self, named: ProtoTransform | None = None) -> dict[str, Any]:
+        """The :class:`Transform` arguments this call runs with.
+
+        An inline call (no ``use``) stands alone. A ``use`` call takes its
+        function from *named*, the ``ingestion_model.transforms`` entry it
+        names; the call's own params, dress, target, input, output and groups
+        override the entry's.
+
+        Raises:
+            ValueError: ``use`` without *named*, or a call whose input, output,
+                groups or dress conflict with an effective key target.
+        """
+        if self.use is None:
+            kwargs: dict[str, Any] = {
+                "name": None,
+                "params": self.params,
+                "module": self.module,
+                "foo": self.foo,
+                "input": tuple(self.input or ()),
+                "output": tuple(self.output or ()),
+                "input_groups": tuple(tuple(g) for g in self.input_groups or ()),
+                "output_groups": tuple(tuple(g) for g in self.output_groups or ()),
+                "dress": self.dress,
+                "strategy": self.strategy or "single",
+                "target": self.target if self.target is not None else "values",
+            }
+            if self.keys is not None:
+                kwargs["keys"] = KeySelectionConfig.model_validate(
+                    self.keys.model_dump()
+                )
+            return kwargs
+        if named is None:
+            raise ValueError(f"call.use {self.use!r} needs its named transform")
+        return self._merged_with(named)
+
+    def _merged_with(self, pt: ProtoTransform) -> dict[str, Any]:
+        next_params = self.params if self.params else pt.params
+        next_dress = self.dress if self.dress is not None else pt.dress
+        next_target = self.target if self.target is not None else pt.target
+
+        next_input: tuple[str, ...]
+        next_output: tuple[str, ...]
+        next_input_groups: tuple[tuple[str, ...], ...]
+        next_output_groups: tuple[tuple[str, ...], ...]
+        if next_target == "keys":
+            if self.input or self.output or self.input_groups or self.output_groups:
+                raise ValueError(
+                    "call.input, call.output, call.input_groups, and call.output_groups "
+                    "cannot be used when the effective transform target is keys "
+                    "(from call.target or the named ingestion_model.transforms entry)."
+                )
+            if self.dress is not None:
+                raise ValueError("call.dress is not supported when target='keys'.")
+            if self.strategy is not None and self.strategy != "single":
+                raise ValueError(
+                    "call.strategy is not allowed when target='keys'; "
+                    "key mode uses implicit per-key execution."
+                )
+            next_input, next_output = (), ()
+            next_input_groups, next_output_groups = (), ()
+        else:
+            next_input_groups = (
+                tuple(tuple(g) for g in self.input_groups)
+                if self.input_groups
+                else pt.input_groups
+            )
+            next_output_groups = (
+                tuple(tuple(g) for g in self.output_groups)
+                if self.output_groups
+                else pt.output_groups
+            )
+            if next_input_groups:
+                next_input = ()
+                # An explicit grouped override does not inherit the entry's
+                # output, which belongs to a different shape.
+                if self.input_groups:
+                    next_output_groups = (
+                        tuple(tuple(g) for g in self.output_groups)
+                        if self.output_groups
+                        else ()
+                    )
+                    next_output = tuple(self.output) if self.output else ()
+                elif next_dress is not None:
+                    next_output = (next_dress.key, next_dress.value)
+                else:
+                    next_output = tuple(self.output) if self.output else pt.output
+            else:
+                next_input = tuple(self.input) if self.input else pt.input
+                if next_dress is not None:
+                    next_output = (next_dress.key, next_dress.value)
+                else:
+                    next_output = tuple(self.output) if self.output else pt.output
+
+        return {
+            "dress": next_dress,
+            "name": self.use,
+            "module": pt.module,
+            "foo": pt.foo,
+            "params": next_params,
+            "input": next_input,
+            "output": next_output,
+            "input_groups": next_input_groups,
+            "output_groups": next_output_groups,
+            "strategy": self.strategy or "single",
+            "target": next_target,
+            "keys": (
+                KeySelectionConfig.model_validate(self.keys.model_dump())
+                if self.keys is not None
+                else pt.keys.model_copy(deep=True)
+            ),
+        }
 
 
 class EdgeEndpointMatchOptionsConfig(ConfigBaseModel):
@@ -876,6 +1051,14 @@ class EdgeActorConfig(EdgeEndpointMatchOptionsConfig):
         normalized = normalize_actor_step(cast(dict[str, Any], data))
         return normalized if normalized.get("type") == "edge" else data
 
+    def intents(self) -> list[EdgeActorConfig | EdgeLinkConfig]:
+        """The source→target bindings this step emits: its links, else itself."""
+        return list(self.links) if self.links is not None else [self]
+
+    def to_shorthand(self, mode: str = "python") -> dict[str, Any]:
+        """``{edge: {from, to, ...}}``, minimal."""
+        return {"edge": _minimal(self, mode)}
+
 
 class DescendActorConfig(ConfigBaseModel):
     """Configuration for a DescendActor."""
@@ -902,6 +1085,12 @@ class DescendActorConfig(ConfigBaseModel):
     @model_validator(mode="after")
     def validate_explicit_vertex_requirements(self) -> DescendActorConfig:
         return self
+
+    def to_shorthand(self, mode: str = "python") -> dict[str, Any]:
+        """``{descend: {key, pipeline: [...]}}``, minimal; children in shorthand too."""
+        body = _minimal(self, mode, {"pipeline"})
+        body["pipeline"] = [step.to_shorthand(mode) for step in self.pipeline]
+        return {"descend": body}
 
 
 class VertexRouterActorConfig(VertexExtractionOptionsConfig):
@@ -988,6 +1177,82 @@ class VertexRouterActorConfig(VertexExtractionOptionsConfig):
         """Whether *vertex* is among the classes the router may produce."""
         return self.vertex_types is None or vertex in self.vertex_types
 
+    @property
+    def slot(self) -> str:
+        """The accumulator role its records are stored under (``role``, else ``type_field``)."""
+        return self.role or self.type_field
+
+    @property
+    def passes_through(self) -> bool:
+        """Whether a value its ``type_map`` lacks routes as the class of that name."""
+        return not self.type_map_only
+
+    @property
+    def unbounded(self) -> bool:
+        """Whether it can produce any declared class: passes through, no ``vertex_types``."""
+        return self.passes_through and self.vertex_types is None
+
+    @property
+    def keeps_subset(self) -> bool:
+        """Whether it routes a chosen subset only: closed, or bounded by ``vertex_types``."""
+        return not self.unbounded
+
+    def mapped_classes(self) -> frozenset[str]:
+        """The classes its ``type_map`` names."""
+        return frozenset((self.type_map or {}).values())
+
+    def route(self, raw: Any, declared: Collection[str]) -> str | None:
+        """The class a record whose ``type_field`` holds *raw* is sent to; ``None`` if skipped.
+
+        The runtime's rule: a closed router skips a value its ``type_map``
+        lacks; ``type_map`` translates, an unmapped value stands for the class
+        of that name; a class *declared* lacks, or ``vertex_types`` excludes,
+        is skipped.
+        """
+        table = self.type_map or {}
+        if self.type_map_only and raw not in table:
+            return None
+        vertex = table.get(raw, raw)
+        if not isinstance(vertex, str) or vertex not in declared:
+            return None
+        return vertex if self.admits(vertex) else None
+
+    def reach(
+        self, known_vertices: Collection[str] | None = None
+    ) -> frozenset[str] | None:
+        """The classes it can produce; ``None`` for any class.
+
+        Closed: the classes its table names. Open: those plus every class in
+        *known_vertices*, or any class without them. ``vertex_types`` bounds
+        either; an open router with it reaches exactly the listed classes.
+        """
+        bound = frozenset(self.vertex_types) if self.vertex_types is not None else None
+        if self.type_map_only:
+            reach = self.mapped_classes()
+            return reach if bound is None else reach & bound
+        if bound is not None:
+            return bound
+        if known_vertices is None:
+            return None
+        return self.mapped_classes() | frozenset(known_vertices)
+
+    def routed_values(self, declared: Collection[str]) -> frozenset[Any]:
+        """Every ``type_field`` value it sends to some class.
+
+        The candidates are the ``type_map`` keys and the *declared* class
+        names (an unmapped value routes as itself); each counts when
+        :meth:`route` sends it somewhere.
+        """
+        candidates = [*(self.type_map or {}), *declared]
+        return frozenset(raw for raw in candidates if self.route(raw, declared))
+
+    def to_shorthand(self, mode: str = "python") -> dict[str, Any]:
+        """``{vertex_router: {...}}``, minimal; ``role`` only when it differs from ``type_field``."""
+        body = _minimal(self, mode)
+        if body.get("role") == self.type_field:
+            del body["role"]
+        return {"vertex_router": body}
+
     @field_validator("vertex_types")
     @classmethod
     def _vertex_types_as_set(cls, value: list[str] | None) -> list[str] | None:
@@ -1046,16 +1311,22 @@ ActorConfig = Annotated[
 DescendActorConfig.model_rebuild()
 TransformActorConfig.model_rebuild()
 
+#: Validates one normalized step. Discriminated on ``type``: a step without one
+#: is refused rather than matched to whichever member happens to accept it (an
+#: empty dict used to validate as an empty descend).
 _actor_config_adapter: TypeAdapter[
     VertexActorConfig
     | TransformActorConfig
     | EdgeActorConfig
     | DescendActorConfig
     | VertexRouterActorConfig
-] = TypeAdapter(
-    VertexActorConfig
-    | TransformActorConfig
-    | EdgeActorConfig
-    | DescendActorConfig
-    | VertexRouterActorConfig
+] = TypeAdapter(ActorConfig)
+
+#: The step classes, for ``isinstance`` checks.
+ACTOR_CONFIG_TYPES = (
+    VertexActorConfig,
+    TransformActorConfig,
+    EdgeActorConfig,
+    DescendActorConfig,
+    VertexRouterActorConfig,
 )

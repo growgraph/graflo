@@ -1639,7 +1639,7 @@ class _Naming:
         self, side: Side, member: str, resource_names: Mapping[Side, Mapping[str, str]]
     ) -> list[tuple[str, str]]:
         """``(side name, union name)`` of each resource of *side* producing *member*."""
-        from graflo.architecture.contract.ingestion.resource import _steps_producing
+        from graflo.architecture.contract.ingestion.resource import steps_producing
 
         manifest = self.manifests[side]
         ingestion, schema = manifest.ingestion_model, manifest.graph_schema
@@ -1649,7 +1649,7 @@ class _Naming:
         return [
             (resource.name, resource_names[side].get(resource.name, resource.name))
             for resource in ingestion.resources
-            if _steps_producing(resource.pipeline, member, known_vertices=known)
+            if steps_producing(resource.pipeline, member, known_vertices=known)
         ]
 
     def _keyable(

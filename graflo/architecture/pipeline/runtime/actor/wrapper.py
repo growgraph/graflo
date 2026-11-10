@@ -14,9 +14,7 @@ from graflo.architecture.contract.ingestion.steps import (
     TransformActorConfig,
     VertexActorConfig,
     VertexRouterActorConfig,
-    normalize_actor_step,
     parse_root_config,
-    validate_actor_step,
 )
 from graflo.architecture.graph_types import (
     ActionContext,
@@ -141,11 +139,6 @@ class ActorWrapper:
             infer_edge_except=set(),
         )
         return wrapper
-
-    @classmethod
-    def _from_step(cls, step: dict[str, Any]) -> ActorWrapper:
-        config = validate_actor_step(normalize_actor_step(step))
-        return cls.from_config(config)
 
     def __call__(
         self,

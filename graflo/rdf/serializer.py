@@ -3,13 +3,21 @@
 from __future__ import annotations
 
 import json
-from typing import Any, cast
+from typing import Any
 
 from rdflib import RDF, BNode, Graph, Literal, URIRef
 from rdflib.namespace import XSD
 
 from graflo.architecture.contract.bindings.core import AnyConnector
 from graflo.architecture.contract.ingestion.resource import step_produces_vertices
+from graflo.architecture.contract.ingestion.steps import (
+    ActorConfig,
+    DescendActorConfig,
+    EdgeActorConfig,
+    TransformActorConfig,
+    VertexActorConfig,
+    VertexRouterActorConfig,
+)
 from graflo.architecture.contract.ingestion.transform import (
     DressConfig,
     KeySelectionConfig,
@@ -22,7 +30,6 @@ from graflo.architecture.schema.vertex import Field, Vertex
 from graflo.rdf import namespace as ns
 from graflo.rdf.utils import (
     actor_step_class,
-    actor_step_type,
     add_enum_individual,
     add_literal,
     join_uri,
@@ -739,7 +746,7 @@ class ManifestRdfSerializer:
     def _emit_actor_step(
         self,
         graph: Graph,
-        step: dict[str, Any],
+        step: ActorConfig,
         *,
         index: int,
         transform_uri_by_name: dict[str, URIRef] | None = None,
@@ -747,96 +754,58 @@ class ManifestRdfSerializer:
         edge_uri_by_id: dict[EdgeId, URIRef] | None = None,
     ) -> BNode:
         step_node = BNode()
-        step_type = actor_step_type(step)
+        step_type = step.type
         graph.add((step_node, RDF.type, URIRef(str(actor_step_class(step_type)))))
         graph.add((step_node, RDF.type, ns.Actor))
         add_literal(graph, step_node, ns.actorType, step_type)
         add_literal(graph, step_node, ns.stepIndex, index)
-        graph.add((step_node, ns.stepPayload, json_literal(step)))
-        if step_type == "vertex":
-            vertex_name = step.get("vertex")
-            if (
-                isinstance(vertex_name, str)
-                and vertex_uri_by_name is not None
-                and vertex_name in vertex_uri_by_name
-            ):
-                graph.add(
-                    (step_node, ns.targetsVertex, vertex_uri_by_name[vertex_name])
-                )
-        if step_type == "vertex_router" and vertex_uri_by_name is not None:
+        # A descend's children are actors of their own, linked by hasActor.
+        payload = {
+            "type": step_type,
+            **step.to_minimal_canonical_dict(exclude={"pipeline"}),
+        }
+        graph.add((step_node, ns.stepPayload, json_literal(payload)))
+        if (
+            isinstance(step, VertexActorConfig)
+            and vertex_uri_by_name is not None
+            and step.vertex in vertex_uri_by_name
+        ):
+            graph.add((step_node, ns.targetsVertex, vertex_uri_by_name[step.vertex]))
+        if isinstance(step, VertexRouterActorConfig) and vertex_uri_by_name is not None:
             # The classes the router names: its reach when that is bounded, its
             # table's targets when it routes any class.
             for mapped in sorted(step_produces_vertices(step)):
                 if mapped in vertex_uri_by_name:
                     graph.add((step_node, ns.targetsVertex, vertex_uri_by_name[mapped]))
-        if step_type == "edge" and edge_uri_by_id is not None:
-
-            def _link_edge(source: str, target: str, relation: str | None) -> None:
-                edge_uri = edge_uri_by_id.get((source, target, relation))
+        if isinstance(step, EdgeActorConfig) and edge_uri_by_id is not None:
+            for intent in step.intents():
+                if intent.source is None or intent.target is None:
+                    continue
+                edge_uri = edge_uri_by_id.get(
+                    (intent.source, intent.target, intent.relation)
+                )
                 if edge_uri is not None:
                     graph.add((step_node, ns.targetsEdge, edge_uri))
-
-            source = step.get("from")
-            target = step.get("to")
-            relation = step.get("relation")
-            if isinstance(source, str) and isinstance(target, str):
-                _link_edge(
-                    source, target, relation if isinstance(relation, str) else None
+        if (
+            isinstance(step, TransformActorConfig)
+            and step.call is not None
+            and step.call.use is not None
+            and transform_uri_by_name is not None
+        ):
+            transform_uri = transform_uri_by_name.get(step.call.use)
+            if transform_uri is not None:
+                graph.add((step_node, ns.executesTransform, transform_uri))
+        if isinstance(step, DescendActorConfig):
+            for nested_index, nested_step in enumerate(step.pipeline):
+                nested_node = self._emit_actor_step(
+                    graph,
+                    nested_step,
+                    index=nested_index,
+                    transform_uri_by_name=transform_uri_by_name,
+                    vertex_uri_by_name=vertex_uri_by_name,
+                    edge_uri_by_id=edge_uri_by_id,
                 )
-            links = step.get("links")
-            if isinstance(links, list):
-                for link in links:
-                    if not isinstance(link, dict):
-                        continue
-                    link_source = link.get("from")
-                    link_target = link.get("to")
-                    link_relation = link.get("relation")
-                    if isinstance(link_source, str) and isinstance(link_target, str):
-                        _link_edge(
-                            link_source,
-                            link_target,
-                            link_relation if isinstance(link_relation, str) else None,
-                        )
-        if step_type == "transform":
-            transform_name = step.get("name")
-            if not isinstance(transform_name, str):
-                call_spec = step.get("call")
-                if isinstance(call_spec, dict):
-                    use_name = call_spec.get("use")
-                    if isinstance(use_name, str):
-                        transform_name = use_name
-            if not isinstance(transform_name, str):
-                transform_step = step.get("transform")
-                if isinstance(transform_step, dict):
-                    direct_name = transform_step.get("name")
-                    if isinstance(direct_name, str):
-                        transform_name = direct_name
-                    nested_call = transform_step.get("call")
-                    if not isinstance(transform_name, str) and isinstance(
-                        nested_call, dict
-                    ):
-                        nested_use = nested_call.get("use")
-                        if isinstance(nested_use, str):
-                            transform_name = nested_use
-            if isinstance(transform_name, str) and transform_uri_by_name is not None:
-                transform_uri = transform_uri_by_name.get(transform_name)
-                if transform_uri is not None:
-                    graph.add((step_node, ns.executesTransform, transform_uri))
-
-        if step_type == "descend":
-            nested_steps = step.get("pipeline")
-            if isinstance(nested_steps, list):
-                for nested_index, nested_step in enumerate(nested_steps):
-                    if isinstance(nested_step, dict):
-                        nested_node = self._emit_actor_step(
-                            graph,
-                            cast(dict[str, Any], nested_step),
-                            index=nested_index,
-                            transform_uri_by_name=transform_uri_by_name,
-                            vertex_uri_by_name=vertex_uri_by_name,
-                            edge_uri_by_id=edge_uri_by_id,
-                        )
-                        graph.add((step_node, ns.hasActor, nested_node))
+                graph.add((step_node, ns.hasActor, nested_node))
         return step_node
 
     def _emit_bindings(

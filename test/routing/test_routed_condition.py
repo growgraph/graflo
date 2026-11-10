@@ -1,4 +1,4 @@
-"""Which rows a resource's routers keep, and where a connector reads that field from."""
+"""Which records a resource's routers keep, and where a connector reads that field from."""
 
 from __future__ import annotations
 
@@ -7,12 +7,19 @@ from typing import Any
 import pytest
 
 from graflo.architecture.contract.bindings import TableConnector
-from graflo.architecture.contract.ingestion.resource import (
-    level_rewrites,
-    routed_row_condition,
-    router_accepted_values,
-    router_keeps_subset,
+from graflo.architecture.contract.ingestion.routing import (
+    RoutedRecordFilter,
+    fields_written_before_routing,
+    routed_record_filter,
+    routers_keep_subset,
 )
+from graflo.architecture.contract.ingestion.steps import (
+    ActorConfig,
+    TransformActorConfig,
+    VertexRouterActorConfig,
+    as_actor_step,
+)
+from graflo.architecture.contract.ingestion.transform import ProtoTransform
 from graflo.filter import JoinClause
 from graflo.filter.onto import render_conjunct
 from graflo.filter.select import SelectSpec
@@ -21,13 +28,44 @@ from graflo.onto import ExpressionFlavor
 
 DECLARED = {"server", "switch", "rack"}
 
+#: A named transform the way ``ingestion_model.transforms`` holds one.
+NAMED = {
+    "lower_name": ProtoTransform(
+        name="lower_name",
+        module="builtins",
+        foo="str",
+        input=("name",),
+        output=("label",),
+    ),
+    "relabel_kind": ProtoTransform(
+        name="relabel_kind",
+        module="builtins",
+        foo="str",
+        input=("raw",),
+        output=("kind",),
+    ),
+}
 
-def _router(**options: Any) -> dict[str, Any]:
-    return {"vertex_router": {"type_field": "kind", **options}}
+
+def _router(**options: Any) -> VertexRouterActorConfig:
+    step = as_actor_step({"vertex_router": {"type_field": "kind", **options}})
+    assert isinstance(step, VertexRouterActorConfig)
+    return step
 
 
-class TestRouterAcceptedValues:
-    def test_a_closed_router_accepts_its_keys_that_reach_a_declared_class(
+def _steps(*raw: dict[str, Any] | ActorConfig) -> list[ActorConfig]:
+    return [as_actor_step(step) for step in raw]
+
+
+def _filter(*raw: dict[str, Any] | ActorConfig) -> RoutedRecordFilter:
+    return routed_record_filter(_steps(*raw), DECLARED, NAMED)
+
+
+CLOSED = {"type_map": {"srv": "server"}, "type_map_only": True}
+
+
+class TestRoutedValues:
+    def test_a_closed_router_routes_its_keys_that_reach_a_declared_class(
         self,
     ) -> None:
         step = _router(
@@ -35,46 +73,95 @@ class TestRouterAcceptedValues:
             type_map_only=True,
         )
 
-        assert router_accepted_values(step, DECLARED) == {"srv", "sw"}
+        assert step.routed_values(DECLARED) == {"srv", "sw"}
 
-    def test_an_open_router_also_accepts_declared_names(self) -> None:
+    def test_an_open_router_also_routes_declared_names(self) -> None:
         step = _router(type_map={"srv": "server"})
 
-        assert router_accepted_values(step, DECLARED) == {
-            "srv",
-            "server",
-            "switch",
-            "rack",
-        }
+        assert step.routed_values(DECLARED) == {"srv", "server", "switch", "rack"}
 
     def test_vertex_types_bound_an_open_router(self) -> None:
         step = _router(type_map={"srv": "server"}, vertex_types=["server"])
 
-        assert router_accepted_values(step, DECLARED) == {"srv", "server"}
+        assert step.routed_values(DECLARED) == {"srv", "server"}
 
     def test_a_name_mapped_elsewhere_routes_where_the_map_says(self) -> None:
         step = _router(type_map={"rack": "server"}, vertex_types=["server"])
 
-        assert router_accepted_values(step, DECLARED) == {"rack", "server"}
+        assert step.routed_values(DECLARED) == {"rack", "server"}
 
 
-class TestRoutedRowCondition:
+class TestFieldsWritten:
+    @staticmethod
+    def _written(raw: dict[str, Any]) -> frozenset[str] | None:
+        step = as_actor_step({"transform": raw})
+        assert isinstance(step, TransformActorConfig)
+        return step.fields_written(NAMED)
+
+    def test_a_rename_writes_its_targets(self) -> None:
+        assert self._written({"rename": {"a": "b"}}) == {"b"}
+
+    def test_an_explicit_output_is_what_is_written(self) -> None:
+        call = {"module": "builtins", "foo": "str", "input": ["kind"], "output": ["k2"]}
+        assert self._written({"call": call}) == {"k2"}
+
+    def test_a_guard_on_the_field_only_reads_it(self) -> None:
+        call = {"module": "builtins", "foo": "str", "input": ["id"], "output": ["key"]}
+        raw = {"call": call, "when": {"field": "kind", "in": ["srv"]}}
+        assert self._written(raw) == {"key"}
+
+    def test_a_call_without_output_writes_back_into_its_input(self) -> None:
+        call = {"module": "builtins", "foo": "str", "input": ["kind"]}
+        assert self._written({"call": call}) == {"kind"}
+
+    def test_a_named_transform_writes_its_declared_output(self) -> None:
+        assert self._written({"call": {"use": "lower_name"}}) == {"label"}
+
+    def test_the_call_overrides_the_named_output(self) -> None:
+        raw = {"call": {"use": "lower_name", "output": ["shout"]}}
+        assert self._written(raw) == {"shout"}
+
+    def test_an_unknown_named_transform_is_unknown(self) -> None:
+        assert self._written({"call": {"use": "missing"}}) is None
+
+    def test_a_dress_writes_its_key_and_value(self) -> None:
+        call = {
+            "module": "builtins",
+            "foo": "str",
+            "input": ["open"],
+            "dress": {"key": "name", "value": "value"},
+        }
+        assert self._written({"call": call}) == {"name", "value"}
+
+    def test_output_groups_are_written(self) -> None:
+        call = {
+            "module": "builtins",
+            "foo": "str",
+            "input_groups": [["a"], ["b"]],
+            "output_groups": [["x"], ["y"]],
+        }
+        assert self._written({"call": call}) == {"x", "y"}
+
+    def test_a_key_target_is_unknown(self) -> None:
+        call = {"module": "builtins", "foo": "str", "target": "keys"}
+        assert self._written({"call": call}) is None
+
+
+class TestRoutedRecordFilter:
     def test_a_router_alone_gives_its_field_and_values(self) -> None:
-        pipeline = [_router(type_map={"srv": "server"}, type_map_only=True)]
-
-        assert routed_row_condition(pipeline, DECLARED) == {"kind": {"srv"}}
+        assert _filter(_router(**CLOSED)).fields == {"kind": {"srv"}}
 
     def test_routers_on_one_field_add_up(self) -> None:
-        pipeline = [
+        verdict = _filter(
             _router(type_map={"srv": "server"}, type_map_only=True, role="a"),
             _router(type_map={"sw": "switch"}, type_map_only=True, role="b"),
-        ]
+        )
 
-        assert routed_row_condition(pipeline, DECLARED) == {"kind": {"srv", "sw"}}
+        assert verdict.fields == {"kind": {"srv", "sw"}}
 
     def test_routers_on_two_fields_give_two_fields(self) -> None:
-        pipeline = [
-            _router(type_map={"srv": "server"}, type_map_only=True),
+        verdict = _filter(
+            _router(**CLOSED),
             {
                 "vertex_router": {
                     "type_field": "parent_kind",
@@ -82,15 +169,12 @@ class TestRoutedRowCondition:
                     "type_map_only": True,
                 }
             },
-        ]
+        )
 
-        assert routed_row_condition(pipeline, DECLARED) == {
-            "kind": {"srv"},
-            "parent_kind": {"rk"},
-        }
+        assert verdict.fields == {"kind": {"srv"}, "parent_kind": {"rk"}}
 
     def test_an_edge_between_router_roles_keeps_the_condition(self) -> None:
-        pipeline = [
+        verdict = _filter(
             _router(type_map={"srv": "server"}, type_map_only=True, role="a"),
             {
                 "vertex_router": {
@@ -101,81 +185,133 @@ class TestRoutedRowCondition:
                 }
             },
             {"edge": {"source_role": "a", "target_role": "b"}},
-        ]
+        )
 
-        assert routed_row_condition(pipeline, DECLARED) == {
-            "kind": {"srv"},
-            "other": {"rk"},
-        }
-
-    def test_a_transform_that_writes_other_fields_keeps_the_condition(self) -> None:
-        pipeline = [
-            {"transform": {"rename": {"name": "label"}}},
-            _router(type_map={"srv": "server"}, type_map_only=True),
-        ]
-
-        assert routed_row_condition(pipeline, DECLARED) == {"kind": {"srv"}}
-
-    def test_a_router_routing_nothing_leaves_no_field(self) -> None:
-        pipeline = [_router(type_map={"pdu": "pdu"}, type_map_only=True)]
-
-        assert routed_row_condition(pipeline, DECLARED) == {}
+        assert verdict.fields == {"kind": {"srv"}, "other": {"rk"}}
 
     @pytest.mark.parametrize(
-        "extra",
+        "transform",
         [
-            pytest.param({"vertex": "rack"}, id="static-vertex"),
+            pytest.param({"rename": {"name": "label"}}, id="rename-elsewhere"),
+            pytest.param({"call": {"use": "lower_name"}}, id="named-output-elsewhere"),
+            pytest.param(
+                {
+                    "call": {
+                        "module": "builtins",
+                        "foo": "str",
+                        "input": ["id"],
+                        "output": ["key"],
+                    },
+                    "when": {"field": "kind", "in": ["srv"]},
+                },
+                id="guarded-on-the-field",
+            ),
+            pytest.param(
+                {
+                    "call": {
+                        "module": "builtins",
+                        "foo": "str",
+                        "input": ["open"],
+                        "dress": {"key": "name", "value": "value"},
+                    }
+                },
+                id="dress",
+            ),
+        ],
+    )
+    def test_a_transform_that_writes_other_fields_keeps_the_condition(
+        self, transform: dict[str, Any]
+    ) -> None:
+        verdict = _filter({"transform": transform}, _router(**CLOSED))
+
+        assert verdict.fields == {"kind": {"srv"}}
+        assert verdict.blocked_by is None
+
+    def test_a_router_routing_nothing_leaves_no_field(self) -> None:
+        verdict = _filter(_router(type_map={"pdu": "pdu"}, type_map_only=True))
+
+        assert verdict.fields == {}
+
+    @pytest.mark.parametrize(
+        "extra,blocked_by",
+        [
+            pytest.param({"vertex": "rack"}, "step 1 (vertex)", id="static-vertex"),
             pytest.param(
                 {"descend": {"key": "parts", "pipeline": [{"vertex": "rack"}]}},
+                "step 1 (descend)",
                 id="descend",
             ),
-            pytest.param({"edge": {"from": "server", "to": "rack"}}, id="static-edge"),
+            pytest.param(
+                {"edge": {"from": "server", "to": "rack"}},
+                "an edge end is not a router role",
+                id="static-edge",
+            ),
             pytest.param(
                 {"edge": {"source_role": "kind", "target_role": "elsewhere"}},
+                "an edge end is not a router role",
                 id="edge-to-a-non-router-role",
             ),
             pytest.param(
                 {"transform": {"rename": {"category": "kind"}}},
+                "it writes ['kind']",
                 id="rename-into-the-field",
             ),
             pytest.param(
-                {"transform": {"call": {"use": "f", "input": ["a"]}}},
-                id="transform-with-unknown-output",
+                {"transform": {"call": {"use": "relabel_kind"}}},
+                "step 1 (transform relabel_kind): it writes ['kind']",
+                id="named-transform-into-the-field",
+            ),
+            pytest.param(
+                {
+                    "transform": {
+                        "call": {"module": "builtins", "foo": "str", "input": ["kind"]}
+                    }
+                },
+                "step 1 (transform builtins.str): it writes ['kind']",
+                id="in-place-call-on-the-field",
+            ),
+            pytest.param(
+                {"transform": {"call": {"use": "missing", "input": ["a"]}}},
+                "cannot be known",
+                id="unknown-named-transform",
             ),
         ],
     )
-    def test_a_row_that_may_count_without_a_router_gives_none(
-        self, extra: dict[str, Any]
+    def test_a_record_that_may_count_without_a_router_names_the_step(
+        self, extra: dict[str, Any], blocked_by: str
     ) -> None:
-        pipeline = [_router(type_map={"srv": "server"}, type_map_only=True), extra]
+        verdict = _filter(_router(**CLOSED), extra)
 
-        assert routed_row_condition(pipeline, DECLARED) is None
+        assert verdict.fields is None
+        assert verdict.blocked_by is not None and blocked_by in verdict.blocked_by
 
     def test_no_router_gives_none(self) -> None:
-        assert routed_row_condition([{"vertex": "rack"}], DECLARED) is None
+        verdict = _filter({"vertex": "rack"})
+
+        assert verdict.fields is None
+        assert verdict.blocked_by == "no top-level vertex_router"
 
     def test_a_transform_listed_after_the_router_still_counts(self) -> None:
         # Transforms of a level run before its routers, whatever the order listed.
-        pipeline = [
-            _router(type_map={"srv": "server"}, type_map_only=True),
-            {"transform": {"rename": {"category": "kind"}}},
-        ]
+        pipeline = _steps(
+            _router(**CLOSED), {"transform": {"rename": {"category": "kind"}}}
+        )
 
-        assert level_rewrites(pipeline) == {"kind"}
-        assert routed_row_condition(pipeline, DECLARED) is None
+        assert fields_written_before_routing(pipeline, NAMED) == {"kind"}
+        assert routed_record_filter(pipeline, DECLARED, NAMED).fields is None
 
 
-class TestRouterKeepsSubset:
+class TestRoutersKeepSubset:
     @pytest.mark.parametrize(
-        "step,expected",
+        "options,expected",
         [
-            pytest.param(_router(type_map_only=True, type_map={}), True, id="closed"),
-            pytest.param(_router(vertex_types=["rack"]), True, id="bounded"),
-            pytest.param(_router(type_map={"srv": "server"}), False, id="open"),
+            pytest.param({"type_map_only": True, "type_map": {}}, True, id="closed"),
+            pytest.param({"vertex_types": ["rack"]}, True, id="bounded"),
+            pytest.param({"type_map": {"srv": "server"}}, False, id="open"),
         ],
     )
-    def test_closed_or_bounded(self, step: dict[str, Any], expected: bool) -> None:
-        assert router_keeps_subset([step]) is expected
+    def test_closed_or_bounded(self, options: dict[str, Any], expected: bool) -> None:
+        assert routers_keep_subset([_router(**options)]) is expected
 
 
 class TestSourceColumn:

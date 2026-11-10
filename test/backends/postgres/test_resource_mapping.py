@@ -73,7 +73,7 @@ def test_create_vertex_resource_emits_minimal_pipeline():
     )
 
     assert resource.name == "users"
-    assert resource.pipeline == [{"vertex": "users"}]
+    assert [step.to_shorthand() for step in resource.pipeline] == [{"vertex": "users"}]
 
 
 def test_create_edge_resource_uses_identity_columns():
@@ -89,7 +89,7 @@ def test_create_edge_resource_uses_identity_columns():
     )
 
     assert resource.name == "purchases"
-    assert resource.pipeline == [
+    assert [step.to_shorthand() for step in resource.pipeline] == [
         {"vertex": "users", "from": {"id": "user_id"}},
         {"vertex": "products", "from": {"product_code": "product_id"}},
     ]

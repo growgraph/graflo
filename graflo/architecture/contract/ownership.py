@@ -8,15 +8,11 @@ properties, so a misread key cannot become a vertex the source never had.
 
 from __future__ import annotations
 
-from typing import Any
-
 from graflo.architecture.contract.ingestion.resource import (
+    iter_steps,
     step_finds,
     step_looks_up,
     step_produces_vertices,
-)
-from graflo.architecture.contract.ingestion.steps.normalize import (
-    normalize_actor_step,
 )
 from graflo.architecture.contract.manifest import GraphManifest
 
@@ -36,24 +32,14 @@ def connector_owned_types(manifest: GraphManifest) -> frozenset[str]:
         else None
     )
     owned: set[str] = set()
-
-    def walk(level: Any) -> None:
-        if not isinstance(level, list):
-            return
-        for item in level:
-            if not isinstance(item, dict):
-                continue
-            step = normalize_actor_step(dict(item))
+    for resource in manifest.ingestion_model.resources:
+        if not manifest.bindings.get_connectors_for_resource(resource.name):
+            continue
+        for step in iter_steps(resource.pipeline):
             for vertex in step_produces_vertices(step, known_vertices=known):
                 if step_looks_up(step, vertex):
                     continue
                 if step_finds(step, vertex, known_vertices=known) is not None:
                     continue
                 owned.add(vertex)
-            if step.get("type") == "descend":
-                walk(step.get("pipeline"))
-
-    for resource in manifest.ingestion_model.resources:
-        if manifest.bindings.get_connectors_for_resource(resource.name):
-            walk(resource.pipeline)
     return frozenset(owned)

@@ -3,6 +3,7 @@
 import pytest
 
 from graflo.architecture.contract import GraphManifest
+from graflo.architecture.contract.ingestion.steps import EdgeActorConfig
 from graflo.architecture.evolution import (
     ReplaceIdentityOp,
     apply_evolution,
@@ -314,11 +315,11 @@ class TestEndpointCascade:
         )
 
     @staticmethod
-    def _edge_step(manifest: GraphManifest) -> dict:
+    def _edge_step(manifest: GraphManifest) -> EdgeActorConfig:
         assert manifest.ingestion_model is not None
         for step in manifest.ingestion_model.resources[0].pipeline:
-            if "edge" in step:
-                return step["edge"]
+            if isinstance(step, EdgeActorConfig):
+                return step
         raise AssertionError("no edge step")
 
     def test_follow_new_leaves_endpoints_on_the_primary_identity(self):
@@ -333,7 +334,7 @@ class TestEndpointCascade:
             ],
         )
 
-        assert self._edge_step(out).get("source_match") in (None, "identity")
+        assert self._edge_step(out).source_match in (None, "identity")
 
     def test_pin_to_retired_repoints_endpoints_at_the_old_key(self):
         out = apply_evolution(
@@ -351,8 +352,8 @@ class TestEndpointCascade:
             ],
         )
 
-        assert self._edge_step(out)["source_match"] == "by_legacy"
-        assert self._edge_step(out).get("target_match") in (None, "identity")
+        assert self._edge_step(out).source_match == "by_legacy"
+        assert self._edge_step(out).target_match in (None, "identity")
 
     def test_pin_does_not_override_an_explicit_selector(self):
         manifest = _manifest(
@@ -395,7 +396,7 @@ class TestEndpointCascade:
             ],
         )
 
-        assert self._edge_step(out)["source_match"] == "by_lei"
+        assert self._edge_step(out).source_match == "by_lei"
 
     def test_pin_to_retired_requires_demotion(self):
         with pytest.raises(ValueError, match="requires retire: demote"):

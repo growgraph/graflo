@@ -17,6 +17,13 @@ from collections.abc import Callable
 
 import pytest
 
+from graflo.architecture.contract.ingestion.steps import as_actor_step
+from graflo.architecture.contract.ingestion.steps.models import (
+    ActorConfig,
+    DescendActorConfig,
+    TransformActorConfig,
+    VertexRouterActorConfig,
+)
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.evolution import (
     AddResourceTransformsOp,
@@ -944,24 +951,26 @@ def _dynamic_manifest_a() -> GraphManifest:
     """:func:`_routed_manifest_a` with no table: ``kind`` *is* the class name."""
     manifest = _routed_manifest_a()
     manifest.require_ingestion_model().resources[0].pipeline = [
-        {
-            "descend": {
-                "key": "records",
-                "apply": [
-                    {
-                        "vertex_router": {
-                            "type_field": "kind",
-                            "keep_fields": [
-                                "firm_id",
-                                "shop_id",
-                                "person_id",
-                                "secondary_key",
-                            ],
+        as_actor_step(
+            {
+                "descend": {
+                    "key": "records",
+                    "apply": [
+                        {
+                            "vertex_router": {
+                                "type_field": "kind",
+                                "keep_fields": [
+                                    "firm_id",
+                                    "shop_id",
+                                    "person_id",
+                                    "secondary_key",
+                                ],
+                            }
                         }
-                    }
-                ],
+                    ],
+                }
             }
-        }
+        )
     ]
     manifest.finish_init()
     return manifest
@@ -999,47 +1008,35 @@ class TestDynamicRouterFusion:
     through, and each writes the entry that keeps the raw value routing.
     """
 
-    def _router(self, union: GraphManifest) -> dict:
-        from graflo.architecture.contract.ingestion.steps.normalize import (
-            normalize_actor_step,
-        )
-
-        pipeline = union.require_ingestion_model().resources[0].pipeline
-        descend = normalize_actor_step(dict(pipeline[0]))
-        return normalize_actor_step(dict(descend["pipeline"][0]))
-
     def test_the_renames_are_written_into_the_table(self) -> None:
-        from graflo.architecture.contract.ingestion.steps.normalize import (
-            normalize_actor_step,
-        )
-
         pipeline = (
             _build_dynamic_member_union()
             .require_ingestion_model()
             .resources[0]
             .pipeline
         )
-        descend = normalize_actor_step(dict(pipeline[0]))
+        descend = pipeline[0]
+        assert isinstance(descend, DescendActorConfig)
         routers = [
             step
-            for step in map(normalize_actor_step, map(dict, descend["pipeline"]))
-            if step.get("type") == "vertex_router"
+            for step in descend.pipeline
+            if isinstance(step, VertexRouterActorConfig)
         ]
 
         # Firm projects its demoted key from firm_id and Shop from shop_id, so
         # merging them splits the router: one closed router per projection.
-        assert [r["type_map"] for r in routers] == [
+        assert [r.type_map for r in routers] == [
             # Merge then closes the router over the left side as handed in:
             # its other classes, as themselves.
             {"Firm": "Company", "Company": "Company", "Person": "Person"},
             {"Shop": "Company"},
         ]
-        assert [r.get("vertex_from_map") for r in routers] == [
+        assert [r.vertex_from_map for r in routers] == [
             # Each demoted key is named by its member's local_key tag.
             {"Company": {"firm__company_id": "firm_id"}},
             {"Company": {"shop__shop_id": "shop_id"}},
         ]
-        assert all(r["type_map_only"] is True for r in routers)
+        assert all(r.type_map_only is True for r in routers)
 
     def test_each_member_fuses_through_its_own_marker(self) -> None:
         union = _build_dynamic_member_union()
@@ -1216,22 +1213,23 @@ def _cast_all(
     return {name: list(docs) for name, docs in result.graph.vertices.items()}
 
 
-def _normalized_steps(union: GraphManifest, resource: str) -> list[dict]:
-    from graflo.architecture.contract.ingestion.steps.normalize import (
-        normalize_actor_step,
-    )
-
+def _pipeline(union: GraphManifest, resource: str) -> list[ActorConfig]:
     found = next(
         r for r in union.require_ingestion_model().resources if r.name == resource
     )
-    return [normalize_actor_step(dict(step)) for step in found.pipeline]
+    return list(found.pipeline)
 
 
-def _derivations(steps: list[dict]) -> list[tuple[str, dict]]:
+def _derivations(steps: list[ActorConfig]) -> list[tuple[str, dict | None]]:
     return [
-        (step["call"]["output"][0], step["when"])
+        (
+            step.call.output[0],
+            None if step.when is None else step.when.model_dump(by_alias=True),
+        )
         for step in steps
-        if step.get("type") == "transform"
+        if isinstance(step, TransformActorConfig)
+        and step.call is not None
+        and step.call.output
     ]
 
 
@@ -1269,7 +1267,7 @@ class TestCompositeDerivedKey:
 
         host = {"field": "cls", "in": ["HostA", "h"]}
         dev = {"field": "cls", "in": ["DevA", "d"]}
-        assert _derivations(_normalized_steps(union, "all_classes")) == [
+        assert _derivations(_pipeline(union, "all_classes")) == [
             ("host_key", host),
             ("group_key", host),
             ("local_key", host),
@@ -1279,7 +1277,7 @@ class TestCompositeDerivedKey:
         ]
         server = {"field": "_class", "in": ["Host", "Server"]}
         switch = {"field": "_class", "in": ["Dev", "Switch"]}
-        assert _derivations(_normalized_steps(union, "api_vertex")) == [
+        assert _derivations(_pipeline(union, "api_vertex")) == [
             ("host_key", server),
             ("group_key", server),
             ("local_key", server),
@@ -1371,10 +1369,11 @@ class TestCompositeDerivedKey:
         union = _physical_union(_api_manifest(extra_vertices=[rack]))
         union.finish_init(strict_references=True)
 
-        router = _normalized_steps(union, "api_vertex")[0]
+        router = _pipeline(union, "api_vertex")[0]
+        assert isinstance(router, VertexRouterActorConfig)
         # The demoted keys of the merged classes read the router's `from`
         # target under their origin-prefixed names.
-        assert router["vertex_from_map"] == {
+        assert router.vertex_from_map == {
             "Host": {"api__key": "vertex_id"},
             "Dev": {"api__key": "vertex_id"},
             "Rack": {},
@@ -1406,9 +1405,11 @@ class TestCompositeDerivedKey:
         )
         union.finish_init(strict_references=True)
 
-        router = _normalized_steps(union, "api_vertex")[0]
-        assert router["type_map"]["Rack"] == "Shelf"
-        assert router["vertex_from_map"] == {
+        router = _pipeline(union, "api_vertex")[0]
+        assert isinstance(router, VertexRouterActorConfig)
+        assert router.type_map is not None
+        assert router.type_map["Rack"] == "Shelf"
+        assert router.vertex_from_map == {
             "Host": {"api__key": "vertex_id"},
             "Shelf": {},
         }

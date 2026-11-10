@@ -1,4 +1,4 @@
-"""A table connector reads only the rows its resource's routers keep."""
+"""A table connector reads only the records its resource's routers keep."""
 
 from __future__ import annotations
 
@@ -45,11 +45,21 @@ def _schema() -> Schema:
     )
 
 
+#: A named transform writing a field other than the routed one.
+LABEL = {
+    "name": "label_of",
+    "module": "builtins",
+    "foo": "str",
+    "input": ["name"],
+    "output": ["label"],
+}
+
+
 def _model(*pipeline: dict[str, Any]) -> IngestionModel:
     model = IngestionModel.model_validate(
         {
             "resources": [{"name": "items", "pipeline": list(pipeline)}],
-            "transforms": [],
+            "transforms": [LABEL],
         }
     )
     model.finish_init(_schema().core_schema)
@@ -98,7 +108,7 @@ class TestTheQueryCarriesTheRoutedValues:
             query = _query(connector, _router())
 
         assert query == 'SELECT * FROM "public"."items" WHERE "kind" IN (\'srv\')'
-        assert "reads only the rows resource 'items' routes: kind in 1 value" in (
+        assert "reads only the records resource 'items' routes: kind in 1 value" in (
             caplog.text
         )
 
@@ -162,6 +172,58 @@ class TestTheQueryCarriesTheRoutedValues:
         assert connector.hash == before
 
 
+class TestTransformsBesideTheRouter:
+    """Transforms at the router's level keep the read narrowed unless they write its field."""
+
+    def test_merge_derived_keys_guarded_on_the_field_keep_the_filter(self) -> None:
+        connector = TableConnector(name="items", table_name="items")
+        derived = {
+            "transform": {
+                "call": {
+                    "module": "graflo.util.transform",
+                    "foo": "tagged_key",
+                    "params": {"tag": "a", "sep": ":"},
+                    "input": ["id"],
+                    "output": ["server_key"],
+                },
+                "when": {"field": "kind", "in": ["srv"]},
+            }
+        }
+
+        query = _query(connector, derived, _router())
+
+        assert query.endswith("WHERE \"kind\" IN ('srv')")
+
+    def test_a_named_transform_writing_elsewhere_keeps_the_filter(self) -> None:
+        connector = TableConnector(name="items", table_name="items")
+
+        query = _query(
+            connector, {"transform": {"call": {"use": "label_of"}}}, _router()
+        )
+
+        assert query.endswith("WHERE \"kind\" IN ('srv')")
+
+    def test_a_transform_rewriting_the_field_is_named_in_the_log(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        connector = TableConnector(name="items", table_name="items")
+        in_place = {
+            "transform": {
+                "call": {"module": "builtins", "foo": "str", "input": ["kind"]}
+            }
+        }
+
+        with caplog.at_level(logging.WARNING, logger=LOGGER):
+            query = _query(connector, in_place, _router())
+
+        assert "WHERE" not in query
+        assert (
+            "Connector 'items' reads every record of resource 'items': its routers "
+            "cannot narrow the read, because step 0 (transform builtins.str): it "
+            "writes ['kind']"
+        ) in caplog.text
+
+
 class TestNothingIsPushed:
     def test_a_static_vertex_step_leaves_the_query_whole(self) -> None:
         connector = TableConnector(name="items", table_name="items")
@@ -182,8 +244,8 @@ class TestNothingIsPushed:
 
         assert "WHERE" not in query
         assert (
-            "Connector 'items' reads every row, but resource 'items' keeps only "
-            "rows with kind in 1 value"
+            "Connector 'items' reads every record, but resource 'items' keeps only "
+            "records with kind in 1 value"
         ) in caplog.text
 
     def test_an_unresolved_field_under_an_open_router_is_quiet(
@@ -196,7 +258,7 @@ class TestNothingIsPushed:
         with caplog.at_level(logging.WARNING, logger=LOGGER):
             _query(connector, _router(type_map_only=False))
 
-        assert "reads every row" not in caplog.text
+        assert "reads every record" not in caplog.text
 
     def test_a_router_routing_nothing_registers_no_source(
         self, caplog: pytest.LogCaptureFixture
@@ -220,7 +282,7 @@ class TestOtherConnectors:
         with caplog.at_level(logging.WARNING, logger=LOGGER):
             _sources(connector, _router())
 
-        assert "Connector 'items' reads every row" in caplog.text
+        assert "Connector 'items' reads every record" in caplog.text
 
     @pytest.mark.parametrize(
         "annotations,reported",
@@ -242,7 +304,7 @@ class TestOtherConnectors:
         with caplog.at_level(logging.WARNING, logger=LOGGER):
             _sources(connector, _router(), strict=False)
 
-        assert ("Connector 'items' reads every row" in caplog.text) is reported
+        assert ("Connector 'items' reads every record" in caplog.text) is reported
 
 
 def test_a_capped_read_returns_kept_rows_only(tmp_path: pathlib.Path) -> None:
