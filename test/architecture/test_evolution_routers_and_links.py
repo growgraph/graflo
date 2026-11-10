@@ -14,8 +14,13 @@ from typing import Any
 from graflo.architecture.contract.ingestion.resource import (
     find_vertex_producing_levels,
 )
-from graflo.architecture.contract.ingestion.steps.normalize import (
-    normalize_actor_step,
+from graflo.architecture.contract.ingestion.steps import as_actor_step
+from graflo.architecture.contract.ingestion.steps.models import (
+    ActorConfig,
+    EdgeActorConfig,
+    EdgeLinkConfig,
+    TransformActorConfig,
+    VertexRouterActorConfig,
 )
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.evolution import (
@@ -85,9 +90,15 @@ def _manifest(*resources: list[dict[str, Any]]) -> GraphManifest:
     return manifest
 
 
-def _pipeline(manifest: GraphManifest, index: int = 0) -> list[dict[str, Any]]:
+def _pipeline(manifest: GraphManifest, index: int = 0) -> list[ActorConfig]:
     resource = manifest.require_ingestion_model().resources[index]
     return list(resource.pipeline)
+
+
+def _router(manifest: GraphManifest) -> VertexRouterActorConfig:
+    (router,) = _pipeline(manifest)
+    assert isinstance(router, VertexRouterActorConfig)
+    return router
 
 
 def _cast(manifest: GraphManifest, rows: list[dict[str, Any]]) -> dict[str, list]:
@@ -111,9 +122,9 @@ class TestRouterProjections:
             _manifest([ROUTER]),
             [RenameVertexPropertiesOp(renames={"Machine": {"serial": "tag"}})],
         )
-        (router,) = _pipeline(renamed)
-        assert router["vertex_from_map"] == {"Machine": {"id": "obj", "tag": "sn"}}
-        assert router["from"] == {"id": "obj", "serial": "sn"}
+        router = _router(renamed)
+        assert router.vertex_from_map == {"Machine": {"id": "obj", "tag": "sn"}}
+        assert router.from_doc == {"id": "obj", "serial": "sn"}
         assert _cast(renamed, ROWS) == {
             "Machine": [{"id": "m1", "tag": "S-1"}],
             "Line": [{"id": "l1", "serial": "S-2"}],
@@ -125,8 +136,8 @@ class TestRouterProjections:
             _manifest([bare]),
             [RenameVertexPropertiesOp(renames={"Machine": {"serial": "tag"}})],
         )
-        (router,) = _pipeline(renamed)
-        assert router["vertex_from_map"] == {"Machine": {"tag": "serial"}}
+        router = _router(renamed)
+        assert router.vertex_from_map == {"Machine": {"tag": "serial"}}
         cast = _cast(renamed, [{"kind": "Machine", "id": "m1", "serial": "S-1"}])
         assert cast == {"Machine": [{"id": "m1", "tag": "S-1"}]}
 
@@ -141,8 +152,7 @@ class TestRouterProjections:
             _manifest([shorthand]),
             [RenameVertexPropertiesOp(renames={"Machine": {"serial": "tag"}})],
         )
-        (step,) = _pipeline(renamed)
-        assert step["vertex_router"]["vertex_from_map"] == {
+        assert _router(renamed).vertex_from_map == {
             "Machine": {"id": "obj", "tag": "sn"}
         }
 
@@ -152,15 +162,15 @@ class TestRouterProjections:
             _manifest([closed]),
             [RenameVertexPropertiesOp(renames={"Machine": {"serial": "tag"}})],
         )
-        assert "vertex_from_map" not in _pipeline(renamed)[0]
+        assert not _router(renamed).vertex_from_map
 
     def test_a_removal_splits_the_shared_from(self) -> None:
         trimmed = apply_evolution(
             _manifest([ROUTER]),
             [RemoveVertexPropertiesOp(removals={"Machine": ["serial"]})],
         )
-        (router,) = _pipeline(trimmed)
-        assert router["vertex_from_map"] == {"Machine": {"id": "obj"}}
+        router = _router(trimmed)
+        assert router.vertex_from_map == {"Machine": {"id": "obj"}}
         assert _cast(trimmed, ROWS) == {
             "Machine": [{"id": "m1"}],
             "Line": [{"id": "l1", "serial": "S-2"}],
@@ -173,8 +183,9 @@ class TestRouterProjections:
             _manifest([rename, bare]),
             [RenameVertexPropertiesOp(renames={"Machine": {"serial": "tag"}})],
         )
-        transform = normalize_actor_step(dict(_pipeline(renamed)[0]))
-        assert transform["rename"] == {"raw": "tag"}
+        transform = _pipeline(renamed)[0]
+        assert isinstance(transform, TransformActorConfig)
+        assert transform.rename == {"raw": "tag"}
 
     def test_a_projection_does_not_change_which_level_produces(self) -> None:
         pipeline = [
@@ -188,15 +199,19 @@ class TestRouterProjections:
         known = {"Machine", "Line", "Sensor"}
         assert find_vertex_producing_levels(
             _pipeline(renamed), "Machine", known_vertices=known
-        ) == find_vertex_producing_levels(pipeline, "Machine", known_vertices=known)
+        ) == find_vertex_producing_levels(
+            [as_actor_step(step) for step in pipeline],
+            "Machine",
+            known_vertices=known,
+        )
 
 
 class TestEdgeLinks:
     VERTICES = [{"vertex": "Sensor"}, {"vertex": "Machine"}, {"vertex": "Line"}]
 
-    def _links(self, manifest: GraphManifest) -> list[dict[str, Any]] | None:
-        edges = [s for s in _pipeline(manifest) if s.get("type") == "edge"]
-        return edges[0]["links"] if edges else None
+    def _links(self, manifest: GraphManifest) -> list[EdgeLinkConfig] | None:
+        edges = [s for s in _pipeline(manifest) if isinstance(s, EdgeActorConfig)]
+        return edges[0].links if edges else None
 
     def test_a_merge_renames_the_link_endpoints(self) -> None:
         merged = apply_evolution(
@@ -210,13 +225,13 @@ class TestEdgeLinks:
                 )
             ],
         )
-        assert [link["to"] for link in self._links(merged) or []] == ["Unit", "Unit"]
+        assert [link.target for link in self._links(merged) or []] == ["Unit", "Unit"]
 
     def test_removing_a_class_drops_its_link(self) -> None:
         trimmed = apply_evolution(
             _manifest([*self.VERTICES, LINKS]), [RemoveVerticesOp(names=["Line"])]
         )
-        assert [link["to"] for link in self._links(trimmed) or []] == ["Machine"]
+        assert [link.target for link in self._links(trimmed) or []] == ["Machine"]
 
     def test_a_step_left_without_links_goes(self) -> None:
         trimmed = apply_evolution(
@@ -243,9 +258,7 @@ class TestEdgeLinks:
             _manifest([probe, {"vertex": "Machine"}, {"vertex": "Line"}, links]),
             [RemoveVerticesOp(names=["Sensor"])],
         )
-        assert [link.get("relation") for link in self._links(trimmed) or []] == [
-            "feeds"
-        ]
+        assert [link.relation for link in self._links(trimmed) or []] == ["feeds"]
 
     def test_removing_every_linked_relation_drops_the_step(self) -> None:
         trimmed = apply_evolution(

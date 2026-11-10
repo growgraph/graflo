@@ -16,6 +16,7 @@ from graflo.architecture.contract.bindings.connectors import (
     BoundSourceKind,
     ResourceConnector,
 )
+from graflo.architecture.contract.ingestion.steps import EdgeActorConfig
 from graflo.architecture.graph_types import Index
 from graflo.architecture.schema.database_features import EdgePhysicalSpec
 from graflo.architecture.schema.identity_funnel import IdentityBranch, IdentityFunnel
@@ -978,7 +979,9 @@ def test_round_trip_preserves_a_step_that_mirrors_its_inverse() -> None:
     restored = _round_trip(manifest)
     assert _canonical(restored) == _canonical(manifest)
     assert restored.ingestion_model is not None
-    assert restored.ingestion_model.resources[0].pipeline[-1]["edge"]["emit_inverse"]
+    edge_step = restored.ingestion_model.resources[0].pipeline[-1]
+    assert isinstance(edge_step, EdgeActorConfig)
+    assert edge_step.emit_inverse
 
 
 def test_round_trip_keeps_push_connectors_and_watermarks() -> None:

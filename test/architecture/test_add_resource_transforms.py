@@ -89,7 +89,8 @@ class TestApply:
         )
         im = manifest.require_ingestion_model()
         pipeline = im.resources[0].pipeline
-        assert pipeline[-1] == _INLINE_STEP  # appended at the end of the root level
+        # appended at the end of the root level
+        assert pipeline[-1].to_shorthand() == _INLINE_STEP
 
         caster = DocumentCaster(im)
         result = asyncio.run(

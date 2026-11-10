@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 
 from graflo.architecture.contract import GraphManifest
+from graflo.architecture.contract.ingestion.steps import as_actor_step
 from graflo.architecture.evolution.hashing import manifest_hash
 from graflo.architecture.pipeline.runtime.resource import ResourceRuntime
 
@@ -256,7 +257,7 @@ class TestWhatIsMirrored:
 
     def test_a_flagged_step_keeps_inference_off_the_reversed_pair(self) -> None:
         step = {"edge": {**_flat(FORWARD), "emit_inverse": True}}
-        assert ResourceRuntime.edge_ids_from_pipeline([step]) == {
+        assert ResourceRuntime.edge_ids_from_pipeline([as_actor_step(step)]) == {
             ("person", "institution", None),
             ("institution", "person", None),
         }

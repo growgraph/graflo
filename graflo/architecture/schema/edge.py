@@ -108,7 +108,7 @@ class SuperProperty(ConfigBaseModel):
     (:mod:`graflo.architecture.schema.hierarchy`); nothing is inherited.
 
     Examples:
-        >>> SuperProperty(edge=EdgeRef(source="App", target="CI", relation="depends_on"))
+        >>> SuperProperty(edge=EdgeRef(source="Controller", target="Asset", relation="depends_on"))
         >>> SuperProperty(iri="http://www.w3.org/2004/02/skos/core#related")
     """
 

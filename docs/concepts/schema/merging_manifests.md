@@ -437,7 +437,7 @@ branch is one of these:
 |---|---|---|
 | a property | `serial_number`, or `[plant, tag]` for a composite | the value of a property the members carry, under its canonical name |
 | a derived branch | `{name: match_key, sources: {...}}` | an attribute each resource computes from its own columns; see [Deriving the key per source](#deriving-the-key-per-source) |
-| derived attributes | `[host_key, group_key]`, with both in `derive` | several attributes each resource computes, all required; see [A key over several columns](#a-key-over-several-columns) |
+| derived attributes | `[machine_key, group_key]`, with both in `derive` | several attributes each resource computes, all required; see [A key over several columns](#a-key-over-several-columns) |
 | a local key | `{local_key: {...}}`, always last | the record's own key behind a per-source tag |
 
 One property branch is a plain natural key. Any other list is an
@@ -449,7 +449,7 @@ One property branch is a plain natural key. Any other list is an
 | `[serial_number]` | that natural key | every member carries the field, under its canonical name |
 | `[asset_id, device_id]` | a funnel, one branch per member's own key | the members stay distinct records under one type |
 | a derived branch, then a `local_key` | a funnel over derived attributes | the key must be normalized, filtered or namespaced per source |
-| `[host_key, group_key]` from `derive`, then a `local_key` | a funnel over a composite of derived attributes | that key spans several columns |
+| `[machine_key, group_key]` from `derive`, then a `local_key` | a funnel over a composite of derived attributes | that key spans several columns |
 
 For example, keying on a property the sensor feed spells differently:
 
@@ -606,22 +606,22 @@ secondary identity, as described in
 
 ### A key over several columns
 
-When the key spans several columns, such as a host name and the group it
+When the key spans several columns, such as a machine name and the group it
 belongs to, declare each part in `derive` and list the parts as one composite
 branch:
 
 ```yaml
     derive:
-        host_key:
-            inventory: {foo: affix_gated_key, input: [host], params: {prefix: "h_"}}
-            api_vertex: {input: [hostname]}
+        machine_key:
+            inventory: {foo: affix_gated_key, input: [machine], params: {prefix: "m_"}}
+            api_vertex: {input: [machine_name]}
         group_key:
             inventory: {input: [group]}
             api_vertex: {input: [group_id]}
     identity:
-    -   [host_key, group_key]
+    -   [machine_key, group_key]
     -   local_key:
-            inventory: {field: host_id, tag: inventory}
+            inventory: {field: machine_id, tag: inventory}
             api_vertex: {field: vertex_id, tag: api}
 ```
 
@@ -634,7 +634,7 @@ branch:
 - A derived branch `{name, sources}` is the same as `derive: {name: sources}`
   with the branch `name`.
 
-A property branch `[hostname, group_id]` keys on the same columns without
+A property branch `[machine_name, group_id]` keys on the same columns without
 normalizing them, and only when every member carries them under one name.
 
 ### A resource that produces several members

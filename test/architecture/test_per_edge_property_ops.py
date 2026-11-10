@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 
 from graflo.architecture.contract import GraphManifest
+from graflo.architecture.contract.ingestion.steps import EdgeActorConfig
 from graflo.architecture.evolution import RemoveEdgePropertiesOp, apply_evolution
 from graflo.architecture.evolution.codec import op_from_dict, op_to_dict
 from graflo.architecture.evolution.merge3 import op_reads, op_slots, split_by_slot
@@ -91,9 +92,9 @@ def _index_fields(manifest: GraphManifest) -> dict[tuple, list[list[str]]]:
 def _step_properties(manifest: GraphManifest) -> list[Any]:
     assert manifest.ingestion_model is not None
     return [
-        step["edge"]["properties"]
+        step.properties
         for step in manifest.ingestion_model.resources[0].pipeline
-        if "edge" in step
+        if isinstance(step, EdgeActorConfig)
     ]
 
 

@@ -16,14 +16,24 @@ from graflo.onto import (
     EndpointAmbiguityPolicy,
 )
 
-from .resource import ResourceConfig
+from .resource import (
+    ResourceConfig,
+    collect_vertex_names_from_pipeline,
+    iter_steps,
+)
+from .steps.models import (
+    ActorConfig,
+    DescendActorConfig,
+    EdgeActorConfig,
+    VertexActorConfig,
+    VertexRouterActorConfig,
+)
 from .sync import sync_errors
 from .transform import ProtoTransform
 
 if TYPE_CHECKING:
     # Runtime types are imported lazily: the declarative contract must stay
-    # importable without the pipeline runtime (see finish_init / prune_to_graph).
-    from graflo.architecture.pipeline.runtime.actor import ActorWrapper
+    # importable without the pipeline runtime (see finish_init).
     from graflo.architecture.pipeline.runtime.resource import ResourceRuntime
     from graflo.architecture.schema import CoreSchema
 
@@ -130,6 +140,11 @@ class IngestionModel(ConfigBaseModel):
             if errors:
                 raise ValueError("sync ownership: " + "; ".join(errors))
 
+    @property
+    def transforms_by_name(self) -> dict[str, ProtoTransform]:
+        """The named transforms a ``call.use`` step can reference."""
+        return dict(self._transforms)
+
     def _rebuild_config_state(self) -> None:
         """Rebuild transform and resource lookup maps."""
         self._rebuild_transform_map()
@@ -161,33 +176,53 @@ class IngestionModel(ConfigBaseModel):
     def prune_to_graph(
         self, core_schema: CoreSchema, disconnected: set[str] | None = None
     ) -> None:
-        """Drop resource actors that reference disconnected vertices."""
-        # Deferred: pruning instantiates actor trees from declarative pipelines.
-        from graflo.architecture.pipeline.runtime.actor import ActorWrapper
+        """Drop the steps that name a disconnected vertex, then the resources left empty.
 
+        A ``vertex`` step of such a vertex, and an edge step with such an end,
+        is removed at any level; a ``vertex_router`` is kept, since it routes
+        whatever classes remain. A resource none of whose remaining steps names
+        a vertex is dropped.
+        """
         if disconnected is None:
             disconnected = (
                 core_schema.vertex_config.vertex_set - core_schema.edge_config.vertices
             )
         if not disconnected:
             return
+        gone: set[str] = disconnected
 
-        def _mentions_disconnected(wrapper: ActorWrapper) -> bool:
-            return bool(wrapper.actor.references_vertices() & disconnected)
+        def names_disconnected(step: ActorConfig) -> bool:
+            if isinstance(step, VertexActorConfig):
+                return step.vertex in gone
+            if isinstance(step, EdgeActorConfig):
+                return any(
+                    end in gone
+                    for intent in step.intents()
+                    for end in (intent.source, intent.target)
+                    if end is not None
+                )
+            return False
 
-        to_drop: list[ResourceConfig] = []
+        def prune(steps: list[ActorConfig]) -> list[ActorConfig]:
+            kept: list[ActorConfig] = []
+            for step in steps:
+                if isinstance(step, DescendActorConfig):
+                    kept.append(
+                        step.model_copy(update={"pipeline": prune(step.pipeline)})
+                    )
+                elif not names_disconnected(step):
+                    kept.append(step)
+            return kept
+
+        resources: list[ResourceConfig] = []
         for resource_config in self.resources:
-            root = ActorWrapper(*resource_config.pipeline)
-            if _mentions_disconnected(root):
-                to_drop.append(resource_config)
+            pipeline = prune(resource_config.pipeline)
+            if not collect_vertex_names_from_pipeline(pipeline) and not any(
+                isinstance(step, VertexRouterActorConfig)
+                for step in iter_steps(pipeline)
+            ):
+                self._runtimes.pop(resource_config.name, None)
                 continue
-            root.remove_descendants_if(_mentions_disconnected)
-            if not any(a.references_vertices() for a in root.collect_actors()):
-                to_drop.append(resource_config)
-
-        for dropped in to_drop:
-            self.resources.remove(dropped)
-            self._resources.pop(dropped.name, None)
-            self._runtimes.pop(dropped.name, None)
-        if to_drop:
-            self._rebuild_config_state()
+            resources.append(resource_config.model_copy(update={"pipeline": pipeline}))
+        self.resources = resources
+        self._rebuild_config_state()

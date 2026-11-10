@@ -14,6 +14,12 @@ import logging
 
 import pytest
 
+from graflo.architecture.contract.ingestion.steps.models import (
+    ActorConfig,
+    EdgeActorConfig,
+    VertexActorConfig,
+    VertexRouterActorConfig,
+)
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.evolution import (
     AlignmentConflictError,
@@ -174,11 +180,37 @@ def _secondaries(manifest: GraphManifest) -> dict[str, list[str]]:
     return {s.name: list(s.fields) for s in _z(manifest).secondary_identities}
 
 
-def _pipeline(manifest: GraphManifest, resource: str) -> list:
+def _pipeline(manifest: GraphManifest, resource: str) -> list[ActorConfig]:
     assert manifest.ingestion_model is not None
     return next(
         r.pipeline for r in manifest.ingestion_model.resources if r.name == resource
     )
+
+
+def _vertex_step(pipeline: list[ActorConfig], vertex: str) -> VertexActorConfig:
+    return next(
+        step
+        for step in pipeline
+        if isinstance(step, VertexActorConfig) and step.vertex == vertex
+    )
+
+
+def _edge_steps(pipeline: list[ActorConfig], relation: str) -> list[EdgeActorConfig]:
+    return [
+        step
+        for step in pipeline
+        if isinstance(step, EdgeActorConfig) and step.relation == relation
+    ]
+
+
+def _router_and_edge(
+    pipeline: list[ActorConfig],
+) -> tuple[VertexRouterActorConfig, EdgeActorConfig]:
+    """The ``RA`` resource: a router, a ``WorkOrder`` vertex and one edge."""
+    router, _work_order, edge = pipeline
+    assert isinstance(router, VertexRouterActorConfig)
+    assert isinstance(edge, EdgeActorConfig)
+    return router, edge
 
 
 class TestDeclaredIdentityCoverage:
@@ -442,8 +474,9 @@ class TestDigestField:
         assert ("identity-collision" in kinds) is colliding
 
 
-def _owns_edge(pipeline: list) -> dict:
-    return next(s for s in pipeline if s.get("relation") == "owns")
+def _owns_edge(pipeline: list[ActorConfig]) -> EdgeActorConfig:
+    (edge,) = _edge_steps(pipeline, "owns")
+    return edge
 
 
 def _cast_graph(merged: GraphManifest, resource: str, rows: list[dict]):
@@ -470,9 +503,9 @@ class TestResourcesOutsideTheDerivedBranches:
                 left=_side_a(reference_step={"vertex": "X"}),
             )
         pipeline = _pipeline(merged, "r_ap")
-        z_step = next(s for s in pipeline if s.get("vertex") == "Z")
-        assert z_step["find"] == "a"
-        assert not z_step.get("lookup_only")
+        z_step = _vertex_step(pipeline, "Z")
+        assert z_step.find == "a"
+        assert not z_step.lookup_only
         assert collect_endpoint_selectors([_owns_edge(pipeline)]) == []
         assert "r_ap" in caplog.text and "'a'" in caplog.text
 
@@ -490,9 +523,9 @@ class TestResourcesOutsideTheDerivedBranches:
             ),
             left=_side_a(reference_step={"vertex": "X"}),
         )
-        z_step = next(s for s in _pipeline(merged, "r_ap") if s.get("vertex") == "Z")
-        assert not z_step.get("lookup_only")
-        assert not z_step.get("find")
+        z_step = _vertex_step(_pipeline(merged, "r_ap"), "Z")
+        assert not z_step.lookup_only
+        assert not z_step.find
         graph = _cast_graph(merged, "r_ap", [{"ap_id": "p1", "x_id": "x1"}])
         assert [doc["x_id"] for doc in graph.vertices["Z"]] == ["x1"]
 
@@ -824,15 +857,10 @@ class TestOwnersAndAttachedResources:
     def test_other_resources_attach_by_their_sides_origin(self) -> None:
         merged, report = _asset_union()
         left_b = _pipeline(merged, "left_resource_B")
-        assert next(s for s in left_b if s.get("vertex") == "Asset")["find"] == "left"
+        assert _vertex_step(left_b, "Asset").find == "left"
         right_b = _pipeline(merged, "right_resource_B")
-        assert next(s for s in right_b if s.get("vertex") == "Asset")["find"] == "right"
-        assert (
-            collect_endpoint_selectors(
-                [s for s in left_b if s.get("relation") == "located_in"]
-            )
-            == []
-        )
+        assert _vertex_step(right_b, "Asset").find == "right"
+        assert collect_endpoint_selectors(_edge_steps(left_b, "located_in")) == []
         assert {(a.resource, a.side, a.members, a.key) for a in report.attached} == {
             ("left_resource_B", "left", ("L1",), "left"),
             ("right_resource_B", "right", ("R",), "right"),
@@ -892,7 +920,7 @@ class TestOwnersAndAttachedResources:
         }
         assert report.shared_key_spaces == []
         left_b = _pipeline(merged, "left_resource_B")
-        assert next(s for s in left_b if s.get("vertex") == "Asset")["find"] == "l1"
+        assert _vertex_step(left_b, "Asset").find == "l1"
 
     def test_a_key_space_both_sides_name_is_refused(self) -> None:
         """A left tag naming the right side's origin would join two id spaces."""
@@ -1163,9 +1191,9 @@ class TestRoutersKeepToTheirSide:
 
     def test_a_router_is_closed_over_its_own_side(self) -> None:
         """Renamed classes keep their entries; the rest are listed as themselves."""
-        router, _work_order, _edge = _pipeline(_merge_routed(), "RA")
-        assert router["type_map"] == {"X": "Z", "C": "C", "WorkOrder": "WorkOrder"}
-        assert router["type_map_only"] is True
+        router, _edge = _router_and_edge(_pipeline(_merge_routed(), "RA"))
+        assert router.type_map == {"X": "Z", "C": "C", "WorkOrder": "WorkOrder"}
+        assert router.type_map_only is True
 
     def test_a_value_only_the_other_side_declares_is_skipped(self) -> None:
         graph = _cast_ra(_merge_routed(right=_side_b_with_org()), self.ORG_ROW)
@@ -1174,8 +1202,8 @@ class TestRoutersKeepToTheirSide:
 
     def test_router_scope_union_keeps_the_router_open(self) -> None:
         merged = _merge_routed(right=_side_b_with_org(), router_scope="union")
-        router, _work_order, _edge = _pipeline(merged, "RA")
-        assert not router.get("type_map_only")
+        router, _edge = _router_and_edge(_pipeline(merged, "RA"))
+        assert not router.type_map_only
         graph = _cast_ra(merged, self.ORG_ROW)
         assert [dict(d) for d in graph.vertices["Org"]] == [{"x_id": "o7"}]
 
@@ -1214,10 +1242,12 @@ class TestOpenRoutersInResourceOrder:
             bump_version=False,
         )
         router = next(
-            step for step in _pipeline(merged, "RA") if step.get("type_field")
+            step
+            for step in _pipeline(merged, "RA")
+            if isinstance(step, VertexRouterActorConfig)
         )
-        assert not router.get("type_map_only")
-        assert router["find"] == {"Z": "a"}
+        assert not router.type_map_only
+        assert router.find == {"Z": "a"}
         return [r.name for r in merged.require_ingestion_model().resources], [
             (c.resource, c.before, c.vertex) for c in report.order_cycles
         ]
@@ -1278,10 +1308,10 @@ class TestRoutedReferences:
     """A router that references ``X`` among other classes it routes to."""
 
     def test_only_the_merged_class_is_attached(self) -> None:
-        router, _work_order, edge = _pipeline(_merge_routed(), "RA")
-        assert router["find"] == {"Z": "a"}
-        assert not router.get("lookup_only")
-        assert not edge.get("target_match")
+        router, edge = _router_and_edge(_pipeline(_merge_routed(), "RA"))
+        assert router.find == {"Z": "a"}
+        assert not router.lookup_only
+        assert not edge.target_match
 
     def test_the_merged_class_is_attached_and_the_rest_still_written(self) -> None:
         caster = DocumentCaster(_merge_routed().require_ingestion_model())
@@ -1348,8 +1378,8 @@ class TestRoutedReferences:
             ),
             bump_version=False,
         )
-        _router, _work_order, edge = _pipeline(merged, "RA")
-        assert edge["target_match"] == {"Z": "a"}
+        _router, edge = _router_and_edge(_pipeline(merged, "RA"))
+        assert edge.target_match == {"Z": "a"}
 
 
 def _side_a_linked() -> GraphManifest:
@@ -1427,9 +1457,11 @@ def test_a_link_table_attaches_the_merged_class_in_both_roles() -> None:
         bump_version=False,
     )
     source, target, edge = _pipeline(merged, "LT")
-    assert source["find"] == {"Z": "a"}
-    assert target["find"] == {"Z": "a"}
-    assert not source.get("lookup_only") and not target.get("lookup_only")
+    assert isinstance(source, VertexRouterActorConfig)
+    assert isinstance(target, VertexRouterActorConfig)
+    assert source.find == {"Z": "a"}
+    assert target.find == {"Z": "a"}
+    assert not source.lookup_only and not target.lookup_only
     assert collect_endpoint_selectors([edge]) == []
 
     graph = _cast_graph(
@@ -1841,10 +1873,6 @@ def _two_clusters(left_origin: str | None = None) -> MergeManifestsOp:
     )
 
 
-def _vertex_step(pipeline: list, vertex: str) -> dict:
-    return next(step for step in pipeline if step.get("vertex") == vertex)
-
-
 class TestOriginNaming:
     """A demoted key is named by the side it came from: property and secondary."""
 
@@ -1861,9 +1889,9 @@ class TestOriginNaming:
     def test_the_prefixed_property_reads_the_raw_column(self) -> None:
         """The prefix is a property rename: pipelines map it from the raw field."""
         merged = _merge(_rekey())
-        assert _vertex_step(_pipeline(merged, "r_x"), "Z")["from"]["a__x_id"] == (
-            "x_id"
-        )
+        from_doc = _vertex_step(_pipeline(merged, "r_x"), "Z").from_doc
+        assert from_doc is not None
+        assert from_doc["a__x_id"] == "x_id"
         caster = DocumentCaster(merged.require_ingestion_model())
         result = asyncio.run(
             caster.cast_batch(

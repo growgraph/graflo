@@ -17,130 +17,157 @@ from graflo.architecture.contract.ingestion.steps.models import (
     VertexActorConfig,
     VertexRouterActorConfig,
 )
-from graflo.architecture.contract.ingestion.steps.parse import canonical_actor_step
+from graflo.architecture.contract.ingestion.steps.parse import (
+    as_actor_step,
+    canonical_actor_step,
+)
 
-KNOWN = {"Host", "Rack", "App"}
+KNOWN = {"Machine", "Line", "Sensor"}
+
+
+def _steps(pipeline):
+    return [as_actor_step(step) for step in pipeline]
 
 
 def test_find_defaults_to_none_and_is_omitted_from_canonical_step():
-    assert VertexActorConfig(vertex="Host").find is None
+    assert VertexActorConfig(vertex="Machine").find is None
     assert VertexRouterActorConfig(type_field="kind").find is None
-    assert "find" not in canonical_actor_step({"vertex": "Host"})
+    assert "find" not in canonical_actor_step({"vertex": "Machine"})
     assert "find" not in canonical_actor_step({"type_field": "kind"})
 
 
 def test_find_survives_canonicalisation_when_set():
-    assert canonical_actor_step({"vertex": "Host", "find": "cmdb"})["find"] == "cmdb"
-    step = canonical_actor_step({"type_field": "kind", "find": {"Host": "cmdb"}})
-    assert step["find"] == {"Host": "cmdb"}
+    assert (
+        canonical_actor_step({"vertex": "Machine", "find": "maintenance"})["find"]
+        == "maintenance"
+    )
+    step = canonical_actor_step(
+        {"type_field": "kind", "find": {"Machine": "maintenance"}}
+    )
+    assert step["find"] == {"Machine": "maintenance"}
 
 
 def test_router_find_for_reads_the_per_class_selector():
     router = VertexRouterActorConfig(
-        type_field="kind", vertex_types=["Host", "Rack"], find={"Host": "cmdb"}
+        type_field="kind",
+        vertex_types=["Machine", "Line"],
+        find={"Machine": "maintenance"},
     )
-    assert router.find_for("Host") == "cmdb"
-    assert router.find_for("Rack") is None
-    assert VertexRouterActorConfig(type_field="kind").find_for("Host") is None
+    assert router.find_for("Machine") == "maintenance"
+    assert router.find_for("Line") is None
+    assert VertexRouterActorConfig(type_field="kind").find_for("Machine") is None
 
 
 def test_router_find_outside_vertex_types_is_refused():
     with pytest.raises(ValidationError, match="find"):
         VertexRouterActorConfig(
-            type_field="kind", vertex_types=["Host"], find={"Rack": "cmdb"}
+            type_field="kind", vertex_types=["Machine"], find={"Line": "maintenance"}
         )
 
 
 def test_step_finds_for_vertex_step():
-    step = {"vertex": "Host", "find": "cmdb"}
-    assert step_finds(step, "Host") == "cmdb"
-    assert step_finds(step, "Rack") is None
-    assert step_finds({"vertex": "Host"}, "Host") is None
+    step = {"vertex": "Machine", "find": "maintenance"}
+    assert step_finds(as_actor_step(step), "Machine") == "maintenance"
+    assert step_finds(as_actor_step(step), "Line") is None
+    assert step_finds(as_actor_step({"vertex": "Machine"}), "Machine") is None
 
 
 def test_step_finds_for_router_only_within_reach():
     router = {
         "type_field": "kind",
-        "vertex_types": ["Host", "Rack"],
-        "find": {"Host": "cmdb", "Rack": "cmdb"},
+        "vertex_types": ["Machine", "Line"],
+        "find": {"Machine": "maintenance", "Line": "maintenance"},
     }
-    assert step_finds(router, "Host") == "cmdb"
-    assert step_finds(router, "App") is None
+    assert step_finds(as_actor_step(router), "Machine") == "maintenance"
+    assert step_finds(as_actor_step(router), "Sensor") is None
     closed = {
         "type_field": "kind",
         "type_map_only": True,
-        "type_map": {"h": "Host"},
-        "find": {"Host": "cmdb", "Rack": "cmdb"},
+        "type_map": {"h": "Machine"},
+        "find": {"Machine": "maintenance", "Line": "maintenance"},
     }
-    assert step_finds(closed, "Host") == "cmdb"
-    assert step_finds(closed, "Rack") is None
+    assert step_finds(as_actor_step(closed), "Machine") == "maintenance"
+    assert step_finds(as_actor_step(closed), "Line") is None
 
 
 def test_step_finds_for_open_router_only_within_known_vertices():
     """An open router reaches the declared classes, not every name in its map."""
-    router = {"type_field": "kind", "find": {"Ghost": "x", "Host": "cmdb"}}
-    assert step_finds(router, "Ghost", known_vertices=KNOWN) is None
-    assert step_finds(router, "Host", known_vertices=KNOWN) == "cmdb"
+    router = {"type_field": "kind", "find": {"Ghost": "x", "Machine": "maintenance"}}
+    assert step_finds(as_actor_step(router), "Ghost", known_vertices=KNOWN) is None
+    assert (
+        step_finds(as_actor_step(router), "Machine", known_vertices=KNOWN)
+        == "maintenance"
+    )
 
 
 def test_step_finds_ignores_non_vertex_steps():
-    assert step_finds({"transform": {"call": {"use": "x"}}}, "Host") is None
+    assert (
+        step_finds(as_actor_step({"transform": {"call": {"use": "x"}}}), "Machine")
+        is None
+    )
 
 
 def test_pipeline_find_selectors_collects_across_levels_and_routers():
     pipeline = [
-        {"vertex": "Host", "find": "cmdb"},
+        {"vertex": "Machine", "find": "maintenance"},
         {
             "descend": {
-                "key": "racks",
-                "pipeline": [{"vertex": "Rack", "find": "cmdb"}],
+                "key": "lines",
+                "pipeline": [{"vertex": "Line", "find": "maintenance"}],
             }
         },
-        {"type_field": "kind", "vertex_types": ["App"], "find": {"App": "ref"}},
+        {"type_field": "kind", "vertex_types": ["Sensor"], "find": {"Sensor": "ref"}},
     ]
-    assert pipeline_find_selectors(pipeline, known_vertices=KNOWN) == {
-        "Host": "cmdb",
-        "Rack": "cmdb",
-        "App": "ref",
+    assert pipeline_find_selectors(_steps(pipeline), known_vertices=KNOWN) == {
+        "Machine": "maintenance",
+        "Line": "maintenance",
+        "Sensor": "ref",
     }
 
 
 def test_pipeline_find_selectors_empty_without_find():
-    assert pipeline_find_selectors([{"vertex": "Host"}], known_vertices=KNOWN) == {}
+    assert (
+        pipeline_find_selectors(_steps([{"vertex": "Machine"}]), known_vertices=KNOWN)
+        == {}
+    )
 
 
 def test_pipeline_find_selectors_allows_lookup_only_with_same_selector():
     pipeline = [
-        {"vertex": "Host", "find": "cmdb"},
-        {"vertex": "Host", "find": "cmdb", "lookup_only": True},
+        {"vertex": "Machine", "find": "maintenance"},
+        {"vertex": "Machine", "find": "maintenance", "lookup_only": True},
     ]
-    assert pipeline_find_selectors(pipeline, known_vertices=KNOWN) == {"Host": "cmdb"}
+    assert pipeline_find_selectors(_steps(pipeline), known_vertices=KNOWN) == {
+        "Machine": "maintenance"
+    }
 
 
 def test_pipeline_find_selectors_refuses_two_selectors_for_one_class():
     pipeline = [
-        {"vertex": "Host", "find": "cmdb"},
-        {"descend": {"key": "x", "pipeline": [{"vertex": "Host", "find": "ref"}]}},
+        {"vertex": "Machine", "find": "maintenance"},
+        {"descend": {"key": "x", "pipeline": [{"vertex": "Machine", "find": "ref"}]}},
     ]
-    with pytest.raises(ValueError, match="Host.*cmdb.*ref|Host.*ref.*cmdb"):
-        pipeline_find_selectors(pipeline, known_vertices=KNOWN)
+    with pytest.raises(
+        ValueError, match="Machine.*maintenance.*ref|Machine.*ref.*maintenance"
+    ):
+        pipeline_find_selectors(_steps(pipeline), known_vertices=KNOWN)
 
 
 @pytest.mark.parametrize(
     "plain",
-    [{"vertex": "Host"}, {"vertex": "Host", "lookup_only": True}],
+    [{"vertex": "Machine"}, {"vertex": "Machine", "lookup_only": True}],
     ids=["written-by-primary", "lookup-only-without-find"],
 )
 def test_pipeline_find_selectors_refuses_find_mixed_with_plain_step(plain):
-    pipeline = [{"vertex": "Host", "find": "cmdb"}, plain]
-    with pytest.raises(ValueError, match="Host.*explicit edge selectors"):
-        pipeline_find_selectors(pipeline, known_vertices=KNOWN)
+    pipeline = [{"vertex": "Machine", "find": "maintenance"}, plain]
+    with pytest.raises(ValueError, match="Machine.*explicit edge selectors"):
+        pipeline_find_selectors(_steps(pipeline), known_vertices=KNOWN)
 
 
 def test_pipeline_find_selectors_refuses_router_class_without_find_beside_find_step():
     pipeline = [
-        {"vertex": "Host", "find": "cmdb"},
-        {"type_field": "kind", "vertex_types": ["Host", "Rack"]},
+        {"vertex": "Machine", "find": "maintenance"},
+        {"type_field": "kind", "vertex_types": ["Machine", "Line"]},
     ]
-    with pytest.raises(ValueError, match="Host"):
-        pipeline_find_selectors(pipeline, known_vertices=KNOWN)
+    with pytest.raises(ValueError, match="Machine"):
+        pipeline_find_selectors(_steps(pipeline), known_vertices=KNOWN)

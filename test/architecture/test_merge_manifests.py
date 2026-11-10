@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from graflo.architecture.contract.bindings import FileConnector
+from graflo.architecture.contract.ingestion.steps import VertexActorConfig
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.evolution import (
     MergeIdentityError,
@@ -507,10 +508,9 @@ def test_union_right_unions_exactly_the_same_name() -> None:
     assert _vertex_names(merged) == {"OrderLine"}
     assert merged.ingestion_model is not None
     targets = {
-        step.get("vertex")
+        step.vertex if isinstance(step, VertexActorConfig) else None
         for resource in merged.ingestion_model.resources
         for step in resource.pipeline
-        if isinstance(step, dict)
     }
     assert targets == {"OrderLine"}
 
@@ -1362,7 +1362,8 @@ def test_role_separated_members_compose_without_the_fusion_flag() -> None:
     assert out.graph_schema is not None
     assert out.graph_schema.core_schema.vertex_config.vertex_set == {"Z"}
     steps = out.require_ingestion_model().resources[0].pipeline
-    assert [(s.get("vertex"), s.get("role")) for s in steps] == [
+    assert all(isinstance(s, VertexActorConfig) for s in steps)
+    assert [(s.vertex, s.role) for s in steps if isinstance(s, VertexActorConfig)] == [
         ("Z", "x"),
         ("Z", "x2"),
     ]

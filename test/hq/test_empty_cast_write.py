@@ -39,10 +39,10 @@ def _schema() -> Schema:
             vertex_config=VertexConfig(
                 vertices=[
                     Vertex(name=name, properties=[Field(name="id")], identity=["id"])
-                    for name in ("server", "rack")
+                    for name in ("machine", "line")
                 ]
             ),
-            edge_config=EdgeConfig(edges=[Edge(source="server", target="rack")]),
+            edge_config=EdgeConfig(edges=[Edge(source="machine", target="line")]),
         ),
         db_profile=DatabaseProfile(db_flavor=DBType.NEO4J),
     )
@@ -100,9 +100,9 @@ class TestIsEmpty:
             pytest.param(GraphContainer(), id="nothing"),
             pytest.param(
                 GraphContainer(
-                    vertices={"server": []},
-                    attached={"rack": []},
-                    edges={("server", "rack", None): []},
+                    vertices={"machine": []},
+                    attached={"line": []},
+                    edges={("machine", "line", None): []},
                 ),
                 id="empty-lists",
             ),
@@ -115,10 +115,12 @@ class TestIsEmpty:
     @pytest.mark.parametrize(
         "gc",
         [
-            pytest.param(GraphContainer(vertices={"server": [{"id": 1}]}), id="vertex"),
-            pytest.param(GraphContainer(attached={"rack": [{"id": 1}]}), id="attached"),
             pytest.param(
-                GraphContainer(edges={("server", "rack", None): [({}, {}, {})]}),
+                GraphContainer(vertices={"machine": [{"id": 1}]}), id="vertex"
+            ),
+            pytest.param(GraphContainer(attached={"line": [{"id": 1}]}), id="attached"),
+            pytest.param(
+                GraphContainer(edges={("machine", "line", None): [({}, {}, {})]}),
                 id="edge",
             ),
         ],
@@ -134,7 +136,7 @@ class TestTheWriter:
             pytest.param(_records_casting_to_nothing(2), id="empty-records"),
             pytest.param(
                 GraphContainer(
-                    vertices={"server": []}, edges={("server", "rack", None): []}
+                    vertices={"machine": []}, edges={("machine", "line", None): []}
                 ),
                 id="empty-lists",
             ),
@@ -151,13 +153,13 @@ class TestTheWriter:
         self, recorder: type[_Recorder]
     ) -> None:
         gc = GraphContainer(
-            vertices={"server": [{"id": 1}], "rack": []},
-            edges={("server", "rack", None): []},
+            vertices={"machine": [{"id": 1}], "line": []},
+            edges={("machine", "line", None): []},
         )
 
         asyncio.run(_writer().write(gc, NEO4J, resource_name=None))
 
-        assert (recorder.upserts, recorder.edges) == (["server"], [])
+        assert (recorder.upserts, recorder.edges) == (["machine"], [])
 
     def test_an_unsupported_guard_is_refused_even_when_empty(self) -> None:
         arango = ArangoConfig(uri="http://localhost:8529", username="u", password="p")
@@ -213,7 +215,7 @@ class TestTheCaster:
     ) -> None:
         caster = _caster(stamp_for=lambda resource, record: {"t": record["t"]})
         seen = _spy_on_writes(caster, monkeypatch)
-        kept = GraphContainer(vertices={"server": [{"id": 1}]})
+        kept = GraphContainer(vertices={"machine": [{"id": 1}]})
 
         async def _cast_by_key(records, keys, resource_name, **kwargs):
             return [(keys[0], GraphContainer()), (keys[1], kept)], []

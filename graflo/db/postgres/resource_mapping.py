@@ -12,9 +12,14 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from graflo.architecture.contract.ingestion.resource import Resource
+from graflo.architecture.contract.ingestion.steps import (
+    ActorConfig,
+    TransformActorConfig,
+    VertexActorConfig,
+)
 from graflo.architecture.contract.ingestion.steps.references import (
     subject_with_references,
 )
@@ -144,7 +149,7 @@ class PostgresResourceMapper:
             matcher,
         )
 
-        apply: list[dict[str, Any]] = []
+        apply: list[ActorConfig] = []
 
         # A column named like an endpoint's identity field is carried under the
         # name the inferred edge declares for it.
@@ -166,22 +171,20 @@ class PostgresResourceMapper:
             if column != name
         }
         if renames:
-            apply.append({"type": "transform", "rename": renames})
+            apply.append(TransformActorConfig(rename=renames))
 
         if source_column:
             apply.append(
-                {
-                    "vertex": source_table,
-                    "from": {source_pk_field: source_column},
-                }
+                VertexActorConfig(
+                    vertex=source_table, from_doc={source_pk_field: source_column}
+                )
             )
 
         if target_column:
             apply.append(
-                {
-                    "vertex": target_table,
-                    "from": {target_pk_field: target_column},
-                }
+                VertexActorConfig(
+                    vertex=target_table, from_doc={target_pk_field: target_column}
+                )
             )
 
         resource = Resource(

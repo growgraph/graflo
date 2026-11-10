@@ -307,6 +307,61 @@ class ProtoTransform(ConfigBaseModel):
         return bool(self._foo is None and other._foo is not None)
 
 
+def effective_io(
+    *,
+    input: tuple[str, ...],
+    output: tuple[str, ...],
+    input_groups: tuple[tuple[str, ...], ...] = (),
+    output_groups: tuple[tuple[str, ...], ...] = (),
+    dress: DressConfig | None = None,
+    rename: dict[str, str] | None = None,
+    fields: tuple[str, ...] = (),
+    passthrough_group_output: bool = True,
+) -> tuple[tuple[str, ...], tuple[str, ...], dict[str, str]]:
+    """The input, output and field map a transform runs with.
+
+    The one rule for what a transform reads and writes: a :class:`Transform`
+    derives its effective I/O through it, and static analysis of a pipeline
+    asks it which fields a step writes. A ``dress`` writes its key and value
+    fields; otherwise a transform without ``output`` writes back into its
+    input fields, and grouped single-field inputs into their own names.
+    """
+    next_input = input
+    next_output = output
+    if input_groups and not output and not output_groups and passthrough_group_output:
+        scalar_names = [group[0] for group in input_groups if len(group) == 1]
+        if len(scalar_names) == len(input_groups):
+            next_output = tuple(scalar_names)
+    next_map = dict(rename or {})
+
+    if fields and not next_input:
+        next_input = fields
+
+    if next_map:
+        if not next_input and not next_output:
+            next_input = tuple(next_map.keys())
+            next_output = tuple(next_map.values())
+        elif not next_input:
+            next_input = tuple(next_map.keys())
+        elif not next_output:
+            next_output = tuple(next_map.values())
+
+    if dress is not None:
+        next_output = (dress.key, dress.value)
+    elif not next_output and next_input:
+        next_output = next_input
+
+    if (
+        not next_map
+        and next_input
+        and next_output
+        and len(next_input) == len(next_output)
+    ):
+        next_map = {src: dst for src, dst in zip(next_input, next_output)}
+
+    return next_input, next_output, next_map
+
+
 class Transform(ProtoTransform):
     """Concrete transform implementation.
 
@@ -372,52 +427,20 @@ class Transform(ProtoTransform):
         self._validate_configuration(explicit_map=explicit_map)
         return self
 
-    def _derive_grouped_default_output(self) -> tuple[str, ...]:
-        if not self.input_groups or self.output or self.output_groups:
-            return self.output
-        if not self.passthrough_group_output:
-            return self.output
-        scalar_names: list[str] = []
-        for group in self.input_groups:
-            if len(group) != 1:
-                return self.output
-            scalar_names.append(group[0])
-        return tuple(scalar_names) if scalar_names else self.output
-
     def _derive_effective_io_and_map(
         self,
     ) -> tuple[tuple[str, ...], tuple[str, ...], dict[str, str]]:
         """Compute effective input/output/map once using explicit precedence."""
-        next_input = self.input
-        next_output = self._derive_grouped_default_output()
-        next_map = dict(self.rename)
-
-        if self.fields and not next_input:
-            next_input = self.fields
-
-        if next_map:
-            if not next_input and not next_output:
-                next_input = tuple(next_map.keys())
-                next_output = tuple(next_map.values())
-            elif not next_input:
-                next_input = tuple(next_map.keys())
-            elif not next_output:
-                next_output = tuple(next_map.values())
-
-        if self.dress is not None:
-            next_output = (self.dress.key, self.dress.value)
-        elif not next_output and next_input:
-            next_output = next_input
-
-        if (
-            not next_map
-            and next_input
-            and next_output
-            and len(next_input) == len(next_output)
-        ):
-            next_map = {src: dst for src, dst in zip(next_input, next_output)}
-
-        return next_input, next_output, next_map
+        return effective_io(
+            input=self.input,
+            output=self.output,
+            input_groups=self.input_groups,
+            output_groups=self.output_groups,
+            dress=self.dress,
+            rename=self.rename,
+            fields=self.fields,
+            passthrough_group_output=self.passthrough_group_output,
+        )
 
     def _init_io_from_map(self, force_init: bool = False) -> None:
         """Backwards-compatible shim; prefer sync_io_from_map()."""

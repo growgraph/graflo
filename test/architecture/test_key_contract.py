@@ -74,9 +74,9 @@ def test_a_composite_key_counts_only_when_complete(values, state, missing):
 
 def test_a_partial_flat_hash_is_not_digested():
     contract = key_contract(TAG)
-    assert key_status(contract, {"label": "hardware"}).state == "partial"
-    assert primary_identity(TAG, contract, {"label": "hardware"}) is None
-    full = {"label": "hardware", "group": "ops"}
+    assert key_status(contract, {"label": "pump"}).state == "partial"
+    assert primary_identity(TAG, contract, {"label": "pump"}) is None
+    full = {"label": "pump", "group": "ops"}
     assert primary_identity(TAG, contract, full) == {
         "id": compute_vertex_identity(full, TAG)
     }

@@ -4,6 +4,13 @@ from __future__ import annotations
 
 import pytest
 
+from graflo.architecture.contract.ingestion.steps import (
+    ActorConfig,
+    DescendActorConfig,
+    EdgeActorConfig,
+    TransformActorConfig,
+    VertexActorConfig,
+)
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.evolution import (
     RenameVertexPropertiesOp,
@@ -72,10 +79,10 @@ def _build_manifest(
     return manifest
 
 
-def _vertex_actor_step(resource_pipeline: list[dict]) -> dict:
+def _vertex_actor_step(resource_pipeline: list[ActorConfig]) -> VertexActorConfig:
     """Return the (single, expected) vertex step from a pipeline."""
     for step in resource_pipeline:
-        if "vertex" in step:
+        if isinstance(step, VertexActorConfig):
             return step
     raise AssertionError(f"no vertex step in pipeline: {resource_pipeline}")
 
@@ -99,7 +106,7 @@ def test_rename_vertex_fields_injects_from_when_absent():
 
     pipeline = manifest.require_ingestion_model().resources[0].pipeline
     step = _vertex_actor_step(pipeline)
-    assert step["from"] == {"user_name": "user-name"}
+    assert step.from_doc == {"user_name": "user-name"}
 
 
 def test_rename_vertex_fields_rewrites_existing_from_keys():
@@ -115,7 +122,7 @@ def test_rename_vertex_fields_rewrites_existing_from_keys():
 
     pipeline = manifest.require_ingestion_model().resources[0].pipeline
     step = _vertex_actor_step(pipeline)
-    assert step["from"] == {"user_name": "raw_name"}
+    assert step.from_doc == {"user_name": "raw_name"}
 
 
 def test_rename_vertex_fields_rewrites_identity():
@@ -224,9 +231,9 @@ def test_rename_vertex_fields_preserves_call_transform_without_rename():
 
     pipeline = manifest.require_ingestion_model().resources[0].pipeline
     tf = pipeline[0]
-    assert tf.get("type") == "transform"
-    assert "rename" not in tf
-    assert "call" in tf
+    assert isinstance(tf, TransformActorConfig)
+    assert tf.rename is None
+    assert tf.call is not None
 
 
 def test_rename_vertex_fields_no_spurious_rename_map_entries():
@@ -244,7 +251,9 @@ def test_rename_vertex_fields_no_spurious_rename_map_entries():
     )
 
     pipeline = manifest.require_ingestion_model().resources[0].pipeline
-    assert pipeline[1]["rename"] == {"other_col": "other_field"}
+    tf = pipeline[1]
+    assert isinstance(tf, TransformActorConfig)
+    assert tf.rename == {"other_col": "other_field"}
 
 
 def test_rename_vertex_fields_nested_rename_not_augmented_by_parent_scope():
@@ -270,9 +279,10 @@ def test_rename_vertex_fields_nested_rename_not_augmented_by_parent_scope():
 
     pipeline = manifest.require_ingestion_model().resources[0].pipeline
     descend = pipeline[1]
-    assert descend["type"] == "descend"
-    inner = descend["pipeline"]
-    assert inner[1]["rename"] == {"amt": "amount"}
+    assert isinstance(descend, DescendActorConfig)
+    inner = descend.pipeline
+    assert isinstance(inner[1], TransformActorConfig)
+    assert inner[1].rename == {"amt": "amount"}
 
 
 def test_rename_vertex_fields_updates_extra_weights_vertex_weights():
@@ -330,7 +340,8 @@ def test_rename_vertex_fields_updates_edge_actor_vertex_weights_in_pipeline():
 
     pipeline = manifest.require_ingestion_model().resources[0].pipeline
     edge_step = pipeline[1]
-    vw = edge_step["vertex_weights"][0]
+    assert isinstance(edge_step, EdgeActorConfig)
+    vw = edge_step.vertex_weights[0]
     # The edge attribute belongs to the edge: it keeps its name, read from the
     # renamed vertex field.
     assert vw["fields"] == []
@@ -423,9 +434,9 @@ def test_apply_sanitize_preserves_call_transform_without_rename():
 
     pipeline = manifest.require_ingestion_model().resources[0].pipeline
     tf = pipeline[0]
-    assert tf.get("type") == "transform"
-    assert "rename" not in tf
-    assert "call" in tf
+    assert isinstance(tf, TransformActorConfig)
+    assert tf.rename is None
+    assert tf.call is not None
 
 
 def test_apply_evolution_dispatches_sanitize_op():
@@ -751,7 +762,7 @@ def test_apply_sanitize_tigergraph_field_invalid_chars_records_stored_name():
 
     pipeline = manifest.require_ingestion_model().resources[0].pipeline
     step = _vertex_actor_step(pipeline)
-    assert "from" not in step
+    assert step.from_doc is None
 
 
 def test_apply_sanitize_tigergraph_forbidden_prefix():

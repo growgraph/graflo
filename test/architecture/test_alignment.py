@@ -7,10 +7,14 @@ import logging
 
 import pytest
 
-from graflo.architecture.contract.ingestion.resource import resolve_pipeline_level
-from graflo.architecture.contract.ingestion.steps.models import TransformGuardConfig
-from graflo.architecture.contract.ingestion.steps.normalize import (
-    normalize_actor_step,
+from graflo.architecture.contract.ingestion.resource import pipeline_level
+from graflo.architecture.contract.ingestion.steps import as_actor_step
+from graflo.architecture.contract.ingestion.steps.models import (
+    DescendActorConfig,
+    TransformActorConfig,
+    TransformCallConfig,
+    TransformGuardConfig,
+    VertexRouterActorConfig,
 )
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.evolution.alignment import (
@@ -40,6 +44,27 @@ from graflo.architecture.evolution.ops import (
 
 def _when(field: str, *values: str) -> TransformGuardConfig:
     return TransformGuardConfig.model_validate({"field": field, "in": list(values)})
+
+
+def _call(step: TransformActorConfig) -> TransformCallConfig:
+    assert step.call is not None
+    return step.call
+
+
+def _guard(step: TransformActorConfig) -> TransformGuardConfig:
+    assert step.when is not None
+    return step.when
+
+
+def _output(call: TransformCallConfig) -> str:
+    """The single attribute *call* writes."""
+    assert call.output is not None
+    (output,) = call.output
+    return output
+
+
+def _calls_of(steps) -> list[TransformCallConfig]:
+    return [_call(step) for step in steps]
 
 
 def _union_manifest() -> GraphManifest:
@@ -212,9 +237,9 @@ class TestModel:
 def _parts() -> dict:
     """``derive`` for a key over two parts, each source with its own columns."""
     return {
-        "host_key": {
-            "r_a": {"input": ["host"]},
-            "r_b": {"input": ["hostname"]},
+        "machine_key": {
+            "r_a": {"input": ["machine"]},
+            "r_b": {"input": ["machine_name"]},
         },
         "group_key": {
             "r_a": {"input": ["group"]},
@@ -227,17 +252,17 @@ class TestDeriveModel:
     """``derive``: attributes each source computes, keyed on by name or composite."""
 
     def test_a_composite_over_derived_attributes_is_a_funnel(self) -> None:
-        equivalence = _equivalence([["host_key", "group_key"]], derive=_parts())
+        equivalence = _equivalence([["machine_key", "group_key"]], derive=_parts())
 
         assert equivalence.has_derivation
         assert not equivalence.is_natural_key
         assert [d.name for d in equivalence.derivations()] == [
-            "host_key",
+            "machine_key",
             "group_key",
         ]
 
     def test_derive_round_trips_and_an_op_without_it_does_not_emit_it(self) -> None:
-        equivalence = _equivalence([["host_key", "group_key"]], derive=_parts())
+        equivalence = _equivalence([["machine_key", "group_key"]], derive=_parts())
         assert VertexEquivalence.model_validate(equivalence.to_dict()) == equivalence
 
         plain = _equivalence([_match_key(), _local_key()])
@@ -255,7 +280,7 @@ class TestDeriveModel:
 
     def test_an_attribute_no_branch_keys_on_is_refused(self) -> None:
         with pytest.raises(ValueError, match=r"no identity branch keys on them"):
-            _equivalence(["host_key"], derive=_parts())
+            _equivalence(["machine_key"], derive=_parts())
 
     def test_a_composite_mixing_derived_and_property_fields_is_refused(
         self,
@@ -263,24 +288,24 @@ class TestDeriveModel:
         parts = _parts()
         del parts["group_key"]
         with pytest.raises(ValueError, match=r"mixes derived attributes"):
-            _equivalence([["host_key", "group_id"]], derive=parts)
+            _equivalence([["machine_key", "group_id"]], derive=parts)
 
     def test_an_attribute_named_like_a_derived_branch_is_refused(self) -> None:
-        parts = {**_parts(), "match_key": _parts()["host_key"]}
+        parts = {**_parts(), "match_key": _parts()["machine_key"]}
         with pytest.raises(ValueError, match="both name"):
-            _equivalence([["host_key", "group_key"], _match_key()], derive=parts)
+            _equivalence([["machine_key", "group_key"], _match_key()], derive=parts)
 
     def test_a_guard_on_a_member_keyed_attribute_is_refused(self) -> None:
         parts = _parts()
-        parts["host_key"]["r_b"] = {
-            "Org": {"input": ["hostname"], "when": {"field": "kind", "in": ["x"]}}
+        parts["machine_key"]["r_b"] = {
+            "Org": {"input": ["machine_name"], "when": {"field": "kind", "in": ["x"]}}
         }
         with pytest.raises(ValueError, match="when"):
-            _equivalence([["host_key", "group_key"]], derive=parts)
+            _equivalence([["machine_key", "group_key"]], derive=parts)
 
     def test_the_plan_lowers_each_part_and_one_composite_branch(self) -> None:
         equivalence = _equivalence(
-            [["host_key", "group_key"], _local_key()], derive=_parts()
+            [["machine_key", "group_key"], _local_key()], derive=_parts()
         )
         assert equivalence.identity is not None
         plan = IdentityPlan(
@@ -293,14 +318,11 @@ class TestDeriveModel:
 
         props = ops[0]
         assert isinstance(props, AddVertexPropertiesOp)
-        assert props.additions == {"Company": ["host_key", "group_key", "local_key"]}
+        assert props.additions == {"Company": ["machine_key", "group_key", "local_key"]}
         steps = ops[1]
         assert isinstance(steps, AddResourceTransformsOp)
-        assert [
-            (s["transform"]["call"]["output"], s["transform"]["call"]["input"])
-            for s in steps.additions["r_b"]
-        ] == [
-            (["host_key"], ["hostname"]),
+        assert [(c.output, c.input) for c in _calls_of(steps.additions["r_b"])] == [
+            (["machine_key"], ["machine_name"]),
             (["group_key"], ["group_id"]),
             (["local_key"], ["org_id"]),
         ]
@@ -309,7 +331,7 @@ class TestDeriveModel:
         target = identity.replacements["Company"].to
         assert isinstance(target, FunnelIdentityTarget)
         assert [(b.id, b.fields) for b in target.funnel.branches] == [
-            ("host_key_group_key", ["host_key", "group_key"]),
+            ("machine_key_group_key", ["machine_key", "group_key"]),
             ("local_key", ["local_key"]),
         ]
         assert plan.raw == []
@@ -332,10 +354,10 @@ class TestComposedOps:
         assert isinstance(derive, AddResourceTransformsOp)
         assert set(derive.additions) == {"r_a", "r_b"}
         # Derived-branch steps precede the local_key step per resource.
-        r_a_calls = [step["transform"]["call"] for step in derive.additions["r_a"]]
-        assert [c["output"] for c in r_a_calls] == [["match_key"], ["local_key"]]
-        assert r_a_calls[1]["foo"] == "tagged_key"
-        assert r_a_calls[1]["params"] == {"tag": "a", "sep": ":"}
+        r_a_calls = _calls_of(derive.additions["r_a"])
+        assert [c.output for c in r_a_calls] == [["match_key"], ["local_key"]]
+        assert r_a_calls[1].foo == "tagged_key"
+        assert r_a_calls[1].params == {"tag": "a", "sep": ":"}
 
         identity = ops[2]
         assert isinstance(identity, ReplaceIdentityOp)
@@ -392,9 +414,9 @@ class TestIdentityPlan:
         props = next(op for op in ops if isinstance(op, AddVertexPropertiesOp))
         assert props.additions == {"Company": ["match_key", "local_key"]}
         outputs = {
-            call["output"][0]
+            _output(call)
             for steps in _transforms_op(ops).additions.values()
-            for call in (step["transform"]["call"] for step in steps)
+            for call in _calls_of(steps)
         }
         assert outputs == {"match_key", "local_key"}
         assert [b.id for b in _funnel(ops).branches] == [
@@ -637,7 +659,8 @@ class TestLevelResolution:
     def test_a_nested_plain_vertex_resolves_to_its_own_level(self) -> None:
         manifest = _union_manifest()
         manifest.require_ingestion_model().resources[0].pipeline = [
-            {"descend": {"key": "rows", "apply": [{"vertex": "Company"}]}}
+            as_actor_step(step)
+            for step in [{"descend": {"key": "rows", "apply": [{"vertex": "Company"}]}}]
         ]
         manifest.finish_init()
 
@@ -648,7 +671,7 @@ class TestLevelResolution:
     def test_a_resource_that_never_produces_the_class_is_rejected(self) -> None:
         manifest = _union_manifest()
         manifest.require_ingestion_model().resources[1].pipeline = [
-            {"vertex": "Person"}
+            as_actor_step(step) for step in [{"vertex": "Person"}]
         ]
         vertex_config = _vertex_config(manifest)
         vertex_config.vertices.append(
@@ -664,8 +687,11 @@ class TestLevelResolution:
     def test_several_producing_levels_are_rejected(self) -> None:
         manifest = _union_manifest()
         manifest.require_ingestion_model().resources[0].pipeline = [
-            {"vertex": "Company"},
-            {"descend": {"key": "rows", "apply": [{"vertex": "Company"}]}},
+            as_actor_step(step)
+            for step in [
+                {"vertex": "Company"},
+                {"descend": {"key": "rows", "apply": [{"vertex": "Company"}]}},
+            ]
         ]
         manifest.finish_init()
 
@@ -677,8 +703,11 @@ class TestLevelResolution:
     def test_an_explicit_at_disambiguates(self) -> None:
         manifest = _union_manifest()
         manifest.require_ingestion_model().resources[0].pipeline = [
-            {"vertex": "Company"},
-            {"descend": {"key": "rows", "apply": [{"vertex": "Company"}]}},
+            as_actor_step(step)
+            for step in [
+                {"vertex": "Company"},
+                {"descend": {"key": "rows", "apply": [{"vertex": "Company"}]}},
+            ]
         ]
         manifest.finish_init()
 
@@ -703,11 +732,8 @@ class TestLevelResolution:
 class TestSpecLowering:
     """One step per spec, writing the branch attribute directly."""
 
-    def _calls(self, ops, resource: str) -> list[dict]:
-        return [
-            step["transform"]["call"]
-            for step in _transforms_op(ops).additions[resource]
-        ]
+    def _calls(self, ops, resource: str) -> list[TransformCallConfig]:
+        return _calls_of(_transforms_op(ops).additions[resource])
 
     @pytest.mark.parametrize("resource", ["r_view", "r_b"])
     def test_a_spec_writes_the_attribute_directly(self, resource: str) -> None:
@@ -715,9 +741,9 @@ class TestSpecLowering:
             identity_to_ops(_routed_plan(), manifest=_routed_manifest()), resource
         )
 
-        assert [c["output"] for c in calls] == [["match_key"], ["local_key"]]
-        assert [c["foo"] for c in calls] == ["gated_normalized_key", "tagged_key"]
-        assert all("strategy" not in c for c in calls)
+        assert [c.output for c in calls] == [["match_key"], ["local_key"]]
+        assert [c.foo for c in calls] == ["gated_normalized_key", "tagged_key"]
+        assert all(c.strategy is None for c in calls)
 
     def test_an_affix_gated_spec_lowers_to_a_single_input_call(self) -> None:
         """The marker idiom reads one field: the value gates itself."""
@@ -742,18 +768,18 @@ class TestSpecLowering:
         calls = self._calls(
             identity_to_ops(plan, manifest=_routed_manifest()), "r_view"
         )
-        marker = [c for c in calls if c["foo"] == "affix_gated_key"]
+        marker = [c for c in calls if c.foo == "affix_gated_key"]
 
-        assert [c["input"] for c in marker] == [["firm_ref"]]
-        assert marker[0]["params"] == {"prefix": "ABC-"}
-        assert marker[0]["output"] == ["match_key"]
+        assert [c.input for c in marker] == [["firm_ref"]]
+        assert marker[0].params == {"prefix": "ABC-"}
+        assert marker[0].output == ["match_key"]
 
 
 class TestExplicitGuard:
     """``when`` on a spec: an explicit guard replacing the derived class guard."""
 
-    def _steps(self, ops, resource: str) -> list[dict]:
-        return [step["transform"] for step in _transforms_op(ops).additions[resource]]
+    def _steps(self, ops, resource: str) -> list[TransformActorConfig]:
+        return list(_transforms_op(ops).additions[resource])
 
     def test_an_explicit_when_lowers_onto_the_step(self) -> None:
         plan = _plan(
@@ -778,11 +804,11 @@ class TestExplicitGuard:
 
         ops = identity_to_ops(plan, manifest=_union_manifest())
 
-        assert [s.get("when") for s in self._steps(ops, "r_a")] == [
-            {"field": "kind", "in": ["firm"]},
-            {"field": "kind", "in": ["firm", "shop"]},
+        assert [s.when for s in self._steps(ops, "r_a")] == [
+            _when("kind", "firm"),
+            _when("kind", "firm", "shop"),
         ]
-        assert all("when" not in s for s in self._steps(ops, "r_b"))
+        assert all(s.when is None for s in self._steps(ops, "r_b"))
 
     def test_the_dict_form_of_when_parses(self) -> None:
         spec = DerivationSpec.model_validate(
@@ -810,11 +836,11 @@ class TestExplicitGuard:
             identity_to_ops(plan, manifest=_routed_manifest()), "r_view"
         )
 
-        by_output = {s["call"]["output"][0]: s["when"] for s in steps}
+        by_output = {_output(_call(s)): s.when for s in steps}
         assert by_output == {
-            "match_key": {"field": "kind", "in": ["firm"]},
+            "match_key": _when("kind", "firm"),
             # The unguarded local key still gets the derived class guard.
-            "local_key": {"field": "kind", "in": ["Company", "firm", "shop"]},
+            "local_key": _when("kind", "Company", "firm", "shop"),
         }
 
     def test_a_member_keyed_spec_may_not_carry_when(self) -> None:
@@ -913,13 +939,9 @@ class TestRouterDelivery:
         routed = _transforms_op(ops).additions["r_view"]
         # match_key and local_key: one step each.
         assert len(routed) == 2
-        assert all(
-            s["transform"]["when"]
-            == {"field": "kind", "in": ["Company", "firm", "shop"]}
-            for s in routed
-        )
+        assert all(s.when == _when("kind", "Company", "firm", "shop") for s in routed)
         plain = _transforms_op(ops).additions["r_b"]
-        assert plain and all("when" not in s["transform"] for s in plain)
+        assert plain and all(s.when is None for s in plain)
 
     def test_routers_on_two_discriminators_cannot_host_a_derivation(self) -> None:
         # Two routers reading different discriminators at one level share one
@@ -964,23 +986,22 @@ class TestRouterDelivery:
         )
 
         pipeline = out.require_ingestion_model().resources[0].pipeline
-        level = resolve_pipeline_level(list(pipeline), [0])
-        transforms = [
-            normalize_actor_step(dict(s))
-            for s in level
-            if normalize_actor_step(dict(s)).get("type") == "transform"
-        ]
+        level = pipeline_level(pipeline, [0])
+        transforms = [s for s in level if isinstance(s, TransformActorConfig)]
         assert len(transforms) == 2
-        assert all(s.get("when") for s in transforms)
+        assert all(s.when for s in transforms)
 
 
 class TestEnsureExtractedFieldsApplies:
     """The op's effect on the pipeline, not just its emission."""
 
-    def _router(self, manifest: GraphManifest) -> dict:
+    def _router(self, manifest: GraphManifest) -> VertexRouterActorConfig:
         pipeline = manifest.require_ingestion_model().resources[0].pipeline
-        descend = normalize_actor_step(dict(pipeline[0]))
-        return normalize_actor_step(dict(descend["pipeline"][0]))
+        descend = pipeline[0]
+        assert isinstance(descend, DescendActorConfig)
+        router = descend.pipeline[0]
+        assert isinstance(router, VertexRouterActorConfig)
+        return router
 
     def test_keep_fields_gains_the_canonical_attributes(self) -> None:
         manifest = _routed_manifest(keep_fields=["firm_id", "shop_id"])
@@ -992,7 +1013,7 @@ class TestEnsureExtractedFieldsApplies:
         )
 
         router = self._router(out)
-        assert router["keep_fields"] == [
+        assert router.keep_fields == [
             "firm_id",
             "shop_id",
             "match_key",
@@ -1008,7 +1029,8 @@ class TestEnsureExtractedFieldsApplies:
             bump_version=False,
         )
 
-        vertex_from_map = self._router(out)["vertex_from_map"]
+        vertex_from_map = self._router(out).vertex_from_map
+        assert vertex_from_map is not None
         assert vertex_from_map["Company"] == {
             "match_key": "match_key",
             "local_key": "local_key",
@@ -1028,7 +1050,9 @@ class TestEnsureExtractedFieldsApplies:
             bump_version=False,
         )
 
-        assert self._router(out)["vertex_from_map"]["Company"] == {
+        vertex_from_map = self._router(out).vertex_from_map
+        assert vertex_from_map is not None
+        assert vertex_from_map["Company"] == {
             "company_id": "firm_id",
             "match_key": "match_key",
             "local_key": "local_key",
@@ -1244,13 +1268,10 @@ class TestMemberKeyedModel:
                 }
             ),
         )
-        steps = [
-            step["transform"]
-            for step in _transforms_op(_member_ops(plan)).additions["r_view"]
-        ]
-        local = [s["call"] for s in steps if s["call"]["output"] == ["local_key"]]
+        calls = _calls_of(_transforms_op(_member_ops(plan)).additions["r_view"])
+        local = [c for c in calls if c.output == ["local_key"]]
 
-        assert [c["params"]["tag"] for c in local] == ["", "shop"]
+        assert [c.params["tag"] for c in local] == ["", "shop"]
 
     def test_a_member_keyed_local_key_may_not_set_when(self) -> None:
         with pytest.raises(ValueError, match="member already decides"):
@@ -1266,27 +1287,27 @@ class TestMemberKeyedModel:
 
 
 class TestMemberKeyedLowering:
-    def _calls(self, ops, resource: str) -> list[dict]:
-        return [step["transform"] for step in _transforms_op(ops).additions[resource]]
+    def _calls(self, ops, resource: str) -> list[TransformActorConfig]:
+        return list(_transforms_op(ops).additions[resource])
 
     def test_each_member_writes_the_attribute_directly_under_a_guard(self) -> None:
         steps = self._calls(_member_ops(), "r_view")
 
-        match = [s for s in steps if s["call"]["output"] == ["match_key"]]
-        assert [s["when"] for s in match] == [
-            {"field": "kind", "in": ["Company", "firm"]},
-            {"field": "kind", "in": ["Shop", "shop"]},
+        match = [s for s in steps if _call(s).output == ["match_key"]]
+        assert [s.when for s in match] == [
+            _when("kind", "Company", "firm"),
+            _when("kind", "Shop", "shop"),
         ]
-        assert [s["call"]["params"]["prefix"] for s in match] == ["abc_", "def_"]
-        assert [s["call"]["input"] for s in match] == [["secondary_key"]] * 2
-        assert not any(s["call"]["foo"] == "coalesce_fields" for s in steps)
+        assert [_call(s).params["prefix"] for s in match] == ["abc_", "def_"]
+        assert [_call(s).input for s in match] == [["secondary_key"]] * 2
+        assert not any(_call(s).foo == "coalesce_fields" for s in steps)
 
     def test_the_local_key_is_guarded_the_same_way(self) -> None:
         steps = self._calls(_member_ops(), "r_view")
 
-        local = [s for s in steps if s["call"]["output"] == ["local_key"]]
-        assert [s["call"]["foo"] for s in local] == ["tagged_key", "tagged_key"]
-        assert [s["when"]["in"] for s in local] == [
+        local = [s for s in steps if _call(s).output == ["local_key"]]
+        assert [_call(s).foo for s in local] == ["tagged_key", "tagged_key"]
+        assert [_guard(s).values for s in local] == [
             ["Company", "firm"],
             ["Shop", "shop"],
         ]
@@ -1294,7 +1315,7 @@ class TestMemberKeyedLowering:
     def test_an_unkeyed_resource_is_lowered_as_before(self) -> None:
         steps = self._calls(_member_ops(), "r_b")
 
-        assert all("when" not in s for s in steps)
+        assert all(s.when is None for s in steps)
 
     def test_the_level_comes_from_the_member(self) -> None:
         assert _transforms_op(_member_ops()).at == {"r_view": [0]}
@@ -1303,12 +1324,12 @@ class TestMemberKeyedLowering:
         steps = self._calls(_member_ops(sides=_sides(plain_shop=True)), "r_view")
 
         by_prefix = {
-            s["call"]["params"].get("prefix"): s
+            _call(s).params.get("prefix"): s
             for s in steps
-            if "prefix" in s["call"]["params"]
+            if "prefix" in _call(s).params
         }
-        assert by_prefix["abc_"]["when"] == {"field": "kind", "in": ["Company", "firm"]}
-        assert "when" not in by_prefix["def_"]
+        assert by_prefix["abc_"].when == _when("kind", "Company", "firm")
+        assert by_prefix["def_"].when is None
 
     def test_the_lowered_steps_are_valid_pipeline_steps(self) -> None:
         manifest = apply_evolution(
@@ -1316,8 +1337,8 @@ class TestMemberKeyedLowering:
         )
 
         pipeline = manifest.require_ingestion_model().resources[0].pipeline
-        level = resolve_pipeline_level(list(pipeline), [0])
-        guarded = [s for s in level if normalize_actor_step(dict(s)).get("when")]
+        level = pipeline_level(pipeline, [0])
+        guarded = [s for s in level if isinstance(s, TransformActorConfig) and s.when]
         assert len(guarded) == 4
 
 
@@ -1438,7 +1459,9 @@ def _dynamic_union(pipeline: list[dict], **kwargs) -> GraphManifest:
     """The routed union with ``r_view`` fed through *pipeline* instead."""
     kwargs.setdefault("company_props", ["secondary_key"])
     manifest = _routed_manifest(**kwargs)
-    manifest.require_ingestion_model().resources[0].pipeline = copy.deepcopy(pipeline)
+    manifest.require_ingestion_model().resources[0].pipeline = [
+        as_actor_step(step) for step in copy.deepcopy(pipeline)
+    ]
     manifest.finish_init()
     return manifest
 
@@ -1458,9 +1481,9 @@ class TestDynamicRouterMembers:
 
     def _match_guards(self, ops) -> list[dict]:
         return [
-            step["transform"]["when"]
+            _guard(step).model_dump(by_alias=True)
             for step in _transforms_op(ops).additions["r_view"]
-            if step["transform"]["call"]["output"] == ["match_key"]
+            if _call(step).output == ["match_key"]
         ]
 
     def test_a_member_resolves_to_the_router_and_guards_on_its_own_name(self) -> None:
@@ -1518,10 +1541,13 @@ class TestDynamicRouterMembers:
 class TestDynamicRouterUnion:
     """Validation against the union alone: single specs over a bare router."""
 
-    def _router(self, manifest: GraphManifest) -> dict:
+    def _router(self, manifest: GraphManifest) -> VertexRouterActorConfig:
         pipeline = manifest.require_ingestion_model().resources[0].pipeline
-        descend = normalize_actor_step(dict(pipeline[0]))
-        return normalize_actor_step(dict(descend["pipeline"][0]))
+        descend = pipeline[0]
+        assert isinstance(descend, DescendActorConfig)
+        router = descend.pipeline[0]
+        assert isinstance(router, VertexRouterActorConfig)
+        return router
 
     def test_a_single_spec_lowers_at_the_router_level(self) -> None:
         manifest = _dynamic_union([_nested(_BARE)])
@@ -1536,10 +1562,7 @@ class TestDynamicRouterUnion:
         ops = identity_to_ops(_routed_plan(), manifest=manifest)
 
         routed = _transforms_op(ops).additions["r_view"]
-        assert routed and all(
-            s["transform"]["when"] == {"field": "kind", "in": ["Company"]}
-            for s in routed
-        )
+        assert routed and all(s.when == _when("kind", "Company") for s in routed)
 
     def test_keep_fields_are_widened(self) -> None:
         router = {
@@ -1556,7 +1579,7 @@ class TestDynamicRouterUnion:
             bump_version=False,
         )
 
-        assert self._router(out)["keep_fields"] == [
+        assert self._router(out).keep_fields == [
             "firm_id",
             "shop_id",
             "match_key",
@@ -1608,11 +1631,11 @@ def _one_resource_side(resource: str) -> GraphManifest:
 def _tagged_key_params(ops, resource: str) -> dict:
     (transforms,) = [op for op in ops if isinstance(op, AddResourceTransformsOp)]
     (call,) = [
-        step["transform"]["call"]
-        for step in transforms.additions[resource]
-        if step["transform"]["call"]["foo"] == "tagged_key"
+        call
+        for call in _calls_of(transforms.additions[resource])
+        if call.foo == "tagged_key"
     ]
-    return call["params"]
+    return call.params
 
 
 class TestLocalKeyTagDefault:

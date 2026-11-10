@@ -4,6 +4,13 @@ from __future__ import annotations
 
 from typing import Any
 
+_EDGE_ROLE_KEYS = (
+    "source_role",
+    "target_role",
+    "source_type_field",
+    "target_type_field",
+)
+
 
 def _steps_list(val: Any) -> list[Any]:
     """Ensure value is a list of steps (single dict becomes [dict])."""
@@ -40,6 +47,11 @@ def normalize_actor_step(data: dict[str, Any]) -> dict[str, Any]:
         return data
     if ("source" in data or "from" in data) and ("target" in data or "to" in data):
         data = dict(data)
+        data["type"] = "edge"
+        return data
+    # A flat edge may name its ends by role only, or carry only `links`; no
+    # other step has these keys.
+    if "links" in data or any(key in data for key in _EDGE_ROLE_KEYS):
         data["type"] = "edge"
         return data
     if "create_edge" in data:

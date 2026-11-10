@@ -317,13 +317,13 @@ Declaring `view` or `joins` turns this off, and the query is then exactly the on
 
 ## A router's types reach the query
 
-When a resource only routes, its table connector reads only the rows the routers keep. GraFlo adds the condition when ingestion starts, beside any date range. The manifest is not changed.
+When a resource only routes, its table connector reads only the records the routers keep. GraFlo adds the condition when ingestion starts, beside any date range. The manifest is not changed.
 
-This applies when every top-level step of the resource is a transform, a `vertex_router`, or an edge between router roles, and no transform writes a router's `type_field`. Each router then contributes `type_field IN (values it routes)`. Those values are its `type_map` keys and the declared type names that reach a type it may produce. Several routers are joined with `OR`. The router still checks every row, so the condition only spares reading rows it would skip.
+This applies when every top-level step of the resource is a transform, a `vertex_router`, or an edge between router roles, and no transform writes a router's `type_field`. A transform writes what it would write at run time: its `output` (or, for a named transform in `call.use`, the entry's), the `key` and `value` of a `dress`, its `output_groups`, and its input fields when it declares no output. A `when` guard on the `type_field` only reads it. A transform on keys (`target: keys`) can write any field, so it prevents the condition. Each router then contributes `type_field IN (values it routes)`. Those values are its `type_map` keys and the declared type names that reach a type it may produce. Several routers are joined with `OR`. The router still checks every record, so the condition only spares reading records it would skip.
 
 The `type_field` must be a column of the query: a column of the table, a `select_fields` column (`alias__column`), or a named column of a `view`. With the `equipment` join above, a router on `asset__kind` adds `asset."kind" IN (...)`, and in a view, a router on the column selected as `{from_join: asset, column: kind, as: asset_kind}` does the same. A row cap (`max_items`) then counts kept rows only.
 
-If the condition cannot be added, ingestion logs a warning naming the connector when the router keeps a subset (`type_map_only` or `vertex_types`). This happens for an expression column, raw `select_columns`, a join that selects all its columns, or values of mixed types. The same warning is logged for a connector of another kind that fixes no router field on its rows. A router that routes no value leaves its table connector unread.
+When a step of the resource prevents the condition, ingestion logs the connector and the step, at warning level when the router keeps a subset (`type_map_only` or `vertex_types`) and at info level otherwise. When the condition holds but cannot be added to the query, a warning names the connector if the router keeps a subset. This happens for an expression column, raw `select_columns`, a join that selects all its columns, or values of mixed types. The same warning is logged for a connector of another kind that fixes no router field on its records. A router that routes no value leaves its table connector unread.
 
 ## What to read next
 

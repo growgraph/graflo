@@ -20,6 +20,7 @@ from typing import Any
 import pytest
 
 from graflo.architecture.contract import GraphManifest
+from graflo.architecture.contract.ingestion.steps import EdgeActorConfig
 from graflo.architecture.evolution import apply_evolution
 from graflo.architecture.evolution.autogenerate import diff_manifests_verified
 from graflo.architecture.evolution.commit import build_root_commit
@@ -247,7 +248,8 @@ class TestRenameReach:
 
         assert renamed.ingestion_model is not None
         edge_step = renamed.ingestion_model.resources[0].pipeline[2]
-        assert edge_step["to"] == "purchase"
+        assert isinstance(edge_step, EdgeActorConfig)
+        assert edge_step.target == "purchase"
 
 
 class TestMergeCommitRelabel:

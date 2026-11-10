@@ -4,13 +4,16 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any
 
 from graflo.architecture.contract.ingestion import IngestionModel
 from graflo.architecture.contract.ingestion.resource import (
-    _steps_producing,
     step_finds,
     step_looks_up,
+    steps_producing,
+)
+from graflo.architecture.contract.ingestion.steps import (
+    ActorConfig,
+    VertexRouterActorConfig,
 )
 from graflo.architecture.contract.manifest import GraphManifest
 
@@ -114,7 +117,7 @@ class MergeReport:
     order_cycles: list[OrderCycle] = field(default_factory=list)
 
 
-def _names_class(step: dict[str, Any], vertex: str) -> bool:
+def _names_class(step: ActorConfig, vertex: str) -> bool:
     """Whether *step*, producing *vertex*, names it rather than passing it through.
 
     A ``vertex_router`` names a class in its ``type_map`` targets, its
@@ -123,18 +126,14 @@ def _names_class(step: dict[str, Any], vertex: str) -> bool:
     reach would make it a writer of every class. Any other step names what it
     produces.
     """
-    if step.get("type") != "vertex_router":
+    if not isinstance(step, VertexRouterActorConfig):
         return True
-    type_map = step.get("type_map")
-    if isinstance(type_map, dict) and vertex in type_map.values():
-        return True
-    return any(
-        isinstance(names, dict | list) and vertex in names
-        for names in (
-            step.get("find"),
-            step.get("vertex_types"),
-            step.get("lookup_only"),
-        )
+    lookup = step.lookup_only if isinstance(step.lookup_only, list) else []
+    return (
+        vertex in step.mapped_classes()
+        or vertex in (step.find or {})
+        or vertex in (step.vertex_types or [])
+        or vertex in lookup
     )
 
 
@@ -179,7 +178,7 @@ def _order_after_merge(
         writers: list[str] = []
         referrers: list[str] = []
         for resource in ingestion.resources:
-            steps = _steps_producing(resource.pipeline, vertex, known_vertices=known)
+            steps = steps_producing(resource.pipeline, vertex, known_vertices=known)
             refers = [
                 step_looks_up(step, vertex)
                 or step_finds(step, vertex, known_vertices=known) is not None

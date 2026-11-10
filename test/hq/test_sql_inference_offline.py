@@ -163,7 +163,9 @@ class TestReferenceEdges:
     ) -> None:
         customers = inferred.ingestion_model.fetch_resource_config("customers")
 
-        assert customers.pipeline == [{"vertex": "customers"}]
+        assert [step.to_shorthand() for step in customers.pipeline] == [
+            {"vertex": "customers"}
+        ]
 
     def test_a_reference_to_a_column_that_is_not_the_key_is_no_edge(self) -> None:
         tables = [

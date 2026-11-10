@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from graflo.architecture.contract.ingestion.steps import EdgeActorConfig
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.evolution import (
     EdgeSelector,
@@ -127,7 +128,9 @@ def test_project_keep_edges_by_triple() -> None:
 
     resource = out.require_ingestion_model().resources[0]
     assert len(resource.pipeline) == 3
-    assert resource.pipeline[2]["edge"]["relation"] == "works_at"
+    edge_step = resource.pipeline[2]
+    assert isinstance(edge_step, EdgeActorConfig)
+    assert edge_step.relation == "works_at"
     assert resource.infer_edge_only[0].edge_id == (
         "person",
         "company",
@@ -183,7 +186,9 @@ def test_project_same_relation_different_dyads() -> None:
     ]
     pipeline = out.require_ingestion_model().resources[0].pipeline
     assert len(pipeline) == 1
-    assert pipeline[0]["edge"]["to"] == "company"
+    edge_step = pipeline[0]
+    assert isinstance(edge_step, EdgeActorConfig)
+    assert edge_step.target == "company"
 
 
 def test_project_strict_unknown_vertex_raises() -> None:

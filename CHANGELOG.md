@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.27.0]
+
+### Changed
+
+- **Breaking:** `ResourceConfig.pipeline` is a list of actor configs (`VertexActorConfig`,
+  `EdgeActorConfig`, `TransformActorConfig`, `DescendActorConfig`, `VertexRouterActorConfig`),
+  not dicts. Input still takes every step spelling; a step that is not valid on its own is
+  refused at load, among them legacy `map` transforms.
+- A manifest's pipeline is written in compact shorthand (`{vertex: …}`, `{edge: {from, to}}`,
+  `{transform: …}`, `{vertex_router: …}`, `{descend: {key, pipeline}}`), not as authored.
+  Content hashes do not change.
+- Pipeline helpers take typed steps: `step_produces_vertices`, `step_finds`, `step_looks_up`,
+  `role_reach`, `find_vertex_producing_levels`, `iter_edge_steps`, `with_emit_inverse` and the
+  evolution `*_in_pipeline` rewriters. Router rules are methods of `VertexRouterActorConfig`
+  (`route`, `reach`, `routed_values`). `pipeline_level` reads a nested level.
+- `AddResourceTransformsOp.additions` holds `TransformActorConfig` steps. Commit ids of ops
+  that carry resources or steps move; run `graflo rehash <store>`.
+- Routed reads are named `routed_record_filter` (`graflo.architecture.contract.ingestion.routing`),
+  returning the routed values or the step that blocks them; log lines say "records".
+
+### Fixed
+
+- A table connector is narrowed by its resource's routers when a transform at the router's level
+  calls a named transform (`call.use`), uses `dress` or groups, or reads the routed field only
+  through `when`: a transform's writes are resolved the way the runtime resolves them. When the
+  read cannot be narrowed, the log names the step that prevents it.
+- `IngestionModel.prune_to_graph` removes the steps naming a disconnected vertex; it used to
+  prune a copy and keep them.
+
 ## [1.26.0]
 
 ### Added
@@ -828,7 +857,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **`VertexEquivalence.derive`**: attributes each source derives, keyed on by name or by a composite
-  branch such as `[host_key, group_key]`, which fires only when every part is derived.
+  branch such as `[machine_key, group_key]`, which fires only when every part is derived.
 
 ### Fixed
 

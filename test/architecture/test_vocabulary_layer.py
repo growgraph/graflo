@@ -113,15 +113,15 @@ def _ref(source: str, target: str, relation: str) -> SuperProperty:
 
 
 # A small hierarchy in which classes and relations both have parents.
-CI = [
-    _vertex("ci"),
-    _vertex("hardware", {"vertex": "ci"}),
-    _vertex("server", {"vertex": "hardware"}, {"iri": AGENT}),
-    _vertex("application", {"vertex": "ci"}),
+ASSETS = [
+    _vertex("asset"),
+    _vertex("machine", {"vertex": "asset"}),
+    _vertex("press", {"vertex": "machine"}, {"iri": AGENT}),
+    _vertex("controller", {"vertex": "asset"}),
 ]
 RELATIONS = [
-    _edge("ci", "ci", "depends_on"),
-    _edge("application", "server", "runs_on", _under("ci", "ci", "depends_on")),
+    _edge("asset", "asset", "depends_on"),
+    _edge("controller", "press", "mounted_on", _under("asset", "asset", "depends_on")),
 ]
 
 
@@ -189,26 +189,34 @@ def test_finish_init_refuses_a_broken_class_hierarchy(
 @pytest.mark.parametrize(
     ("edges", "message"),
     [
-        ([_edge("ci", "ci", "r", _under("ci", "ci", "nothing"))], "does not declare"),
-        ([_edge("ci", "ci", "r", _under("ci", "ci", "r"))], "subproperty of itself"),
+        (
+            [_edge("asset", "asset", "r", _under("asset", "asset", "nothing"))],
+            "does not declare",
+        ),
+        (
+            [_edge("asset", "asset", "r", _under("asset", "asset", "r"))],
+            "subproperty of itself",
+        ),
         (
             [
-                _edge("ci", "ci", "r", _under("ci", "ci", "s")),
-                _edge("ci", "ci", "s", _under("ci", "ci", "r")),
+                _edge("asset", "asset", "r", _under("asset", "asset", "s")),
+                _edge("asset", "asset", "s", _under("asset", "asset", "r")),
             ],
             "cycle",
         ),
         (
             [
-                _edge("server", "server", "r"),
-                _edge("ci", "ci", "s", _under("server", "server", "r")),
+                _edge("press", "press", "r"),
+                _edge("asset", "asset", "s", _under("press", "press", "r")),
             ],
             "endpoints are not subclasses",
         ),
         (
             [
-                _edge("ci", "ci", "r"),
-                _edge("server", "server", "s", _under("ci", "ci", "r"), directed=False),
+                _edge("asset", "asset", "r"),
+                _edge(
+                    "press", "press", "s", _under("asset", "asset", "r"), directed=False
+                ),
             ],
             "undirected edge",
         ),
@@ -219,24 +227,27 @@ def test_finish_init_refuses_a_broken_relation_hierarchy(
     edges: list[dict[str, Any]], message: str
 ) -> None:
     with pytest.raises(ValueError, match=message):
-        _manifest(*CI, edges=edges)
+        _manifest(*ASSETS, edges=edges)
 
 
 def test_an_undirected_parent_subsumes_either_orientation() -> None:
     manifest = _manifest(
-        *CI,
+        *ASSETS,
         edges=[
-            _edge("ci", "application", "linked", directed=False),
+            _edge("asset", "controller", "linked", directed=False),
             _edge(
-                "server", "application", "hosts", _under("ci", "application", "linked")
+                "press",
+                "controller",
+                "carries",
+                _under("asset", "controller", "linked"),
             ),
             _edge(
-                "application", "server", "uses", _under("ci", "application", "linked")
+                "controller", "press", "uses", _under("asset", "controller", "linked")
             ),
         ],
     )
     assert Hierarchy.of(_core(manifest)).is_subproperty(
-        ("application", "server", "uses"), ("ci", "application", "linked")
+        ("controller", "press", "uses"), ("asset", "controller", "linked")
     )
 
 
@@ -255,10 +266,10 @@ def test_a_local_element_named_by_iri_is_refused() -> None:
         )
     with pytest.raises(ValueError, match="superproperty"):
         _manifest(
-            *CI,
+            *ASSETS,
             edges=[
-                _edge("ci", "ci", "depends_on", semantics={"iri": RELATED}),
-                _edge("server", "server", "mirrors", {"iri": RELATED}),
+                _edge("asset", "asset", "depends_on", semantics={"iri": RELATED}),
+                _edge("press", "press", "mirrors", {"iri": RELATED}),
             ],
         )
 
@@ -300,35 +311,37 @@ def test_merged_semantics_union_the_links_and_clear_a_disputed_label() -> None:
 
 
 def test_the_hierarchy_is_reflexive_transitive_and_reaches_external_parents() -> None:
-    hierarchy = Hierarchy.of(_core(_manifest(*CI, edges=RELATIONS)))
-    assert hierarchy.superclasses("server") == ["hardware", "ci"]
-    assert hierarchy.superclasses("server", transitive=False) == ["hardware"]
-    assert hierarchy.subclasses("ci") == ["hardware", "application", "server"]
-    assert hierarchy.is_subclass("server", "ci") and hierarchy.is_subclass("ci", "ci")
-    assert not hierarchy.is_subclass("ci", "server")
-    assert hierarchy.external_superclasses("server") == [AGENT]
-    assert hierarchy.external_superclasses("hardware") == []
-    runs_on, depends_on = (
-        ("application", "server", "runs_on"),
-        ("ci", "ci", "depends_on"),
+    hierarchy = Hierarchy.of(_core(_manifest(*ASSETS, edges=RELATIONS)))
+    assert hierarchy.superclasses("press") == ["machine", "asset"]
+    assert hierarchy.superclasses("press", transitive=False) == ["machine"]
+    assert hierarchy.subclasses("asset") == ["machine", "controller", "press"]
+    assert hierarchy.is_subclass("press", "asset") and hierarchy.is_subclass(
+        "asset", "asset"
     )
-    assert hierarchy.superproperties(runs_on) == [depends_on]
-    assert hierarchy.subproperties(depends_on) == [runs_on]
-    assert hierarchy.subproperty_pairs() == {(runs_on, depends_on)}
+    assert not hierarchy.is_subclass("asset", "press")
+    assert hierarchy.external_superclasses("press") == [AGENT]
+    assert hierarchy.external_superclasses("machine") == []
+    mounted_on, depends_on = (
+        ("controller", "press", "mounted_on"),
+        ("asset", "asset", "depends_on"),
+    )
+    assert hierarchy.superproperties(mounted_on) == [depends_on]
+    assert hierarchy.subproperties(depends_on) == [mounted_on]
+    assert hierarchy.subproperty_pairs() == {(mounted_on, depends_on)}
 
 
 def test_a_new_subsumption_between_base_classes_is_reported() -> None:
-    base = _manifest(*CI)
-    narrower = _manifest(*CI, _vertex("database", {"vertex": "ci"}))
+    base = _manifest(*ASSETS)
+    narrower = _manifest(*ASSETS, _vertex("tool", {"vertex": "asset"}))
     assert not new_subsumptions(_core(base), _core(narrower))
     collapsed = _manifest(
-        _vertex("ci"),
-        _vertex("hardware", {"vertex": "ci"}),
-        _vertex("server", {"vertex": "hardware"}, {"iri": AGENT}),
-        _vertex("application", {"vertex": "server"}),
+        _vertex("asset"),
+        _vertex("machine", {"vertex": "asset"}),
+        _vertex("press", {"vertex": "machine"}, {"iri": AGENT}),
+        _vertex("controller", {"vertex": "press"}),
     )
     found = new_subsumptions(_core(base), _core(collapsed))
-    assert found.classes == {("application", "server"), ("application", "hardware")}
+    assert found.classes == {("controller", "press"), ("controller", "machine")}
 
 
 def test_a_vertex_iri_is_its_grounding_else_the_minted_one() -> None:
@@ -362,9 +375,9 @@ def test_a_changed_superclass_is_diffed_replayed_and_inverted() -> None:
 
 def test_a_changed_superproperty_is_diffed_replayed_and_inverted() -> None:
     base = _manifest(
-        *CI, edges=[RELATIONS[0], _edge("application", "server", "runs_on")]
+        *ASSETS, edges=[RELATIONS[0], _edge("controller", "press", "mounted_on")]
     )
-    target = _manifest(*CI, edges=RELATIONS)
+    target = _manifest(*ASSETS, edges=RELATIONS)
     ops, warnings = diff_manifests_verified(base, target)
     assert warnings == []
     (op,) = ops
@@ -377,14 +390,14 @@ def test_a_changed_superproperty_is_diffed_replayed_and_inverted() -> None:
 
 
 def test_a_rename_follows_every_reference() -> None:
-    base = _manifest(*CI, edges=RELATIONS)
+    base = _manifest(*ASSETS, edges=RELATIONS)
     renamed = _apply(
         base,
-        {"op": "rename_vertices", "renames": {"ci": "item"}},
+        {"op": "rename_vertices", "renames": {"asset": "item"}},
         {"op": "rename_relations", "renames": {"depends_on": "needs"}},
     )
-    assert _parents(renamed, "hardware") == [SuperClass(vertex="item")]
-    assert _edge_parents(renamed, ("application", "server", "runs_on")) == [
+    assert _parents(renamed, "machine") == [SuperClass(vertex="item")]
+    assert _edge_parents(renamed, ("controller", "press", "mounted_on")) == [
         _ref("item", "item", "needs")
     ]
 
@@ -392,21 +405,26 @@ def test_a_rename_follows_every_reference() -> None:
 def test_removing_a_parent_splices_it_out() -> None:
     """What was under the removed class or relation moves under its parents."""
     base = _manifest(
-        *CI,
+        *ASSETS,
         edges=[
-            _edge("ci", "ci", "relates", {"iri": RELATED}),
-            _edge("ci", "ci", "depends_on", _under("ci", "ci", "relates")),
-            _edge("application", "server", "runs_on", _under("ci", "ci", "depends_on")),
+            _edge("asset", "asset", "relates", {"iri": RELATED}),
+            _edge("asset", "asset", "depends_on", _under("asset", "asset", "relates")),
+            _edge(
+                "controller",
+                "press",
+                "mounted_on",
+                _under("asset", "asset", "depends_on"),
+            ),
         ],
     )
-    spliced = _apply(base, {"op": "remove_vertices", "names": ["hardware"]})
-    assert _parents(spliced, "server") == [
-        SuperClass(vertex="ci"),
+    spliced = _apply(base, {"op": "remove_vertices", "names": ["machine"]})
+    assert _parents(spliced, "press") == [
+        SuperClass(vertex="asset"),
         SuperClass(iri=AGENT),
     ]
     spliced = _apply(base, {"op": "remove_edges", "relations": ["depends_on"]})
-    assert _edge_parents(spliced, ("application", "server", "runs_on")) == [
-        _ref("ci", "ci", "relates")
+    assert _edge_parents(spliced, ("controller", "press", "mounted_on")) == [
+        _ref("asset", "asset", "relates")
     ]
     # In any order, one at a time or together, the survivors end the same.
     together = _apply(
@@ -418,7 +436,7 @@ def test_removing_a_parent_splices_it_out() -> None:
         {"op": "remove_edges", "relations": ["depends_on"]},
     )
     assert manifest_hash(together) == manifest_hash(one_by_one)
-    assert _edge_parents(together, ("application", "server", "runs_on")) == [
+    assert _edge_parents(together, ("controller", "press", "mounted_on")) == [
         SuperProperty(iri=RELATED)
     ]
 
@@ -441,19 +459,22 @@ def test_merging_vertices_follows_every_reference_to_a_source() -> None:
 
 def test_merging_relations_drops_a_parent_folded_into_its_child() -> None:
     base = _manifest(
-        *CI,
-        edges=[_edge("ci", "ci", "r"), _edge("ci", "ci", "s", _under("ci", "ci", "r"))],
+        *ASSETS,
+        edges=[
+            _edge("asset", "asset", "r"),
+            _edge("asset", "asset", "s", _under("asset", "asset", "r")),
+        ],
     )
     merged = _apply(base, {"op": "merge_edges", "sources": ["s"], "into": "r"})
-    assert _edge_parents(merged, ("ci", "ci", "r")) == []
+    assert _edge_parents(merged, ("asset", "asset", "r")) == []
 
 
 def test_retargeting_an_edge_follows_its_subproperties() -> None:
     base = _manifest(
-        *CI,
+        *ASSETS,
         edges=[
-            _edge("hardware", "ci", "on"),
-            _edge("server", "ci", "racked_on", _under("hardware", "ci", "on")),
+            _edge("machine", "asset", "on"),
+            _edge("press", "asset", "installed_at", _under("machine", "asset", "on")),
         ],
     )
     moved = _apply(
@@ -462,16 +483,16 @@ def test_retargeting_an_edge_follows_its_subproperties() -> None:
             "op": "retarget_edges",
             "edges": [
                 {
-                    "source": "hardware",
-                    "target": "ci",
+                    "source": "machine",
+                    "target": "asset",
                     "relation": "on",
-                    "new_source": "ci",
+                    "new_source": "asset",
                 }
             ],
         },
     )
-    assert _edge_parents(moved, ("server", "ci", "racked_on")) == [
-        _ref("ci", "ci", "on")
+    assert _edge_parents(moved, ("press", "asset", "installed_at")) == [
+        _ref("asset", "asset", "on")
     ]
 
 
@@ -514,9 +535,10 @@ def test_merged_manifests_keep_an_agreed_base_iri_and_refuse_a_rebound_prefix() 
 
 
 def test_a_link_cut_on_one_branch_conflicts_with_a_parent_relying_on_it() -> None:
-    """The edge's parent holds only through ``hardware``'s chain, which the other side cuts."""
+    """The edge's parent holds only through ``machine``'s chain, which the other side cuts."""
     base = _manifest(
-        *CI, edges=[_edge("ci", "ci", "depends_on"), _edge("server", "ci", "backs_up")]
+        *ASSETS,
+        edges=[_edge("asset", "asset", "depends_on"), _edge("press", "asset", "feeds")],
     )
     left = _apply(
         base,
@@ -524,21 +546,21 @@ def test_a_link_cut_on_one_branch_conflicts_with_a_parent_relying_on_it() -> Non
             "op": "set_edge_subproperty_of",
             "edges": [
                 {
-                    "source": "server",
-                    "target": "ci",
-                    "relation": "backs_up",
-                    "subproperty_of": [_under("ci", "ci", "depends_on")],
+                    "source": "press",
+                    "target": "asset",
+                    "relation": "feeds",
+                    "subproperty_of": [_under("asset", "asset", "depends_on")],
                 }
             ],
         },
     )
     right = _apply(
-        base, {"op": "set_vertex_subclass_of", "subclass_of": {"hardware": []}}
+        base, {"op": "set_vertex_subclass_of", "subclass_of": {"machine": []}}
     )
     merged, result = merge_three_way(base, left, right)
     assert merged is None
     assert [list(c.slot) for c in result.conflicts] == [
-        ["vertex", "hardware", "subclass_of"]
+        ["vertex", "machine", "subclass_of"]
     ]
 
 
@@ -546,18 +568,18 @@ def test_a_link_cut_on_one_branch_conflicts_with_a_parent_relying_on_it() -> Non
 
 
 def test_a_slice_keeps_the_parents_of_what_it_keeps() -> None:
-    manifest = _manifest(*CI, edges=RELATIONS)
+    manifest = _manifest(*ASSETS, edges=RELATIONS)
     assert manifest.graph_schema is not None
-    selection = select_induced(_core(manifest), keep_vertices=["application", "server"])
-    assert selection.surviving_vertices == {"application", "server", "hardware", "ci"}
-    assert ("ci", "ci", "depends_on") in selection.surviving_edge_ids
+    selection = select_induced(_core(manifest), keep_vertices=["controller", "press"])
+    assert selection.surviving_vertices == {"controller", "press", "machine", "asset"}
+    assert ("asset", "asset", "depends_on") in selection.surviving_edge_ids
     sliced = build_subschema(manifest.graph_schema, selection)
-    assert Hierarchy.of(sliced.core_schema).is_subclass("server", "ci")
+    assert Hierarchy.of(sliced.core_schema).is_subclass("press", "asset")
 
 
 def test_removing_disconnected_vertices_keeps_a_superclass() -> None:
     manifest = _manifest(
-        *CI, _vertex("orphan"), edges=[_edge("application", "server", "runs_on")]
+        *ASSETS, _vertex("orphan"), edges=[_edge("controller", "press", "mounted_on")]
     )
     assert manifest.graph_schema is not None
     removed = manifest.graph_schema.remove_disconnected_vertices()

@@ -8,12 +8,20 @@ from typing import Any, Literal
 
 from graflo.architecture.contract.ingestion import IngestionModel
 from graflo.architecture.contract.ingestion.resource import (
-    level_rewrites,
-    route_discriminator,
-    router_reach,
+    iter_steps,
     step_produces_vertices,
 )
-from graflo.architecture.contract.ingestion.steps.normalize import normalize_actor_step
+from graflo.architecture.contract.ingestion.routing import (
+    fields_written_before_routing,
+)
+from graflo.architecture.contract.ingestion.steps import (
+    ActorConfig,
+    DescendActorConfig,
+    TransformActorConfig,
+    VertexActorConfig,
+    VertexRouterActorConfig,
+)
+from graflo.architecture.contract.ingestion.transform import ProtoTransform
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.graph_types import EdgeId
 from graflo.architecture.schema import Schema
@@ -118,6 +126,7 @@ from .ops import (
     SetVertexSemanticsOp,
     SetVertexSubclassOfOp,
 )
+from .pipeline_dicts import pipeline_from_dicts, pipeline_to_dicts
 from .project import compute_projection
 from .rewrite import (
     pipeline_mentions_any_vertex,
@@ -190,51 +199,36 @@ def _prune_ingestion_for_removed_vertices(
         )
 
 
-def _row_reach(
-    pipeline: Sequence[Any], constants: Mapping[str, Any], declared: Collection[str]
+def _record_reach(
+    pipeline: Sequence[ActorConfig],
+    constants: Mapping[str, Any],
+    declared: Collection[str],
+    transforms: Mapping[str, ProtoTransform],
 ) -> set[str]:
-    """Classes *pipeline* can produce from a row carrying *constants*.
+    """Classes *pipeline* can produce from a record carrying *constants*.
 
     A top-level ``vertex_router`` whose ``type_field`` the constants fix routes
     that value the way the runtime does, unless a transform of the level may
-    rewrite the field (transforms run before routers, wherever they are
-    listed). Every other producing step, at any level, counts with all it can
-    produce.
+    write the field (transforms run before routers, wherever they are listed).
+    Every other producing step, at any level, counts with all it can produce.
     """
     reach: set[str] = set()
-
-    def everything(level: Any) -> None:
-        if not isinstance(level, list):
-            return
-        for item in level:
-            if not isinstance(item, dict):
-                continue
-            step = normalize_actor_step(dict(item))
-            reach.update(step_produces_vertices(step, known_vertices=declared))
-            if step.get("type") == "descend":
-                everything(step.get("pipeline"))
-
-    rewritten = level_rewrites(pipeline)
-    for item in pipeline:
-        if not isinstance(item, dict):
-            continue
-        step = normalize_actor_step(dict(item))
-        kind = step.get("type")
-        field = step.get("type_field")
-        if kind == "transform":
+    written = fields_written_before_routing(pipeline, transforms)
+    for step in pipeline:
+        if isinstance(step, TransformActorConfig):
             continue
         if (
-            kind == "vertex_router"
-            and isinstance(field, str)
-            and isinstance(constants.get(field), str | int | float | bool)
-            and rewritten is not None
-            and field not in rewritten
+            isinstance(step, VertexRouterActorConfig)
+            and isinstance(constants.get(step.type_field), str | int | float | bool)
+            and written is not None
+            and step.type_field not in written
         ):
-            vertex = route_discriminator(step, constants[field], declared)
+            vertex = step.route(constants[step.type_field], declared)
             if vertex is not None:
                 reach.add(vertex)
             continue
-        everything([step])
+        for inner in iter_steps([step]):
+            reach.update(step_produces_vertices(inner, known_vertices=declared))
     return reach
 
 
@@ -265,6 +259,7 @@ def prune_connectors_for_removed_vertices(
     if bindings is None or ingestion is None or not removed:
         return
     pipelines = {resource.name: resource.pipeline for resource in ingestion.resources}
+    transforms = ingestion.transforms_by_name
     rows = [
         ResourceConnectorBinding.model_validate(row) if isinstance(row, dict) else row
         for row in bindings.resource_connector
@@ -287,7 +282,7 @@ def prune_connectors_for_removed_vertices(
 
     def dead(constants: Mapping[str, Any], resources: set[str]) -> bool:
         reaches = [
-            _row_reach(pipelines[name], constants, declared)
+            _record_reach(pipelines[name], constants, declared, transforms)
             for name in resources
             if name in pipelines
         ]
@@ -601,7 +596,11 @@ def _rewrite_ingestion_for_merge(
 
 
 def _fused_slots(
-    steps: list[Any], *, merged: str, mapping: dict[str, str], path: str = "pipeline"
+    steps: Sequence[ActorConfig],
+    *,
+    merged: str,
+    mapping: dict[str, str],
+    path: str = "pipeline",
 ) -> list[str]:
     """Accumulator slots of a *pre-merge* pipeline where *merged* would fuse.
 
@@ -611,7 +610,7 @@ def _fused_slots(
     assembly merges one ``(vertex, lindex)`` bucket at a time. So two steps at
     one level share a slot only when their roles agree (or both are bare).
 
-    A router produces its :func:`router_reach` -- an unbounded one every
+    A router produces its reach (:meth:`VertexRouterActorConfig.reach`) -- an unbounded one every
     member, by pass-through. A slot is reported when it holds more than one
     producing step *and* those steps came from more than one pre-merge name: one source document then
     yields both members, and after the merge they share the bucket, so
@@ -623,37 +622,29 @@ def _fused_slots(
     hits: list[str] = []
     slots: dict[str | None, list[set[str]]] = {}
     for index, step in enumerate(steps):
-        if not isinstance(step, dict):
-            continue
-        normalized = normalize_actor_step(dict(step))
-        step_type = normalized.get("type")
-        if step_type == "vertex":
-            name = normalized.get("vertex")
-            if isinstance(name, str) and mapping.get(name, name) == merged:
-                slots.setdefault(normalized.get("role"), []).append({name})
-        elif step_type == "vertex_router":
-            reach = router_reach(normalized)
+        if isinstance(step, VertexActorConfig):
+            if mapping.get(step.vertex, step.vertex) == merged:
+                slots.setdefault(step.role, []).append({step.vertex})
+        elif isinstance(step, VertexRouterActorConfig):
+            reach = step.reach()
             if reach is None:
                 # Unbounded: the table's classes, and every member by
                 # pass-through.
-                reach = frozenset(step_produces_vertices(normalized)) | {
+                reach = step.mapped_classes() | {
                     name for name, target in mapping.items() if target == merged
                 }
             members = {name for name in reach if mapping.get(name, name) == merged}
             if members:
-                slot = normalized.get("role") or normalized.get("type_field")
-                slots.setdefault(slot, []).append(members)
-        elif step_type == "descend":
-            sub = normalized.get("pipeline")
-            if isinstance(sub, list):
-                hits.extend(
-                    _fused_slots(
-                        sub,
-                        merged=merged,
-                        mapping=mapping,
-                        path=f"{path}[{index}].pipeline",
-                    )
+                slots.setdefault(step.slot, []).append(members)
+        elif isinstance(step, DescendActorConfig):
+            hits.extend(
+                _fused_slots(
+                    step.pipeline,
+                    merged=merged,
+                    mapping=mapping,
+                    path=f"{path}[{index}].pipeline",
                 )
+            )
     for slot, producers in slots.items():
         members = sorted(set().union(*producers))
         if len(producers) > 1 and len(members) > 1:
@@ -966,11 +957,13 @@ def _rewrite_ingestion_for_canonicalize(
         # The vertex rewriter unions colliding `vertex_from_map` entries, which
         # a merge needs; relations live in disjoint slots and follow in a
         # second pass that reads each slot once.
-        pipeline = rewrite_vertex_names_in_pipeline(
-            resource.pipeline, vertex_map, declared=declared
+        pipeline = pipeline_to_dicts(
+            rewrite_vertex_names_in_pipeline(
+                resource.pipeline, vertex_map, declared=declared
+            )
         )
         rewrite_entity_names_in_pipeline(pipeline, edges=relation_map)
-        d["pipeline"] = pipeline
+        d["pipeline"] = pipeline_from_dicts(pipeline)
         for key in ("infer_edge_only", "infer_edge_except", "extra_weights"):
             if d.get(key):
                 d[key] = _rewrite_relation_names_in_value(
@@ -1857,11 +1850,9 @@ def apply_remove_edges(manifest: GraphManifest, op: RemoveEdgesOp) -> None:
         resources: list[Resource] = []
         for resource in manifest.ingestion_model.resources:
             payload = resource.to_dict(skip_defaults=False)
-            pipeline = payload.get("pipeline")
-            if isinstance(pipeline, list):
-                payload["pipeline"] = rewrite_remove_relations_in_pipeline(
-                    pipeline, removed
-                )
+            payload["pipeline"] = rewrite_remove_relations_in_pipeline(
+                resource.pipeline, removed
+            )
             for key in ("infer_edge_only", "infer_edge_except"):
                 specs = payload.get(key)
                 if isinstance(specs, list):
@@ -1942,11 +1933,9 @@ def apply_remove_edge_ids(
     resources: list[Resource] = []
     for resource in manifest.ingestion_model.resources:
         payload = resource.to_dict(skip_defaults=False)
-        pipeline = payload.get("pipeline")
-        if isinstance(pipeline, list):
-            payload["pipeline"] = rewrite_remove_edge_ids_in_pipeline(
-                pipeline, removed_edge_ids
-            )
+        payload["pipeline"] = rewrite_remove_edge_ids_in_pipeline(
+            resource.pipeline, removed_edge_ids
+        )
         for key in ("infer_edge_only", "infer_edge_except"):
             specs = payload.get(key)
             if isinstance(specs, list):

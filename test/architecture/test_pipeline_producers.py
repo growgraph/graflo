@@ -6,14 +6,19 @@ from graflo.architecture.contract.ingestion.resource import (
     find_vertex_producing_levels,
     step_produces_vertices,
 )
+from graflo.architecture.contract.ingestion.steps import ActorConfig, as_actor_step
 
 _KNOWN = {"Company", "Shop", "Person"}
-_BARE = {"vertex_router": {"type_field": "kind"}}
-_MAPPED = {"vertex_router": {"type_field": "kind", "type_map": {"firm": "Company"}}}
+_BARE = as_actor_step({"vertex_router": {"type_field": "kind"}})
+_MAPPED = as_actor_step(
+    {"vertex_router": {"type_field": "kind", "type_map": {"firm": "Company"}}}
+)
 
 
-def _nested(*steps: dict) -> dict:
-    return {"descend": {"key": "records", "apply": list(steps)}}
+def _nested(*steps: ActorConfig) -> ActorConfig:
+    return as_actor_step(
+        {"descend": {"key": "records", "apply": [s.to_shorthand() for s in steps]}}
+    )
 
 
 class TestStepProducesVertices:
@@ -29,11 +34,11 @@ class TestStepProducesVertices:
         assert step_produces_vertices(_MAPPED, known_vertices=_KNOWN) == _KNOWN
 
     def test_a_vertex_step_is_unaffected_by_the_schema(self) -> None:
-        step = {"vertex": "Company"}
+        step = as_actor_step({"vertex": "Company"})
         assert step_produces_vertices(step, known_vertices=_KNOWN) == {"Company"}
 
     def test_an_edge_step_produces_nothing(self) -> None:
-        step = {"edge": {"source": "Company", "target": "Person"}}
+        step = as_actor_step({"edge": {"source": "Company", "target": "Person"}})
         assert step_produces_vertices(step, known_vertices=_KNOWN) == set()
 
 
@@ -58,6 +63,6 @@ class TestFindVertexProducingLevels:
 
     def test_a_level_without_a_router_never_passes_through(self) -> None:
         levels = find_vertex_producing_levels(
-            [{"vertex": "Person"}], "Shop", known_vertices=_KNOWN
+            [as_actor_step({"vertex": "Person"})], "Shop", known_vertices=_KNOWN
         )
         assert levels == []

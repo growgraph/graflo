@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 
 from graflo.architecture.contract import GraphManifest
+from graflo.architecture.contract.ingestion.steps import as_actor_step
 from graflo.architecture.contract.ingestion.steps.ref import (
     EdgeStepRef,
     iter_edge_steps,
@@ -127,14 +128,14 @@ class TestSetInverseEmission:
         )
         assert _flags(out) == {"2/0#link0": False, "2/0#link1": True}
 
-    def test_the_step_keeps_its_authored_spelling(self) -> None:
+    def test_the_step_dumps_as_compact_shorthand(self) -> None:
         flat = {"source": "person", "target": "institution", "relation": "employed_by"}
-        assert with_emit_inverse([flat], EdgeStepRef(step=0), True) == [
-            {**flat, "emit_inverse": True}
-        ]
-        assert with_emit_inverse([STEP], EdgeStepRef(step=0), True) == [
-            {"edge": {**STEP["edge"], "emit_inverse": True}}
-        ]
+        expected = [{"edge": {**STEP["edge"], "emit_inverse": True}}]
+        for spelling in (flat, STEP):
+            out = with_emit_inverse(
+                [as_actor_step(spelling)], EdgeStepRef(step=0), True
+            )
+            assert [step.to_shorthand() for step in out] == expected
 
     @pytest.mark.parametrize(
         ("kwargs", "match"),

@@ -224,7 +224,7 @@ def _mirrors_created_edge(
         return inverse is not None and (target, source, inverse) in created
     # The writer learns which identity an endpoint is matched on per edge id, at
     # load time; a mirror known only per document has nowhere to register that.
-    if view.payload.get("source_match") or view.payload.get("target_match"):
+    if view.payload.source_match or view.payload.target_match:
         return False
     written = view.relations_written()
     forward_of = {inverse: relation for relation, inverse in active.items()}

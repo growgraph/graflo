@@ -131,16 +131,16 @@ A vertex's `subclass_of` lists its superclasses (`rdfs:subClassOf`, as `gf:subcl
 
 ```yaml
 vertices:
--   {name: ci, identity: [id]}
--   {name: server, identity: [id], subclass_of: [{vertex: ci}]}
--   {name: application, identity: [id], subclass_of: [{vertex: ci}]}
+-   {name: asset, identity: [id]}
+-   {name: press, identity: [id], subclass_of: [{vertex: asset}]}
+-   {name: controller, identity: [id], subclass_of: [{vertex: asset}]}
 edges:
--   {source: ci, target: ci, relation: depends_on}
--   source: application
-    target: server
-    relation: runs_on
+-   {source: asset, target: asset, relation: depends_on}
+-   source: controller
+    target: press
+    relation: mounted_on
     subproperty_of:
-    -   edge: {source: ci, target: ci, relation: depends_on}
+    -   edge: {source: asset, target: asset, relation: depends_on}
 ```
 
 Both are logical assertions, and the schema checks them: a local parent is declared, the hierarchy is acyclic, an edge's endpoints are subclasses of its parent edge's (either way round when the parent is undirected), and an undirected edge has an undirected parent. A local element is named locally, never by its IRI. Nothing is inherited — a subclass gets no property, identity or storage from its parent — and nothing at ingestion or query time reads either list.
