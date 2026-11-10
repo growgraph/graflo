@@ -105,7 +105,7 @@ class VertexEquivalence(ConfigBaseModel):
 
     ``derive`` declares attributes each source computes, without making each
     one a branch: a name or composite branch in ``identity`` keys on them, so
-    ``[host_key, group_key]`` fires only when both are derived and the digest
+    ``[machine_key, group_key]`` fires only when both are derived and the digest
     joins them. A ``DerivedBranch`` ``{name, sources}`` is the same as
     ``derive: {name: sources}`` with the branch ``name``.
     """

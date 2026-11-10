@@ -26,7 +26,7 @@ from graflo.filter.select import SelectSpec
 from graflo.filter.sql import values_in_filter
 from graflo.onto import ExpressionFlavor
 
-DECLARED = {"server", "switch", "rack"}
+DECLARED = {"machine", "sensor", "line"}
 
 #: A named transform the way ``ingestion_model.transforms`` holds one.
 NAMED = {
@@ -61,7 +61,7 @@ def _filter(*raw: dict[str, Any] | ActorConfig) -> RoutedRecordFilter:
     return routed_record_filter(_steps(*raw), DECLARED, NAMED)
 
 
-CLOSED = {"type_map": {"srv": "server"}, "type_map_only": True}
+CLOSED = {"type_map": {"mch": "machine"}, "type_map_only": True}
 
 
 class TestRoutedValues:
@@ -69,26 +69,26 @@ class TestRoutedValues:
         self,
     ) -> None:
         step = _router(
-            type_map={"srv": "server", "sw": "switch", "pdu": "pdu"},
+            type_map={"mch": "machine", "sen": "sensor", "valve": "valve"},
             type_map_only=True,
         )
 
-        assert step.routed_values(DECLARED) == {"srv", "sw"}
+        assert step.routed_values(DECLARED) == {"mch", "sen"}
 
     def test_an_open_router_also_routes_declared_names(self) -> None:
-        step = _router(type_map={"srv": "server"})
+        step = _router(type_map={"mch": "machine"})
 
-        assert step.routed_values(DECLARED) == {"srv", "server", "switch", "rack"}
+        assert step.routed_values(DECLARED) == {"mch", "machine", "sensor", "line"}
 
     def test_vertex_types_bound_an_open_router(self) -> None:
-        step = _router(type_map={"srv": "server"}, vertex_types=["server"])
+        step = _router(type_map={"mch": "machine"}, vertex_types=["machine"])
 
-        assert step.routed_values(DECLARED) == {"srv", "server"}
+        assert step.routed_values(DECLARED) == {"mch", "machine"}
 
     def test_a_name_mapped_elsewhere_routes_where_the_map_says(self) -> None:
-        step = _router(type_map={"rack": "server"}, vertex_types=["server"])
+        step = _router(type_map={"line": "machine"}, vertex_types=["machine"])
 
-        assert step.routed_values(DECLARED) == {"rack", "server"}
+        assert step.routed_values(DECLARED) == {"line", "machine"}
 
 
 class TestFieldsWritten:
@@ -107,7 +107,7 @@ class TestFieldsWritten:
 
     def test_a_guard_on_the_field_only_reads_it(self) -> None:
         call = {"module": "builtins", "foo": "str", "input": ["id"], "output": ["key"]}
-        raw = {"call": call, "when": {"field": "kind", "in": ["srv"]}}
+        raw = {"call": call, "when": {"field": "kind", "in": ["mch"]}}
         assert self._written(raw) == {"key"}
 
     def test_a_call_without_output_writes_back_into_its_input(self) -> None:
@@ -149,15 +149,15 @@ class TestFieldsWritten:
 
 class TestRoutedRecordFilter:
     def test_a_router_alone_gives_its_field_and_values(self) -> None:
-        assert _filter(_router(**CLOSED)).fields == {"kind": {"srv"}}
+        assert _filter(_router(**CLOSED)).fields == {"kind": {"mch"}}
 
     def test_routers_on_one_field_add_up(self) -> None:
         verdict = _filter(
-            _router(type_map={"srv": "server"}, type_map_only=True, role="a"),
-            _router(type_map={"sw": "switch"}, type_map_only=True, role="b"),
+            _router(type_map={"mch": "machine"}, type_map_only=True, role="a"),
+            _router(type_map={"sen": "sensor"}, type_map_only=True, role="b"),
         )
 
-        assert verdict.fields == {"kind": {"srv", "sw"}}
+        assert verdict.fields == {"kind": {"mch", "sen"}}
 
     def test_routers_on_two_fields_give_two_fields(self) -> None:
         verdict = _filter(
@@ -165,21 +165,21 @@ class TestRoutedRecordFilter:
             {
                 "vertex_router": {
                     "type_field": "parent_kind",
-                    "type_map": {"rk": "rack"},
+                    "type_map": {"ln": "line"},
                     "type_map_only": True,
                 }
             },
         )
 
-        assert verdict.fields == {"kind": {"srv"}, "parent_kind": {"rk"}}
+        assert verdict.fields == {"kind": {"mch"}, "parent_kind": {"ln"}}
 
     def test_an_edge_between_router_roles_keeps_the_condition(self) -> None:
         verdict = _filter(
-            _router(type_map={"srv": "server"}, type_map_only=True, role="a"),
+            _router(type_map={"mch": "machine"}, type_map_only=True, role="a"),
             {
                 "vertex_router": {
                     "type_field": "other",
-                    "type_map": {"rk": "rack"},
+                    "type_map": {"ln": "line"},
                     "type_map_only": True,
                     "role": "b",
                 }
@@ -187,7 +187,7 @@ class TestRoutedRecordFilter:
             {"edge": {"source_role": "a", "target_role": "b"}},
         )
 
-        assert verdict.fields == {"kind": {"srv"}, "other": {"rk"}}
+        assert verdict.fields == {"kind": {"mch"}, "other": {"ln"}}
 
     @pytest.mark.parametrize(
         "transform",
@@ -202,7 +202,7 @@ class TestRoutedRecordFilter:
                         "input": ["id"],
                         "output": ["key"],
                     },
-                    "when": {"field": "kind", "in": ["srv"]},
+                    "when": {"field": "kind", "in": ["mch"]},
                 },
                 id="guarded-on-the-field",
             ),
@@ -224,25 +224,25 @@ class TestRoutedRecordFilter:
     ) -> None:
         verdict = _filter({"transform": transform}, _router(**CLOSED))
 
-        assert verdict.fields == {"kind": {"srv"}}
+        assert verdict.fields == {"kind": {"mch"}}
         assert verdict.blocked_by is None
 
     def test_a_router_routing_nothing_leaves_no_field(self) -> None:
-        verdict = _filter(_router(type_map={"pdu": "pdu"}, type_map_only=True))
+        verdict = _filter(_router(type_map={"valve": "valve"}, type_map_only=True))
 
         assert verdict.fields == {}
 
     @pytest.mark.parametrize(
         "extra,blocked_by",
         [
-            pytest.param({"vertex": "rack"}, "step 1 (vertex)", id="static-vertex"),
+            pytest.param({"vertex": "line"}, "step 1 (vertex)", id="static-vertex"),
             pytest.param(
-                {"descend": {"key": "parts", "pipeline": [{"vertex": "rack"}]}},
+                {"descend": {"key": "parts", "pipeline": [{"vertex": "line"}]}},
                 "step 1 (descend)",
                 id="descend",
             ),
             pytest.param(
-                {"edge": {"from": "server", "to": "rack"}},
+                {"edge": {"from": "machine", "to": "line"}},
                 "an edge end is not a router role",
                 id="static-edge",
             ),
@@ -286,7 +286,7 @@ class TestRoutedRecordFilter:
         assert verdict.blocked_by is not None and blocked_by in verdict.blocked_by
 
     def test_no_router_gives_none(self) -> None:
-        verdict = _filter({"vertex": "rack"})
+        verdict = _filter({"vertex": "line"})
 
         assert verdict.fields is None
         assert verdict.blocked_by == "no top-level vertex_router"
@@ -306,8 +306,8 @@ class TestRoutersKeepSubset:
         "options,expected",
         [
             pytest.param({"type_map_only": True, "type_map": {}}, True, id="closed"),
-            pytest.param({"vertex_types": ["rack"]}, True, id="bounded"),
-            pytest.param({"type_map": {"srv": "server"}}, False, id="open"),
+            pytest.param({"vertex_types": ["line"]}, True, id="bounded"),
+            pytest.param({"type_map": {"mch": "machine"}}, False, id="open"),
         ],
     )
     def test_closed_or_bounded(self, options: dict[str, Any], expected: bool) -> None:
@@ -353,20 +353,20 @@ class TestSourceColumn:
             {
                 "joins": [
                     {
-                        "table": "cmdb_all_classes",
-                        "alias": "ci_types",
-                        "on_self": "cmdb_ci",
-                        "on_other": "sys_id",
+                        "table": "all_classes",
+                        "alias": "machine_types",
+                        "on_self": "machine_id",
+                        "on_other": "entity_id",
                     }
                 ],
                 "select": [
                     "all_base",
-                    {"base": "cmdb_ci"},
+                    {"base": "machine_id"},
                     {"base": "name", "as": "label"},
                     {
-                        "from_join": "ci_types",
-                        "column": "sys_class_name",
-                        "as": "ci_type",
+                        "from_join": "machine_types",
+                        "column": "type_name",
+                        "as": "machine_type",
                     },
                     {"expr": "upper(name)", "as": "shout"},
                 ],
@@ -374,9 +374,9 @@ class TestSourceColumn:
         )
         connector = TableConnector(table_name="t", view=view)
 
-        assert connector.source_column("ci_type") == "ci_types.sys_class_name"
+        assert connector.source_column("machine_type") == "machine_types.type_name"
         assert connector.source_column("label") == "name"
-        assert connector.source_column("cmdb_ci") == "cmdb_ci"
+        assert connector.source_column("machine_id") == "machine_id"
         assert connector.source_column("other") == "other"
         assert connector.source_column("shout") is None
 
@@ -420,7 +420,7 @@ class TestValuesInFilter:
         )
 
     def test_one_column_is_one_sorted_in(self) -> None:
-        assert self._sql({"kind": {"sw", "srv"}}) == "\"kind\" IN ('srv', 'sw')"
+        assert self._sql({"kind": {"sen", "mch"}}) == "\"kind\" IN ('mch', 'sen')"
 
     def test_two_columns_are_or_ed(self) -> None:
         assert self._sql({"b": {1}, "a": {"x"}}) == '("a" IN (\'x\') OR "b" IN (1))'
@@ -428,7 +428,7 @@ class TestValuesInFilter:
     @pytest.mark.parametrize(
         "values",
         [
-            pytest.param({1, "server"}, id="mixed"),
+            pytest.param({1, "machine"}, id="mixed"),
             pytest.param({True}, id="bool"),
             pytest.param(set(), id="empty"),
         ],

@@ -25,7 +25,7 @@ from graflo.hq.ingestion_parameters import IngestionParams
 from graflo.hq.registry_builder import RegistryBuilder
 
 LOGGER = "graflo.hq.registry_builder"
-CLOSED = {"type_field": "kind", "type_map": {"srv": "server"}, "type_map_only": True}
+CLOSED = {"type_field": "kind", "type_map": {"mch": "machine"}, "type_map_only": True}
 
 
 def _schema() -> Schema:
@@ -36,7 +36,7 @@ def _schema() -> Schema:
                 "vertex_config": {
                     "vertices": [
                         {"name": name, "properties": ["id"], "identity": ["id"]}
-                        for name in ("server", "switch", "rack")
+                        for name in ("machine", "sensor", "line")
                     ]
                 },
                 "edge_config": {"edges": []},
@@ -107,7 +107,7 @@ class TestTheQueryCarriesTheRoutedValues:
         with caplog.at_level(logging.INFO, logger=LOGGER):
             query = _query(connector, _router())
 
-        assert query == 'SELECT * FROM "public"."items" WHERE "kind" IN (\'srv\')'
+        assert query == 'SELECT * FROM "public"."items" WHERE "kind" IN (\'mch\')'
         assert "reads only the records resource 'items' routes: kind in 1 value" in (
             caplog.text
         )
@@ -117,35 +117,35 @@ class TestTheQueryCarriesTheRoutedValues:
 
         query = _query(connector, _router(type_map_only=False))
 
-        assert query.endswith("WHERE \"kind\" IN ('rack', 'server', 'srv', 'switch')")
+        assert query.endswith("WHERE \"kind\" IN ('line', 'machine', 'mch', 'sensor')")
 
     def test_a_view_is_narrowed_on_the_joined_column(self) -> None:
         view = SelectSpec.model_validate(
             {
                 "joins": [
                     {
-                        "table": "cmdb_all_classes",
-                        "alias": "ci_types",
-                        "on_self": "cmdb_ci",
-                        "on_other": "sys_id",
+                        "table": "all_classes",
+                        "alias": "machine_types",
+                        "on_self": "machine_id",
+                        "on_other": "entity_id",
                     }
                 ],
                 "select": [
                     "all_base",
-                    {"base": "cmdb_ci"},
+                    {"base": "machine_id"},
                     {
-                        "from_join": "ci_types",
-                        "column": "sys_class_name",
-                        "as": "ci_type",
+                        "from_join": "machine_types",
+                        "column": "type_name",
+                        "as": "machine_type",
                     },
                 ],
             }
         )
-        connector = TableConnector(name="items", table_name="cmdb_ci", view=view)
+        connector = TableConnector(name="items", table_name="equipment", view=view)
 
-        query = _query(connector, _router(type_field="ci_type"))
+        query = _query(connector, _router(type_field="machine_type"))
 
-        assert query.endswith("WHERE ci_types.\"sys_class_name\" IN ('srv')")
+        assert query.endswith("WHERE machine_types.\"type_name\" IN ('mch')")
 
     def test_the_date_range_and_the_routed_values_both_apply(self) -> None:
         connector = TableConnector(name="items", table_name="items")
@@ -159,7 +159,7 @@ class TestTheQueryCarriesTheRoutedValues:
         )
 
         assert query.endswith(
-            "WHERE \"updated\" >= '2020-06-01' AND \"kind\" IN ('srv')"
+            "WHERE \"updated\" >= '2020-06-01' AND \"kind\" IN ('mch')"
         )
 
     def test_the_declared_manifest_is_left_alone(self) -> None:
@@ -184,15 +184,15 @@ class TestTransformsBesideTheRouter:
                     "foo": "tagged_key",
                     "params": {"tag": "a", "sep": ":"},
                     "input": ["id"],
-                    "output": ["server_key"],
+                    "output": ["machine_key"],
                 },
-                "when": {"field": "kind", "in": ["srv"]},
+                "when": {"field": "kind", "in": ["mch"]},
             }
         }
 
         query = _query(connector, derived, _router())
 
-        assert query.endswith("WHERE \"kind\" IN ('srv')")
+        assert query.endswith("WHERE \"kind\" IN ('mch')")
 
     def test_a_named_transform_writing_elsewhere_keeps_the_filter(self) -> None:
         connector = TableConnector(name="items", table_name="items")
@@ -201,7 +201,7 @@ class TestTransformsBesideTheRouter:
             connector, {"transform": {"call": {"use": "label_of"}}}, _router()
         )
 
-        assert query.endswith("WHERE \"kind\" IN ('srv')")
+        assert query.endswith("WHERE \"kind\" IN ('mch')")
 
     def test_a_transform_rewriting_the_field_is_named_in_the_log(
         self, caplog: pytest.LogCaptureFixture
@@ -228,7 +228,7 @@ class TestNothingIsPushed:
     def test_a_static_vertex_step_leaves_the_query_whole(self) -> None:
         connector = TableConnector(name="items", table_name="items")
 
-        query = _query(connector, _router(), {"vertex": "rack"})
+        query = _query(connector, _router(), {"vertex": "line"})
 
         assert query == 'SELECT * FROM "public"."items"'
 
@@ -266,7 +266,7 @@ class TestNothingIsPushed:
         connector = TableConnector(name="items", table_name="items")
 
         with caplog.at_level(logging.WARNING, logger=LOGGER):
-            sources = _sources(connector, _router(type_map={"pdu": "pdu"}))
+            sources = _sources(connector, _router(type_map={"valve": "valve"}))
 
         assert sources == []
         assert "Connector 'items' is not read" in caplog.text
@@ -276,7 +276,7 @@ class TestOtherConnectors:
     def test_a_file_under_a_closed_router_is_reported(
         self, tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture
     ) -> None:
-        (tmp_path / "items.csv").write_text("id,kind\n1,srv\n")
+        (tmp_path / "items.csv").write_text("id,kind\n1,mch\n")
         connector = FileConnector(name="items", sub_path=tmp_path, regex=r"items\.csv")
 
         with caplog.at_level(logging.WARNING, logger=LOGGER):
@@ -288,7 +288,7 @@ class TestOtherConnectors:
         "annotations,reported",
         [
             pytest.param({}, True, id="field-open"),
-            pytest.param({"kind": "srv"}, False, id="field-fixed"),
+            pytest.param({"kind": "mch"}, False, id="field-fixed"),
         ],
     )
     def test_an_api_request_fixing_the_field_is_quiet(
@@ -313,7 +313,7 @@ def test_a_capped_read_returns_kept_rows_only(tmp_path: pathlib.Path) -> None:
         db.execute("CREATE TABLE items (id INTEGER, kind TEXT)")
         db.executemany(
             "INSERT INTO items VALUES (?, ?)",
-            [(1, "sw"), (2, "rk"), (3, "sw"), (4, "srv"), (5, "rk"), (6, "srv")],
+            [(1, "sen"), (2, "ln"), (3, "sen"), (4, "mch"), (5, "ln"), (6, "mch")],
         )
     connector = TableConnector(name="items", table_name="items", schema_name="main")
     query = _query(connector, _router())
@@ -323,4 +323,4 @@ def test_a_capped_read_returns_kept_rows_only(tmp_path: pathlib.Path) -> None:
     )
     rows = [row for batch in source.iter_batches(limit=2) for row in batch]
 
-    assert rows == [{"id": 4, "kind": "srv"}, {"id": 6, "kind": "srv"}]
+    assert rows == [{"id": 4, "kind": "mch"}, {"id": 6, "kind": "mch"}]

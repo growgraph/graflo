@@ -286,7 +286,7 @@ class TestWriteResolutionLog:
         from graflo.hq.endpoint_resolve import AttachStats, WriteStats
 
         stats = WriteStats()
-        stats.add_attached("ci", AttachStats(documents=3, unmatched=2))
+        stats.add_attached("pump", AttachStats(documents=3, unmatched=2))
 
         async def _write(batch, resource_name=None, conn_conf=None, batch_seq=None):
             del batch, resource_name, conn_conf, batch_seq
@@ -316,7 +316,7 @@ class TestWriteResolutionLog:
             self._ingest(_caster())
 
         (message,) = self._logged(caplog)
-        assert "attached ci" in message and "unmatched=2" in message
+        assert "attached pump" in message and "unmatched=2" in message
 
     def test_the_counts_are_logged_when_a_write_fails(self, caplog) -> None:
         with (
@@ -326,7 +326,7 @@ class TestWriteResolutionLog:
             self._ingest(_caster(), fail=True)
 
         (message,) = self._logged(caplog)
-        assert "attached ci" in message and "unmatched=2" in message
+        assert "attached pump" in message and "unmatched=2" in message
 
 
 class TestWriterLifetime:

@@ -741,15 +741,15 @@ class TestSelectColumnSet:
     _JOINS = [
         {
             "table": "all_classes",
-            "alias": "ci_types",
-            "on_self": "cmdb_ci",
-            "on_other": "sys_id",
+            "alias": "machine_types",
+            "on_self": "machine_id",
+            "on_other": "entity_id",
         },
         {
             "table": "all_classes",
-            "alias": "ba_types",
-            "on_self": "business_service",
-            "on_other": "sys_id",
+            "alias": "line_types",
+            "on_self": "line_id",
+            "on_other": "entity_id",
         },
     ]
 
@@ -759,17 +759,17 @@ class TestSelectColumnSet:
                 "joins": self._JOINS,
                 "select": [
                     ALL_BASE_COLUMNS,
-                    {"base": "cmdb_ci"},
-                    {"base": "business_service"},
+                    {"base": "machine_id"},
+                    {"base": "line_id"},
                     {
-                        "from_join": "ci_types",
-                        "column": "sys_class_name",
-                        "as": "ci_type",
+                        "from_join": "machine_types",
+                        "column": "type_name",
+                        "as": "machine_type",
                     },
                     {
-                        "from_join": "ba_types",
-                        "column": "sys_class_name",
-                        "as": "business_service_type",
+                        "from_join": "line_types",
+                        "column": "type_name",
+                        "as": "line_type",
                     },
                 ],
             }
@@ -778,18 +778,18 @@ class TestSelectColumnSet:
         sql = spec.build_sql("public", "assets")
 
         assert sql.startswith(
-            'SELECT base.*, ci_types."sys_class_name" AS ci_type, '
-            'ba_types."sys_class_name" AS business_service_type FROM'
+            'SELECT base.*, machine_types."type_name" AS machine_type, '
+            'line_types."type_name" AS line_type FROM'
         )
 
     def test_a_base_column_under_a_new_name_stays(self):
         spec = SelectSpec(
             joins=self._JOINS[:1],
-            select=[ALL_BASE_COLUMNS, {"base": "cmdb_ci", "as": "ci"}],
+            select=[ALL_BASE_COLUMNS, {"base": "machine_id", "as": "machine"}],
         )
 
         assert spec.build_sql("public", "assets").startswith(
-            'SELECT base.*, base."cmdb_ci" AS ci FROM'
+            'SELECT base.*, base."machine_id" AS machine FROM'
         )
 
     def test_a_repeated_item_is_one_column(self):
@@ -804,8 +804,8 @@ class TestSelectColumnSet:
             SelectSpec(
                 joins=self._JOINS,
                 select=[
-                    {"from_join": "ci_types", "column": "sys_class_name", "as": "kind"},
-                    {"from_join": "ba_types", "column": "sys_class_name", "as": "kind"},
+                    {"from_join": "machine_types", "column": "type_name", "as": "kind"},
+                    {"from_join": "line_types", "column": "type_name", "as": "kind"},
                 ],
             )
 

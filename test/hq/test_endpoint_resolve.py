@@ -213,13 +213,19 @@ class TestSelectMatches:
 class TestWriteStats:
     def test_attach_counts_accumulate_per_class(self) -> None:
         stats = WriteStats()
-        stats.add_attached("ci", AttachStats(documents=2, attached=1, unmatched=1))
-        stats.add_attached("ci", AttachStats(documents=1, ambiguous=1, written=2))
-        ci = stats.attached["ci"]
-        counts = (ci.documents, ci.attached, ci.unmatched, ci.ambiguous, ci.written)
+        stats.add_attached("pump", AttachStats(documents=2, attached=1, unmatched=1))
+        stats.add_attached("pump", AttachStats(documents=1, ambiguous=1, written=2))
+        pump = stats.attached["pump"]
+        counts = (
+            pump.documents,
+            pump.attached,
+            pump.unmatched,
+            pump.ambiguous,
+            pump.written,
+        )
         assert counts == (3, 1, 1, 1, 2)
-        assert ci.has_findings()
-        assert "ci" in stats.summary() and "unmatched=1" in stats.summary()
+        assert pump.has_findings()
+        assert "pump" in stats.summary() and "unmatched=1" in stats.summary()
 
     def test_endpoint_stats_accumulate_per_edge(self) -> None:
         stats = WriteStats()

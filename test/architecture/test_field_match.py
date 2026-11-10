@@ -337,7 +337,7 @@ def test_match_and_derived_round_trip_through_rdf():
                         "vertices": [
                             _unit().model_dump(),
                             {
-                                "name": "Host",
+                                "name": "Website",
                                 "identity": ["name"],
                                 "properties": [
                                     {

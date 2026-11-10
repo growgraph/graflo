@@ -1080,8 +1080,8 @@ class TestDynamicRouterFusion:
 
 
 def _inventory_manifest() -> GraphManifest:
-    """Left: one router for hosts and devices, each keyed by its own id."""
-    member = {"properties": ["aid", "host", "group"], "identity": ["aid"]}
+    """Left: one router for machines and devices, each keyed by its own id."""
+    member = {"properties": ["aid", "machine", "group"], "identity": ["aid"]}
     return GraphManifest.from_config(
         {
             "schema": {
@@ -1089,7 +1089,7 @@ def _inventory_manifest() -> GraphManifest:
                 "graph": {
                     "vertex_config": {
                         "vertices": [
-                            {"name": "HostA", **member},
+                            {"name": "MachineA", **member},
                             {"name": "DevA", **member},
                         ]
                     },
@@ -1104,7 +1104,7 @@ def _inventory_manifest() -> GraphManifest:
                             {
                                 "vertex_router": {
                                     "type_field": "cls",
-                                    "type_map": {"h": "HostA", "d": "DevA"},
+                                    "type_map": {"h": "MachineA", "d": "DevA"},
                                 }
                             }
                         ],
@@ -1118,12 +1118,12 @@ def _inventory_manifest() -> GraphManifest:
 def _api_manifest(*, extra_vertices: list[dict] | None = None) -> GraphManifest:
     """Right: one open router reads every class from ``_class``."""
     member = {
-        "properties": ["key", "hostname", "group_id", "name"],
+        "properties": ["key", "machine_name", "group_id", "name"],
         "identity": ["key"],
     }
     vertices = [
-        {"name": "Server", **member},
-        {"name": "Switch", **member},
+        {"name": "Press", **member},
+        {"name": "Gauge", **member},
         {"name": "Other", "properties": ["key", "name"], "identity": ["key"]},
         *(extra_vertices or []),
     ]
@@ -1158,9 +1158,9 @@ def _api_manifest(*, extra_vertices: list[dict] | None = None) -> GraphManifest:
 
 
 def _physical_equivalence(left: str, right: str, into: str, marker: str):
-    """*left* and *right* are one *into*, matched on host and group together.
+    """*left* and *right* are one *into*, matched on machine and group together.
 
-    The inventory marks the hosts that take part with *marker* on the host
+    The inventory marks the machines that take part with *marker* on the machine
     value; the API reports plain values.
     """
     return VertexEquivalence(
@@ -1168,13 +1168,15 @@ def _physical_equivalence(left: str, right: str, into: str, marker: str):
         right=right,
         into=into,
         derive={
-            "host_key": {
+            "machine_key": {
                 "all_classes": {
                     left: DerivationSpec(
-                        foo="affix_gated_key", input=["host"], params={"prefix": marker}
+                        foo="affix_gated_key",
+                        input=["machine"],
+                        params={"prefix": marker},
                     )
                 },
-                "api_vertex": DerivationSpec(input=["hostname"]),
+                "api_vertex": DerivationSpec(input=["machine_name"]),
             },
             "group_key": {
                 "all_classes": {left: DerivationSpec(input=["group"])},
@@ -1182,7 +1184,7 @@ def _physical_equivalence(left: str, right: str, into: str, marker: str):
             },
         },
         identity=[
-            ["host_key", "group_key"],
+            ["machine_key", "group_key"],
             LocalKeyBranch(
                 local_key={
                     "all_classes": {left: LocalKeySource(field="aid", tag="inventory")},
@@ -1196,8 +1198,8 @@ def _physical_equivalence(left: str, right: str, into: str, marker: str):
 def _physical_union(right: GraphManifest | None = None) -> GraphManifest:
     op = MergeManifestsOp(
         vertex_equivalences=[
-            _physical_equivalence("HostA", "Server", "Host", "h_"),
-            _physical_equivalence("DevA", "Switch", "Dev", "d_"),
+            _physical_equivalence("MachineA", "Press", "Machine", "h_"),
+            _physical_equivalence("DevA", "Gauge", "Dev", "d_"),
         ]
     )
     return merge_manifests(
@@ -1234,15 +1236,20 @@ def _derivations(steps: list[ActorConfig]) -> list[tuple[str, dict | None]]:
 
 
 _INVENTORY_ROWS = [
-    {"cls": "h", "aid": "a1", "host": "h_Web-01", "group": "AG-7"},
-    {"cls": "h", "aid": "a2", "host": "x_web-01", "group": "AG-7"},
-    {"cls": "d", "aid": "a3", "host": "d_SW-01", "group": "AG-7"},
+    {"cls": "h", "aid": "a1", "machine": "h_Press-01", "group": "AG-7"},
+    {"cls": "h", "aid": "a2", "machine": "x_press-01", "group": "AG-7"},
+    {"cls": "d", "aid": "a3", "machine": "d_GA-01", "group": "AG-7"},
 ]
 
 _API_ROWS = [
-    {"_class": "Server", "vertex_id": "v1", "hostname": "web-01", "group_id": "ag-7"},
-    {"_class": "Server", "vertex_id": "v2", "hostname": "db-02"},
-    {"_class": "Switch", "vertex_id": "v3", "hostname": "sw-01", "group_id": "ag-7"},
+    {
+        "_class": "Press",
+        "vertex_id": "v1",
+        "machine_name": "press-01",
+        "group_id": "ag-7",
+    },
+    {"_class": "Press", "vertex_id": "v2", "machine_name": "lathe-02"},
+    {"_class": "Gauge", "vertex_id": "v3", "machine_name": "ga-01", "group_id": "ag-7"},
     {"_class": "Other", "vertex_id": "v4", "name": "other"},
 ]
 
@@ -1254,36 +1261,36 @@ class TestCompositeDerivedKey:
         union = _physical_union()
         vc = union.require_schema().core_schema.vertex_config
 
-        for name in ("Host", "Dev"):
+        for name in ("Machine", "Dev"):
             funnel = vc[name].identity_funnel
             assert funnel is not None
             assert [(b.id, b.fields) for b in funnel.branches] == [
-                ("host_key_group_key", ["host_key", "group_key"]),
+                ("machine_key_group_key", ["machine_key", "group_key"]),
                 ("local_key", ["local_key"]),
             ]
 
     def test_each_part_is_derived_behind_its_member_and_class_guard(self) -> None:
         union = _physical_union()
 
-        host = {"field": "cls", "in": ["HostA", "h"]}
+        machine = {"field": "cls", "in": ["MachineA", "h"]}
         dev = {"field": "cls", "in": ["DevA", "d"]}
         assert _derivations(_pipeline(union, "all_classes")) == [
-            ("host_key", host),
-            ("group_key", host),
-            ("local_key", host),
-            ("host_key", dev),
+            ("machine_key", machine),
+            ("group_key", machine),
+            ("local_key", machine),
+            ("machine_key", dev),
             ("group_key", dev),
             ("local_key", dev),
         ]
-        server = {"field": "_class", "in": ["Host", "Server"]}
-        switch = {"field": "_class", "in": ["Dev", "Switch"]}
+        press = {"field": "_class", "in": ["Machine", "Press"]}
+        gauge = {"field": "_class", "in": ["Dev", "Gauge"]}
         assert _derivations(_pipeline(union, "api_vertex")) == [
-            ("host_key", server),
-            ("group_key", server),
-            ("local_key", server),
-            ("host_key", switch),
-            ("group_key", switch),
-            ("local_key", switch),
+            ("machine_key", press),
+            ("group_key", press),
+            ("local_key", press),
+            ("machine_key", gauge),
+            ("group_key", gauge),
+            ("local_key", gauge),
         ]
 
     def test_records_fuse_when_every_part_matches(self) -> None:
@@ -1292,11 +1299,11 @@ class TestCompositeDerivedKey:
         inventory = _cast_all(union, "all_classes", _INVENTORY_ROWS)
         api = _cast_all(union, "api_vertex", _API_ROWS)
 
-        hosts = {doc["inventory__aid"]: doc for doc in inventory["Host"]}
-        servers = {doc["api__key"]: doc for doc in api["Host"]}
-        assert hosts["a1"]["id"] == servers["v1"]["id"]
+        machines = {doc["inventory__aid"]: doc for doc in inventory["Machine"]}
+        presses = {doc["api__key"]: doc for doc in api["Machine"]}
+        assert machines["a1"]["id"] == presses["v1"]["id"]
         assert inventory["Dev"][0]["id"] == api["Dev"][0]["id"]
-        assert servers["v1"]["id"] != api["Dev"][0]["id"]
+        assert presses["v1"]["id"] != api["Dev"][0]["id"]
 
     def test_a_record_failing_a_part_falls_back_to_its_local_key(self) -> None:
         union = _physical_union()
@@ -1305,14 +1312,14 @@ class TestCompositeDerivedKey:
         api = _cast_all(union, "api_vertex", _API_ROWS)
 
         unmarked = next(
-            doc for doc in inventory["Host"] if doc["inventory__aid"] == "a2"
+            doc for doc in inventory["Machine"] if doc["inventory__aid"] == "a2"
         )
-        assert unmarked.get("host_key") is None
+        assert unmarked.get("machine_key") is None
         assert unmarked["local_key"] == "inventory:a2"
-        partial = next(doc for doc in api["Host"] if doc["api__key"] == "v2")
+        partial = next(doc for doc in api["Machine"] if doc["api__key"] == "v2")
         assert partial.get("group_key") is None
         assert partial["local_key"] == "api:v2"
-        ids = [doc["id"] for doc in [*inventory["Host"], *api["Host"]]]
+        ids = [doc["id"] for doc in [*inventory["Machine"], *api["Machine"]]]
         assert len(set(ids)) == 3
 
     def test_a_class_in_no_equivalence_keeps_its_own_key(self) -> None:
@@ -1323,12 +1330,14 @@ class TestCompositeDerivedKey:
         assert others == [{"key": "v4", "name": "other"}]
 
     def test_a_derived_branch_is_one_attribute_and_a_name_branch(self) -> None:
-        spec = DerivationSpec(input=["hostname"])
-        sources = {"all_classes": {"HostA": DerivationSpec(input=["host"])}}
+        spec = DerivationSpec(input=["machine_name"])
+        sources = {"all_classes": {"MachineA": DerivationSpec(input=["machine"])}}
         sources["api_vertex"] = spec  # type: ignore[assignment]
         local = LocalKeyBranch(
             local_key={
-                "all_classes": {"HostA": LocalKeySource(field="aid", tag="inventory")},
+                "all_classes": {
+                    "MachineA": LocalKeySource(field="aid", tag="inventory")
+                },
                 "api_vertex": LocalKeySource(field="vertex_id", tag="api"),
             }
         )
@@ -1339,19 +1348,19 @@ class TestCompositeDerivedKey:
 
         as_branch = union(
             VertexEquivalence(
-                left="HostA",
-                right="Server",
-                into="Host",
-                identity=[DerivedBranch(name="host_key", sources=sources), local],
+                left="MachineA",
+                right="Press",
+                into="Machine",
+                identity=[DerivedBranch(name="machine_key", sources=sources), local],
             )
         )
         as_derive = union(
             VertexEquivalence(
-                left="HostA",
-                right="Server",
-                into="Host",
-                derive={"host_key": sources},
-                identity=["host_key", local],
+                left="MachineA",
+                right="Press",
+                into="Machine",
+                derive={"machine_key": sources},
+                identity=["machine_key", local],
             )
         )
         assert as_branch == as_derive
@@ -1359,14 +1368,14 @@ class TestCompositeDerivedKey:
     def test_a_routed_class_without_the_shared_from_target_still_loads(
         self,
     ) -> None:
-        rack = {
-            "name": "Rack",
-            "properties": ["rack_no", "name"],
-            "identity": ["rack_no"],
+        line = {
+            "name": "Line",
+            "properties": ["line_no", "name"],
+            "identity": ["line_no"],
         }
-        _api_manifest(extra_vertices=[rack]).finish_init(strict_references=True)
+        _api_manifest(extra_vertices=[line]).finish_init(strict_references=True)
 
-        union = _physical_union(_api_manifest(extra_vertices=[rack]))
+        union = _physical_union(_api_manifest(extra_vertices=[line]))
         union.finish_init(strict_references=True)
 
         router = _pipeline(union, "api_vertex")[0]
@@ -1374,42 +1383,44 @@ class TestCompositeDerivedKey:
         # The demoted keys of the merged classes read the router's `from`
         # target under their origin-prefixed names.
         assert router.vertex_from_map == {
-            "Host": {"api__key": "vertex_id"},
+            "Machine": {"api__key": "vertex_id"},
             "Dev": {"api__key": "vertex_id"},
-            "Rack": {},
+            "Line": {},
         }
-        racks = _cast_all(
+        lines = _cast_all(
             union,
             "api_vertex",
-            [{"_class": "Rack", "vertex_id": "v9", "rack_no": "r1", "name": "rack"}],
-        )["Rack"]
-        assert racks == [{"rack_no": "r1", "name": "rack"}]
+            [{"_class": "Line", "vertex_id": "v9", "line_no": "r1", "name": "line"}],
+        )["Line"]
+        assert lines == [{"line_no": "r1", "name": "line"}]
 
     def test_a_renamed_routed_class_without_the_target_still_loads(self) -> None:
-        rack = {
-            "name": "Rack",
-            "properties": ["rack_no", "name"],
-            "identity": ["rack_no"],
+        line = {
+            "name": "Line",
+            "properties": ["line_no", "name"],
+            "identity": ["line_no"],
         }
         op = MergeManifestsOp.model_validate(
             {
                 "vertex_equivalences": [
-                    _physical_equivalence("HostA", "Server", "Host", "h_").to_dict()
+                    _physical_equivalence(
+                        "MachineA", "Press", "Machine", "h_"
+                    ).to_dict()
                 ],
-                "renames": {"right": {"vertices": {"Rack": "Shelf"}}},
+                "renames": {"right": {"vertices": {"Line": "Cell"}}},
             }
         )
 
         union = merge_manifests(
-            _inventory_manifest(), _api_manifest(extra_vertices=[rack]), op
+            _inventory_manifest(), _api_manifest(extra_vertices=[line]), op
         )
         union.finish_init(strict_references=True)
 
         router = _pipeline(union, "api_vertex")[0]
         assert isinstance(router, VertexRouterActorConfig)
         assert router.type_map is not None
-        assert router.type_map["Rack"] == "Shelf"
+        assert router.type_map["Line"] == "Cell"
         assert router.vertex_from_map == {
-            "Host": {"api__key": "vertex_id"},
-            "Shelf": {},
+            "Machine": {"api__key": "vertex_id"},
+            "Cell": {},
         }

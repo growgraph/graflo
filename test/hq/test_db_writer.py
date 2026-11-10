@@ -589,15 +589,15 @@ def test_an_edge_the_schema_does_not_declare_is_reported_once(caplog):
 # -- attach: records written onto the vertices their secondary identity finds ----
 
 
-def _cmdb_schema(flavor: str = "neo4j") -> Schema:
+def _pump_schema(flavor: str = "neo4j") -> Schema:
     return Schema.model_validate(
         {
-            "metadata": {"name": "cmdb"},
+            "metadata": {"name": "plant"},
             "core_schema": {
                 "vertex_config": {
                     "vertices": [
                         {
-                            "name": "ci",
+                            "name": "pump",
                             "properties": ["id", "serial", "site", "tag", "owner"],
                             "identity": ["id"],
                             "secondary_identities": [
@@ -622,19 +622,19 @@ def _cmdb_schema(flavor: str = "neo4j") -> Schema:
     )
 
 
-def _cmdb_model(schema: Schema, policy: str = "all") -> IngestionModel:
+def _pump_model(schema: Schema, policy: str = "all") -> IngestionModel:
     model = IngestionModel.model_validate(
         {
             "resources": [
                 {
                     "name": "owners",
-                    "pipeline": [{"vertex": "ci", "from": {"id": "id"}}],
+                    "pipeline": [{"vertex": "pump", "from": {"id": "id"}}],
                 },
                 {
                     "name": "attach",
                     "pipeline": [
                         {
-                            "vertex": "ci",
+                            "vertex": "pump",
                             "find": "by_serial",
                             "from": {"serial": "serial", "owner": "owner"},
                         }
@@ -709,9 +709,9 @@ def _attach_write(
     conn_conf=None,
     resource_name: str | None = "attach",
 ) -> DBWriter:
-    schema = schema or _cmdb_schema()
+    schema = schema or _pump_schema()
     writer = DBWriter(
-        schema=schema, ingestion_model=_cmdb_model(schema, policy), dry=dry
+        schema=schema, ingestion_model=_pump_model(schema, policy), dry=dry
     )
 
     monkeypatch.setattr("graflo.hq.db_writer.ConnectionManager", _manager_for(db))
@@ -723,7 +723,7 @@ def _attach_write(
 
 
 def _attached(
-    docs: list[dict], selector: str = "by_serial", vertex: str = "ci"
+    docs: list[dict], selector: str = "by_serial", vertex: str = "pump"
 ) -> GraphContainer:
     return GraphContainer(
         vertices={}, edges={}, attached={vertex: docs}, attached_by={vertex: selector}
@@ -735,7 +735,7 @@ class TestAttachVertices:
         self, monkeypatch
     ):
         gc = _attached([{"serial": "S1", "owner": "ann"}])
-        gc.vertices["ci"] = [{"id": "c1"}]
+        gc.vertices["pump"] = [{"id": "c1"}]
         db = _AttachDB(stored=[{"id": "c0", "serial": "S1"}])
 
         writer = _attach_write(monkeypatch, gc, db)
@@ -743,10 +743,10 @@ class TestAttachVertices:
         owners, attached = db.upserts
         assert owners["docs"] == [{"id": "c1"}]
         assert attached["docs"] == [{"serial": "S1", "owner": "ann", "id": "c0"}]
-        assert attached["class_name"] == "ci" and attached["match_keys"] == ["id"]
+        assert attached["class_name"] == "pump" and attached["match_keys"] == ["id"]
         assert attached["update_keys"] == "doc" and attached["filter_uniques"]
-        assert db.resolves == [("ci", ("serial",), ("id",))]
-        stats = writer.stats.attached["ci"]
+        assert db.resolves == [("pump", ("serial",), ("id",))]
+        stats = writer.stats.attached["pump"]
         assert (stats.documents, stats.attached, stats.written) == (1, 1, 1)
 
     def test_an_unmatched_record_is_counted_and_never_written(self, monkeypatch):
@@ -759,7 +759,7 @@ class TestAttachVertices:
 
         (attached,) = db.upserts
         assert attached["docs"] == [{"serial": "S1", "owner": "ann", "id": "c0"}]
-        stats = writer.stats.attached["ci"]
+        stats = writer.stats.attached["pump"]
         assert (stats.documents, stats.attached, stats.unmatched) == (2, 1, 1)
 
     def test_attaching_never_creates_a_vertex(self, monkeypatch):
@@ -770,7 +770,7 @@ class TestAttachVertices:
         )
 
         assert db.upserts == []
-        assert writer.stats.attached["ci"].unmatched == 1
+        assert writer.stats.attached["pump"].unmatched == 1
 
     @pytest.mark.parametrize(
         ("policy", "ids"),
@@ -791,7 +791,7 @@ class TestAttachVertices:
         written = [doc for call in db.upserts for doc in call["docs"]]
         assert [doc["id"] for doc in written] == ids
         assert all(doc["owner"] == "ann" for doc in written)
-        stats = writer.stats.attached["ci"]
+        stats = writer.stats.attached["pump"]
         assert stats.ambiguous == 1 and stats.written == len(ids)
 
     def test_an_ambiguous_record_raises_under_error(self, monkeypatch):
@@ -808,7 +808,7 @@ class TestAttachVertices:
         assert db.upserts == []
 
     def test_an_ambiguous_record_under_error_cancels_every_class(self, monkeypatch):
-        schema = _cmdb_schema()
+        schema = _pump_schema()
         (identity,) = schema.core_schema.vertex_config.identity_fields("probe")
         db = _AttachDB(
             stored=[
@@ -820,9 +820,9 @@ class TestAttachVertices:
         gc = GraphContainer(
             attached={
                 "probe": [{"serial": "P1", "owner": "bob"}],
-                "ci": [{"serial": "S1", "owner": "ann"}],
+                "pump": [{"serial": "S1", "owner": "ann"}],
             },
-            attached_by={"probe": "by_serial", "ci": "by_serial"},
+            attached_by={"probe": "by_serial", "pump": "by_serial"},
         )
 
         with pytest.raises(AmbiguousEndpointError, match="S1"):
@@ -847,7 +847,7 @@ class TestAttachVertices:
         )
 
         assert db.upserts == []
-        stats = writer.stats.attached["ci"]
+        stats = writer.stats.attached["pump"]
         assert (stats.documents, stats.unresolvable, stats.written) == (1, 1, 0)
 
     def test_a_dry_run_resolves_and_writes_nothing(self, monkeypatch):
@@ -862,10 +862,10 @@ class TestAttachVertices:
         )
 
         assert db.upserts == []
-        assert writer.stats.attached["ci"].documents == 1
+        assert writer.stats.attached["pump"].documents == 1
 
     def test_a_hash_keyed_vertex_mirrors_the_arango_key(self, monkeypatch):
-        schema = _cmdb_schema("arango")
+        schema = _pump_schema("arango")
         (identity,) = schema.core_schema.vertex_config.identity_fields("probe")
         db = _AttachDB(stored=[{identity: "h1", "serial": "S1"}])
 
@@ -891,10 +891,10 @@ class TestAttachVertices:
             writer = _attach_write(monkeypatch, gc, db)
 
         summary = writer.stats.summary()
-        assert "ci" in summary and "unmatched=1" in summary
+        assert "pump" in summary and "unmatched=1" in summary
         assert not writer.stats.is_empty()
         (warning,) = [r.getMessage() for r in caplog.records]
-        assert "ci" in warning and "by_serial" in warning and "unmatched=1" in warning
+        assert "pump" in warning and "by_serial" in warning and "unmatched=1" in warning
 
     def test_records_landing_on_one_vertex_become_one_row(self, monkeypatch):
         db = _AttachDB(stored=[{"id": "c0", "serial": "S1"}])
@@ -911,7 +911,7 @@ class TestAttachVertices:
         assert call["docs"] == [
             {"serial": "S1", "owner": "bob", "site": "x", "tag": "t", "id": "c0"}
         ]
-        stats = writer.stats.attached["ci"]
+        stats = writer.stats.attached["pump"]
         assert (stats.attached, stats.written) == (2, 1)
 
     def test_a_match_without_a_primary_identity_is_unmatched(self, monkeypatch):
@@ -922,14 +922,14 @@ class TestAttachVertices:
         )
 
         assert db.upserts == []
-        stats = writer.stats.attached["ci"]
+        stats = writer.stats.attached["pump"]
         assert (stats.unmatched, stats.attached, stats.written) == (1, 0, 0)
 
     def test_an_attached_class_without_a_selector_is_refused(self, monkeypatch):
-        gc = GraphContainer(attached={"ci": [{"serial": "S1"}]})
+        gc = GraphContainer(attached={"pump": [{"serial": "S1"}]})
         db = _AttachDB(stored=[{"id": "c0", "serial": "S1"}])
 
-        with pytest.raises(ValueError, match="'ci'.*no secondary identity"):
+        with pytest.raises(ValueError, match="'pump'.*no secondary identity"):
             _attach_write(monkeypatch, gc, db)
         assert db.resolves == [] and db.upserts == []
 
@@ -940,12 +940,12 @@ class TestAttachVertices:
 def _located_schema() -> Schema:
     return Schema.model_validate(
         {
-            "metadata": {"name": "cmdb"},
+            "metadata": {"name": "plant"},
             "core_schema": {
                 "vertex_config": {
                     "vertices": [
                         {
-                            "name": "ci",
+                            "name": "pump",
                             "properties": ["id", "serial"],
                             "identity": ["id"],
                             "secondary_identities": [
@@ -957,8 +957,8 @@ def _located_schema() -> Schema:
                 },
                 "edge_config": {
                     "edges": [
-                        {"source": "ci", "target": "site", "relation": "at"},
-                        {"source": "ci", "target": "site", "relation": "near"},
+                        {"source": "pump", "target": "site", "relation": "at"},
+                        {"source": "pump", "target": "site", "relation": "near"},
                     ]
                 },
             },
@@ -988,7 +988,7 @@ def _push_located_edges(monkeypatch, edges: dict, db: _EdgeResolveDB) -> None:
     model.finish_init(schema.core_schema)
     writer = DBWriter(schema=schema, ingestion_model=model)
     registry = EdgeDerivationRegistry()
-    registry.attach("ci", "by_serial")
+    registry.attach("pump", "by_serial")
     resource = SimpleNamespace(edge_derivation=registry)
 
     monkeypatch.setattr("graflo.hq.db_writer.ConnectionManager", _manager_for(db))
@@ -1006,8 +1006,8 @@ class TestEdgeEndpointResolution:
             ]
         )
         edges = {
-            ("ci", "site", "near"): [({"serial": "S2"}, {"id": "x"}, {})],
-            ("ci", "site", "at"): [({"serial": "S1"}, {"id": "x"}, {})],
+            ("pump", "site", "near"): [({"serial": "S2"}, {"id": "x"}, {})],
+            ("pump", "site", "at"): [({"serial": "S1"}, {"id": "x"}, {})],
         }
 
         with pytest.raises(AmbiguousEndpointError, match="S1"):
@@ -1019,8 +1019,8 @@ class TestEdgeEndpointResolution:
             stored=[{"id": "c1", "serial": "S1"}, {"id": "c3", "serial": "S2"}]
         )
         edges = {
-            ("ci", "site", "near"): [({"serial": "S2"}, {"id": "x"}, {})],
-            ("ci", "site", "at"): [({"serial": "S1"}, {"id": "x"}, {})],
+            ("pump", "site", "near"): [({"serial": "S2"}, {"id": "x"}, {})],
+            ("pump", "site", "at"): [({"serial": "S1"}, {"id": "x"}, {})],
         }
 
         _push_located_edges(monkeypatch, edges, db)
@@ -1530,11 +1530,11 @@ def _located_writer() -> DBWriter:
                 {
                     "name": "located",
                     "pipeline": [
-                        {"vertex": "ci"},
+                        {"vertex": "pump"},
                         {"vertex": "site"},
                         {
                             "edge": {
-                                "from": "ci",
+                                "from": "pump",
                                 "to": "site",
                                 "relation": "at",
                                 "source_match": "by_serial",
@@ -1550,16 +1550,16 @@ def _located_writer() -> DBWriter:
 
 
 class TestWriteGuard:
-    STORED_CI = [
+    STORED_PUMPS = [
         {"id": "c1", "serial": "S1", "access_zones": [1]},
         {"id": "c2", "serial": "S2", "access_zones": [2]},
     ]
 
     def test_an_edge_endpoint_hidden_by_the_guard_is_not_resolved(self, monkeypatch):
-        db = _GuardedDB({"ci": self.STORED_CI})
+        db = _GuardedDB({"pump": self.STORED_PUMPS})
         gc = GraphContainer(
             edges={
-                ("ci", "site", "at"): [
+                ("pump", "site", "at"): [
                     ({"serial": "S1"}, {"id": "x"}, {}),
                     ({"serial": "S2"}, {"id": "x"}, {}),
                 ]
@@ -1575,9 +1575,9 @@ class TestWriteGuard:
         assert db.guards == [_zone_guard(1)]
 
     def test_an_attached_record_never_lands_on_a_hidden_vertex(self, monkeypatch):
-        schema = _cmdb_schema()
-        writer = DBWriter(schema=schema, ingestion_model=_cmdb_model(schema))
-        db = _GuardedDB({"ci": self.STORED_CI})
+        schema = _pump_schema()
+        writer = DBWriter(schema=schema, ingestion_model=_pump_model(schema))
+        db = _GuardedDB({"pump": self.STORED_PUMPS})
         gc = _attached(
             [{"serial": "S1", "owner": "ann"}, {"serial": "S2", "owner": "bob"}]
         )
@@ -1585,9 +1585,9 @@ class TestWriteGuard:
         _guarded_write(monkeypatch, writer, gc, db, "attach", guard=_zone_guard(1))
 
         ((class_name, docs),) = db.upserts
-        assert class_name == "ci"
+        assert class_name == "pump"
         assert docs == [{"serial": "S1", "owner": "ann", "id": "c1"}]
-        assert writer.stats.attached["ci"].unmatched == 1
+        assert writer.stats.attached["pump"].unmatched == 1
 
     def test_an_extra_weight_is_never_copied_from_a_hidden_vertex(self, monkeypatch):
         schema = _employment_schema()
@@ -1624,9 +1624,9 @@ class TestWriteGuard:
         assert grades == {"p1": None, "p4": "A"}
 
     def test_without_a_guard_every_lookup_runs_unguarded(self, monkeypatch):
-        db = _GuardedDB({"ci": self.STORED_CI})
+        db = _GuardedDB({"pump": self.STORED_PUMPS})
         gc = GraphContainer(
-            edges={("ci", "site", "at"): [({"serial": "S2"}, {"id": "x"}, {})]}
+            edges={("pump", "site", "at"): [({"serial": "S2"}, {"id": "x"}, {})]}
         )
 
         _guarded_write(monkeypatch, _located_writer(), gc, db, "located")
@@ -1638,10 +1638,10 @@ class TestWriteGuard:
     def test_a_guard_on_a_backend_without_read_guards_is_refused_up_front(
         self, monkeypatch
     ):
-        db = _GuardedDB({"ci": self.STORED_CI})
+        db = _GuardedDB({"pump": self.STORED_PUMPS})
         gc = GraphContainer(
             vertices={"site": [{"id": "x"}]},
-            edges={("ci", "site", "at"): [({"serial": "S1"}, {"id": "x"}, {})]},
+            edges={("pump", "site", "at"): [({"serial": "S1"}, {"id": "x"}, {})]},
         )
 
         with pytest.raises(NotImplementedError, match="read guard"):

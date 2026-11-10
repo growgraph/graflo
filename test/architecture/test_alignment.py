@@ -237,9 +237,9 @@ class TestModel:
 def _parts() -> dict:
     """``derive`` for a key over two parts, each source with its own columns."""
     return {
-        "host_key": {
-            "r_a": {"input": ["host"]},
-            "r_b": {"input": ["hostname"]},
+        "machine_key": {
+            "r_a": {"input": ["machine"]},
+            "r_b": {"input": ["machine_name"]},
         },
         "group_key": {
             "r_a": {"input": ["group"]},
@@ -252,17 +252,17 @@ class TestDeriveModel:
     """``derive``: attributes each source computes, keyed on by name or composite."""
 
     def test_a_composite_over_derived_attributes_is_a_funnel(self) -> None:
-        equivalence = _equivalence([["host_key", "group_key"]], derive=_parts())
+        equivalence = _equivalence([["machine_key", "group_key"]], derive=_parts())
 
         assert equivalence.has_derivation
         assert not equivalence.is_natural_key
         assert [d.name for d in equivalence.derivations()] == [
-            "host_key",
+            "machine_key",
             "group_key",
         ]
 
     def test_derive_round_trips_and_an_op_without_it_does_not_emit_it(self) -> None:
-        equivalence = _equivalence([["host_key", "group_key"]], derive=_parts())
+        equivalence = _equivalence([["machine_key", "group_key"]], derive=_parts())
         assert VertexEquivalence.model_validate(equivalence.to_dict()) == equivalence
 
         plain = _equivalence([_match_key(), _local_key()])
@@ -280,7 +280,7 @@ class TestDeriveModel:
 
     def test_an_attribute_no_branch_keys_on_is_refused(self) -> None:
         with pytest.raises(ValueError, match=r"no identity branch keys on them"):
-            _equivalence(["host_key"], derive=_parts())
+            _equivalence(["machine_key"], derive=_parts())
 
     def test_a_composite_mixing_derived_and_property_fields_is_refused(
         self,
@@ -288,24 +288,24 @@ class TestDeriveModel:
         parts = _parts()
         del parts["group_key"]
         with pytest.raises(ValueError, match=r"mixes derived attributes"):
-            _equivalence([["host_key", "group_id"]], derive=parts)
+            _equivalence([["machine_key", "group_id"]], derive=parts)
 
     def test_an_attribute_named_like_a_derived_branch_is_refused(self) -> None:
-        parts = {**_parts(), "match_key": _parts()["host_key"]}
+        parts = {**_parts(), "match_key": _parts()["machine_key"]}
         with pytest.raises(ValueError, match="both name"):
-            _equivalence([["host_key", "group_key"], _match_key()], derive=parts)
+            _equivalence([["machine_key", "group_key"], _match_key()], derive=parts)
 
     def test_a_guard_on_a_member_keyed_attribute_is_refused(self) -> None:
         parts = _parts()
-        parts["host_key"]["r_b"] = {
-            "Org": {"input": ["hostname"], "when": {"field": "kind", "in": ["x"]}}
+        parts["machine_key"]["r_b"] = {
+            "Org": {"input": ["machine_name"], "when": {"field": "kind", "in": ["x"]}}
         }
         with pytest.raises(ValueError, match="when"):
-            _equivalence([["host_key", "group_key"]], derive=parts)
+            _equivalence([["machine_key", "group_key"]], derive=parts)
 
     def test_the_plan_lowers_each_part_and_one_composite_branch(self) -> None:
         equivalence = _equivalence(
-            [["host_key", "group_key"], _local_key()], derive=_parts()
+            [["machine_key", "group_key"], _local_key()], derive=_parts()
         )
         assert equivalence.identity is not None
         plan = IdentityPlan(
@@ -318,11 +318,11 @@ class TestDeriveModel:
 
         props = ops[0]
         assert isinstance(props, AddVertexPropertiesOp)
-        assert props.additions == {"Company": ["host_key", "group_key", "local_key"]}
+        assert props.additions == {"Company": ["machine_key", "group_key", "local_key"]}
         steps = ops[1]
         assert isinstance(steps, AddResourceTransformsOp)
         assert [(c.output, c.input) for c in _calls_of(steps.additions["r_b"])] == [
-            (["host_key"], ["hostname"]),
+            (["machine_key"], ["machine_name"]),
             (["group_key"], ["group_id"]),
             (["local_key"], ["org_id"]),
         ]
@@ -331,7 +331,7 @@ class TestDeriveModel:
         target = identity.replacements["Company"].to
         assert isinstance(target, FunnelIdentityTarget)
         assert [(b.id, b.fields) for b in target.funnel.branches] == [
-            ("host_key_group_key", ["host_key", "group_key"]),
+            ("machine_key_group_key", ["machine_key", "group_key"]),
             ("local_key", ["local_key"]),
         ]
         assert plan.raw == []

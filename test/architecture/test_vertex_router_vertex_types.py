@@ -576,9 +576,9 @@ _SHARED_FROM = {
 }
 
 _DECLARED = {
-    "Server": ["key", "label"],
-    "Rack": ["rack_no", "label"],
-    "Cable": ["cable_no"],
+    "Press": ["key", "label"],
+    "Conveyor": ["conveyor_no", "label"],
+    "Hose": ["cable_no"],
 }
 
 
@@ -606,33 +606,33 @@ class TestClosingKeepsPassThroughProjections:
 
         assert closed.type_map_only is True
         assert closed.vertex_from_map == {
-            "Rack": {"label": "name"},
-            "Cable": {},
+            "Conveyor": {"label": "name"},
+            "Hose": {},
         }
 
     def test_a_class_the_table_already_names_is_left_alone(self) -> None:
-        router = {**_SHARED_FROM, "type_map": {"rack": "Rack"}}
+        router = {**_SHARED_FROM, "type_map": {"conveyor": "Conveyor"}}
 
         closed = _closed_router(
             [router], sorted(_DECLARED), declared_properties=_DECLARED
         )
 
-        assert closed.vertex_from_map == {"Cable": {}}
+        assert closed.vertex_from_map == {"Hose": {}}
 
     def test_an_authored_entry_is_kept(self) -> None:
-        router = {**_SHARED_FROM, "vertex_from_map": {"Cable": {"cable_no": "id"}}}
+        router = {**_SHARED_FROM, "vertex_from_map": {"Hose": {"cable_no": "id"}}}
 
         closed = _closed_router(
             [router], sorted(_DECLARED), declared_properties=_DECLARED
         )
 
         assert closed.vertex_from_map == {
-            "Cable": {"cable_no": "id"},
-            "Rack": {"label": "name"},
+            "Hose": {"cable_no": "id"},
+            "Conveyor": {"label": "name"},
         }
 
     def test_a_bounded_router_already_checked_its_classes(self) -> None:
-        router = {**_SHARED_FROM, "vertex_types": ["Server", "Rack"]}
+        router = {**_SHARED_FROM, "vertex_types": ["Press", "Conveyor"]}
 
         closed = _closed_router(
             [router], sorted(_DECLARED), declared_properties=_DECLARED
@@ -643,14 +643,12 @@ class TestClosingKeepsPassThroughProjections:
     def test_a_router_under_descend_is_closed_the_same_way(self) -> None:
         pipeline = [{"descend": {"key": "items", "apply": [dict(_SHARED_FROM)]}}]
 
-        closed = _close_one(
-            pipeline, ["Server", "Cable"], declared_properties=_DECLARED
-        )
+        closed = _close_one(pipeline, ["Press", "Hose"], declared_properties=_DECLARED)
 
         assert isinstance(closed, DescendActorConfig)
         (router,) = closed.pipeline
         assert isinstance(router, VertexRouterActorConfig)
-        assert router.vertex_from_map == {"Cable": {}}
+        assert router.vertex_from_map == {"Hose": {}}
 
     def test_without_declared_properties_only_the_table_is_closed(self) -> None:
         closed = _closed_router([_SHARED_FROM], sorted(_DECLARED))
@@ -661,24 +659,24 @@ class TestClosingKeepsPassThroughProjections:
     def test_values_the_side_passed_through_are_followed_through_a_rename(
         self,
     ) -> None:
-        router = {**_SHARED_FROM, "type_map": {"Rack": "Shelf"}}
-        declared = {**_DECLARED, "Shelf": ["rack_no"]}
+        router = {**_SHARED_FROM, "type_map": {"Conveyor": "Belt"}}
+        declared = {**_DECLARED, "Belt": ["conveyor_no"]}
 
         closed = _closed_router(
             [router],
-            ["Server", "Rack"],
+            ["Press", "Conveyor"],
             declared_properties=declared,
-            pass_through={"Server", "Rack"},
+            pass_through={"Press", "Conveyor"},
         )
 
-        assert closed.vertex_from_map == {"Shelf": {}}
+        assert closed.vertex_from_map == {"Belt": {}}
 
     def test_the_side_pass_through_classes_exclude_named_ones(self) -> None:
-        bounded = {**_SHARED_FROM, "vertex_types": ["Server"], "role": "b"}
-        named = {**_SHARED_FROM, "type_map": {"rack": "Rack"}, "role": "a"}
+        bounded = {**_SHARED_FROM, "vertex_types": ["Press"], "role": "b"}
+        named = {**_SHARED_FROM, "type_map": {"conveyor": "Conveyor"}, "role": "a"}
 
         assert pass_through_classes(_steps([named]), sorted(_DECLARED)) == {
-            "Server",
-            "Cable",
+            "Press",
+            "Hose",
         }
         assert pass_through_classes(_steps([bounded]), sorted(_DECLARED)) == set()

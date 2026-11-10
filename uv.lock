@@ -590,7 +590,7 @@ wheels = [
 
 [[package]]
 name = "graflo"
-version = "1.26.0"
+version = "1.27.0"
 source = { editable = "." }
 dependencies = [
     { name = "boto3" },
