@@ -27,11 +27,16 @@ import logging
 from collections.abc import Sequence
 from typing import Any, LiteralString, cast
 
-from neo4j import GraphDatabase, NotificationDisabledCategory, Result
-from neo4j.exceptions import ClientError
+from neo4j import GraphDatabase, NotificationDisabledCategory, Query, Result
+from neo4j.exceptions import ClientError, Neo4jError
 from neo4j.time import Date, DateTime, Time
 
 from graflo.architecture.graph_types import EdgeDirection, GraphContainer, Index
+from graflo.architecture.query.timeout import (
+    Deadline,
+    QueryTimeoutError,
+    check_timeout,
+)
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import VertexConfig
@@ -124,6 +129,32 @@ def _rows(result: Result) -> list[dict[str, Any]]:
     return [_native(row) for row in result.data()]
 
 
+def _timed_out(error: Neo4jError) -> bool:
+    """Whether the server stopped the transaction at its time limit."""
+    return "TransactionTimedOut" in (error.code or "")
+
+
+def _read_rows(
+    db: Any, query: str, params: dict[str, Any], timeout_s: float | None
+) -> list[dict[str, Any]]:
+    """Run a read and return its records; see :func:`_rows`.
+
+    With *timeout_s* the query runs as a transaction the server terminates at
+    that limit, reported as :class:`QueryTimeoutError`; without it, as before.
+    """
+    limit = check_timeout(timeout_s)
+    if limit is None:
+        return _rows(db.execute(query, **params))
+    try:
+        return _rows(
+            db.conn.run(Query(cast(LiteralString, query), timeout=limit), params)
+        )
+    except Neo4jError as error:
+        if _timed_out(error):
+            raise QueryTimeoutError(limit) from error
+        raise
+
+
 def _create_schema_rule(db: Any, query: str) -> None:
     """Run an index or constraint DDL statement; an existing rule is not an error."""
     try:
@@ -164,6 +195,8 @@ class Neo4jConnection(Connection):
     # Creating a relationship locks both endpoint nodes.
     bulk_partition_edges = True
     supports_sync = True
+    # A read runs as a transaction with a timeout, which the server terminates.
+    supports_query_timeout = True
 
     def __init__(self, config: Neo4jConfig):
         """Initialize Neo4j connection.
@@ -915,6 +948,8 @@ class Neo4jConnection(Connection):
         limit: int | None = None,
         return_keys: list | None = None,
         unset_keys: list | None = None,
+        *,
+        timeout_s: float | None = None,
         **kwargs,
     ):
         """Fetch nodes from a label.
@@ -925,6 +960,7 @@ class Neo4jConnection(Connection):
             limit: Maximum number of nodes to return
             return_keys: Keys to return
             unset_keys: Unused in Neo4j
+            timeout_s: Transaction timeout the server enforces; ``None`` for none.
 
         Returns:
             list: Fetched nodes
@@ -953,9 +989,8 @@ class Neo4jConnection(Connection):
             f"  RETURN n {keep_clause}"
             f"  {limit_clause}"
         )
-        cursor = self.execute(q, **params.values)
-        r = [item["n"] for item in _rows(cursor)]
-        return r
+        rows = _read_rows(self, q, params.values, timeout_s)
+        return [item["n"] for item in rows]
 
     # TODO test
     def fetch_edges(
@@ -970,6 +1005,8 @@ class Neo4jConnection(Connection):
         return_keys: list | None = None,
         unset_keys: list | None = None,
         direction: EdgeDirection = EdgeDirection.OUT,
+        *,
+        timeout_s: float | None = None,
         **kwargs,
     ):
         """Fetch edges from Neo4j using Cypher.
@@ -988,6 +1025,7 @@ class Neo4jConnection(Connection):
             return_keys: Keys to return (projection)
             unset_keys: Keys to exclude (projection) - not supported in Neo4j
             direction: Orientations to follow from the anchor
+            timeout_s: Transaction timeout the server enforces; ``None`` for none.
             **kwargs: Additional parameters
 
         Returns:
@@ -1041,8 +1079,7 @@ class Neo4jConnection(Connection):
             {limit_clause}
         """
 
-        cursor = self.execute(query, **params)
-        result = [item["r"] for item in _rows(cursor)]
+        result = [item["r"] for item in _read_rows(self, query, params, timeout_s)]
 
         # Note: unset_keys is not supported in Neo4j as we can't modify the result structure
         # after the query
@@ -1146,6 +1183,8 @@ class Neo4jConnection(Connection):
         discriminant: str | None = None,
         aggregated_field: str | None = None,
         filters: FilterExpression | list | dict | None = None,
+        *,
+        timeout_s: float | None = None,
     ):
         """Aggregate over nodes of a label.
 
@@ -1156,6 +1195,7 @@ class Neo4jConnection(Connection):
             aggregated_field: Field to aggregate. Required for everything but
                 an ungrouped COUNT.
             filters: Applied before aggregating.
+            timeout_s: Transaction timeout the server enforces; ``None`` for none.
 
         Returns:
             An ungrouped COUNT returns an int; a grouped COUNT returns
@@ -1181,7 +1221,7 @@ class Neo4jConnection(Connection):
             if discriminant:
                 field = cypher_name(discriminant, quoted=True)
                 query += f" RETURN n.{field} AS key, count(*) AS value"
-                rows = _rows(self.execute(query, **params.values))
+                rows = _read_rows(self, query, params.values, timeout_s)
                 return {row["key"]: row["value"] for row in rows}
             query += " RETURN count(n) AS value"
         else:
@@ -1203,7 +1243,7 @@ class Neo4jConnection(Connection):
                     f"Unsupported aggregation type: {aggregation_function}"
                 )
 
-        rows = _rows(self.execute(query, **params.values))
+        rows = _read_rows(self, query, params.values, timeout_s)
         if aggregation_function == AggregationType.SORTED_UNIQUE:
             return [row["value"] for row in rows]
         return rows[0]["value"] if rows else None
@@ -1254,14 +1294,17 @@ class Neo4jConnection(Connection):
         limit: int | None = None,
         schema: Schema | None = None,
         guard: FilterExpression | None = None,
+        timeout_s: float | None = None,
     ) -> GraphContainer:
         """Bounded neighbourhood via a single variable-length Cypher pattern.
 
         Native rather than composed from :meth:`fetch_edges`, and not only for
         speed: ``fetch_edges`` here returns ``RETURN r``, and the driver renders
         a bare relationship without its endpoints, so a breadth-first walk over
-        it has nothing to step to.
+        it has nothing to step to. Every query of the walk spends one
+        *timeout_s*.
         """
+        deadline = Deadline(timeout_s)
         return cypher_graph_neighbors(
             self,
             vertex_type=vertex_type,
@@ -1271,7 +1314,9 @@ class Neo4jConnection(Connection):
             edge_types=edge_types,
             limit=limit,
             schema=schema,
-            run=lambda query, params: _rows(self.execute(query, **params)),
+            run=lambda query, params: _read_rows(
+                self, query, params, deadline.remaining()
+            ),
             filters=filters,
             guard=guard,
         )
@@ -1281,8 +1326,9 @@ class Neo4jConnection(Connection):
         class_name: str,
         *,
         limit: int | None = None,
+        timeout_s: float | None = None,
     ) -> list[dict[str, Any]]:
-        """Fetch all nodes for a label."""
+        """Fetch all nodes for a label, within *timeout_s* if set."""
         escaped = cypher_name(class_name, quoted=True)
         limit_clause = f"LIMIT {limit}" if limit is not None else ""
         query = f"""
@@ -1290,7 +1336,7 @@ class Neo4jConnection(Connection):
             RETURN properties(n) AS props
             {limit_clause}
         """
-        rows = _rows(self.execute(query))
+        rows = _read_rows(self, query, {}, timeout_s)
         return [
             strip_internal_properties(row["props"]) for row in rows if row.get("props")
         ]

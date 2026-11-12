@@ -320,6 +320,26 @@ The spec declares that. The `state` and `access` aspects require one;
 | `access_for` | access | per vertex type, the merge mode of its zones: `{Ticket: replace, Product: union}` |
 | `access_edges` | access | per edge relation, the merge mode of its zones: `{about: union}` |
 
+## Which parts a lift added
+
+`aspect_members(schema)` reads a lifted schema back: the types each aspect
+defines, the relations it lifted, and the other types it was lifted onto.
+
+```python
+from graflo.architecture.evolution.aspects import aspect_members
+
+members = aspect_members(manifest.require_schema())
+members.types  # {"SourceRecord": "provenance", "Agent": "provenance"}
+members.lifted_onto  # {"Ticket": ["provenance"], ...}
+for edge in members.edges:
+    print(edge.source, edge.relation, edge.target, edge.aspect)
+```
+
+A relation counts only with the exact shape the aspect builds: its name, its
+two ends and its grounding IRI. A domain type or relation grounded in a PROV
+term is not an aspect's. `access` and `sync` add reserved fields, not types or
+relations, so they have no members here.
+
 ## When a lift refuses
 
 A lift never guesses. It stops with a `LiftError` that names what is missing

@@ -67,7 +67,11 @@ def _wrap_tg_exception(func):
 
 
 class TigerGraphConnection(Connection):
-    """TigerGraph database connection — facade over auth, REST, GSQL, DDL, and data ops."""
+    """TigerGraph database connection — facade over auth, REST, GSQL, DDL, and data ops.
+
+    Does not declare ``supports_query_timeout``: reads are not handed a
+    server-side time limit, so ``timeout_s`` is accepted and ignored.
+    """
 
     flavor = DBType.TIGERGRAPH
     supports_instance_delete = True
@@ -76,6 +80,9 @@ class TigerGraphConnection(Connection):
     # lower bound, so `sample_limit` has nothing to bound.
     schema_introspection_is_sampled = False
     supports_bulk_load = True
+    # Reads are not handed a server-side time limit, so ``timeout_s`` is
+    # accepted and ignored.
+    supports_query_timeout = False
 
     def __init__(self, config: TigergraphConfig):
         super().__init__()
@@ -528,10 +535,10 @@ class TigerGraphConnection(Connection):
     def insert_return_batch(self, docs, class_name):
         return self._data.insert_return_batch(docs, class_name)
 
-    def fetch_docs(self, *args, **kwargs):
+    def fetch_docs(self, *args, timeout_s: float | None = None, **kwargs):
         return self._data.fetch_docs(*args, **kwargs)
 
-    def fetch_edges(self, *args, **kwargs):
+    def fetch_edges(self, *args, timeout_s: float | None = None, **kwargs):
         return self._data.fetch_edges(*args, **kwargs)
 
     def fetch_all_docs(
@@ -539,6 +546,7 @@ class TigerGraphConnection(Connection):
         class_name: str,
         *,
         limit: int | None = None,
+        timeout_s: float | None = None,
     ) -> list[dict[str, Any]]:
         return self._data.fetch_all_docs(class_name, limit=limit)
 
@@ -593,7 +601,9 @@ class TigerGraphConnection(Connection):
     def fetch_present_documents(self, *args, **kwargs):
         return self._data.fetch_present_documents(*args, **kwargs)
 
-    def resolve_vertices(self, *args, guard=None, **kwargs):
+    def resolve_vertices(
+        self, *args, guard=None, timeout_s: float | None = None, **kwargs
+    ):
         if guard is not None:
             self.require_read_guard()
         return self._data.resolve_vertices(*args, **kwargs)
@@ -604,7 +614,7 @@ class TigerGraphConnection(Connection):
     def delete_edges(self, *args, **kwargs):
         return self._data.delete_edges(*args, **kwargs)
 
-    def aggregate(self, *args, **kwargs):
+    def aggregate(self, *args, timeout_s: float | None = None, **kwargs):
         return self._data.aggregate(*args, **kwargs)
 
     def keep_absent_documents(self, *args, **kwargs):

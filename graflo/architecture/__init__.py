@@ -75,6 +75,7 @@ _EXPORTS: dict[str, str] = {
     "NodeQuery": "graflo.architecture.query",
     "QueryCaps": "graflo.architecture.query",
     "QueryResult": "graflo.architecture.query",
+    "QueryTimeoutError": "graflo.architecture.query",
     "TraverseQuery": "graflo.architecture.query",
 }
 
@@ -113,6 +114,7 @@ __all__ = [
     "PushConnector",
     "QueryCaps",
     "QueryResult",
+    "QueryTimeoutError",
     "RankingWeights",
     "Resource",
     "ResourceConnector",

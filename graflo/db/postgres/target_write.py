@@ -13,6 +13,7 @@ from psycopg2 import sql
 from psycopg2.extras import execute_values
 
 from graflo.architecture.graph_types import EdgeDirection
+from graflo.architecture.query.timeout import timeout_kwargs
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.db_aware import (
     edge_identity_index,
@@ -770,7 +771,11 @@ class PostgresTargetWriteMixin:
     report_edge_direction_support: Any
 
     def read(
-        self, query: str, params: tuple | dict[str, Any] | None = None
+        self,
+        query: str,
+        params: tuple | dict[str, Any] | None = None,
+        *,
+        timeout_s: float | None = None,
     ) -> list[dict[str, Any]]:
         raise NotImplementedError
 
@@ -1271,8 +1276,11 @@ class PostgresTargetWriteMixin:
         limit: int | None = None,
         return_keys: list[str] | None = None,
         unset_keys: list[str] | None = None,
+        *,
+        timeout_s: float | None = None,
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
+        """Rows of a vertex table; *timeout_s* is the ``statement_timeout``."""
         pg_schema = _pg_schema_name(self.config)
         table = vertex_table_name(class_name)
 
@@ -1296,7 +1304,7 @@ class PostgresTargetWriteMixin:
             f"{_quote_ident(pg_schema)}.{_quote_ident(table)}"
             f"{where_clause}{limit_clause}"
         )
-        return self.read(q, params.values or None)
+        return self.read(q, params.values or None, **timeout_kwargs(timeout_s))
 
     def fetch_edges(
         self,
@@ -1310,6 +1318,8 @@ class PostgresTargetWriteMixin:
         return_keys: list | None = None,
         unset_keys: list | None = None,
         direction: EdgeDirection = EdgeDirection.OUT,
+        *,
+        timeout_s: float | None = None,
         **kwargs,
     ) -> list[dict[str, Any]]:
         """Edges incident to one vertex, read from the edge table.
@@ -1317,7 +1327,8 @@ class PostgresTargetWriteMixin:
         ``edge_type`` names the edge table (the storage name), matching
         ``fetch_all_edges``'s ``collection_name``. Endpoints live in
         ``source_id`` / ``target_id``; ``define_edge_indexes`` indexes the latter,
-        so the inbound branch is not a sequential scan.
+        so the inbound branch is not a sequential scan. *timeout_s* is the
+        ``statement_timeout`` of the read.
 
         Raises:
             NotImplementedError: When either endpoint has a composite identity,
@@ -1374,7 +1385,7 @@ class PostgresTargetWriteMixin:
         params: dict[str, Any] = {"from_id": from_id, **bound.values}
         if to_id is not None:
             params["to_id"] = to_id
-        rows = self.read(sql, params)
+        rows = self.read(sql, params, **timeout_kwargs(timeout_s))
 
         if return_keys or unset_keys:
             keep = set(return_keys) if return_keys else None
@@ -1409,12 +1420,14 @@ class PostgresTargetWriteMixin:
         discriminant: str | None = None,
         aggregated_field: str | None = None,
         filters: FilterExpression | list | dict | None = None,
+        *,
+        timeout_s: float | None = None,
     ) -> int | float | list[dict[str, Any]] | dict[str, int | float] | None:
         """Aggregate over a vertex table, optionally grouped by *discriminant*.
 
         Mirrors the shape the other backends return: a list of
         ``{discriminant, _value}`` rows when grouping, otherwise a single
-        ``{_value}`` row.
+        ``{_value}`` row. *timeout_s* is the ``statement_timeout`` of the read.
         """
         pg_schema = _pg_schema_name(self.config)
         table = vertex_table_name(class_name)
@@ -1456,7 +1469,7 @@ class PostgresTargetWriteMixin:
                 f"{expression} AS _value FROM {qualified}{where_clause} "
                 f"GROUP BY {column}"
             )
-        return self.read(q, params.values or None)
+        return self.read(q, params.values or None, **timeout_kwargs(timeout_s))
 
     def keep_absent_documents(
         self,
@@ -1570,8 +1583,9 @@ class PostgresTargetWriteMixin:
         class_name: str,
         *,
         limit: int | None = None,
+        timeout_s: float | None = None,
     ) -> list[dict[str, Any]]:
-        return self.fetch_docs(class_name, limit=limit)
+        return self.fetch_docs(class_name, limit=limit, **timeout_kwargs(timeout_s))
 
     def introspect_graph_schema(
         self,

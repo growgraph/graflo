@@ -137,6 +137,7 @@ def identify_many(
     *,
     db: Any | None = None,
     guard: FilterExpression | None = None,
+    timeout_s: float | None = None,
 ) -> list[Identity]:
     """:func:`identify` for each of *values*, all of type *vertex_type*.
 
@@ -149,23 +150,39 @@ def identify_many(
         values: Property values, one mapping per entity.
         db: An open connection, as for :func:`identify`.
         guard: A trusted read guard, as for :func:`identify`.
+        timeout_s: As for :func:`identify`; one limit for every read.
 
     Returns:
         One :class:`Identity` per value set, in order.
 
     Raises:
         ValueError: *vertex_type* is not in the schema.
+        QueryTimeoutError: The reads ran past *timeout_s*.
     """
+    if db is None:
+        return _identify_many(schema, vertex_type, values, None)
+    # Deferred: hq.lookup imports pandas, and an offline resolve reads no graph.
+    from graflo.hq.lookup import _Reader, read_deadline
+
+    vertex = _vertex(schema, vertex_type)
+    applied = guard if guard is not None and _covers(guard, vertex) else None
+    deadline = read_deadline(db, timeout_s)
+    with deadline.spent():
+        return _identify_many(
+            schema, vertex_type, values, _Reader(db, schema, applied, deadline)
+        )
+
+
+def _identify_many(
+    schema: Schema,
+    vertex_type: str,
+    values: Sequence[Mapping[str, Any]],
+    reader: _Reader | None,
+) -> list[Identity]:
+    """:func:`identify_many` with its reader, if any, open."""
     vertex = _vertex(schema, vertex_type)
     contract: KeyContract = key_contract(vertex)
     identity_fields = list(contract.identity_fields)
-    reader: _Reader | None = None
-    if db is not None:
-        # Deferred: hq.lookup imports pandas, and an offline resolve reads no graph.
-        from graflo.hq.lookup import _Reader
-
-        applied = guard if guard is not None and _covers(guard, vertex) else None
-        reader = _Reader(db, schema, guard=applied)
 
     out: list[Identity] = []
     keyed: list[int] = []
@@ -251,6 +268,7 @@ def identify(
     *,
     db: Any | None = None,
     guard: FilterExpression | None = None,
+    timeout_s: float | None = None,
 ) -> Identity:
     """Which entity of *vertex_type* the property *values* identify.
 
@@ -270,9 +288,14 @@ def identify(
             one the guard hides. It applies only when *vertex_type* declares
             every field it names; other types are read unguarded. Refused by a
             backend without read guards.
+        timeout_s: Seconds every read together may run; ``None`` for no limit.
+            Enforced only where the backend declares ``supports_query_timeout``.
 
     Raises:
         ValueError: *vertex_type* is not in the schema.
+        QueryTimeoutError: The reads ran past *timeout_s*.
     """
-    (identity,) = identify_many(schema, vertex_type, [values], db=db, guard=guard)
+    (identity,) = identify_many(
+        schema, vertex_type, [values], db=db, guard=guard, timeout_s=timeout_s
+    )
     return identity

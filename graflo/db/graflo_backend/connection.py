@@ -75,6 +75,9 @@ class GraFloBackendConnection(Connection):
     database, ``merge: union`` fields included. Every read therefore scans the
     whole collection it reads, whatever its ``limit``: this backend holds dumps
     and serves tests; it is not a database to serve a graph from.
+
+    Does not declare ``supports_query_timeout``: reads run in process with
+    nothing to cancel them, so ``timeout_s`` is accepted and ignored.
     """
 
     flavor = DBType.GRAFLO_BACKEND
@@ -87,6 +90,9 @@ class GraFloBackendConnection(Connection):
     supports_union_merge = True
     supports_membership_read = True
     supports_bulk_load = True
+    #: Reads run in process with nothing to cancel them, so ``timeout_s`` is
+    #: accepted and ignored.
+    supports_query_timeout = False
 
     def __init__(self, config: GraFloBackendConfig) -> None:
         super().__init__()
@@ -285,6 +291,8 @@ class GraFloBackendConnection(Connection):
         return_keys: list[str] | None = None,
         unset_keys: list[str] | None = None,
         guard: FilterExpression | None = None,
+        *,
+        timeout_s: float | None = None,
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
         """Documents of *class_name*, one per entity, that match *filters*.
@@ -322,6 +330,8 @@ class GraFloBackendConnection(Connection):
         return_keys: list[str] | None = None,
         unset_keys: list[str] | None = None,
         direction: EdgeDirection = EdgeDirection.OUT,
+        *,
+        timeout_s: float | None = None,
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
         """Edges incident to one vertex, served from a lazily built index.
@@ -472,6 +482,8 @@ class GraFloBackendConnection(Connection):
         discriminant: str | None = None,
         aggregated_field: str | None = None,
         filters: FilterExpression | list[Any] | dict[str, Any] | None = None,
+        *,
+        timeout_s: float | None = None,
     ) -> int | float | list[dict[str, Any]] | dict[str, int | float] | None:
         """Aggregate over the documents of a vertex type, read in full.
 
@@ -553,6 +565,7 @@ class GraFloBackendConnection(Connection):
         class_name: str,
         *,
         limit: int | None = None,
+        timeout_s: float | None = None,
     ) -> list[dict[str, Any]]:
         return self.fetch_docs(class_name, limit=limit)
 
@@ -583,6 +596,7 @@ class GraFloBackendConnection(Connection):
         limit: int | None = None,
         schema: Schema | None = None,
         guard: FilterExpression | None = None,
+        timeout_s: float | None = None,
     ) -> GraphContainer:
         """The default breadth-first walk, with *guard* applied to every element."""
         return bfs_neighbors(

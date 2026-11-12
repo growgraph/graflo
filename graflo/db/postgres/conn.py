@@ -20,11 +20,13 @@ Example:
 """
 
 import logging
+import math
 from collections.abc import Collection
 from typing import Any
 
 import psycopg2
 from psycopg2 import sql
+from psycopg2.extensions import QueryCanceledError
 from psycopg2.extras import RealDictCursor
 
 from graflo.architecture.onto_sql import (
@@ -33,6 +35,7 @@ from graflo.architecture.onto_sql import (
     SchemaIntrospectionResult,
     VertexTableInfo,
 )
+from graflo.architecture.query.timeout import QueryTimeoutError, check_timeout
 from graflo.connections.onto import PostgresConfig
 from graflo.db import sql as sql_introspect
 from graflo.db.conn import Connection
@@ -52,6 +55,10 @@ class PostgresConnection(PostgresBulkMixin, Connection):
         config: PostgreSQL connection configuration
         conn: psycopg2 connection instance
     """
+
+    # A read runs under ``SET LOCAL statement_timeout``, which the server
+    # enforces by cancelling the statement.
+    supports_query_timeout = True
 
     def __init__(self, config: PostgresConfig):
         """Initialize PostgreSQL connection.
@@ -96,7 +103,11 @@ class PostgresConnection(PostgresBulkMixin, Connection):
             raise
 
     def read(
-        self, query: str, params: tuple | dict[str, Any] | None = None
+        self,
+        query: str,
+        params: tuple | dict[str, Any] | None = None,
+        *,
+        timeout_s: float | None = None,
     ) -> list[dict[str, Any]]:
         """Execute a SELECT query and return results as a list of dictionaries.
 
@@ -104,22 +115,51 @@ class PostgresConnection(PostgresBulkMixin, Connection):
             query: SQL SELECT query to execute
             params: Optional parameters — a tuple for ``%s`` placeholders, or a
                 mapping for named ``%(name)s`` ones.
+            timeout_s: The statement's ``statement_timeout``, set with ``SET
+                LOCAL`` in the read's transaction and restored after it;
+                ``None`` leaves the setting alone.
 
         Returns:
             List of dictionaries, where each dictionary represents a row with column names as keys.
             Decimal values are converted to float for compatibility with graph databases.
+
+        Raises:
+            QueryTimeoutError: The server cancelled the statement at
+                *timeout_s*; the transaction is rolled back.
         """
         from decimal import Decimal
 
+        limit = check_timeout(timeout_s)
         with self.conn.cursor(cursor_factory=RealDictCursor) as cursor:
-            if params:
-                cursor.execute(query, params)
-            else:
-                cursor.execute(query)
+            previous: str | None = None
+            if limit is not None:
+                cursor.execute("SHOW statement_timeout")
+                shown = cursor.fetchone()
+                previous = None if shown is None else str(shown["statement_timeout"])
+                # Whole milliseconds, at least one: zero would mean no limit.
+                timeout_ms = max(1, math.ceil(limit * 1000))
+                cursor.execute(f"SET LOCAL statement_timeout = {timeout_ms}")
+            try:
+                if params:
+                    cursor.execute(query, params)
+                else:
+                    cursor.execute(query)
+                fetched = cursor.fetchall()
+            except QueryCanceledError as error:
+                if limit is None:
+                    raise
+                # The statement aborted the transaction; nothing else is usable
+                # until it ends, and ending it also drops the SET LOCAL.
+                self.conn.rollback()
+                raise QueryTimeoutError(limit) from error
+            if previous is not None:
+                cursor.execute(
+                    "SELECT set_config('statement_timeout', %s, true)", (previous,)
+                )
 
             # Convert rows to dictionaries and convert Decimal to float
             results = []
-            for row in cursor.fetchall():
+            for row in fetched:
                 row_dict = dict(row)
                 # Convert Decimal to float for JSON/graph database compatibility
                 for key, value in row_dict.items():

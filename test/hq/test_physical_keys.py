@@ -220,7 +220,9 @@ class _RecordingReader:
     _guard_kwargs = Connection._guard_kwargs
     _anchor_identity = Connection._anchor_identity
     require_read_guard = Connection.require_read_guard
+    query_deadline = Connection.query_deadline
     supports_read_guard = False
+    supports_query_timeout = False
 
     def __init__(self, flavor: DBType, reached: GraphContainer):
         self.flavor = flavor

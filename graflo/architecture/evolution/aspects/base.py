@@ -6,6 +6,12 @@ from pydantic import Field as PydanticField
 
 from graflo.architecture.base import ConfigBaseModel
 
+#: The aspects' names, as a caller addresses them (``--aspect NAME``).
+PROVENANCE = "provenance"
+STATE = "state"
+ACCESS = "access"
+SYNC = "sync"
+
 
 class LiftError(ValueError):
     """The lift cannot be planned, and the message says which declaration is missing.

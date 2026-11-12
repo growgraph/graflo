@@ -247,6 +247,10 @@ class MemgraphConnection(Connection):
     node/relationship CRUD, batch operations, aggregations, and raw
     Cypher query execution.
 
+    Does not declare ``supports_query_timeout``: the client sends no
+    per-query time limit and the server's execution timeout is instance-wide,
+    so ``timeout_s`` on a read is accepted and ignored.
+
     Thread Safety
     -------------
     This class is NOT thread-safe. Each thread should use its own
@@ -286,6 +290,10 @@ class MemgraphConnection(Connection):
     supports_bulk_load = True
     # Two transactions adding edges to one node conflict, and one aborts.
     bulk_partition_edges = True
+    # No query timeout: the client sends no per-query limit and the server's
+    # execution timeout is instance-wide, so ``timeout_s`` is accepted and
+    # ignored.
+    supports_query_timeout = False
 
     #: Attempts at a bulk write that a transaction conflict aborted.
     BULK_ATTEMPTS: ClassVar[int] = 8
@@ -1166,6 +1174,8 @@ class MemgraphConnection(Connection):
         limit: int | None = None,
         return_keys: list[str] | None = None,
         unset_keys: list[str] | None = None,
+        *,
+        timeout_s: float | None = None,
         **kwargs,
     ) -> list[dict]:
         """Fetch nodes from the database with optional filtering and projection.
@@ -1267,6 +1277,7 @@ class MemgraphConnection(Connection):
         class_name: str,
         *,
         limit: int | None = None,
+        timeout_s: float | None = None,
     ) -> list[dict[str, Any]]:
         """Every node of a label, as its properties."""
         return [
@@ -1308,6 +1319,8 @@ class MemgraphConnection(Connection):
         return_keys: list[str] | None = None,
         unset_keys: list[str] | None = None,
         direction: EdgeDirection = EdgeDirection.OUT,
+        *,
+        timeout_s: float | None = None,
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
         """Fetch edges from Memgraph using Cypher.
@@ -1420,6 +1433,7 @@ class MemgraphConnection(Connection):
         filters: Any | None = None,
         limit: int | None = None,
         schema: Schema | None = None,
+        timeout_s: float | None = None,
     ) -> GraphContainer:
         """Bounded neighbourhood via a variable-length OpenCypher pattern.
 
@@ -1483,6 +1497,8 @@ class MemgraphConnection(Connection):
         discriminant: str | None = None,
         aggregated_field: str | None = None,
         filters: FilterExpression | list[Any] | dict[str, Any] | None = None,
+        *,
+        timeout_s: float | None = None,
     ) -> int | float | list[dict[str, Any]] | dict[str, int | float] | None:
         """Perform aggregation operations on nodes.
 
