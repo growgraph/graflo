@@ -70,6 +70,7 @@ def test_the_source_record_carries_an_address_and_a_hash_never_content() -> None
         "source_uri",
         "media_type",
         "content_hash",
+        "written_at",
         "retrieved_at",
     }
     assert record.identity == ["source_record_id"]

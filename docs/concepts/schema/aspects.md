@@ -125,7 +125,7 @@ Two types and two edges:
 
 | Type | Key | Properties | Grounded as |
 |---|---|---|---|
-| `SourceRecord` | `source_record_id` | `source_uri`, `media_type`, `content_hash`, `retrieved_at` | `prov:Entity` |
+| `SourceRecord` | `source_record_id` | `source_uri`, `media_type`, `content_hash`, `written_at`, `retrieved_at` | `prov:Entity` |
 | `Agent` | `agent_id` | `label`, `agent_kind` | `prov:Agent`, `sosa:Sensor` |
 
 | Edge | Properties | Grounded as |
@@ -133,6 +133,9 @@ Two types and two edges:
 | `<Type> -wasDerivedFrom-> SourceRecord` | — | `prov:wasDerivedFrom` |
 | `SourceRecord -wasAttributedTo-> Agent` | `role` | `prov:wasAttributedTo` |
 | `SourceRecord -mentions-> <Type>` | — | `schema:mentions` |
+
+`written_at` is when the record itself was written, grounded as `prov:generatedAtTime`: a
+relative time in its text ("this morning") is read against it. `retrieved_at` is when it was read.
 
 A `SourceRecord` is the record a fact was read from: a document, a message, an
 API response, a table row. It holds the record's **address and content hash,
@@ -181,7 +184,8 @@ Each row carries the ticket, its record's address and the reporter:
 ```json
 {"ticket_id": "SUP-42", "title": "Pump P-200 loses pressure",
  "source_record_id": "tracker:SUP-42@3", "source_uri": "https://tracker.example/SUP-42",
- "content_hash": "sha256:9f2c", "retrieved_at": "2026-10-18T09:00:00Z",
+ "content_hash": "sha256:9f2c", "written_at": "2026-10-17T16:42:00Z",
+ "retrieved_at": "2026-10-18T09:00:00Z",
  "reporter_email": "ann@example.com", "reporter_name": "Ann Lee", "role": "reporter"}
 ```
 

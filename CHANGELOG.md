@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The provenance aspect's `SourceRecord` gains `written_at` (`DATETIME`), when the record was
+  written, grounded as `prov:generatedAtTime`. `retrieved_at` no longer carries that grounding.
 - On those backends `traverse` now stops at its query's `timeout_s` (10 s unless set), and a
   walk that times out raises `QueryTimeoutError` instead of returning an empty hop.
 
