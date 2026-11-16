@@ -125,7 +125,7 @@ Two types and two edges:
 
 | Type | Key | Properties | Grounded as |
 |---|---|---|---|
-| `SourceRecord` | `source_record_id` | `source_uri`, `media_type`, `content_hash`, `retrieved_at` | `prov:Entity` |
+| `SourceRecord` | `source_record_id` | `source_uri`, `media_type`, `content_hash`, `written_at`, `retrieved_at` | `prov:Entity` |
 | `Agent` | `agent_id` | `label`, `agent_kind` | `prov:Agent`, `sosa:Sensor` |
 
 | Edge | Properties | Grounded as |
@@ -133,6 +133,9 @@ Two types and two edges:
 | `<Type> -wasDerivedFrom-> SourceRecord` | — | `prov:wasDerivedFrom` |
 | `SourceRecord -wasAttributedTo-> Agent` | `role` | `prov:wasAttributedTo` |
 | `SourceRecord -mentions-> <Type>` | — | `schema:mentions` |
+
+`written_at` is when the record itself was written, grounded as `prov:generatedAtTime`: a
+relative time in its text ("this morning") is read against it. `retrieved_at` is when it was read.
 
 A `SourceRecord` is the record a fact was read from: a document, a message, an
 API response, a table row. It holds the record's **address and content hash,
@@ -181,7 +184,8 @@ Each row carries the ticket, its record's address and the reporter:
 ```json
 {"ticket_id": "SUP-42", "title": "Pump P-200 loses pressure",
  "source_record_id": "tracker:SUP-42@3", "source_uri": "https://tracker.example/SUP-42",
- "content_hash": "sha256:9f2c", "retrieved_at": "2026-10-18T09:00:00Z",
+ "content_hash": "sha256:9f2c", "written_at": "2026-10-17T16:42:00Z",
+ "retrieved_at": "2026-10-18T09:00:00Z",
  "reporter_email": "ann@example.com", "reporter_name": "Ann Lee", "role": "reporter"}
 ```
 
@@ -319,6 +323,26 @@ The spec declares that. The `state` and `access` aspects require one;
 | `provenance` | provenance | `false` leaves the aspect out, like not naming it |
 | `access_for` | access | per vertex type, the merge mode of its zones: `{Ticket: replace, Product: union}` |
 | `access_edges` | access | per edge relation, the merge mode of its zones: `{about: union}` |
+
+## Which parts a lift added
+
+`aspect_members(schema)` reads a lifted schema back: the types each aspect
+defines, the relations it lifted, and the other types it was lifted onto.
+
+```python
+from graflo.architecture.evolution.aspects import aspect_members
+
+members = aspect_members(manifest.require_schema())
+members.types  # {"SourceRecord": "provenance", "Agent": "provenance"}
+members.lifted_onto  # {"Ticket": ["provenance"], ...}
+for edge in members.edges:
+    print(edge.source, edge.relation, edge.target, edge.aspect)
+```
+
+A relation counts only with the exact shape the aspect builds: its name, its
+two ends and its grounding IRI. A domain type or relation grounded in a PROV
+term is not an aspect's. `access` and `sync` add reserved fields, not types or
+relations, so they have no members here.
 
 ## When a lift refuses
 

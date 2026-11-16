@@ -27,6 +27,7 @@ from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
 from graflo.architecture.graph_types import EdgeDirection, EdgeId, GraphContainer
+from graflo.architecture.query.timeout import QueryTimeoutError
 from graflo.db.cypher.direction import cypher_rel_pattern
 from graflo.db.cypher.escape import cypher_name
 from graflo.filter.onto import BoundParams, FilterExpression, parse_filter_expression
@@ -329,6 +330,9 @@ def cypher_graph_neighbors(
             try:
                 bound = {anchor_param(i): value for i, (_f, value) in enumerate(at)}
                 rows = run(query, {**bound, **params.values})
+            except QueryTimeoutError:
+                # A read the database stopped is not an empty one.
+                raise
             except Exception:
                 if filters is not None or guard is not None:
                     # A constrained read that failed is not an empty answer.

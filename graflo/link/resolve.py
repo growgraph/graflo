@@ -5,9 +5,11 @@
 keyed decision is :func:`~graflo.hq.identify.identify`; this module adds the
 batch around it:
 
-1. A complete primary key identifies the record. For a connector-owned type
-   (see :func:`~graflo.architecture.contract.ownership.connector_owned_types`)
-   the entity must already be in the graph; it is never created from a record.
+1. A complete primary key identifies the record. Only a record that defines
+   its entity creates it: one that may create it, of a type no connector owns
+   (see :func:`~graflo.architecture.contract.ownership.connector_owned_types`).
+   Any other keyed record refers: it links to the entity a record of the batch
+   defines, or to one already in the graph, and otherwise stages.
 2. A complete secondary identity looks the entity up: first among the batch's
    identified records, repeated until nothing new resolves, then in the graph.
    Exactly one entity resolves the record; several stage it as ``ambiguous``.
@@ -245,14 +247,14 @@ def resolve_records(
     for key in batch.order:
         batch.contract(batch.records[key].type)  # unknown types fail first
     stated = batch.identify(batch.order)
-    owned_keyed: list[_Key] = []
+    referring: list[_Key] = []
     guarded_keyed: list[_Key] = []
     for key in batch.order:
         record = batch.records[key]
         identity = stated[key]
         if identity.outcome == "identified":
-            if record.type in owned:
-                owned_keyed.append(key)
+            if record.type in owned or not record.may_create:
+                referring.append(key)
             elif db is not None and covered(record.type):
                 guarded_keyed.append(key)
             else:
@@ -271,20 +273,6 @@ def resolve_records(
                 "partial_key" if identity.state == "partial" else "no_key",
                 0,
             )
-
-    # Connector-owned keys must already be in the graph.
-    if owned_keyed:
-        present = (
-            batch.identify(owned_keyed, db=db, guard=guard) if db is not None else {}
-        )
-        for key in owned_keyed:
-            found = present.get(key)
-            if found is not None and found.found:
-                batch.resolve(
-                    key, dict(found.identity or {}), by="key", found_in="graph"
-                )
-            else:
-                batch.staged[key] = ("owned_unmatched", 0)
 
     # Under a guard, a stated key may name an entity the guard hides: that
     # record stages rather than writing onto, or linking to, what it cannot see,
@@ -305,6 +293,52 @@ def resolve_records(
                 batch.staged[key] = ("hidden", 0)
             else:
                 batch.resolve(key, identity, by="key")
+
+    # A keyed record that only refers -- of a connector-owned type, or one that
+    # may not create its entity -- links to the entity a record of the batch
+    # defines, or to one in the graph the guard shows. It never creates one: a
+    # definition decides an entity's zone, a reference never does.
+    if referring:
+        defined = {
+            (r.type, _frozen(r.identity))
+            for k, r in batch.resolved.items()
+            if r.by == "key" and batch.records[k].may_create
+        }
+        in_graph: list[_Key] = []
+        for key in referring:
+            record = batch.records[key]
+            identity = dict(stated[key].identity or {})
+            if record.type not in owned and (record.type, _frozen(identity)) in defined:
+                batch.resolve(key, identity, by="key", found_in="batch")
+            else:
+                in_graph.append(key)
+        present = (
+            batch.identify(in_graph, db=db, guard=guard)
+            if db is not None and in_graph
+            else {}
+        )
+        unseen = [
+            k
+            for k in in_graph
+            if not (k in present and present[k].found)
+            and batch.records[k].type not in owned
+            and db is not None
+            and covered(batch.records[k].type)
+        ]
+        exists = batch.identify(unseen, db=db) if unseen else {}
+        for key in in_graph:
+            record = batch.records[key]
+            found = present.get(key)
+            if found is not None and found.found:
+                batch.resolve(
+                    key, dict(found.identity or {}), by="key", found_in="graph"
+                )
+            elif key in exists and exists[key].found:
+                batch.staged[key] = ("hidden", 0)
+            elif record.type in owned:
+                batch.staged[key] = ("owned_unmatched", 0)
+            else:
+                batch.staged[key] = ("unmatched", 0)
 
     # Secondary identities: the batch first, to a fixpoint, then the graph.
     waiting = [

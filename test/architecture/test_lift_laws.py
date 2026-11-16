@@ -35,6 +35,7 @@ RECORD_FIELDS = {
     "source_uri": "STRING",
     "media_type": "STRING",
     "content_hash": "STRING",
+    "written_at": "DATETIME",
     "retrieved_at": "DATETIME",
 }
 AGENT_FIELDS = {"label": "STRING", "agent_kind": "STRING"}
@@ -47,8 +48,8 @@ def kits(draw: Any, name: str) -> GraphManifest:
     def fields(pool: dict[str, str], own: str) -> list[dict[str, Any]]:
         chosen = draw(st.sets(st.sampled_from(sorted(pool))))
         out = [{"name": f, "type": pool[f]} for f in sorted(chosen)]
-        if "retrieved_at" in chosen and draw(st.booleans()):
-            out[sorted(chosen).index("retrieved_at")]["semantics"] = {
+        if "written_at" in chosen and draw(st.booleans()):
+            out[sorted(chosen).index("written_at")]["semantics"] = {
                 "iri": f"{PROV}generatedAtTime"
             }
         if draw(st.booleans()):

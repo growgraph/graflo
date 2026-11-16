@@ -309,6 +309,52 @@ def test_a_guard_reaches_every_read_the_lookup_makes() -> None:
     assert all(kw["guard"] is guard for kw in reader.neighbour_kwargs)
 
 
+def test_a_time_limit_reaches_every_read_the_lookup_makes(
+    conn: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A backend that declares an enforced time limit.
+    monkeypatch.setattr(GraFloBackendConnection, "supports_query_timeout", True)
+    limits: list[tuple[str, float | None]] = []
+    for method in ("resolve_vertices", "graph_neighbors"):
+        original = getattr(conn, method)
+
+        def recorded(*args: Any, _name=method, _read=original, **kwargs: Any) -> Any:
+            limits.append((_name, kwargs.get("timeout_s")))
+            return _read(*args, **kwargs)
+
+        monkeypatch.setattr(conn, method, recorded)
+
+    found = lookup_candidates(
+        conn, _schema(), "the Berlin pump and SUP-42", SPEC, timeout_s=30.0
+    )
+
+    assert ("Product", "P-200", "alias") in _found(found)
+    assert {name for name, _ in limits} == {"resolve_vertices", "graph_neighbors"}
+    # One deadline: every read is given what is left of it, never more.
+    given = [limit for _, limit in limits if limit is not None]
+    assert len(given) == len(limits)
+    assert all(0 < limit <= 30.0 for limit in given)
+    assert given == sorted(given, reverse=True)
+
+
+def test_a_lookup_without_a_limit_passes_none(
+    conn: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(GraFloBackendConnection, "supports_query_timeout", True)
+    seen: list[dict[str, Any]] = []
+    original = conn.resolve_vertices
+
+    def recorded(*args: Any, **kwargs: Any) -> Any:
+        seen.append(kwargs)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(conn, "resolve_vertices", recorded)
+    lookup_candidates(conn, _schema(), "the Berlin pump", SPEC)
+
+    assert seen
+    assert all("timeout_s" not in kwargs for kwargs in seen)
+
+
 def test_a_guard_is_refused_where_the_backend_cannot_apply_it(
     conn: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:

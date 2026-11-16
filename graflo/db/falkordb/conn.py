@@ -25,6 +25,7 @@ Example:
 """
 
 import logging
+import math
 import sys
 from collections.abc import Sequence
 from typing import Any
@@ -33,8 +34,14 @@ from urllib.parse import urlparse
 from falkordb import FalkorDB
 from falkordb.graph import Graph
 from falkordb.helpers import stringify_param_value
+from redis.exceptions import ResponseError
 
 from graflo.architecture.graph_types import EdgeDirection, GraphContainer, Index
+from graflo.architecture.query.timeout import (
+    Deadline,
+    QueryTimeoutError,
+    check_timeout,
+)
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import VertexConfig
@@ -91,6 +98,27 @@ from graflo.onto import AggregationType, DBType
 logger = logging.getLogger(__name__)
 
 
+def _read(db: Any, query: str, params: dict[str, Any], timeout_s: float | None) -> Any:
+    """Run a read query; with *timeout_s*, as ``GRAPH.QUERY ... TIMEOUT ms``.
+
+    The server aborts a query past its timeout, reported as
+    :class:`QueryTimeoutError`; without one the query runs as before.
+    """
+    limit = check_timeout(timeout_s)
+    if limit is None:
+        return db.execute(query, **params)
+    if db.graph is None:
+        raise RuntimeError("Connection is closed")
+    # Whole milliseconds, at least one: the server takes an integer.
+    timeout_ms = max(1, math.ceil(limit * 1000))
+    try:
+        return db.graph.query(query, params=params or None, timeout=timeout_ms)
+    except ResponseError as error:
+        if "timed out" in str(error).lower():
+            raise QueryTimeoutError(limit) from error
+        raise
+
+
 class FalkordbConnection(Connection):
     """FalkorDB-specific implementation of the Connection interface.
 
@@ -120,6 +148,8 @@ class FalkordbConnection(Connection):
     # GRAPH.BULK addresses nodes by insertion order, which dense ids reproduce.
     bulk_dense_ids = True
     supports_sync = True
+    # GRAPH.QUERY takes a TIMEOUT the server enforces.
+    supports_query_timeout = True
 
     # Type annotations for instance attributes
     client: FalkorDB | None
@@ -1077,6 +1107,8 @@ class FalkordbConnection(Connection):
         limit: int | None = None,
         return_keys: list | None = None,
         unset_keys: list | None = None,
+        *,
+        timeout_s: float | None = None,
         **kwargs,
     ):
         """Fetch nodes from a label.
@@ -1087,6 +1119,7 @@ class FalkordbConnection(Connection):
             limit: Maximum number of nodes to return
             return_keys: Keys to return
             unset_keys: Unused in FalkorDB
+            timeout_s: Query timeout the server enforces; ``None`` for none.
             **kwargs: Additional parameters
 
         Returns:
@@ -1124,7 +1157,7 @@ class FalkordbConnection(Connection):
             {limit_clause}
         """
 
-        result = self.execute(q, **params.values)
+        result = _read(self, q, params.values, timeout_s)
 
         # Convert FalkorDB results to list of dictionaries
         if return_keys is not None:
@@ -1163,6 +1196,8 @@ class FalkordbConnection(Connection):
         return_keys: list | None = None,
         unset_keys: list | None = None,
         direction: EdgeDirection = EdgeDirection.OUT,
+        *,
+        timeout_s: float | None = None,
         **kwargs,
     ):
         """Fetch edges from FalkorDB using Cypher.
@@ -1181,6 +1216,7 @@ class FalkordbConnection(Connection):
             return_keys: Keys to return (projection)
             unset_keys: Keys to exclude (projection) - not supported in FalkorDB
             direction: Orientations to follow from the anchor
+            timeout_s: Query timeout the server enforces; ``None`` for none.
             **kwargs: Additional parameters
 
         Returns:
@@ -1233,7 +1269,7 @@ class FalkordbConnection(Connection):
             {limit_clause}
         """
 
-        result = self.execute(query, **params)
+        result = _read(self, query, params, timeout_s)
 
         # Convert results
         if return_keys is not None:
@@ -1253,22 +1289,25 @@ class FalkordbConnection(Connection):
         limit: int | None = None,
         schema: Schema | None = None,
         guard: FilterExpression | None = None,
+        timeout_s: float | None = None,
     ) -> GraphContainer:
         """Bounded neighbourhood via a variable-length OpenCypher pattern.
 
         Same reasoning as Neo4j: ``fetch_edges`` returns ``RETURN r``, and a bare
         relationship carries no endpoints, so the generic breadth-first default
         has nothing to walk to. A *guard* holds on every node and relationship
-        of a path, as on Neo4j.
+        of a path, as on Neo4j. Every query of the walk spends one *timeout_s*.
         """
         from graflo.db.cypher.traversal import (
             NEIGHBOR_COLUMNS,
             cypher_graph_neighbors,
         )
 
+        deadline = Deadline(timeout_s)
+
         def run(query: str, params: dict[str, Any]) -> list[dict[str, Any]]:
             # FalkorDB returns rows as positional lists.
-            result = self.execute(query, **params)
+            result = _read(self, query, params, deadline.remaining())
             return [dict(zip(NEIGHBOR_COLUMNS, row)) for row in result.result_set]
 
         return cypher_graph_neighbors(
@@ -1290,11 +1329,12 @@ class FalkordbConnection(Connection):
         class_name: str,
         *,
         limit: int | None = None,
+        timeout_s: float | None = None,
     ) -> list[dict[str, Any]]:
-        """Fetch all nodes for a label."""
+        """Fetch all nodes for a label, within *timeout_s* if set."""
         limit_clause = f"LIMIT {limit}" if limit is not None else ""
         query = f"MATCH (n:{cypher_name(class_name)}) RETURN n {limit_clause}"
-        result = self.execute(query)
+        result = _read(self, query, {}, timeout_s)
         return [
             strip_internal_properties(self._node_to_dict(row[0]))
             for row in result.result_set
@@ -1466,6 +1506,8 @@ class FalkordbConnection(Connection):
         discriminant: str | None = None,
         aggregated_field: str | None = None,
         filters: FilterExpression | list | dict | None = None,
+        *,
+        timeout_s: float | None = None,
     ):
         """Perform aggregation on nodes.
 
@@ -1475,6 +1517,7 @@ class FalkordbConnection(Connection):
             discriminant: Field to group by
             aggregated_field: Field to aggregate
             filters: Query filters
+            timeout_s: Query timeout the server enforces; ``None`` for none.
 
         Returns:
             Aggregation results (dict for grouped aggregations, int/float for single value)
@@ -1496,7 +1539,7 @@ class FalkordbConnection(Connection):
                     {filter_clause}
                     RETURN n.{cypher_name(discriminant)} AS key, count(*) AS count
                 """
-                result = self.execute(q, **params.values)
+                result = _read(self, q, params.values, timeout_s)
                 return {row[0]: row[1] for row in result.result_set}
             else:
                 q = f"""
@@ -1504,7 +1547,7 @@ class FalkordbConnection(Connection):
                     {filter_clause}
                     RETURN count(*) AS count
                 """
-                result = self.execute(q, **params.values)
+                result = _read(self, q, params.values, timeout_s)
                 return result.result_set[0][0] if result.result_set else 0
 
         elif aggregation_function == AggregationType.MAX:
@@ -1515,7 +1558,7 @@ class FalkordbConnection(Connection):
                 {filter_clause}
                 RETURN max(n.{cypher_name(aggregated_field)}) AS max_value
             """
-            result = self.execute(q, **params.values)
+            result = _read(self, q, params.values, timeout_s)
             return result.result_set[0][0] if result.result_set else None
 
         elif aggregation_function == AggregationType.MIN:
@@ -1526,7 +1569,7 @@ class FalkordbConnection(Connection):
                 {filter_clause}
                 RETURN min(n.{cypher_name(aggregated_field)}) AS min_value
             """
-            result = self.execute(q, **params.values)
+            result = _read(self, q, params.values, timeout_s)
             return result.result_set[0][0] if result.result_set else None
 
         elif aggregation_function == AggregationType.AVERAGE:
@@ -1537,7 +1580,7 @@ class FalkordbConnection(Connection):
                 {filter_clause}
                 RETURN avg(n.{cypher_name(aggregated_field)}) AS avg_value
             """
-            result = self.execute(q, **params.values)
+            result = _read(self, q, params.values, timeout_s)
             return result.result_set[0][0] if result.result_set else None
 
         elif aggregation_function == AggregationType.SORTED_UNIQUE:
@@ -1551,7 +1594,7 @@ class FalkordbConnection(Connection):
                 RETURN DISTINCT n.{cypher_name(aggregated_field)} AS value
                 ORDER BY value
             """
-            result = self.execute(q, **params.values)
+            result = _read(self, q, params.values, timeout_s)
             return [row[0] for row in result.result_set]
 
         else:

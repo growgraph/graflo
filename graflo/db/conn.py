@@ -60,6 +60,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 from suthing import batched
 
 from graflo.architecture.graph_types import EdgeDirection, GraphContainer
+from graflo.architecture.query.timeout import Deadline, timeout_kwargs
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.physical_keys import PhysicalKeys
@@ -160,6 +161,7 @@ class ConnectionCapability(Enum):
     MEMBERSHIP_READ = "supports_membership_read"
     BULK_LOAD = "supports_bulk_load"
     SYNC = "supports_sync"
+    QUERY_TIMEOUT = "supports_query_timeout"
 
     @property
     def label(self) -> str:
@@ -176,6 +178,9 @@ class ConnectionCapability(Enum):
             ConnectionCapability.MEMBERSHIP_READ: "reading a list field by ANY_IN",
             ConnectionCapability.BULK_LOAD: "bulk loading an empty target",
             ConnectionCapability.SYNC: "record sync into a loaded target",
+            ConnectionCapability.QUERY_TIMEOUT: (
+                "a time limit on each read, enforced by the database"
+            ),
         }[self]
 
 
@@ -237,6 +242,20 @@ def _refuse_reserved(
         named |= parse_filter_expression(filters).fields()
     if named & reserved:
         raise ReservedFieldError()
+
+
+def _call_deadline(conn: "Connection", timeout_s: float | None) -> Deadline:
+    """:meth:`Connection.query_deadline`, read off *conn* only when there is a limit."""
+    return Deadline(None) if timeout_s is None else conn.query_deadline(timeout_s)
+
+
+def _hook_kwargs(guarded: dict[str, Any], deadline: Deadline) -> dict[str, Any]:
+    """The optional keywords of :meth:`Connection._graph_neighbors`: a guard, a limit.
+
+    Each is passed only when set, so a hook that takes neither is called as
+    before.
+    """
+    return {**guarded, **deadline.kwargs()}
 
 
 def _reserved_names(schema: Schema, stored: Schema) -> frozenset[str]:
@@ -307,9 +326,28 @@ class Connection(abc.ABC):
     bulk_partition_edges: ClassVar[bool] = False
     #: Implements :mod:`graflo.db.sync`: replacing what changed owner records wrote.
     supports_sync: ClassVar[bool] = False
+    #: The bounded reads (:meth:`fetch_docs`, :meth:`fetch_edges`,
+    #: :meth:`fetch_all_docs`, :meth:`aggregate`, :meth:`resolve_vertices`,
+    #: :meth:`graph_neighbors`, :meth:`traverse`) hand their ``timeout_s`` to the
+    #: database or driver, which cancels the work, and raise
+    #: :class:`~graflo.architecture.query.QueryTimeoutError` when it does.
+    #: Without it ``timeout_s`` is accepted and ignored: nothing is cancelled and
+    #: nothing extra is raised.
+    supports_query_timeout: ClassVar[bool] = False
 
     def __init__(self):
         """Initialize the connection."""
+
+    def query_deadline(self, timeout_s: float | None) -> Deadline:
+        """One limit for a call made of several reads.
+
+        Unbounded on a backend that does not declare ``supports_query_timeout``,
+        so such a call neither cancels nor raises, as for a single read.
+
+        Raises:
+            ValueError: *timeout_s* is not a positive number of seconds.
+        """
+        return Deadline(timeout_s if self.supports_query_timeout else None)
 
     @classmethod
     def expression_flavor(cls) -> ExpressionFlavor:
@@ -633,6 +671,8 @@ class Connection(abc.ABC):
         limit: int | None = None,
         return_keys: list[str] | None = None,
         unset_keys: list[str] | None = None,
+        *,
+        timeout_s: float | None = None,
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
         """Fetch documents from a vertex type.
@@ -643,10 +683,15 @@ class Connection(abc.ABC):
             limit: Maximum number of documents to return
             return_keys: Keys to return
             unset_keys: Keys to unset
+            timeout_s: Seconds the read may run; ``None`` for no limit. Enforced
+                only where the backend declares ``supports_query_timeout``.
             **kwargs: Additional database-specific parameters (e.g., field_types for TigerGraph)
 
         Returns:
             list: Fetched documents
+
+        Raises:
+            QueryTimeoutError: The database stopped the read at *timeout_s*.
         """
 
     @abc.abstractmethod
@@ -662,6 +707,8 @@ class Connection(abc.ABC):
         return_keys: list[str] | None = None,
         unset_keys: list[str] | None = None,
         direction: EdgeDirection = EdgeDirection.OUT,
+        *,
+        timeout_s: float | None = None,
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
         """Fetch edges incident to one vertex.
@@ -685,6 +732,7 @@ class Connection(abc.ABC):
             unset_keys: Keys to exclude (projection)
             direction: Orientations to follow from the anchor. Defaults to
                 :attr:`EdgeDirection.OUT`, the historical behaviour.
+            timeout_s: As for :meth:`fetch_docs`.
             **kwargs: Additional database-specific parameters. Two are part of
                 the contract, passed by every schema-aware caller and ignored
                 by backends that do not need them: ``native_inverse_type``
@@ -701,6 +749,7 @@ class Connection(abc.ABC):
         Raises:
             UnsupportedEdgeDirectionError: if the backend cannot follow the edge
                 in the requested direction (TigerGraph without a reverse type).
+            QueryTimeoutError: The database stopped the read at *timeout_s*.
         """
 
     @abc.abstractmethod
@@ -738,6 +787,7 @@ class Connection(abc.ABC):
         *,
         chunk_size: int = DEFAULT_RESOLVE_CHUNK_SIZE,
         guard: FilterExpression | None = None,
+        timeout_s: float | None = None,
     ) -> dict[int, list[dict[str, Any]]]:
         """Locate vertices by an arbitrary field-set, preserving multiplicity.
 
@@ -762,13 +812,20 @@ class Connection(abc.ABC):
             chunk_size: Distinct keys per lookup query
             guard: A trusted predicate every match must satisfy, ANDed with
                 the key match; a vertex it hides is never matched.
+            timeout_s: Seconds the whole lookup may run, every chunk included;
+                ``None`` for no limit. Enforced only where the backend declares
+                ``supports_query_timeout``.
 
         Returns:
             dict: Position in *key_docs* -> every vertex it matched. Positions
                 with an unresolvable (partial) key or no match are absent.
+
+        Raises:
+            QueryTimeoutError: The lookup ran past *timeout_s*.
         """
         if guard is not None:
             self.require_read_guard()
+        deadline = _call_deadline(self, timeout_s)
         if not key_docs or not match_keys:
             return {}
 
@@ -778,18 +835,21 @@ class Connection(abc.ABC):
 
         fetch_keys = list(dict.fromkeys([*match_keys, *return_keys]))
         buckets: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
-        for chunk in batched(keys, chunk_size):
-            match = build_match_filter(match_keys, chunk)
-            # Unchanged without a guard; with one, only a backend that declares
-            # guard support gets here, and its fetch_docs parses an expression.
-            filters: Any = match if guard is None else conjoin(match, guard)
-            docs = self.fetch_docs(
-                class_name,
-                filters=filters,
-                return_keys=fetch_keys,
-            )
-            for key, matched in bucket_by_key(list(docs or []), match_keys).items():
-                buckets.setdefault(key, []).extend(matched)
+        with deadline.spent():
+            for chunk in batched(keys, chunk_size):
+                match = build_match_filter(match_keys, chunk)
+                # Unchanged without a guard; with one, only a backend that
+                # declares guard support gets here, and its fetch_docs parses an
+                # expression.
+                filters: Any = match if guard is None else conjoin(match, guard)
+                docs = self.fetch_docs(
+                    class_name,
+                    filters=filters,
+                    return_keys=fetch_keys,
+                    **deadline.kwargs(),
+                )
+                for key, matched in bucket_by_key(list(docs or []), match_keys).items():
+                    buckets.setdefault(key, []).extend(matched)
 
         return index_matches_by_doc(key_docs, match_keys, buckets)
 
@@ -911,6 +971,8 @@ class Connection(abc.ABC):
         discriminant: str | None = None,
         aggregated_field: str | None = None,
         filters: "FilterExpression | list[Any] | dict[str, Any] | None" = None,
+        *,
+        timeout_s: float | None = None,
     ) -> int | float | list[dict[str, Any]] | dict[str, int | float] | None:
         """Perform aggregation on a collection.
 
@@ -923,9 +985,13 @@ class Connection(abc.ABC):
                 as the shorthand dict/list forms, matching ``fetch_edges`` —
                 callers holding a typed query model should not have to round-trip
                 it back through a dict to aggregate.
+            timeout_s: As for :meth:`fetch_docs`.
 
         Returns:
             Aggregation results (type depends on aggregation function)
+
+        Raises:
+            QueryTimeoutError: The database stopped the read at *timeout_s*.
         """
 
     @abc.abstractmethod
@@ -1021,6 +1087,7 @@ class Connection(abc.ABC):
         limit: int | None = None,
         schema: Schema | None = None,
         guard: FilterExpression | None = None,
+        timeout_s: float | None = None,
     ) -> GraphContainer:
         """Bounded neighbourhood around one anchor vertex.
 
@@ -1062,6 +1129,10 @@ class Connection(abc.ABC):
             guard: A trusted predicate, never taken from a request, that every
                 vertex and edge on a path must satisfy, the anchor included.
                 It names fields as stored, and reserved fields may appear in it.
+            timeout_s: Seconds the whole read may run, the anchor lookup and
+                every query of the walk included; ``None`` for no limit.
+                Enforced only where the backend declares
+                ``supports_query_timeout``.
 
         Returns:
             GraphContainer: vertices and edges reached, deduplicated.
@@ -1074,8 +1145,10 @@ class Connection(abc.ABC):
                 identity names several vertices or none.
             NotImplementedError: if a *guard* is given and the backend does not
                 declare ``supports_read_guard``.
+            QueryTimeoutError: The read ran past *timeout_s*.
         """
         guarded = self._guard_kwargs(guard)
+        deadline = _call_deadline(self, timeout_s)
         if schema is None:
             if isinstance(key, dict):
                 from graflo.architecture.schema.anchor import AnchorNotAKeyError
@@ -1085,31 +1158,35 @@ class Connection(abc.ABC):
                     "says which fields are keys",
                     vertex_type=vertex_type,
                 )
-            return self._graph_neighbors(
+            with deadline.spent():
+                return self._graph_neighbors(
+                    vertex_type,
+                    key,
+                    hops=hops,
+                    direction=direction,
+                    edge_types=edge_types,
+                    filters=filters,
+                    limit=limit,
+                    schema=None,
+                    **_hook_kwargs(guarded, deadline),
+                )
+        stored, keys = self._stored_view(schema)
+        _refuse_reserved(_reserved_names(schema, stored), filters=filters, key=key)
+        with deadline.spent():
+            anchor = self._anchor_identity(
+                schema, vertex_type, key, guard, **deadline.kwargs()
+            )
+            reached = self._graph_neighbors(
                 vertex_type,
-                key,
+                keys.anchor_key(vertex_type, anchor),
                 hops=hops,
                 direction=direction,
                 edge_types=edge_types,
-                filters=filters,
+                filters=keys.edge_filter(filters, _walked_edge_ids(schema, edge_types)),
                 limit=limit,
-                schema=None,
-                **guarded,
+                schema=stored,
+                **_hook_kwargs(guarded, deadline),
             )
-        stored, keys = self._stored_view(schema)
-        _refuse_reserved(_reserved_names(schema, stored), filters=filters, key=key)
-        anchor = self._anchor_identity(schema, vertex_type, key, guard)
-        reached = self._graph_neighbors(
-            vertex_type,
-            keys.anchor_key(vertex_type, anchor),
-            hops=hops,
-            direction=direction,
-            edge_types=edge_types,
-            filters=keys.edge_filter(filters, _walked_edge_ids(schema, edge_types)),
-            limit=limit,
-            schema=stored,
-            **guarded,
-        )
         return keys.logical_container(reached, schema.core_schema.edge_config)
 
     def require_read_guard(self) -> None:
@@ -1130,6 +1207,8 @@ class Connection(abc.ABC):
         vertex_type: str,
         key: str | dict[str, Any],
         guard: FilterExpression | None,
+        *,
+        timeout_s: float | None = None,
     ) -> str | dict[str, Any]:
         """The primary identity *key* names, in logical names; a bare value as-is.
 
@@ -1139,7 +1218,14 @@ class Connection(abc.ABC):
         # Deferred: hq sits above db; a secondary identity is looked up through it.
         from graflo.hq.anchor import anchor_identity
 
-        return anchor_identity(schema, vertex_type, key, db=self, guard=guard)
+        return anchor_identity(
+            schema,
+            vertex_type,
+            key,
+            db=self,
+            guard=guard,
+            **timeout_kwargs(timeout_s),
+        )
 
     def _guard_kwargs(self, guard: FilterExpression | None) -> dict[str, Any]:
         """``{"guard": guard}`` for :meth:`_graph_neighbors`, or nothing.
@@ -1163,6 +1249,7 @@ class Connection(abc.ABC):
         filters: Any | None = None,
         limit: int | None = None,
         schema: Schema | None = None,
+        timeout_s: float | None = None,
     ) -> GraphContainer:
         """Backend hook for :meth:`graph_neighbors`, in stored names.
 
@@ -1173,6 +1260,9 @@ class Connection(abc.ABC):
         that declares ``supports_read_guard`` and keeps this default overrides
         it to pass ``guard`` on to
         :func:`~graflo.db.traversal.bfs_neighbors`.
+
+        *timeout_s* is passed only when set, and only to a backend that
+        declares ``supports_query_timeout``; it bounds the whole hook.
         """
         from graflo.db.traversal import bfs_neighbors
 
@@ -1186,6 +1276,7 @@ class Connection(abc.ABC):
             filters=filters,
             limit=limit,
             schema=schema,
+            timeout_s=timeout_s,
         )
 
     def _stored_view(self, schema: Schema) -> tuple[Schema, PhysicalKeys]:
@@ -1218,6 +1309,10 @@ class Connection(abc.ABC):
         seeds appears once. Names are logical in and out, as for
         :meth:`graph_neighbors`; the stored view is resolved once for all seeds.
 
+        The query's ``timeout_s`` bounds the whole traversal, every seed's
+        anchor lookup and walk included, where the backend declares
+        ``supports_query_timeout``.
+
         The query is **not** validated here. Cap enforcement belongs to the
         surface that accepted the request, before any connection is opened —
         validating again at the driver would make the ordering ambiguous and
@@ -1239,8 +1334,10 @@ class Connection(abc.ABC):
                 several vertices or none; ``seed`` is its position.
             NotImplementedError: if a *guard* is given and the backend does not
                 declare ``supports_read_guard``.
+            QueryTimeoutError: The traversal ran past the query's ``timeout_s``.
         """
         guarded = self._guard_kwargs(guard)
+        deadline = _call_deadline(self, query.timeout_s)
         stored, keys = self._stored_view(schema)
         reserved = _reserved_names(schema, stored)
         query.refuse_reserved(reserved)
@@ -1254,32 +1351,37 @@ class Connection(abc.ABC):
         # Every seed is resolved before any is walked: one that names no vertex
         # fails the request rather than shrinking its answer.
         anchors: list[tuple[str, str | dict[str, Any]]] = []
-        for position, seed in enumerate(query.seeds):
-            try:
-                anchor = self._anchor_identity(
-                    schema, seed["vertex_type"], seed["key"], guard
-                )
-            except AnchorKeyError as error:
-                error.seed = position
-                raise
-            anchors.append((seed["vertex_type"], anchor))
         container = GraphContainer()
-        for vertex_type, anchor in anchors:
-            reached = self._graph_neighbors(
-                vertex_type,
-                keys.anchor_key(vertex_type, anchor),
-                hops=query.max_hops,
-                direction=query.edge_direction,
-                edge_types=query.edge_relations,
-                filters=filters,
-                limit=query.limit,
-                schema=stored,
-                **guarded,
-            )
-            for vertex_type, docs in reached.vertices.items():
-                container.vertices.setdefault(vertex_type, []).extend(docs)
-            for edge_id, rows in reached.edges.items():
-                container.edges.setdefault(edge_id, []).extend(rows)
+        with deadline.spent():
+            for position, seed in enumerate(query.seeds):
+                try:
+                    anchor = self._anchor_identity(
+                        schema,
+                        seed["vertex_type"],
+                        seed["key"],
+                        guard,
+                        **deadline.kwargs(),
+                    )
+                except AnchorKeyError as error:
+                    error.seed = position
+                    raise
+                anchors.append((seed["vertex_type"], anchor))
+            for vertex_type, anchor in anchors:
+                reached = self._graph_neighbors(
+                    vertex_type,
+                    keys.anchor_key(vertex_type, anchor),
+                    hops=query.max_hops,
+                    direction=query.edge_direction,
+                    edge_types=query.edge_relations,
+                    filters=filters,
+                    limit=query.limit,
+                    schema=stored,
+                    **_hook_kwargs(guarded, deadline),
+                )
+                for vertex_type, docs in reached.vertices.items():
+                    container.vertices.setdefault(vertex_type, []).extend(docs)
+                for edge_id, rows in reached.edges.items():
+                    container.edges.setdefault(edge_id, []).extend(rows)
         container.pick_unique()
         return keys.logical_container(container, schema.core_schema.edge_config)
 
@@ -1342,8 +1444,18 @@ class Connection(abc.ABC):
         class_name: str,
         *,
         limit: int | None = None,
+        timeout_s: float | None = None,
     ) -> list[dict[str, Any]]:
-        """Fetch all documents for a vertex type/collection."""
+        """Fetch all documents for a vertex type/collection.
+
+        Args:
+            class_name: Name of the vertex type.
+            limit: At most this many documents.
+            timeout_s: As for :meth:`fetch_docs`.
+
+        Raises:
+            QueryTimeoutError: The database stopped the read at *timeout_s*.
+        """
         raise NotImplementedError(
             f"fetch_all_docs is not implemented for {type(self).__name__}"
         )

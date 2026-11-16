@@ -187,6 +187,9 @@ class NebulaConnection(Connection):
 
     * **v3.x** -- ``nebula3-python``, nGQL
     * **v5.x** -- ``nebula5-python``, ISO GQL / Cypher
+
+    Does not declare ``supports_query_timeout``: no per-statement time limit
+    reaches the server, so ``timeout_s`` on a read is accepted and ignored.
     """
 
     flavor: ClassVar[DBType] = DBType.NEBULA
@@ -200,6 +203,10 @@ class NebulaConnection(Connection):
     # Edges address their endpoints by VID and lock nothing, so neither dense
     # ids nor edge rounds are needed.
     supports_bulk_load: ClassVar[bool] = True
+    # No per-statement time limit reaches the server (the client's timeout is
+    # a socket timeout, which cancels nothing), so ``timeout_s`` is accepted
+    # and ignored.
+    supports_query_timeout: ClassVar[bool] = False
 
     def __init__(self, config: NebulaConfig):
         super().__init__()
@@ -1071,6 +1078,8 @@ class NebulaConnection(Connection):
         limit: int | None = None,
         return_keys: list[str] | None = None,
         unset_keys: list[str] | None = None,
+        *,
+        timeout_s: float | None = None,
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
         if self.config.is_v3:
@@ -1106,6 +1115,7 @@ class NebulaConnection(Connection):
         class_name: str,
         *,
         limit: int | None = None,
+        timeout_s: float | None = None,
     ) -> list[dict[str, Any]]:
         """Every vertex of a tag, as its properties; needs a tag index on it."""
         lim = f" LIMIT {int(limit)}" if limit is not None else ""
@@ -1297,6 +1307,8 @@ class NebulaConnection(Connection):
         return_keys: list[str] | None = None,
         unset_keys: list[str] | None = None,
         direction: EdgeDirection = EdgeDirection.OUT,
+        *,
+        timeout_s: float | None = None,
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
         """Fetch edges incident to one vertex via ``GO``.
@@ -1418,6 +1430,8 @@ class NebulaConnection(Connection):
         discriminant: str | None = None,
         aggregated_field: str | None = None,
         filters: FilterExpression | list[Any] | dict[str, Any] | None = None,
+        *,
+        timeout_s: float | None = None,
     ) -> int | float | list[dict[str, Any]] | dict[str, int | float] | None:
         agg_name = (
             aggregation_function.value

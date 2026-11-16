@@ -33,7 +33,8 @@ from graflo.architecture.contract.manifest import GraphManifest
 
 from ..ops import ManifestOp
 from .access.plan import plan_access
-from .base import Aspect, LiftError
+from .base import ACCESS, PROVENANCE, STATE, SYNC, Aspect, LiftError
+from .members import AspectEdge, AspectMembers, aspect_members
 from .provenance.plan import plan_provenance
 from .recipe import (
     LiftRecipe,
@@ -45,11 +46,6 @@ from .recipe import (
 from .spec import EdgeGrounding, Grounding, LiftSpec
 from .state.plan import StatePlan, plan_state
 from .sync.plan import plan_sync
-
-PROVENANCE = "provenance"
-STATE = "state"
-ACCESS = "access"
-SYNC = "sync"
 
 ASPECTS: dict[str, Aspect] = {
     PROVENANCE: Aspect(
@@ -202,12 +198,15 @@ __all__ = [
     "STATE",
     "SYNC",
     "Aspect",
+    "AspectEdge",
+    "AspectMembers",
     "EdgeGrounding",
     "Grounding",
     "LiftError",
     "LiftRecipe",
     "LiftSpec",
     "StatePlan",
+    "aspect_members",
     "build_lift_recipe",
     "plan_access",
     "plan_lift",

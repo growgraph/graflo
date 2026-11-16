@@ -106,7 +106,15 @@ class MyConnection(Connection):
     supports_instance_delete = True  # delete_vertices and delete_edges
     supports_scoped_delete = True  # delete_scoped_vertices and delete_scoped_edges
     supports_membership_read = False  # True only if fetch_docs takes an ANY_IN filter
+    supports_query_timeout = (
+        False  # True only if the database cancels a read at timeout_s
+    )
 ```
+
+With `supports_query_timeout`, every bounded read hands its `timeout_s` to the
+database or driver and turns the driver's timeout error into
+`QueryTimeoutError`. A backend that cannot cancel a read leaves it `False` and
+ignores `timeout_s`; a client-side clock does not count.
 
 An introspector that samples records must leave `property_types` empty and
 `directed` at its default of `True` instead of guessing. Sampling recovers a

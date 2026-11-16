@@ -33,6 +33,7 @@ SOURCE_RECORD_ID = "source_record_id"
 SOURCE_URI = "source_uri"
 MEDIA_TYPE = "media_type"
 CONTENT_HASH = "content_hash"
+WRITTEN_AT = "written_at"
 RETRIEVED_AT = "retrieved_at"
 ROLE = "role"
 
@@ -46,7 +47,8 @@ def source_record_vertex() -> Vertex:
         description=(
             "The record a fact was read from: a document, a message, an API "
             "response, a table row. Carries where the record is and a hash of "
-            "what it held, not the content itself."
+            "what it held, not the content itself; when it was written and when "
+            "it was read."
         ),
         semantics=Semantics(iri=PROV_ENTITY, exact_match=[PROV_ENTITY]),
         properties=[
@@ -54,11 +56,14 @@ def source_record_vertex() -> Vertex:
             Field(name=SOURCE_URI, type=FieldType.STRING),
             Field(name=MEDIA_TYPE, type=FieldType.STRING),
             Field(name=CONTENT_HASH, type=FieldType.STRING),
+            # When the record itself was written, which is what relative times in
+            # its text ("this morning") are read against.
             Field(
-                name=RETRIEVED_AT,
+                name=WRITTEN_AT,
                 type=FieldType.DATETIME,
                 semantics=FieldSemantics(iri=PROV_GENERATED_AT),
             ),
+            Field(name=RETRIEVED_AT, type=FieldType.DATETIME),
         ],
         identity=[SOURCE_RECORD_ID],
     )
@@ -148,6 +153,7 @@ __all__ = [
     "SOURCE_RECORD",
     "SOURCE_RECORD_ID",
     "SOURCE_URI",
+    "WRITTEN_AT",
     "agent_vertex",
     "attributed_to_edge",
     "derived_from_edge",

@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.27.1]
+
+### Added
+
+- `aspect_members(schema)` (`graflo.architecture.evolution.aspects`): the types, relations and
+  lifted-onto types a schema owes to the provenance and state aspects, matched by the shape each
+  aspect builds.
+- Bounded reads (`fetch_docs`, `fetch_edges`, `fetch_all_docs`, `aggregate`, `resolve_vertices`,
+  `graph_neighbors`, `lookup_candidates`, `identify`) take `timeout_s`; `traverse` uses its query's
+  `timeout_s`. A read made of several queries spends one deadline. The database cancels the read
+  and `QueryTimeoutError` is raised on backends declaring `supports_query_timeout` (ArangoDB,
+  Neo4j, FalkorDB, PostgreSQL); elsewhere the limit is ignored.
+
+### Changed
+
+- The provenance aspect's `SourceRecord` gains `written_at` (`DATETIME`), when the record was
+  written, grounded as `prov:generatedAtTime`. `retrieved_at` no longer carries that grounding.
+- On those backends `traverse` now stops at its query's `timeout_s` (10 s unless set), and a
+  walk that times out raises `QueryTimeoutError` instead of returning an empty hop.
+- `resolve_records`: only a record with `may_create` creates its entity, keyed or minted. A keyed
+  record without it links to the entity a record of the batch defines or one in the graph, and
+  otherwise stages as `unmatched` (`hidden` when the guard hides it) instead of creating it.
+
 ## [1.27.0]
 
 ### Changed

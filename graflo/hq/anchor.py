@@ -30,6 +30,7 @@ def anchor_identity(
     *,
     db: Any,
     guard: FilterExpression | None = None,
+    timeout_s: float | None = None,
 ) -> Any:
     """The identity *key* names: a bare value, or a primary identity mapping.
 
@@ -39,6 +40,7 @@ def anchor_identity(
         key: A bare value or a mapping of logical field names to values.
         db: The open connection a secondary identity is looked up through.
         guard: Trusted read guard for that lookup.
+        timeout_s: Seconds that lookup may run; ``None`` for no limit.
 
     Raises:
         ValueError: *vertex_type* is not in the schema.
@@ -46,6 +48,7 @@ def anchor_identity(
         AnchorIncompleteError: part of a key, or an empty value.
         AnchorAmbiguousError: a secondary identity found several vertices.
         AnchorUnmatchedError: a secondary identity found none.
+        QueryTimeoutError: The lookup ran past *timeout_s*.
     """
     vertex_config = schema.core_schema.vertex_config
     if vertex_type not in vertex_config.vertex_set:
@@ -64,7 +67,9 @@ def anchor_identity(
     if form == "key_set":
         found = identify(schema, vertex_type, key)
     else:
-        found = identify(schema, vertex_type, key, db=db, guard=guard)
+        found = identify(
+            schema, vertex_type, key, db=db, guard=guard, timeout_s=timeout_s
+        )
     name = key_set.name if key_set is not None else ""
     if found.outcome == "identified" and found.identity is not None:
         return found.identity

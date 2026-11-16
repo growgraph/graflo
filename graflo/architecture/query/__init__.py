@@ -18,16 +18,19 @@ from graflo.architecture.query.models import (
     TraverseQuery,
 )
 from graflo.architecture.query.result import QueryResult
+from graflo.architecture.query.timeout import Deadline, QueryTimeoutError
 
 __all__ = [
     "HARD_CAPS",
     "AggregateQuery",
     "CapExceededError",
+    "Deadline",
     "GraphQuery",
     "NeighborQuery",
     "NodeQuery",
     "QueryCaps",
     "QueryResult",
+    "QueryTimeoutError",
     "ReservedFieldError",
     "TraverseQuery",
 ]

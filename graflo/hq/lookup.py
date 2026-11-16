@@ -28,6 +28,7 @@ from pydantic import Field
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.evolution.sanitize import with_physical_names
 from graflo.architecture.graph_types.enums import EdgeDirection
+from graflo.architecture.query.timeout import Deadline
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.derive import normal_value
 from graflo.architecture.schema.physical_keys import PhysicalKeys
@@ -230,15 +231,36 @@ def word_runs(text: str, max_words: int) -> list[str]:
     return list(runs)
 
 
+def read_deadline(db: Any, timeout_s: float | None) -> Deadline:
+    """One limit for a call of several reads on *db*.
+
+    Unbounded unless *db* is a connection declaring ``supports_query_timeout``.
+    """
+    # Deferred: hq sits above db, and an offline resolve opens no connection.
+    from graflo.db.conn import Connection
+
+    if isinstance(db, Connection):
+        return db.query_deadline(timeout_s)
+    return Deadline(None)
+
+
 class _Reader:
-    """Exact field lookups by logical names on one connection."""
+    """Exact field lookups by logical names on one connection.
+
+    Every read spends *deadline*, so a lookup of many reads has one limit.
+    """
 
     def __init__(
-        self, db: Any, schema: Schema, guard: FilterExpression | None = None
+        self,
+        db: Any,
+        schema: Schema,
+        guard: FilterExpression | None = None,
+        deadline: Deadline | None = None,
     ) -> None:
         self.db = db
         self.schema = schema
         self.guard = guard
+        self.deadline = deadline or Deadline(None)
         # Only passed when set, so a backend that predates guards is untouched.
         self.guarded: dict[str, Any] = {"guard": guard} if guard is not None else {}
         named = with_physical_names(schema, db.flavor)
@@ -277,6 +299,7 @@ class _Reader:
             tuple(self.keys.vertex_fields(vertex_type, fields)),
             tuple(self.keys.vertex_fields(vertex_type, returned)),
             **self.guarded,
+            **self.deadline.kwargs(),
         )
         return {
             position: [self.keys.logical_vertex_doc(vertex_type, d) for d in docs]
@@ -312,6 +335,7 @@ class _Reader:
             return_keys=self.keys.vertex_fields(
                 vertex_type, list(dict.fromkeys([*returned, field]))
             ),
+            **self.deadline.kwargs(),
         )
         return [self.keys.logical_vertex_doc(vertex_type, d) for d in docs or []]
 
@@ -326,6 +350,7 @@ class _Reader:
             edge_types=[relation],
             schema=self.schema,
             **self.guarded,
+            **self.deadline.kwargs(),
         )
         return list(reached.vertices.get(target, []))
 
@@ -455,6 +480,7 @@ def lookup_candidates(
     *,
     guard: FilterExpression | None = None,
     comparable: Readable | None = None,
+    timeout_s: float | None = None,
 ) -> list[Candidate]:
     """Vertices of *db* that *text* may name, best first, at most ``max_seeds``.
 
@@ -475,6 +501,9 @@ def lookup_candidates(
         comparable: Which fields may be matched on, as ``(vertex type, field)
             -> bool``. A label, a key pattern's field or a derived field (or
             its source) it refuses is never read. Default: every field.
+        timeout_s: Seconds the whole lookup may run, every read included;
+            ``None`` for no limit. Enforced only where the backend declares
+            ``supports_query_timeout``.
 
     Returns:
         The candidates; empty when the text names nothing found.
@@ -482,11 +511,26 @@ def lookup_candidates(
     Raises:
         NotImplementedError: A *guard* on a backend that cannot apply one, or
             a type with a derived keys field on a backend that cannot read one.
+        QueryTimeoutError: The lookup ran past *timeout_s*.
     """
     spec = spec or LookupSpec()
     if guard is not None:
         db.require_read_guard()
-    reader = _Reader(db, schema, guard)
+    deadline = read_deadline(db, timeout_s)
+    with deadline.spent():
+        return _lookup_candidates(
+            _Reader(db, schema, guard, deadline), schema, text, spec, comparable
+        )
+
+
+def _lookup_candidates(
+    reader: _Reader,
+    schema: Schema,
+    text: str,
+    spec: LookupSpec,
+    comparable: Readable | None,
+) -> list[Candidate]:
+    """:func:`lookup_candidates` once its reader is open."""
     vertex_by_name = {v.name: v for v in schema.core_schema.vertex_config.vertices}
     alias_types = {hop.alias_type for hop in spec.aliases}
     types = spec.vertex_types or [

@@ -29,6 +29,7 @@ from collections.abc import Sequence
 from typing import Any, cast
 
 from arango import ArangoClient
+from arango.exceptions import ArangoServerError
 from arango.graph import Graph
 from arango.request import Request
 
@@ -38,6 +39,7 @@ from graflo.architecture.graph_types import (
     Index,
     IndexType,
 )
+from graflo.architecture.query.timeout import QueryTimeoutError, check_timeout
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import VertexConfig
@@ -85,6 +87,34 @@ from graflo.onto import AggregationType, DBType, ExpressionFlavor
 from graflo.util.transform import pick_unique_dict
 
 logger = logging.getLogger(__name__)
+
+#: ArangoDB's error number for a query it killed, as it does one past
+#: ``maxRuntime``.
+_QUERY_KILLED = 1500
+
+
+def _timed_aql_rows(
+    db: Any, query: str, bind_vars: dict[str, Any] | None, limit: float
+) -> list[Any]:
+    """Rows of an AQL read the server kills after *limit* seconds (``maxRuntime``)."""
+    try:
+        cursor = db.aql.execute(query, bind_vars=bind_vars or None, max_runtime=limit)
+        return get_data_from_cursor(cursor)
+    except ArangoServerError as error:
+        if error.error_code == _QUERY_KILLED:
+            raise QueryTimeoutError(limit) from error
+        raise
+
+
+def _aql_rows(
+    conn: Any, query: str, bind_vars: dict[str, Any] | None, timeout_s: float | None
+) -> list[Any]:
+    """Rows of an AQL read through *conn*, within *timeout_s* if set."""
+    limit = check_timeout(timeout_s)
+    if limit is None:
+        return get_data_from_cursor(conn.execute(query, bind_vars=bind_vars))
+    return _timed_aql_rows(conn.conn, query, bind_vars, limit)
+
 
 # Alias for backward compatibility
 _json_serializer = json_serializer
@@ -252,6 +282,8 @@ class ArangoConnection(Connection):
     supports_schema_ddl = True
     supports_schema_introspection = True
     supports_bulk_load = True
+    # An AQL read takes a maxRuntime the server kills it at.
+    supports_query_timeout = True
 
     def __init__(self, config: ArangoConfig):
         """Initialize ArangoDB connection.
@@ -1303,6 +1335,8 @@ class ArangoConnection(Connection):
         limit: int | None = None,
         return_keys: list[str] | None = None,
         unset_keys: list[str] | None = None,
+        *,
+        timeout_s: float | None = None,
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
         """Fetch documents from a collection.
@@ -1313,6 +1347,7 @@ class ArangoConnection(Connection):
             limit: Maximum number of documents to return
             return_keys: Keys to return
             unset_keys: Keys to unset
+            timeout_s: ``maxRuntime`` of the query; ``None`` for none.
 
         Returns:
             list: Fetched documents
@@ -1344,8 +1379,7 @@ class ArangoConnection(Connection):
             f"  {limit_clause}"
             f"  RETURN {return_clause}"
         )
-        cursor = self.execute(q, bind_vars=params.values)
-        return get_data_from_cursor(cursor)
+        return _aql_rows(self, q, params.values, timeout_s)
 
     def fetch_edges(
         self,
@@ -1359,6 +1393,8 @@ class ArangoConnection(Connection):
         return_keys: list[str] | None = None,
         unset_keys: list[str] | None = None,
         direction: EdgeDirection = EdgeDirection.OUT,
+        *,
+        timeout_s: float | None = None,
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
         """Fetch edges from ArangoDB using AQL.
@@ -1377,6 +1413,7 @@ class ArangoConnection(Connection):
             return_keys: Keys to return (projection)
             unset_keys: Keys to exclude (projection)
             direction: Orientations to follow from the anchor
+            timeout_s: ``maxRuntime`` of the query; ``None`` for none.
             **kwargs: Additional parameters
 
         Returns:
@@ -1420,8 +1457,7 @@ class ArangoConnection(Connection):
                 RETURN e
         """
 
-        cursor = self.execute(query, bind_vars=bind_vars)
-        result = list(get_data_from_cursor(cursor))
+        result = list(_aql_rows(self, query, bind_vars, timeout_s))
 
         # Apply projection
         if return_keys is not None:
@@ -1442,6 +1478,8 @@ class ArangoConnection(Connection):
         discriminant: str | None = None,
         aggregated_field: str | None = None,
         filters: None | FilterExpression | list[Any] | dict[str, Any] = None,
+        *,
+        timeout_s: float | None = None,
     ) -> list[dict[str, Any]]:
         """Perform aggregation on a collection.
 
@@ -1451,6 +1489,7 @@ class ArangoConnection(Connection):
             discriminant: Field to group by
             aggregated_field: Field to aggregate
             filters: Query filters
+            timeout_s: ``maxRuntime`` of the query; ``None`` for none.
 
         Returns:
             list: Aggregation results
@@ -1489,9 +1528,7 @@ class ArangoConnection(Connection):
                     {collect_clause}
                     RETURN {return_clause}"""
 
-        cursor = self.execute(q, bind_vars=params.values)
-        data = get_data_from_cursor(cursor)
-        return data
+        return _aql_rows(self, q, params.values, timeout_s)
 
     def keep_absent_documents(
         self,
@@ -1656,6 +1693,7 @@ class ArangoConnection(Connection):
         filters: Any | None = None,
         limit: int | None = None,
         schema: Schema | None = None,
+        timeout_s: float | None = None,
     ) -> GraphContainer:
         """Bounded neighbourhood via AQL ``FOR v, e IN 1..k``.
 
@@ -1667,6 +1705,7 @@ class ArangoConnection(Connection):
         Returns the reached vertices and the edges of the paths that reached
         them, shaped as the default walk returns them: edge rows by edge id,
         their ends under ``source`` and ``target``, at most *limit* of each.
+        The one query runs under ``maxRuntime`` *timeout_s*, if set.
         """
         from graflo.architecture.graph_types import EdgeId
         from graflo.architecture.schema.edge import Edge
@@ -1761,7 +1800,12 @@ class ArangoConnection(Connection):
                         )
                     }}
         """
-        rows = get_data_from_cursor(self.conn.aql.execute(query, bind_vars=bind_vars))
+        limit_s = check_timeout(timeout_s)
+        rows = (
+            get_data_from_cursor(self.conn.aql.execute(query, bind_vars=bind_vars))
+            if limit_s is None
+            else _timed_aql_rows(self.conn, query, bind_vars, limit_s)
+        )
 
         # A reached document's type is the collection it lives in, read from its
         # ``_id`` (``collection/key``) before internal keys are stripped.
@@ -1829,8 +1873,9 @@ class ArangoConnection(Connection):
         class_name: str,
         *,
         limit: int | None = None,
+        timeout_s: float | None = None,
     ) -> list[dict[str, Any]]:
-        """Fetch all documents from a vertex collection."""
+        """Fetch all documents from a vertex collection, within *timeout_s* if set."""
         safe = _arango_safe_collection_name(class_name)
         limit_clause = f"LIMIT {limit}" if limit is not None else ""
         query = f"""
@@ -1838,7 +1883,7 @@ class ArangoConnection(Connection):
                 {limit_clause}
                 RETURN UNSET(doc, '_id', '_rev')
         """
-        rows = get_data_from_cursor(self.execute(query))
+        rows = _aql_rows(self, query, None, timeout_s)
         return [strip_internal_properties(row) for row in rows if isinstance(row, dict)]
 
     def fetch_all_edges(

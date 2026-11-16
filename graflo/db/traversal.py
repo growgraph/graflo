@@ -20,6 +20,7 @@ from collections.abc import Iterable, Sequence
 from typing import TYPE_CHECKING, Any
 
 from graflo.architecture.graph_types import EdgeDirection, EdgeId, GraphContainer
+from graflo.architecture.query.timeout import Deadline, QueryTimeoutError
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.edge_direction import reversed_direction
 from graflo.architecture.schema.inverse_realization import resolve_relation
@@ -146,6 +147,7 @@ def bfs_neighbors(
     limit: int | None = None,
     schema: Schema | None = None,
     guard: FilterExpression | None = None,
+    timeout_s: float | None = None,
 ) -> GraphContainer:
     """Breadth-first neighbourhood around one anchor, as a ``GraphContainer``.
 
@@ -169,6 +171,9 @@ def bfs_neighbors(
             apply it to ``nodes(path)`` and ``relationships(path)``. Evaluated
             in process, so a hidden element is never stepped through: an edge
             is reported only when it and both its ends pass.
+        timeout_s: Seconds the whole walk may run, on a connection that
+            declares ``supports_query_timeout``. One deadline: each read is
+            given what is left of it, and none starts once nothing is.
 
     Returns:
         GraphContainer: reached vertices and edges, deduplicated.
@@ -178,7 +183,40 @@ def bfs_neighbors(
             declared in the schema.
         UnsupportedEdgeDirectionError: if a backend cannot follow an edge in the
             requested direction.
+        QueryTimeoutError: if the walk ran past *timeout_s*.
     """
+    deadline = Deadline(None) if timeout_s is None else conn.query_deadline(timeout_s)
+    with deadline.spent():
+        return _bfs_neighbors(
+            conn,
+            anchor_type=anchor_type,
+            anchor_key=anchor_key,
+            hops=hops,
+            direction=direction,
+            edge_types=edge_types,
+            filters=filters,
+            limit=limit,
+            schema=schema,
+            guard=guard,
+            deadline=deadline,
+        )
+
+
+def _bfs_neighbors(
+    conn: Connection,
+    *,
+    anchor_type: str,
+    anchor_key: str | dict[str, Any],
+    hops: int,
+    direction: EdgeDirection,
+    edge_types: Sequence[str] | None,
+    filters: Any | None,
+    limit: int | None,
+    schema: Schema | None,
+    guard: FilterExpression | None,
+    deadline: Deadline,
+) -> GraphContainer:
+    """:func:`bfs_neighbors`, every read spending *deadline*."""
     if hops < 1:
         raise ValueError(f"hops must be >= 1, got {hops}")
     if schema is None:
@@ -198,11 +236,16 @@ def bfs_neighbors(
     selected = select_edges(schema, edge_types)
 
     container = GraphContainer()
-    anchor_id = _resolve_anchor_id(conn, schema, db_aware, anchor_type, anchor_key)
+    anchor_id = _resolve_anchor_id(
+        conn, schema, db_aware, anchor_type, anchor_key, deadline
+    )
     if anchor_id is None:
         return container
     if guard is not None and not _admitted_docs(
-        guard, _hydrate_far_endpoints(conn, db_aware, schema, anchor_type, [anchor_id])
+        guard,
+        _hydrate_far_endpoints(
+            conn, db_aware, schema, anchor_type, [anchor_id], deadline
+        ),
     ):
         return container
 
@@ -252,6 +295,7 @@ def bfs_neighbors(
                     filters=filters,
                     remaining=max_edges - edge_count,
                     native_inverse_type=native_inverse_type,
+                    deadline=deadline,
                 )
                 if not rows:
                     continue
@@ -290,7 +334,9 @@ def bfs_neighbors(
                     if far is not None:
                         far_ids.append(far)
 
-                docs = _hydrate_far_endpoints(conn, db_aware, schema, far_type, far_ids)
+                docs = _hydrate_far_endpoints(
+                    conn, db_aware, schema, far_type, far_ids, deadline
+                )
                 if guard is not None:
                     docs = _admitted_docs(guard, docs)
                 # Without a guard every edge row is reported, as before; with
@@ -393,6 +439,7 @@ def _resolve_anchor_id(
     db_aware: Any,
     anchor_type: str,
     anchor_key: str | dict[str, Any],
+    deadline: Deadline,
 ) -> str | None:
     """Resolve *anchor_key* to the id string the backend indexes on.
 
@@ -412,7 +459,7 @@ def _resolve_anchor_id(
         for field, value in anchor_key.items()
     ]
     filters = leaves[0] if len(leaves) == 1 else {"AND": leaves}
-    docs = conn.fetch_docs(storage, filters=filters, limit=1)
+    docs = conn.fetch_docs(storage, filters=filters, limit=1, **deadline.kwargs())
     if not docs:
         return None
     return _vertex_identity_value(conn, schema, anchor_type, docs[0])
@@ -429,13 +476,16 @@ def _fetch_edge_rows(
     filters: Any | None,
     remaining: int,
     native_inverse_type: str | None = None,
+    deadline: Deadline | None = None,
 ) -> list[dict[str, Any]]:
     """One hop over one declared edge, in storage terms.
 
     ``native_inverse_type`` and the edge's undirectedness travel with the
     request: a backend whose reverse reachability is fixed at schema time
     answers an inbound read from them, and every other backend ignores them.
+    The read is given what is left of *deadline*.
     """
+    timed = (deadline or Deadline(None)).kwargs()
     edge_storage = edge_query_name(db_aware, edge, conn.flavor)
     anchor_storage = db_aware.vertex_config.vertex_dbname(anchor_type)
     far_type = _far_endpoint(edge.edge_id, anchor_type)
@@ -452,13 +502,15 @@ def _fetch_edge_rows(
                 direction=direction,
                 native_inverse_type=native_inverse_type,
                 edge_is_undirected=not edge.directed,
+                **timed,
             )
             or []
         )
-    except (NotImplementedError, UnsupportedEdgeDirectionError):
-        # A direction the backend cannot follow is a refusal, not a miss:
-        # swallowing it would return the half of the neighbourhood that the
-        # module exists to never silently drop.
+    except (NotImplementedError, UnsupportedEdgeDirectionError, QueryTimeoutError):
+        # A direction the backend cannot follow is a refusal, not a miss, and a
+        # read the database stopped is not an empty one: swallowing either
+        # would return the part of the neighbourhood that the module exists to
+        # never silently drop.
         raise
     except Exception:
         logger.exception(
@@ -578,6 +630,7 @@ def _hydrate_far_endpoints(
     schema: Schema,
     far_type: str,
     ids: list[str],
+    deadline: Deadline | None = None,
 ) -> list[dict[str, Any]]:
     """Fetch the vertex documents for already-normalized far-endpoint *ids*."""
     if not ids:
@@ -589,8 +642,11 @@ def _hydrate_far_endpoints(
         return []
     key_field = identity_fields[0]
     filters = _match_any(key_field, list(dict.fromkeys(ids)))
+    timed = (deadline or Deadline(None)).kwargs()
     try:
-        return list(conn.fetch_docs(storage, filters=filters) or [])
+        return list(conn.fetch_docs(storage, filters=filters, **timed) or [])
+    except QueryTimeoutError:
+        raise
     except Exception:
         logger.exception("graph_neighbors: hydrating %s endpoints failed", far_type)
         return []
