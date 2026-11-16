@@ -12,6 +12,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `match.parts.elide`: a less specific form may keep any of a value's parts, in order, cutting
   each but the last to its first word ("Spandau bay 3" of "Berlin, Spandau depot, bay 3"). Keys
   derived from the field include those forms, and the comparator grades them `compatible`.
+- `Edge.merge` (`union` by default, or `replace`: one target per source) and `Edge.exclusive` (a
+  different target is a conflict). Ontology 1.12.0 adds `gf:edgeMergeMode` and `gf:edgeExclusive`.
+- The writer keeps `merge: replace` edges to one target per source (databases delete the old target;
+  the file backend folds on read) and refuses an `exclusive` edge's second target with
+  `WriteRefusal` (`exclusive-conflict`); NebulaGraph and TigerGraph refuse `replace` edges.
+- The provenance aspect adds `Assertion`, one statement a record makes as one triple (`subject`
+  edge, `predicate`, a property's `value` or an `object` edge), with its quote, stated time,
+  modality, polarity and `basis`, when `mentions_for` names a type.
+- The state aspect's `stateful` accepts single-valued relations; their past targets go on `<Type>State`.
+- `graflo.link.statements.resolve`: the facts that hold at a time, from statements with polarity,
+  modality, stated and said times and basis (`extracted` < `confirmed` < `recorded`), with history,
+  conflicts and withdrawals; a missing time is unknown, never the oldest. `slot_rules` reads the
+  slots from a schema.
+- `graflo.link.assertions`: `statement_container` writes statements as `Assertion`s,
+  `read_statements` reads them back (about one entity or all, under an optional read guard) and
+  `graph_time` is the newest `SourceRecord.written_at`. `graflo.link.reconcile.reconcile` deletes
+  stated edges that do not hold and writes those that do but are missing, reporting refused
+  exclusive edges.
+
+### Fixed
+
+- The file backend's walks match each edge's endpoint types, so a relation name shared by several
+  pairs of types (`note -about-> person`, `note -about-> team`) no longer reports every row under
+  every pair.
+
+### Changed
+
+- Docs: the ontology explorer uses the project palette (blue classes, orange enumerations, slate
+  external terms, muted group colours) in both light and dark.
 
 ## [1.27.2]
 

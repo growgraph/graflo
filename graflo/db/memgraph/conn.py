@@ -113,6 +113,7 @@ from graflo.db.cypher.bulk import (
 )
 from graflo.db.cypher.delete import delete_nodes, delete_relationships
 from graflo.db.cypher.scan import all_relationships_query
+from graflo.db.cypher.targets import relationship_targets
 from graflo.db.field_type_support import assert_schema_supported, index_limit
 from graflo.db.graph_introspection import (
     GraphSchemaInferencer,
@@ -286,6 +287,7 @@ class MemgraphConnection(Connection):
 
     flavor = DBType.MEMGRAPH
     supports_instance_delete = True
+    supports_edge_target_read = True
     supports_schema_introspection = True
     supports_bulk_load = True
     # Two transactions adding edges to one node conflict, and one aborts.
@@ -1685,6 +1687,30 @@ class MemgraphConnection(Connection):
             target_class,
             relation_name,
             endpoints,
+            match_keys_source,
+            match_keys_target,
+            chunk_size,
+        )
+
+    def fetch_edge_targets(
+        self,
+        source_class: str,
+        target_class: str,
+        relation_name: str | None,
+        sources: list[dict[str, Any]],
+        match_keys_source: tuple[str, ...],
+        match_keys_target: tuple[str, ...],
+        *,
+        collection_name: str | None = None,
+        chunk_size: int = DEFAULT_DELETE_CHUNK_SIZE,
+    ) -> dict[int, list[dict[str, Any]]]:
+        """The stored targets of each source's relationships of one type."""
+        return relationship_targets(
+            lambda query, rows: list(self.execute(query, data=rows).result_set),
+            source_class,
+            target_class,
+            relation_name,
+            sources,
             match_keys_source,
             match_keys_target,
             chunk_size,

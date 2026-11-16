@@ -462,6 +462,12 @@ class ManifestRdfDeserializer:
         )
         if isinstance(identities, list):
             edge["identities"] = identities
+        merge_mode = self._literal(graph, edge_uri, ns.edgeMergeMode)
+        if merge_mode is not None:
+            edge["merge"] = merge_mode
+        exclusive = self._literal(graph, edge_uri, ns.edgeExclusive)
+        if exclusive is not None:
+            edge["exclusive"] = exclusive.lower() == "true"
         edge_type = self._literal(graph, edge_uri, ns.edgeType)
         if edge_type is not None:
             edge["type"] = edge_type

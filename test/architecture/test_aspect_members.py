@@ -43,12 +43,19 @@ def test_an_unlifted_schema_owes_nothing_to_an_aspect() -> None:
 
 def test_provenance_types_relations_and_the_types_it_was_lifted_onto() -> None:
     members = _members(_tickets_lifted())
-    assert members.types == {"SourceRecord": "provenance", "Agent": "provenance"}
+    assert members.types == {
+        "SourceRecord": "provenance",
+        "Agent": "provenance",
+        "Assertion": "provenance",
+    }
     assert {(e.source, e.relation, e.target) for e in members.edges} == {
         ("Claim", "wasDerivedFrom", "SourceRecord"),
         ("Ticket", "wasDerivedFrom", "SourceRecord"),
         ("SourceRecord", "mentions", "Ticket"),
         ("SourceRecord", "wasAttributedTo", "Agent"),
+        ("Assertion", "wasDerivedFrom", "SourceRecord"),
+        ("Assertion", "subject", "Ticket"),
+        ("Assertion", "object", "Ticket"),
     }
     assert {e.aspect for e in members.edges} == {"provenance"}
     assert members.lifted_onto == {"Claim": ["provenance"], "Ticket": ["provenance"]}

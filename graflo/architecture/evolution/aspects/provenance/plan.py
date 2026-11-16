@@ -42,7 +42,8 @@ def plan_provenance(
             ``SourceRecord``, in this order. The caller vouches that each one
             exists or is added by the same change set.
         mentions: vertex type names ``SourceRecord`` gains a ``mentions`` edge to,
-            in this order, on the same terms.
+            in this order, on the same terms. When there are any, ``Assertion``
+            is added too, with ``subject`` and ``object`` edges to each.
 
     Raises:
         LiftError: the manifest has no schema, or declares part of the
@@ -54,13 +55,27 @@ def plan_provenance(
             "cannot lift a manifest with no schema block: there are no types to "
             "attach provenance to"
         )
+    named = list(mentions)
+    # A type a record can name is a type a record can state something about.
+    statements = (
+        [vocab.derived_from_edge(vocab.ASSERTION)]
+        + [vocab.subject_edge(name) for name in named]
+        + [vocab.object_edge(name) for name in named]
+        if named
+        else []
+    )
     return join(
         schema.core_schema,
-        vertices=[vocab.source_record_vertex(), vocab.agent_vertex()],
+        vertices=[
+            vocab.source_record_vertex(),
+            vocab.agent_vertex(),
+            *([vocab.assertion_vertex()] if named else []),
+        ],
         edges=[
             *(vocab.derived_from_edge(name) for name in attach),
-            *(vocab.mentions_edge(name) for name in mentions),
+            *(vocab.mentions_edge(name) for name in named),
             vocab.attributed_to_edge(),
+            *statements,
         ],
     )
 

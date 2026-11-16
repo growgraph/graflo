@@ -177,6 +177,23 @@ edges:
   `MERGE`) on the endpoints, relation and the properties of the first identity; see
   [backend indexes](../schema/backend_indexes.md#edge-upserts-and-merge-neo4j-memgraph-falkordb).
 - `directed` (default `true`): see the next section.
+- `merge` (default `union`): how many targets one source holds in the relation.
+  With `union` they accumulate. With `replace` a source holds one target, and a
+  newer one replaces it, as a property's `merge: replace` keeps one value. A
+  `replace` edge declares no `identities`.
+- `exclusive` (default `false`, needs `merge: replace`): a different target is a
+  conflict to report rather than an update, for a relation that never changes,
+  such as a part's model.
+
+  The writer keeps both. Within a batch the last target per source wins (the
+  first, for `exclusive`). A database target reads each source's stored targets
+  and deletes the others before the insert; the file backend, which only
+  appends, folds the edge on read to one record per source. A target that can
+  do neither (NebulaGraph, TigerGraph) refuses the write before anything is
+  stored. An `exclusive` edge whose source already holds another target is not
+  written: the stored target stays, the rest of the batch is written, and the
+  write raises `WriteRefusal` with check `exclusive-conflict`, one subject per
+  refused edge.
 - `description`, `semantics`: documentation, as on a vertex.
 
 Where the relation comes from when records are cast (a column, a JSON key)

@@ -466,6 +466,11 @@ class ManifestRdfSerializer:
             )
         if edge.identities:
             graph.add((edge_uri, ns.edgeIdentities, json_literal(edge.identities)))
+        # Emitted only when not the default, as `directed` is.
+        if edge.merge != "union":
+            add_literal(graph, edge_uri, ns.edgeMergeMode, edge.merge)
+        if edge.exclusive:
+            add_literal(graph, edge_uri, ns.edgeExclusive, edge.exclusive)
         if edge.type is not None:
             add_literal(graph, edge_uri, ns.edgeType, str(edge.type))
         if edge.by is not None:

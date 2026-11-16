@@ -50,6 +50,7 @@ from graflo.architecture.graph_types import (
 from graflo.architecture.schema.semantics import Semantics, check_iri
 from graflo.architecture.schema.vertex import (
     Field,
+    FieldMerge,
     VertexConfig,
     VertexName,
     union_field_lists,
@@ -197,6 +198,22 @@ class Edge(ConfigBaseModel):
             ":meth:`finish_init` if not already declared (same idea as vertex identity)."
         ),
     )
+    merge: FieldMerge = PydanticField(
+        default="union",
+        description=(
+            "How many targets one source holds in this relation. ``union`` "
+            "(default): targets accumulate. ``replace``: one target per source; "
+            "a newer one replaces the old. Same words as a property's ``merge``."
+        ),
+    )
+    exclusive: bool = PydanticField(
+        default=False,
+        description=(
+            "With ``merge: replace``: a different target is a conflict to report, "
+            "not an update. For a relation that never changes, such as a part's "
+            "model."
+        ),
+    )
     properties: list[Field] = PydanticField(
         default_factory=list,
         description=(
@@ -290,6 +307,23 @@ class Edge(ConfigBaseModel):
                 seen_keys.add(key_tuple)
                 deduped_keys.append(deduped_tokens)
         object.__setattr__(self, "identities", deduped_keys)
+        return self
+
+    @model_validator(mode="after")
+    def check_single_valued(self) -> Edge:
+        """``merge: replace`` keys the edge on its source, so it cannot also
+        declare parallel-edge ``identities``; ``exclusive`` needs one value.
+
+        Runs after :meth:`normalize_identity_keys`, which drops empty keys.
+        """
+        owner = f"edge ({self.source!r}, {self.target!r}, {self.relation!r})"
+        if self.merge == "replace" and self.identities:
+            raise ValueError(
+                f"{owner}: merge 'replace' holds one target per source, so it "
+                "cannot declare identities for parallel edges"
+            )
+        if self.exclusive and self.merge != "replace":
+            raise ValueError(f"{owner}: exclusive needs merge 'replace'")
         return self
 
     def finish_init(self, vertex_config: VertexConfig):

@@ -288,6 +288,18 @@ def delete_rows_query(schema: str, table: str, columns: list[str]) -> str:
     )
 
 
+def select_edge_targets_query(
+    schema: str, table: str, source_columns: list[str], target_columns: list[str]
+) -> str:
+    """The source and target columns of the rows of *table* whose source matches ``VALUES %s``."""
+    sources = ", ".join(_quote_ident(c) for c in source_columns)
+    selected = ", ".join(_quote_ident(c) for c in [*source_columns, *target_columns])
+    return (
+        f"SELECT {selected} FROM {_quote_ident(schema)}.{_quote_ident(table)} "
+        f"WHERE ({sources}) IN (VALUES %s)"
+    )
+
+
 def delete_referencing_rows_query(
     schema: str,
     table: str,
@@ -763,6 +775,7 @@ class PostgresTargetWriteMixin:
     # reports in full; nothing here is sampled.
     schema_introspection_is_sampled = False
     supports_instance_delete = True
+    supports_edge_target_read = True
     config: Any
     conn: _Psycopg2Conn
     # Supplied by Connection, which follows this mixin in the MRO: annotate
@@ -1261,6 +1274,51 @@ class PostgresTargetWriteMixin:
             for start in range(0, len(values), chunk_size):
                 execute_values(cursor, query, values[start : start + chunk_size])
         self.conn.commit()
+
+    def fetch_edge_targets(
+        self,
+        source_class: str,
+        target_class: str,
+        relation_name: str | None,
+        sources: list[dict[str, Any]],
+        match_keys_source: tuple[str, ...],
+        match_keys_target: tuple[str, ...],
+        *,
+        collection_name: str | None = None,
+        chunk_size: int = DEFAULT_DELETE_CHUNK_SIZE,
+    ) -> dict[int, list[dict[str, Any]]]:
+        """The stored targets of each source's edge rows, as the text an insert stores."""
+        source_keys = match_keys_source or ("id",)
+        target_keys = match_keys_target or ("id",)
+        positions: dict[tuple[str, ...], list[int]] = {}
+        for position, doc in enumerate(sources):
+            if deletable_docs([doc], source_keys):
+                key = tuple(str(doc[k]) for k in source_keys)
+                positions.setdefault(key, []).append(position)
+        found: dict[int, list[dict[str, Any]]] = {}
+        if not positions:
+            return found
+        query = select_edge_targets_query(
+            _pg_schema_name(self.config),
+            edge_table_name(source_class, target_class, relation_name),
+            edge_endpoint_columns("source", source_keys),
+            edge_endpoint_columns("target", target_keys),
+        )
+        keys = list(positions)
+        with self.conn.cursor() as cursor:
+            for start in range(0, len(keys), chunk_size):
+                rows = execute_values(
+                    cursor, query, keys[start : start + chunk_size], fetch=True
+                )
+                for row in rows:
+                    source = tuple(str(v) for v in row[: len(source_keys)])
+                    target = dict(
+                        zip(target_keys, row[len(source_keys) :], strict=True)
+                    )
+                    for position in positions.get(source, []):
+                        found.setdefault(position, []).append(dict(target))
+        self.conn.commit()
+        return found
 
     def insert_return_batch(
         self, docs: list[dict[str, Any]], class_name: str

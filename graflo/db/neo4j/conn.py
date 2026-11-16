@@ -75,6 +75,7 @@ from graflo.db.cypher.sync import (
     owner_statements,
     stored_hashes_query,
 )
+from graflo.db.cypher.targets import relationship_targets
 from graflo.db.cypher.traversal import cypher_graph_neighbors
 from graflo.db.cypher.union import union_upsert_query, union_upsert_rows
 from graflo.db.field_type_support import assert_schema_supported
@@ -182,6 +183,7 @@ class Neo4jConnection(Connection):
 
     flavor = DBType.NEO4J
     supports_instance_delete = True
+    supports_edge_target_read = True
     supports_scoped_delete = True
     supports_graph_export = True
     # A migration emitter is registered for this backend
@@ -1122,6 +1124,32 @@ class Neo4jConnection(Connection):
             target_class,
             relation_name,
             endpoints,
+            match_keys_source,
+            match_keys_target,
+            chunk_size,
+        )
+
+    def fetch_edge_targets(
+        self,
+        source_class: str,
+        target_class: str,
+        relation_name: str | None,
+        sources: list[dict[str, Any]],
+        match_keys_source: tuple[str, ...],
+        match_keys_target: tuple[str, ...],
+        *,
+        collection_name: str | None = None,
+        chunk_size: int = DEFAULT_DELETE_CHUNK_SIZE,
+    ) -> dict[int, list[dict[str, Any]]]:
+        """The stored targets of each source's relationships of one type."""
+        return relationship_targets(
+            lambda query, rows: [
+                list(row.values()) for row in _rows(self.execute(query, data=rows))
+            ],
+            source_class,
+            target_class,
+            relation_name,
+            sources,
             match_keys_source,
             match_keys_target,
             chunk_size,

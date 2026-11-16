@@ -262,6 +262,34 @@ def arango_remove_edges_query(
     )
 
 
+def arango_edge_targets_query(
+    edge_collection: str,
+    source_collection: str,
+    source_keys: Sequence[str],
+    *,
+    with_relation: bool,
+) -> str:
+    """AQL returning the targets of the edges leaving each source of ``@rows``.
+
+    A row is ``{"i": position, "s": source keys}``; each result is
+    ``{"i": position, "t": target keys}``, the keys bound as ``@target_keys``
+    and the target collection as ``@target``. With *with_relation*, only edges
+    whose ``relation`` is ``@relation``.
+    """
+    source = " AND ".join(
+        f"s.{_aql_attribute(k)} == row.s.{_aql_attribute(k)}" for k in source_keys
+    )
+    relation = " AND e.relation == @relation" if with_relation else ""
+    return (
+        f"FOR row IN @rows "
+        f"FOR s IN {source_collection} FILTER {source} "
+        f"FOR e IN {edge_collection} FILTER e._from == s._id{relation} "
+        "FILTER IS_SAME_COLLECTION(@target, e._to) "
+        "LET t = DOCUMENT(e._to) FILTER t != null "
+        "RETURN {i: row.i, t: KEEP(t, @target_keys)}"
+    )
+
+
 class ArangoConnection(Connection):
     """ArangoDB-specific implementation of the Connection interface.
 
@@ -276,6 +304,7 @@ class ArangoConnection(Connection):
 
     flavor = DBType.ARANGO
     supports_instance_delete = True
+    supports_edge_target_read = True
     supports_graph_export = True
     # A migration emitter is registered for this backend
     # (graflo/migrate/executor.py); the other six have none.
@@ -1280,6 +1309,48 @@ class ArangoConnection(Connection):
             if relation_name is not None:
                 bind_vars["relation"] = relation_name
             self.conn.aql.execute(query, bind_vars=bind_vars)
+
+    def fetch_edge_targets(
+        self,
+        source_class: str,
+        target_class: str,
+        relation_name: str | None,
+        sources: list[dict[str, Any]],
+        match_keys_source: tuple[str, ...],
+        match_keys_target: tuple[str, ...],
+        *,
+        collection_name: str | None = None,
+        chunk_size: int = DEFAULT_DELETE_CHUNK_SIZE,
+    ) -> dict[int, list[dict[str, Any]]]:
+        """The stored targets of each source's edges, located by their keys."""
+        rows = [
+            {"i": position, "s": keyed[0]}
+            for position, doc in enumerate(sources)
+            if (keyed := deletable_docs([doc], match_keys_source))
+        ]
+        found: dict[int, list[dict[str, Any]]] = {}
+        if not rows or not match_keys_source or not match_keys_target:
+            return found
+        target = _arango_safe_collection_name(target_class)
+        query = arango_edge_targets_query(
+            _arango_safe_collection_name(
+                collection_name or f"{source_class}_{target_class}_edges"
+            ),
+            _arango_safe_collection_name(source_class),
+            match_keys_source,
+            with_relation=relation_name is not None,
+        )
+        for start in range(0, len(rows), chunk_size):
+            bind_vars: dict[str, Any] = {
+                "rows": rows[start : start + chunk_size],
+                "target": target,
+                "target_keys": list(match_keys_target),
+            }
+            if relation_name is not None:
+                bind_vars["relation"] = relation_name
+            for item in get_data_from_cursor(self.execute(query, bind_vars=bind_vars)):
+                found.setdefault(int(item["i"]), []).append(item["t"])
+        return found
 
     def fetch_present_documents(
         self,

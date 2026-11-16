@@ -162,6 +162,8 @@ class ConnectionCapability(Enum):
     BULK_LOAD = "supports_bulk_load"
     SYNC = "supports_sync"
     QUERY_TIMEOUT = "supports_query_timeout"
+    EDGE_TARGET_READ = "supports_edge_target_read"
+    SINGLE_VALUED_FOLD = "supports_single_valued_fold"
 
     @property
     def label(self) -> str:
@@ -180,6 +182,12 @@ class ConnectionCapability(Enum):
             ConnectionCapability.SYNC: "record sync into a loaded target",
             ConnectionCapability.QUERY_TIMEOUT: (
                 "a time limit on each read, enforced by the database"
+            ),
+            ConnectionCapability.EDGE_TARGET_READ: (
+                "reading the stored targets of a source's edges"
+            ),
+            ConnectionCapability.SINGLE_VALUED_FOLD: (
+                "folding a single-valued relation on read"
             ),
         }[self]
 
@@ -334,6 +342,14 @@ class Connection(abc.ABC):
     #: Without it ``timeout_s`` is accepted and ignored: nothing is cancelled and
     #: nothing extra is raised.
     supports_query_timeout: ClassVar[bool] = False
+    #: Implements :meth:`fetch_edge_targets`. With ``supports_instance_delete``
+    #: it lets a writer keep a ``merge: replace`` edge single-valued, and it
+    #: lets a writer refuse an ``exclusive`` edge's second target.
+    supports_edge_target_read: ClassVar[bool] = False
+    #: Keeps a ``merge: replace`` edge single-valued without deleting: reads
+    #: fold its records to one per source (the last, or the first when
+    #: ``exclusive``). An append-only store declares it instead of deleting.
+    supports_single_valued_fold: ClassVar[bool] = False
 
     def __init__(self):
         """Initialize the connection."""
@@ -913,6 +929,47 @@ class Connection(abc.ABC):
         """
         raise NotImplementedError(
             f"{type(self).__name__} does not support deleting edges"
+        )
+
+    def fetch_edge_targets(
+        self,
+        source_class: str,
+        target_class: str,
+        relation_name: str | None,
+        sources: list[dict[str, Any]],
+        match_keys_source: tuple[str, ...],
+        match_keys_target: tuple[str, ...],
+        *,
+        collection_name: str | None = None,
+        chunk_size: int = DEFAULT_DELETE_CHUNK_SIZE,
+    ) -> dict[int, list[dict[str, Any]]]:
+        """The stored targets of each source's edges of one type.
+
+        The read counterpart of :meth:`delete_edges`, with the same names: what
+        it returns can be handed back to it as the target of a pair.
+
+        Args:
+            source_class: Stored name of the source vertex type.
+            target_class: Stored name of the target vertex type.
+            relation_name: Stored relation, as passed to :meth:`insert_edges_batch`.
+            sources: Source documents carrying *match_keys_source*. A document
+                missing a key field reads nothing.
+            match_keys_source: Identity fields of the source type.
+            match_keys_target: Identity fields of the target type.
+            collection_name: Edge collection, where the backend has one.
+            chunk_size: Sources per statement.
+
+        Returns:
+            Position in *sources* -> one document per stored edge, carrying the
+            target's *match_keys_target*. A source with no stored edge has no
+            entry.
+
+        Raises:
+            NotImplementedError: On a backend that does not declare
+                ``supports_edge_target_read``.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support reading edge targets"
         )
 
     def delete_scoped_vertices(self, class_name: str, field: str, value: Any) -> None:

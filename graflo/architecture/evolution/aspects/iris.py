@@ -25,10 +25,18 @@ TIME = "http://www.w3.org/2006/time#"
 QUDT = "http://qudt.org/schema/qudt/"
 DCTERMS = "http://purl.org/dc/terms/"
 RDFS = "http://www.w3.org/2000/01/rdf-schema#"
+RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
 
 RDFS_LABEL = f"{RDFS}label"
 
 SCHEMA_MENTIONS = "https://schema.org/mentions"
+
+RDF_STATEMENT = f"{RDF}Statement"
+RDF_SUBJECT = f"{RDF}subject"
+RDF_PREDICATE = f"{RDF}predicate"
+RDF_OBJECT = f"{RDF}object"
+TIME_HAS_BEGINNING = f"{TIME}hasBeginning"
+TIME_HAS_END = f"{TIME}hasEnd"
 
 PROV_ENTITY = f"{PROV}Entity"
 PROV_ACTIVITY = f"{PROV}Activity"
@@ -68,6 +76,11 @@ __all__ = [
     "PROV_WAS_INFLUENCED_BY",
     "QUDT",
     "QUDT_UCUM_CODE",
+    "RDF",
+    "RDF_OBJECT",
+    "RDF_PREDICATE",
+    "RDF_STATEMENT",
+    "RDF_SUBJECT",
     "SCHEMA_MENTIONS",
     "SOSA",
     "SOSA_FEATURE_OF_INTEREST",
@@ -80,5 +93,7 @@ __all__ = [
     "SSN",
     "SSN_PROPERTY",
     "TIME",
+    "TIME_HAS_BEGINNING",
+    "TIME_HAS_END",
     "TIME_PROPER_INTERVAL",
 ]

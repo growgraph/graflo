@@ -13,6 +13,7 @@ from graflo.architecture.backend import (
     GraFloLayout,
 )
 from graflo.architecture.graph_types import GraphContainer
+from graflo.architecture.graph_types.enums import EdgeDirection
 from graflo.architecture.schema import CoreSchema, GraphMetadata, Schema
 from graflo.architecture.schema.edge import Edge, EdgeConfig
 from graflo.architecture.schema.vertex import Field, Vertex, VertexConfig
@@ -493,3 +494,49 @@ def test_schema_drift_against_the_file_backend_is_not_sampled(tmp_path: Path) ->
 
     assert drift.sampled is False
     assert drift.missing_properties == {"person": ["email"]}
+
+
+def test_a_relation_shared_by_several_type_pairs_is_walked_per_pair(
+    tmp_path: Path,
+) -> None:
+    """``note -about-> person`` and ``note -about-> team`` share a relation name;
+    a walk from a person reaches its notes once, under the person's edge only."""
+    schema = Schema(
+        metadata=GraphMetadata(name="notes"),
+        core_schema=CoreSchema(
+            vertex_config=VertexConfig(
+                vertices=[
+                    Vertex(name=name, properties=[Field(name="id")], identity=["id"])
+                    for name in ("note", "person", "team")
+                ]
+            ),
+            edge_config=EdgeConfig(
+                edges=[
+                    Edge(source="note", target="person", relation="about"),
+                    Edge(source="note", target="team", relation="about"),
+                ]
+            ),
+        ),
+    )
+    with GraFloBackendWriter(tmp_path) as writer:
+        writer.write_schema(schema)
+        writer.write_vertex_batch("note", [{"id": "n1"}, {"id": "n2"}])
+        writer.write_vertex_batch("person", [{"id": "x"}])
+        writer.write_vertex_batch("team", [{"id": "x"}])
+        writer.write_edge_batch(
+            ("note", "person", "about"), [[{"id": "n1"}, {"id": "x"}, {}]]
+        )
+        writer.write_edge_batch(
+            ("note", "team", "about"), [[{"id": "n2"}, {"id": "x"}, {}]]
+        )
+        writer.flush_index()
+
+    with ConnectionManager(
+        connection_config=GraFloBackendConfig(output_dir=tmp_path)
+    ) as conn:
+        reached = conn.graph_neighbors(
+            "person", {"id": "x"}, direction=EdgeDirection.ANY, schema=schema
+        )
+
+    assert [doc["id"] for doc in reached.vertices["note"]] == ["n1"]
+    assert list(reached.edges) == [("note", "person", "about")]

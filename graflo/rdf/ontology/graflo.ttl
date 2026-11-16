@@ -7,8 +7,8 @@
 @prefix prov: <http://www.w3.org/ns/prov#> .
 
 <https://ontology.growgraph.dev/graflo> a owl:Ontology ;
-    owl:versionIRI <https://ontology.growgraph.dev/graflo/1.11.0> ;
-    owl:versionInfo "1.11.0" ;
+    owl:versionIRI <https://ontology.growgraph.dev/graflo/1.12.0> ;
+    owl:versionInfo "1.12.0" ;
     rdfs:label "GraFlo Ontology"@en ;
     skos:prefLabel "GraFlo Ontology"@en ;
     rdfs:comment "OWL vocabulary describing GraFlo GraphManifest contracts: schema, ingestion, bindings, transforms, and pipeline actors."@en .
@@ -800,6 +800,16 @@ gf:edgeDirected a owl:DatatypeProperty ;
     rdfs:domain gf:Edge ;
     rdfs:range xsd:boolean ;
     rdfs:comment "Whether source-to-target order is meaningful. False marks a logically undirected edge whose two orientations denote one relationship." .
+
+gf:edgeMergeMode a owl:DatatypeProperty ;
+    rdfs:domain gf:Edge ;
+    rdfs:range xsd:string ;
+    rdfs:comment "How many targets one source holds in the relation: `union`, targets accumulate, or `replace`, one target per source that a newer one replaces. Absent means `union`."@en .
+
+gf:edgeExclusive a owl:DatatypeProperty ;
+    rdfs:domain gf:Edge ;
+    rdfs:range xsd:boolean ;
+    rdfs:comment "With `replace`: a different target is a conflict, not an update. Absent means false."@en .
 
 gf:profileVertexName a owl:DatatypeProperty ;
     rdfs:domain gf:Index ;

@@ -112,7 +112,41 @@ def test_mentions_for_points_source_record_at_each_type() -> None:
     assert (edge.source, edge.target) == ("SourceRecord", "Ticket")
     assert edge.semantics is not None
     assert edge.semantics.iri == "https://schema.org/mentions"
-    assert not [e for e in core.edge_config.edges if e.relation == "wasDerivedFrom"]
+    derived = [e for e in core.edge_config.edges if e.relation == "wasDerivedFrom"]
+    # Only a statement is derived from a record here; Ticket's facts are not.
+    assert [(e.source, e.target) for e in derived] == [("Assertion", "SourceRecord")]
+
+
+def test_a_type_records_can_name_is_one_they_can_state_things_about() -> None:
+    ops = plan_lift(
+        _manifest(), LiftSpec(mentions_for=["Ticket"]), aspects=["provenance"]
+    )
+    core = apply_evolution(_manifest(), ops).require_schema().core_schema
+    assertion = core.vertex_config["Assertion"]
+    assert assertion.identity == ["assertion_id"]
+    # One triple: the subject and object are edges, the predicate and a
+    # property's value are fields.
+    assert {"predicate", "value", "quote", "polarity", "modality", "basis"} <= set(
+        assertion.property_names
+    )
+    assert {"valid_from", "valid_to", "granularity", "span_start"} <= set(
+        assertion.property_names
+    )
+    predicate = next(f for f in assertion.properties if f.name == "predicate")
+    assert predicate.semantics is not None
+    assert predicate.semantics.iri == (
+        "http://www.w3.org/1999/02/22-rdf-syntax-ns#predicate"
+    )
+    triples = {(e.source, e.relation, e.target) for e in core.edge_config.edges}
+    assert {("Assertion", "subject", "Ticket"), ("Assertion", "object", "Ticket")} <= (
+        triples
+    )
+
+
+def test_no_named_type_lifts_no_statements() -> None:
+    ops = plan_lift(_manifest(), LiftSpec(), aspects=["provenance"])
+    core = apply_evolution(_manifest(), ops).require_schema().core_schema
+    assert "Assertion" not in core.vertex_config.vertex_set
 
 
 def test_mentions_for_an_unknown_type_is_refused() -> None:

@@ -937,7 +937,15 @@
                     "range": "boolean"
                 },
                 {
+                    "label": "edgeExclusive",
+                    "range": "boolean"
+                },
+                {
                     "label": "edgeIdentities",
+                    "range": "string"
+                },
+                {
+                    "label": "edgeMergeMode",
                     "range": "string"
                 },
                 {
@@ -1663,5 +1671,5 @@
         }
     ],
     "universalRoot": "https://ontology.growgraph.dev/graflo/GrafloArtifact",
-    "version": "1.11.0"
+    "version": "1.12.0"
 }

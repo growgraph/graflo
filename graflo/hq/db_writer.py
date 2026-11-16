@@ -15,12 +15,13 @@ import queue
 import threading
 from collections.abc import Coroutine, Generator, Iterator, Mapping, Sequence
 from contextlib import AsyncExitStack, contextmanager
-from typing import TYPE_CHECKING, Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
 from graflo.architecture.contract.ingestion import IngestionModel
 from graflo.architecture.graph_types import EdgeId, GraphContainer, Weight
 from graflo.architecture.graph_types.merge import fuse_doc_basis
 from graflo.architecture.graph_types.transform import VertexRep
+from graflo.architecture.refusal import WriteRefusal
 from graflo.architecture.schema import Schema, SchemaDBAware
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.physical_keys import PhysicalKeys
@@ -28,7 +29,7 @@ from graflo.architecture.schema.vertex import field_type_value, is_list_field_ty
 from graflo.connections.onto import DBConfig
 from graflo.db.conn import Connection, ConnectionCapability
 from graflo.db.manager import ConnectionManager
-from graflo.db.resolve import key_tuple
+from graflo.db.resolve import KeyTuple, key_tuple
 from graflo.hq.endpoint_resolve import (
     AttachStats,
     WriteStats,
@@ -57,6 +58,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _T = TypeVar("_T")
+
+#: How a target keeps a ``merge: replace`` edge single-valued: by deleting the
+#: source's other stored targets before the insert, or by folding on read.
+SingleValuedMode = Literal["delete", "fold"]
 
 # Backends whose upsert primitive is atomic per key under concurrency:
 # Postgres INSERT .. ON CONFLICT and the keyed REST/NGQL upserts of TigerGraph
@@ -275,9 +280,14 @@ class DBWriter:
 
         Raises:
             ValueError: If an element of a type with a reserved field and
-                *stamp* does not set it.
+                *stamp* does not set it, or a ``merge: replace`` edge goes to a
+                target that can keep it single-valued neither by deleting nor
+                by folding; nothing is written then.
             NotImplementedError: If *guard* is given and the backend does not
                 apply read guards; nothing is written.
+            WriteRefusal: ``exclusive-conflict``, for edges of an ``exclusive``
+                edge whose source already holds another target. Those edges
+                are not written; everything else in *gc* is.
         """
         # Checks that hold whatever the container holds run first, so a batch
         # that cast to nothing is refused like any other.
@@ -288,6 +298,7 @@ class DBWriter:
         check_stamp(gc, self.schema, stamp)
         refuse_reserved_attributes(gc, self.schema)
         self._check_union(gc, conn_conf)
+        self._check_single_valued(gc, conn_conf)
         # A container that no resource produced (``migrate_graph`` writes an
         # exported graph through an empty ingestion model) has no resource to
         # consult, and needs none: extra weights, endpoint selections and the
@@ -522,6 +533,20 @@ class DBWriter:
         )
         if on_vertices or on_edges:
             ConnectionManager.require(conn_conf, ConnectionCapability.UNION_MERGE)
+
+    def _check_single_valued(self, gc: GraphContainer, conn_conf: DBConfig) -> None:
+        """Refuse a ``merge: replace`` edge the target cannot keep single-valued.
+
+        Checked once, before anything is written.
+
+        Raises:
+            ValueError: As :func:`single_valued_mode`.
+        """
+        core_ec = self.schema.core_schema.edge_config
+        for edge_id, rows in gc.edges.items():
+            edge = core_ec.declared(edge_id)
+            if rows and edge is not None:
+                single_valued_mode(edge, conn_conf)
 
     def _upsert(self, db: Any, batch: StoredVertices, conn_conf: DBConfig) -> None:
         """Upsert one vertex type's stored documents on their identity.
@@ -935,8 +960,9 @@ class DBWriter:
                 edge_docs = await asyncio.to_thread(_sync)
             return (edge_id, edge, edge_docs) if edge_docs else None
 
-        async def _insert_one(edge_id: tuple, edge: Edge, edge_docs: list) -> None:
+        async def _insert_one(edge_id: tuple, edge: Edge, edge_docs: list) -> list[str]:
             source, target, relation = edge_id
+            mode = single_valued_mode(edge, conn_conf)
             # Projected before a write slot or a connection is taken.
             stored = (
                 None
@@ -961,13 +987,25 @@ class DBWriter:
                         relation,
                     )
                 )
-                await self._acquire_write_slot(stack, conn_conf, lock_key)
+                # A single-valued edge reads, then deletes, then inserts: two
+                # batches doing that for one source at once would both keep
+                # their target, so its writes never overlap, on any flavor.
+                await self._acquire_write_slot(
+                    stack, conn_conf, lock_key, serialize=mode is not None
+                )
 
-                def _sync() -> None:
+                def _sync() -> list[str]:
                     with self._connection(conn_conf) as db:
-                        if stored is not None:
+                        if stored is None:
+                            return []
+                        docs, conflicts = stored.docs, []
+                        if mode is not None:
+                            docs, conflicts = self._keep_single_valued(
+                                db, edge, stored, mode, ctx
+                            )
+                        if docs:
                             db.insert_edges_batch(
-                                docs_edges=stored.docs,
+                                docs_edges=docs,
                                 source_class=stored.source_class,
                                 target_class=stored.target_class,
                                 relation_name=stored.relation_name,
@@ -975,17 +1013,120 @@ class DBWriter:
                                 match_keys_target=stored.match_keys_target,
                                 **self._edge_kwargs(stored, conn_conf),
                             )
+                        return conflicts
 
-                await asyncio.to_thread(_sync)
+                return await asyncio.to_thread(_sync)
 
         # Every edge id resolves before any inserts, so an ``error`` raised for
         # one leaves the others unwritten too.
         resolved = await _gather_settled(
             [_resolve_one(edge_id, docs) for edge_id, docs in gc.edges.items() if docs]
         )
-        await asyncio.gather(
-            *[_insert_one(*entry) for entry in resolved if entry is not None]
+        # Every insert runs to the end before a conflict is reported, so the
+        # edges that do not conflict are written.
+        conflicts = await _gather_settled(
+            [_insert_one(*entry) for entry in resolved if entry is not None]
         )
+        refused = [line for lines in conflicts for line in lines]
+        if refused:
+            raise WriteRefusal(
+                "exclusive edges not written, their source holds another target:\n"
+                + "\n".join(refused),
+                check="exclusive-conflict",
+                subjects=tuple(refused),
+            )
+
+    def _keep_single_valued(
+        self,
+        db: Any,
+        edge: Edge,
+        stored: StoredEdges,
+        mode: SingleValuedMode,
+        ctx: WriteContext,
+    ) -> tuple[list[Any], list[str]]:
+        """The rows of a ``merge: replace`` edge to insert, one per source.
+
+        Within the batch the last row per source wins, or, for an
+        ``exclusive`` edge, the first target per source. A source's stored
+        targets are read where the target deletes them or the edge is
+        ``exclusive``: under ``delete`` the other stored targets are removed
+        here, before the insert; under ``fold`` the target's reads keep the
+        edge single-valued. A row of an ``exclusive`` edge whose source holds
+        another target is not written.
+
+        Returns:
+            The rows to insert, and one line per row refused as a conflict.
+        """
+        source_keys = stored.match_keys_source
+        target_keys = stored.match_keys_target
+        keys = ctx.keys
+        conflicts: list[str] = []
+
+        def conflict(row: Any, held: dict[str, Any]) -> None:
+            conflicts.append(
+                f"edge {edge.edge_id}: {edge.source} "
+                f"{keys.logical_vertex_doc(edge.source, _project(row[0], source_keys))} "
+                f"holds {edge.target} "
+                f"{keys.logical_vertex_doc(edge.target, _project(held, target_keys))}, "
+                f"refused "
+                f"{keys.logical_vertex_doc(edge.target, _project(row[1], target_keys))}"
+            )
+
+        # One row per source; rows without a complete source key stay as cast.
+        rows: list[Any] = []
+        at: dict[KeyTuple, int] = {}
+        for row in stored.docs:
+            source = _text_key(row[0], source_keys)
+            if source is None:
+                rows.append(row)
+                continue
+            position = at.get(source)
+            if position is None:
+                at[source] = len(rows)
+                rows.append(row)
+            elif not edge.exclusive or _text_key(
+                rows[position][1], target_keys
+            ) == _text_key(row[1], target_keys):
+                rows[position] = row
+            else:
+                conflict(row, rows[position][1])
+
+        if mode == "fold" and not edge.exclusive:
+            return rows, conflicts
+        held = db.fetch_edge_targets(
+            stored.source_class,
+            stored.target_class,
+            stored.relation_name,
+            [row[0] for row in rows],
+            source_keys,
+            target_keys,
+            collection_name=stored.collection_name,
+        )
+        kept: list[Any] = []
+        stale: list[tuple[dict[str, Any], dict[str, Any]]] = []
+        for position, row in enumerate(rows):
+            target = _text_key(row[1], target_keys)
+            others = [
+                doc
+                for doc in held.get(position, [])
+                if _text_key(doc, target_keys) != target
+            ]
+            if others and edge.exclusive:
+                conflict(row, others[0])
+                continue
+            stale.extend((row[0], doc) for doc in others)
+            kept.append(row)
+        if stale and mode == "delete":
+            db.delete_edges(
+                stored.source_class,
+                stored.target_class,
+                stored.relation_name,
+                stale,
+                source_keys,
+                target_keys,
+                collection_name=stored.collection_name,
+            )
+        return kept, conflicts
 
     def _edge_kwargs(self, stored: StoredEdges, conn_conf: DBConfig) -> dict[str, Any]:
         """The flavor's options for inserting *stored*.
@@ -1132,16 +1273,22 @@ class DBWriter:
         stack: AsyncExitStack,
         conn_conf: DBConfig,
         collection: tuple[str | None, ...],
+        *,
+        serialize: bool = False,
     ) -> None:
         """Enter the semaphore and, when the backend's upsert can race with
-        itself (Cypher MERGE has no cross-transaction atomicity), a
-        per-collection lock so the same collection is written by one batch at a
-        time while distinct collections still proceed in parallel.
+        itself (Cypher MERGE has no cross-transaction atomicity) or the caller
+        asks to *serialize*, a per-collection lock so the same collection is
+        written by one batch at a time while distinct collections still proceed
+        in parallel.
 
         The lock is taken before the semaphore, so a write queued behind its
         collection does not hold a ``max_concurrent`` slot while it waits.
         """
-        if conn_conf.connection_type not in _CONCURRENT_UPSERT_SAFE_FLAVORS:
+        if (
+            serialize
+            or conn_conf.connection_type not in _CONCURRENT_UPSERT_SAFE_FLAVORS
+        ):
             loop = asyncio.get_running_loop()
             if self._collection_locks_loop is not loop:
                 self._collection_locks = {}
@@ -1181,6 +1328,58 @@ def require_read_guard(conn_conf: DBConfig) -> None:
         raise NotImplementedError(
             f"{exc}; a guarded write is refused rather than looked up unguarded"
         ) from exc
+
+
+def single_valued_mode(edge: Edge, conn_conf: DBConfig) -> SingleValuedMode | None:
+    """How *conn_conf*'s target keeps *edge* single-valued; ``None`` if it accumulates.
+
+    A ``merge: replace`` edge is kept by deleting a source's other stored
+    targets (``supports_instance_delete`` with ``supports_edge_target_read``),
+    or by folding on read (``supports_single_valued_fold``). An ``exclusive``
+    edge also needs the read, to refuse a second target.
+
+    Raises:
+        ValueError: If the target can do neither, rather than letting targets
+            accumulate.
+    """
+    if edge.merge != "replace":
+        return None
+    declares = ConnectionManager.declares
+    reads = declares(conn_conf, ConnectionCapability.EDGE_TARGET_READ)
+    if declares(conn_conf, ConnectionCapability.SINGLE_VALUED_FOLD) and (
+        reads or not edge.exclusive
+    ):
+        return "fold"
+    if declares(conn_conf, ConnectionCapability.INSTANCE_DELETE) and reads:
+        return "delete"
+    read = ConnectionCapability.EDGE_TARGET_READ.label
+    delete = ConnectionCapability.INSTANCE_DELETE.label
+    fold = ConnectionCapability.SINGLE_VALUED_FOLD.label
+    needs = (
+        f"{delete} and {read}, or {fold} and {read}"
+        if edge.exclusive
+        else f"{delete} and {read}, or {fold}"
+    )
+    raise ValueError(
+        f"Database type {conn_conf.connection_type!r} cannot write edge "
+        f"{edge.edge_id}: merge 'replace'{' with exclusive' if edge.exclusive else ''}"
+        f" holds one target per source, which needs {needs}"
+    )
+
+
+def _project(doc: dict[str, Any], fields: Sequence[str]) -> dict[str, Any]:
+    return {field: doc.get(field) for field in fields}
+
+
+def _text_key(doc: Any, fields: Sequence[str]) -> KeyTuple | None:
+    """*doc*'s values of *fields* as text, which every target compares equal.
+
+    ``None`` when one is missing.
+    """
+    if not isinstance(doc, dict):
+        return None
+    key = key_tuple(doc, fields)
+    return None if key is None else tuple(str(value) for value in key)
 
 
 def _guard_kwargs(guard: FilterExpression | None) -> dict[str, Any]:
