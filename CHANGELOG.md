@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   written, grounded as `prov:generatedAtTime`. `retrieved_at` no longer carries that grounding.
 - On those backends `traverse` now stops at its query's `timeout_s` (10 s unless set), and a
   walk that times out raises `QueryTimeoutError` instead of returning an empty hop.
+- `resolve_records`: only a record with `may_create` creates its entity, keyed or minted. A keyed
+  record without it links to the entity a record of the batch defines or one in the graph, and
+  otherwise stages as `unmatched` (`hidden` when the guard hides it) instead of creating it.
 
 ## [1.27.0]
 

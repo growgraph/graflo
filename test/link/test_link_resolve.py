@@ -110,7 +110,7 @@ def _by(resolution):
 def test_a_complete_key_resolves_and_its_stated_props_are_written(schema):
     graph = _g(
         "note-88",
-        [_m("t", "Ticket", may_create=False, number="HD-4411", wait=26.0)],
+        [_m("t", "Ticket", number="HD-4411", wait=26.0)],
     )
     resolution = resolve_records(schema, [graph])
     assert _by(resolution) == {("note-88", "t"): "key"}
@@ -188,7 +188,7 @@ def test_a_keyless_type_is_minted_only_when_introduced(schema):
         [
             _m("n", "Comment", body="shipped"),
             _m("old", "Comment", may_create=False),
-            _m("t", "Ticket", may_create=False, number="HD-4411"),
+            _m("t", "Ticket", number="HD-4411"),
         ],
         [_r(ON, "n", "t")],
     )
@@ -440,6 +440,76 @@ def test_a_stated_key_the_guard_shows_or_nobody_holds_resolves(
     assert resolution.staged.records == []
 
 
+def test_a_mention_of_a_key_nobody_holds_stages_until_it_is_written(
+    tmp_path, guarded_backend
+):
+    conf = GraFloBackendConfig(output_dir=tmp_path)
+    _zoned_ticket(conf, "HD-1", [1])
+    graph = _g(
+        "chat-1",
+        [
+            _m("t", "Ticket", may_create=False, number="HD-2"),
+            _m("c", "Customer", account="A"),
+        ],
+        [_r(RAISED, "c", "t")],
+    )
+
+    with ConnectionManager(connection_config=conf) as db:
+        resolution = resolve_records(_zoned_schema(), [graph], db=db, guard=_opens(1))
+    assert _reasons(resolution)[("chat-1", "t")] == "unmatched"
+    assert [r.waiting_on for r in resolution.staged.relations] == [["t"]]
+    assert "Ticket" not in promote(_zoned_schema(), resolution).vertices
+
+    _zoned_ticket(conf, "HD-2", [1])
+    with ConnectionManager(connection_config=conf) as db:
+        resolution = resolve_records(_zoned_schema(), [graph], db=db, guard=_opens(1))
+    assert {r.ref: r.found_in for r in resolution.resolved}["t"] == "graph"
+
+
+def test_a_mention_neither_joins_a_hidden_entity_nor_creates_one(
+    tmp_path, guarded_backend
+):
+    conf = GraFloBackendConfig(output_dir=tmp_path)
+    _zoned_ticket(conf, "HD-9", [2], merge="union")
+    graph = _g(
+        "chat-1",
+        [
+            _m("held", "Ticket", may_create=False, number="HD-9"),
+            _m("absent", "Ticket", may_create=False, number="HD-3"),
+        ],
+    )
+
+    with ConnectionManager(connection_config=conf) as db:
+        resolution = resolve_records(
+            _zoned_schema("union"), [graph], db=db, guard=_opens(1)
+        )
+    assert resolution.resolved == []
+    assert _reasons(resolution) == {
+        ("chat-1", "held"): "hidden",
+        ("chat-1", "absent"): "unmatched",
+    }
+
+
+def test_a_mention_no_record_defines_stages_and_writes_nothing(schema):
+    graph = _g("note-1", [_m("t", "Ticket", may_create=False, number="HD-7", wait=3.0)])
+    resolution = resolve_records(schema, [graph])
+    assert _reasons(resolution) == {("note-1", "t"): "unmatched"}
+    assert promote(schema, resolution).vertices == {}
+
+
+def test_a_mention_links_to_the_entity_a_record_of_the_batch_defines(schema):
+    graphs = [
+        _g("note-1", [_m("t", "Ticket", may_create=False, number="HD-7")]),
+        _g("ticket-7", [_m("t", "Ticket", number="HD-7", severity=2)]),
+    ]
+    resolution = resolve_records(schema, graphs)
+    found = {r.source_id: r.found_in for r in resolution.resolved}
+    assert found == {"note-1": "batch", "ticket-7": None}
+    assert promote(schema, resolution).vertices["Ticket"] == [
+        {"number": "HD-7", "severity": 2}
+    ]
+
+
 def _only(zone: int) -> FilterExpression:
     return FilterExpression(
         kind="leaf",
@@ -555,8 +625,8 @@ def test_a_relation_between_records_of_one_entity_is_dropped(schema):
     graph = _g(
         "c1",
         [
-            _m("v1", "Ticket", may_create=False, number="HD-1"),
-            _m("v2", "Ticket", may_create=False, number="HD-1"),
+            _m("v1", "Ticket", number="HD-1"),
+            _m("v2", "Ticket", number="HD-1"),
         ],
         [_r(DUPLICATES, "v1", "v2")],
     )
@@ -591,7 +661,7 @@ def test_a_record_fixed_by_hand_to_its_related_records_entity_is_dropped(schema)
         "c1",
         [
             _m("v1", "Ticket", may_create=False),
-            _m("v2", "Ticket", may_create=False, number="HD-42"),
+            _m("v2", "Ticket", number="HD-42"),
         ],
         [_r(DUPLICATES, "v1", "v2")],
     )
@@ -646,8 +716,8 @@ def test_two_unrelated_records_of_one_entity_both_resolve(schema):
     graph = _g(
         "c1",
         [
-            _m("a", "Ticket", may_create=False, number="HD-1"),
-            _m("b", "Ticket", may_create=False, number="HD-1"),
+            _m("a", "Ticket", number="HD-1"),
+            _m("b", "Ticket", number="HD-1"),
             _m("c", "Customer", account="ACC-1"),
         ],
         [_r(RAISED, "c", "a"), _r(RAISED, "c", "b")],
@@ -667,7 +737,7 @@ def test_two_unrelated_records_of_one_entity_both_resolve(schema):
 def test_a_relation_from_a_record_to_itself_is_kept(schema):
     graph = _g(
         "c1",
-        [_m("v1", "Ticket", may_create=False, number="HD-1")],
+        [_m("v1", "Ticket", number="HD-1")],
         [_r(DUPLICATES, "v1", "v1")],
     )
     resolution = resolve_records(schema, [graph])

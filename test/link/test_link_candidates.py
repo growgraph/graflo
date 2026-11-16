@@ -114,11 +114,13 @@ def _zoned_schema() -> Schema:
     return Schema.model_validate(lifted)
 
 
-def _m(ref: str, type_: str, quote: str = "", **props: Any) -> PartialRecord:
+def _m(
+    ref: str, type_: str, quote: str = "", *, may_create: bool = False, **props: Any
+) -> PartialRecord:
     return PartialRecord(
         ref=ref,
         type=type_,
-        may_create=False,
+        may_create=may_create,
         props={k: StatedProp(value=v) for k, v in props.items()},
         evidence={"quote": quote or ref},
     )
@@ -216,7 +218,10 @@ def test_an_alias_leads_to_what_it_names(db):
 def test_a_stated_relation_to_a_resolved_anchor_gives_the_linked_entities(db):
     graph = _g(
         "m1",
-        [_m("c", "Customer", "the customer"), _m("t", "Ticket", number="HD-4411")],
+        [
+            _m("c", "Customer", "the customer"),
+            _m("t", "Ticket", may_create=True, number="HD-4411"),
+        ],
         [(RAISED, "c", "t")],
     )
     (entry,) = _gather(db, [graph])
@@ -248,8 +253,14 @@ def test_an_ambiguous_secondary_identity_lists_what_it_matched(db):
 
 def test_an_ambiguous_record_finds_its_batch_entities_without_a_database():
     graphs = [
-        _g("a", [_m("c", "Customer", account="ACC-8", email="x@x.com")]),
-        _g("b", [_m("c", "Customer", account="ACC-9", email="x@x.com")]),
+        _g(
+            "a",
+            [_m("c", "Customer", may_create=True, account="ACC-8", email="x@x.com")],
+        ),
+        _g(
+            "b",
+            [_m("c", "Customer", may_create=True, account="ACC-9", email="x@x.com")],
+        ),
         _g("c", [_m("c", "Customer", email="x@x.com")]),
     ]
     schema = _schema()
@@ -345,9 +356,18 @@ def test_a_key_differing_only_in_case_contradicts(db):
 
 def test_a_batch_alternate_matches_literally():
     graphs = [
-        _g("a", [_m("c", "Customer", account="ACC-8", email="x@x.com")]),
-        _g("b", [_m("c", "Customer", account="ACC-9", email="x@x.com")]),
-        _g("d", [_m("c", "Customer", account="ACC-7", email="X@x.com")]),
+        _g(
+            "a",
+            [_m("c", "Customer", may_create=True, account="ACC-8", email="x@x.com")],
+        ),
+        _g(
+            "b",
+            [_m("c", "Customer", may_create=True, account="ACC-9", email="x@x.com")],
+        ),
+        _g(
+            "d",
+            [_m("c", "Customer", may_create=True, account="ACC-7", email="X@x.com")],
+        ),
         _g("c", [_m("c", "Customer", email="x@x.com")]),
     ]
     schema = _schema()
@@ -417,7 +437,13 @@ def test_the_cap_holds_and_says_so(db):
 
 
 def test_nothing_named_finds_nothing(db):
-    graph = _g("m1", [_m("c", "Customer", "someone"), _m("t", "Ticket", number="HD-1")])
+    graph = _g(
+        "m1",
+        [
+            _m("c", "Customer", "someone"),
+            _m("t", "Ticket", may_create=True, number="HD-1"),
+        ],
+    )
     (entry,) = _gather(db, [graph])
     assert entry.candidates == []
     assert not entry.truncated
@@ -438,7 +464,10 @@ def test_only_staged_records_get_an_entry_in_order(db):
 def test_a_candidate_set_round_trips_as_json(db):
     graph = _g(
         "m1",
-        [_m("c", "Customer", "the customer"), _m("t", "Ticket", number="HD-4411")],
+        [
+            _m("c", "Customer", "the customer"),
+            _m("t", "Ticket", may_create=True, number="HD-4411"),
+        ],
         [(RAISED, "c", "t")],
     )
     entries = _gather(db, [graph])
@@ -504,8 +533,8 @@ def test_the_alias_lane_never_offers_the_entity_of_a_related_record(db):
 def test_the_alternate_lane_never_offers_the_entity_of_a_related_record():
     records = [
         _m("v1", "Ticket", title="Pump leak"),
-        _m("v2", "Ticket", number="HD-1", title="Pump leak"),
-        _m("v3", "Ticket", number="HD-2", title="Pump leak"),
+        _m("v2", "Ticket", may_create=True, number="HD-1", title="Pump leak"),
+        _m("v3", "Ticket", may_create=True, number="HD-2", title="Pump leak"),
     ]
     schema = _schema()
     for relations, expected in (
@@ -581,7 +610,10 @@ def test_the_guard_reaches_the_relation_path(zoned, monkeypatch):
     guard = _opens(1)
     graph = _g(
         "m1",
-        [_m("c", "Customer", "the customer"), _m("t", "Ticket", number="HD-4411")],
+        [
+            _m("c", "Customer", "the customer"),
+            _m("t", "Ticket", may_create=True, number="HD-4411"),
+        ],
         [(RAISED, "c", "t")],
     )
     _gather(zoned, [graph], schema=_zoned_schema(), guard=guard)

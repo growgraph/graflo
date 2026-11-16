@@ -48,8 +48,9 @@ class PartialRecord(ConfigBaseModel):
     may_create: bool = Field(
         description=(
             "The record may create its entity when absent, rather than only "
-            "reference one assumed to exist. Decides only whether a type that "
-            "takes no key from the data is minted."
+            "reference one assumed to exist. Only such a record creates an "
+            "entity, keyed or minted; any other links to one that exists or "
+            "stages."
         )
     )
     props: dict[str, StatedProp] = Field(default_factory=dict)

@@ -156,13 +156,15 @@
             type: STRING
         -   name: content_hash
             type: STRING
-        -   name: retrieved_at
+        -   name: written_at
             type: DATETIME
             semantics:
                 iri: http://www.w3.org/ns/prov#generatedAtTime
+        -   name: retrieved_at
+            type: DATETIME
         identity:
         -   source_record_id
-        description: 'The record a fact was read from: a document, a message, an API response, a table row. Carries where the record is and a hash of what it held, not the content itself.'
+        description: 'The record a fact was read from: a document, a message, an API response, a table row. Carries where the record is and a hash of what it held, not the content itself; when it was written and when it was read.'
         semantics:
             iri: http://www.w3.org/ns/prov#Entity
             exact_match:
