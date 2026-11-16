@@ -278,9 +278,24 @@ class GraFloBackendWriter:
             writer.flush()
         for writer in self._edge_writers.values():
             writer.flush()
+        pending = any(
+            writer.unpublished()[0]
+            for writer in (*self._vertex_writers.values(), *self._edge_writers.values())
+        )
+        schema_hash = backend_schema_hash(self._schema)
 
         with directory_lock(self._layout.root):
             on_disk = _read_index(self._layout.index_path)
+            # Nothing new to publish: keep the index as it is, so a reader's
+            # cached schema and edge index stay valid across read-your-writes
+            # flushes.
+            if (
+                not pending
+                and on_disk is not None
+                and on_disk.schema_hash == schema_hash
+            ):
+                self._index = on_disk
+                return on_disk
             vertices = dict(on_disk.vertices) if on_disk is not None else {}
             for name, writer in self._vertex_writers.items():
                 vertices[name] = _merge_entry(vertices.get(name), *writer.unpublished())
@@ -290,7 +305,7 @@ class GraFloBackendWriter:
                 edges[name] = _merge_entry(edges.get(name), *writer.unpublished())
             index = GraFloIndex(
                 graflo_version=_graflo_package_version(),
-                schema_hash=backend_schema_hash(self._schema),
+                schema_hash=schema_hash,
                 vertices=vertices,
                 edges=edges,
             )

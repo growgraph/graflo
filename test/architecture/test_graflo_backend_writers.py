@@ -74,6 +74,37 @@ def test_a_writer_flushed_twice_counts_its_records_once(tmp_path: Path) -> None:
     assert len(index.vertices["person"].chunks) == 1
 
 
+def test_a_flush_with_nothing_new_leaves_the_index_as_it_is(tmp_path: Path) -> None:
+    with GraFloBackendWriter(tmp_path) as writer:
+        writer.write_schema(_schema())
+        writer.write_vertex_batch("person", [{"id": "a"}])
+        writer.flush_index()
+    reader = GraFloBackendReader(tmp_path)
+    reader.read_index()
+    before = (tmp_path / "INDEX.json").read_bytes()
+
+    with GraFloBackendWriter(tmp_path, resume=True) as writer:
+        writer.flush_index()
+
+    assert (tmp_path / "INDEX.json").read_bytes() == before
+    assert reader.reload_index() is False
+
+
+def test_a_new_schema_is_published_with_nothing_else_new(tmp_path: Path) -> None:
+    with GraFloBackendWriter(tmp_path) as writer:
+        writer.write_schema(_schema())
+        writer.flush_index()
+    before = GraFloBackendReader(tmp_path).read_index().schema_hash
+    wider = _schema()
+    wider.core_schema.vertex_config.vertices[0].properties.append(Field(name="name"))
+
+    with GraFloBackendWriter(tmp_path, resume=True) as writer:
+        writer.write_schema(wider)
+        writer.flush_index()
+
+    assert GraFloBackendReader(tmp_path).read_index().schema_hash != before
+
+
 def test_writers_in_several_processes_keep_every_record(tmp_path: Path) -> None:
     with GraFloBackendWriter(tmp_path) as setup:
         setup.write_schema(_schema())
