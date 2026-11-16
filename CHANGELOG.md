@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `match.parts.elide`: a less specific form may keep any of a value's parts, in order, cutting
+  each but the last to its first word ("Spandau bay 3" of "Berlin, Spandau depot, bay 3"). Keys
+  derived from the field include those forms, and the comparator grades them `compatible`.
+
 ## [1.27.2]
 
 ### Fixed

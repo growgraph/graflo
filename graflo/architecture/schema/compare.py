@@ -5,7 +5,8 @@ A comparison yields a level, never agree/contradict:
 - ``exact``: equal after the field's normalizer (or ``coerce_value`` without one);
 - ``compatible``: one is a less specific form of the other, as the field's
   ``match.parts`` defines it -- a leading run of parts (``general_first``), a
-  trailing run (``specific_first``) or a subset (``unordered``);
+  trailing run (``specific_first``) or a subset (``unordered``); with ``elide``,
+  also any parts kept in order, each but the last cut to its first word or not;
 - ``differs``: neither, and not evidence against;
 - ``conflict``: neither, on an ``exclusive`` field -- the one level that vetoes;
 - ``unknown``: a value is missing on either side.
@@ -19,7 +20,7 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from graflo.architecture.schema.coerce import CoercionError, coerce_value
-from graflo.architecture.schema.derive import normal_value, value_parts
+from graflo.architecture.schema.derive import elided_forms, normal_value, value_parts
 from graflo.architecture.schema.vertex import Field, FieldType, field_type_value
 
 MatchLevel = Literal["exact", "compatible", "differs", "conflict", "unknown"]
@@ -89,6 +90,11 @@ def _compare_scalar(
             order = match.parts.order
             if _within(a, b, order) or _within(b, a, order):
                 return "compatible"
+            if match.parts.elide and order != "unordered":
+                # A shortened form may use other separators, or none: compare words.
+                left_form, right_form = " ".join(a), " ".join(b)
+                if left_form in elided_forms(b) or right_form in elided_forms(a):
+                    return "compatible"
     return "conflict" if exclusive else "differs"
 
 

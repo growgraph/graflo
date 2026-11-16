@@ -9,6 +9,7 @@ pure and reads no database.
 
 from __future__ import annotations
 
+import itertools
 from collections.abc import Mapping
 from typing import Any
 
@@ -66,13 +67,15 @@ def value_keys(field: Field, value: Any) -> list[str]:
     ``general_first``, trailing runs for ``specific_first``. "Berlin, pump hall
     2" split on ``,`` gives ``berlin``, ``berlin pump hall 2``. ``unordered``
     parts give no keys: every part would be one, and a common part reaches every
-    value that contains it.
+    value that contains it. With ``elide``, every elided form (:func:`elided_forms`).
     """
     parts = value_parts(field, value)
     match = field.match
     if not parts or match is None or match.parts is None:
         return []
     order = match.parts.order
+    if match.parts.elide and order != "unordered":
+        return elided_forms(parts)
     if order == "general_first":
         runs = [parts[:size] for size in range(1, len(parts) + 1)]
     elif order == "specific_first":
@@ -80,6 +83,27 @@ def value_keys(field: Field, value: Any) -> list[str]:
     else:
         return []
     return list(dict.fromkeys(" ".join(run) for run in runs))
+
+
+def elided_forms(parts: list[str]) -> list[str]:
+    """Every form of *parts* that keeps some of them in order, the last one whole.
+
+    A kept part before the last may be cut to its first word: speech shortens the
+    general parts and says the most specific one it keeps in full. "berlin",
+    "spandau depot", "bay 3" gives "berlin spandau depot bay 3", "spandau bay 3",
+    "bay 3", "berlin spandau depot", ... but not "spandau" or "bay". At most
+    3**n - 1 forms for n parts, joined by spaces, the value itself first.
+    """
+    choices = [
+        [(part, True), *([(part.split()[0], False)] if " " in part else []), ("", True)]
+        for part in parts
+    ]
+    forms: list[str] = []
+    for combo in itertools.product(*choices):
+        kept = [(text, whole) for text, whole in combo if text]
+        if kept and kept[-1][1]:
+            forms.append(" ".join(text for text, _ in kept))
+    return list(dict.fromkeys(forms))
 
 
 def derived_value(vertex: Vertex, field: Field, doc: Mapping[str, Any]) -> Any:

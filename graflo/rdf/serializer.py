@@ -427,6 +427,8 @@ class ManifestRdfSerializer:
                 split if isinstance(split, str) else json.dumps(split),
             )
             add_literal(graph, match_uri, ns.matchOrder, match.parts.order)
+            if match.parts.elide:
+                add_literal(graph, match_uri, ns.matchElide, True)
         if match.exclusive is not None:
             add_literal(graph, match_uri, ns.matchExclusive, match.exclusive)
 

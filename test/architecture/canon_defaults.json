@@ -158,6 +158,7 @@
         "FieldMatch.exclusive": null,
         "FieldMatch.normalizer": null,
         "FieldMatch.parts": null,
+        "FieldParts.elide": false,
         "FieldParts.order": "<required>",
         "FieldParts.split": "<required>",
         "FieldSemantics.broader": [],

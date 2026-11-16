@@ -165,6 +165,7 @@ fieldMatch = GF.fieldMatch
 matchNormalizer = GF.matchNormalizer
 matchSplit = GF.matchSplit
 matchOrder = GF.matchOrder
+matchElide = GF.matchElide
 matchExclusive = GF.matchExclusive
 derivedSource = GF.derivedSource
 derivedForm = GF.derivedForm

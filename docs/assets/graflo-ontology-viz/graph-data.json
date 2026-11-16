@@ -1069,6 +1069,10 @@
             "comment": "How a stated value of a field is compared with a stored one: its normalizer, how it splits into parts, and whether a difference is a conflict. Structure only, never meaning.",
             "datatypeProperties": [
                 {
+                    "label": "matchElide",
+                    "range": "boolean"
+                },
+                {
                     "label": "matchExclusive",
                     "range": "boolean"
                 },

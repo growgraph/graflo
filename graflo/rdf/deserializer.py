@@ -354,6 +354,9 @@ class ManifestRdfDeserializer:
                 "split": split if split == "words" else json.loads(split),
                 "order": self._literal(graph, match_uri, ns.matchOrder),
             }
+            elide = self._literal(graph, match_uri, ns.matchElide)
+            if elide is not None:
+                match["parts"]["elide"] = elide.lower() == "true"
         exclusive = self._literal(graph, match_uri, ns.matchExclusive)
         if exclusive is not None:
             match["exclusive"] = exclusive.lower() == "true"
