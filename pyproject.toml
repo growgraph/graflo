@@ -92,7 +92,8 @@ xml2json = "graflo.cli.xml2json:xml2json"
 [project.urls]
 Changelog = "https://github.com/growgraph/graflo/blob/main/CHANGELOG.md"
 Documentation = "https://growgraph.github.io/graflo"
-Homepage = "https://github.com/growgraph/graflo"
+Homepage = "https://growgraph.dev/open-source/graflo"
+Repository = "https://github.com/growgraph/graflo"
 
 [tool.hatch.build.targets.sdist]
 include = ["graflo"]

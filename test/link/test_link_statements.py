@@ -74,6 +74,39 @@ def test_a_planned_value_is_pending_until_its_time() -> None:
     assert (past.value, past.valid_to) == ("R-3.0", _t(16, 20))
 
 
+def test_a_plan_for_a_day_is_due_only_once_that_day_is_over() -> None:
+    """'Tonight' on the 16th is still pending late on the 16th."""
+    tonight = _runs(
+        "e",
+        "R-3.2",
+        modality="planned",
+        valid_from=_t(16, 0),
+        granularity="day",
+        said_at=_t(16, 9),
+        record="m4",
+    )
+    late = resolve([*CHARGER[:3], tonight], SINGLE, as_of=_t(16, 23))
+    assert _values(late.current) == ["R-3.0"]
+    assert _values(late.pending) == ["R-3.2"]
+    next_day = resolve([*CHARGER[:3], tonight], SINGLE, as_of=_t(17, 0))
+    assert _values(next_day.current) == ["R-3.2"]
+
+
+def test_a_stated_end_closes_the_period_one_unit_later() -> None:
+    week = _runs(
+        "f",
+        "R-3.2",
+        modality="planned",
+        valid_from=_t(12, 0),
+        valid_to=_t(19, 0),
+        granularity="week",
+        said_at=_t(10),
+        record="m5",
+    )
+    assert _values(resolve([week], SINGLE, as_of=_t(25)).pending) == ["R-3.2"]
+    assert _values(resolve([week], SINGLE, as_of=_t(26)).current) == ["R-3.2"]
+
+
 def test_without_a_time_to_resolve_at_every_plan_waits() -> None:
     result = resolve(CHARGER, SINGLE)
     assert _values(result.current) == ["R-3.0"]

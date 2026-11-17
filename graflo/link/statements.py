@@ -19,9 +19,12 @@ relation from one entity.
    conflict. A
    missing time is unknown, never the oldest. Where no value outranks every
    other, the slot is a conflict and holds nothing.
-3. **Modality.** A planned value counts once its ``valid_from`` is at or before
-   ``as_of``; before that, and when ``as_of`` is not given, it is pending. A
-   hedged statement never decides a slot; it is pending.
+3. **Modality.** A planned value counts once its whole stated period has
+   passed by ``as_of``: the period ends one ``granularity`` unit after
+   ``valid_to``, or after ``valid_from`` when no end is stated (an instant, or
+   no granularity, ends where it starts). Until then, and when ``as_of`` is not
+   given, it is pending, so a plan is never reported done before it could have
+   happened. A hedged statement never decides a slot; it is pending.
 4. **Exclusive slots.** A second value is always a conflict; the value with the
    strongest basis stays current when one has it.
 5. **History.** In a stateful slot, each value the current one replaced is kept
@@ -39,7 +42,7 @@ import hashlib
 import json
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import IntEnum
 from itertools import pairwise
 from typing import Any, Literal
@@ -363,9 +366,27 @@ def _denial_withdraws(denial: Statement, affirmation: Statement) -> bool | None:
 def _in_force(statement: Statement, as_of: datetime | None) -> bool:
     if statement.modality != "planned":
         return True
-    if as_of is None or statement.valid_from is None:
+    if as_of is None:
         return False
-    return statement.valid_from <= as_of
+    end = _period_end(statement)
+    return end is not None and end <= as_of
+
+
+def _period_end(statement: Statement) -> datetime | None:
+    """When a statement's stated period is over: one unit past its last period."""
+    last = statement.valid_to or statement.valid_from
+    if last is None:
+        return None
+    unit = statement.granularity
+    if unit == "day":
+        return last + timedelta(days=1)
+    if unit == "week":
+        return last + timedelta(weeks=1)
+    if unit in ("month", "year"):
+        months = 1 if unit == "month" else 12
+        index = last.month - 1 + months
+        return last.replace(year=last.year + index // 12, month=index % 12 + 1)
+    return last
 
 
 def _by_value(statements: list[Statement]) -> dict[str, list[Statement]]:

@@ -1,12 +1,12 @@
 """Keep a graph's stated relations to what its statements resolve to.
 
-A producer writes each affirmed relation as an edge when it states it, including
-one a later statement corrects and one stated only as planned or hedged.
-:func:`reconcile` reads every relation statement
-(:func:`~graflo.link.assertions.read_statements`), resolves them under the
-schema's slot rules (:func:`~graflo.link.statements.resolve`) ``as_of`` a time,
-by default the graph's own (:func:`~graflo.link.assertions.graph_time`), and
-materialises each resolved relation slot:
+A producer may write each affirmed relation as an edge when it states it, or
+leave every stated edge to reconcile; either way :func:`reconcile` reads every
+relation statement (:func:`~graflo.link.assertions.read_statements`), resolves
+them under the schema's slot rules (:func:`~graflo.link.statements.resolve`)
+``as_of`` a time, by default the graph's own
+(:func:`~graflo.link.assertions.graph_time`), and materialises each resolved
+relation slot:
 
 - a stored edge that statements back but that does not hold is deleted;
 - a value that holds and is not stored is written, through the writer, so a

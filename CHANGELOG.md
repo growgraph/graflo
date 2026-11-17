@@ -39,6 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The PyPI homepage, the README and the docs footer link to the project page on growgraph.dev.
 - Docs: the ontology explorer uses the project palette (blue classes, orange enumerations, slate
   external terms, muted group colours) in both light and dark.
 
