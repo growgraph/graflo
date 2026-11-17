@@ -354,6 +354,9 @@ class ManifestRdfDeserializer:
                 "split": split if split == "words" else json.loads(split),
                 "order": self._literal(graph, match_uri, ns.matchOrder),
             }
+            elide = self._literal(graph, match_uri, ns.matchElide)
+            if elide is not None:
+                match["parts"]["elide"] = elide.lower() == "true"
         exclusive = self._literal(graph, match_uri, ns.matchExclusive)
         if exclusive is not None:
             match["exclusive"] = exclusive.lower() == "true"
@@ -459,6 +462,12 @@ class ManifestRdfDeserializer:
         )
         if isinstance(identities, list):
             edge["identities"] = identities
+        merge_mode = self._literal(graph, edge_uri, ns.edgeMergeMode)
+        if merge_mode is not None:
+            edge["merge"] = merge_mode
+        exclusive = self._literal(graph, edge_uri, ns.edgeExclusive)
+        if exclusive is not None:
+            edge["exclusive"] = exclusive.lower() == "true"
         edge_type = self._literal(graph, edge_uri, ns.edgeType)
         if edge_type is not None:
             edge["type"] = edge_type

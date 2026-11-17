@@ -6,15 +6,18 @@ import gzip
 import json
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
 
-from graflo.architecture.backend.fold import fold_edges, fold_vertices
+from graflo.architecture.backend.fold import SingleValued, fold_edges, fold_vertices
 from graflo.architecture.backend.index import GraFloIndex
 from graflo.architecture.backend.layout import GraFloLayout
 from graflo.architecture.graph_types import EdgeId, GraphContainer
 from graflo.architecture.schema.document import Schema
 from graflo.architecture.schema.physical_keys import PhysicalKeys
 from graflo.onto import DBType
+
+if TYPE_CHECKING:
+    from graflo.architecture.schema.edge import Edge
 
 
 def stored_schema(schema: Schema) -> Schema:
@@ -47,6 +50,13 @@ def edge_chunk_key(schema: Schema, edge_id: EdgeId) -> EdgeId:
     )
 
 
+def _single_valued(edge: Edge) -> SingleValued | None:
+    """How *edge* folds a record to another target of the same source, if it does."""
+    if edge.merge != "replace":
+        return None
+    return "first" if edge.exclusive else "last"
+
+
 class _Folding(NamedTuple):
     """What folds the records of one stored collection, in stored names."""
 
@@ -59,6 +69,7 @@ class _EdgeFolding(NamedTuple):
     target_identity: tuple[str, ...]
     key_fields: tuple[str, ...]
     union: frozenset[str]
+    single: SingleValued | None
 
 
 class GraFloBackendReader:
@@ -149,6 +160,7 @@ class GraFloBackendReader:
                     identity(edge.target),
                     tuple(keys.edge_fields(edge.edge_id, merge)),
                     frozenset(keys.edge_fields(edge.edge_id, union)),
+                    _single_valued(edge),
                 ),
             )
         self._vertex_folding, self._edge_folding = vertices, edges
@@ -191,6 +203,7 @@ class GraFloBackendReader:
             folding.target_identity,
             folding.key_fields,
             folding.union,
+            folding.single,
         )
 
     def iter_vertex_batches(

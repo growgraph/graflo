@@ -21,6 +21,7 @@ properties:
 | `normalizer` | A registered normalizer, applied to the whole value and to each part. `label_v1` folds case, Unicode width, punctuation and spacing: `"PUMP-x1!"` and `"Pump X1"` are both `"pump x1"`. Without one, values compare after type coercion alone. |
 | `parts.split` | `words`, or the separators between parts. Required with `parts`. |
 | `parts.order` | Which end of the value is the general one: `general_first`, `specific_first` or `unordered`. Required with `parts`. |
+| `parts.elide` | Whether a less specific form may keep any of the parts, in order, cutting each but the last to its first word: "Spandau bay 3" of "Berlin, Spandau depot, bay 3". Ordered `parts` only; default false. A value of n parts has up to 3ⁿ − 1 such forms, so declare it on short hierarchical values. |
 | `exclusive` | Whether two different values are evidence against a match. Unset: true on a key or alternate-key field, false otherwise. |
 
 Some shapes, as examples:
@@ -30,6 +31,7 @@ Some shapes, as examples:
 | a serial number used as a key | nothing |
 | a status | `{normalizer: label_v1, exclusive: true}` |
 | an address, a category path, a version | `{normalizer: label_v1, parts: {split: [...], order: general_first}}` |
+| a place people shorten when they say it | `{normalizer: label_v1, parts: {split: [","], order: general_first, elide: true}}` |
 | a host name | `{normalizer: label_v1, parts: {split: ["."], order: specific_first}}` |
 | a name whose short form is its first words | `{normalizer: label_v1, parts: {split: words, order: general_first}, exclusive: false}` |
 | free text | `{normalizer: label_v1, parts: {split: words, order: unordered}}` |
@@ -41,7 +43,7 @@ Some shapes, as examples:
 | Level | When |
 |---|---|
 | `exact` | Equal after the normalizer |
-| `compatible` | One is a less specific form of the other: a leading run of parts (`general_first`), a trailing run (`specific_first`) or a subset of parts (`unordered`) |
+| `compatible` | One is a less specific form of the other: a leading run of parts (`general_first`), a trailing run (`specific_first`), a subset of parts (`unordered`), or with `elide` an elided form |
 | `differs` | Neither, on a field that is not `exclusive`; not evidence against |
 | `conflict` | Neither, on an `exclusive` field |
 | `unknown` | A value is missing on either side |
@@ -67,7 +69,7 @@ properties:
 ```
 
 - `form: normal` stores the source's normal form: "Berlin  Pump!" gives `berlin pump`.
-- `form: keys` stores every run of the source's parts that keeps the general end: "Berlin, pump hall 2" gives `berlin` and `berlin pump hall 2`. It needs a `LIST` of `STRING` and ordered `parts` on its source.
+- `form: keys` stores every run of the source's parts that keeps the general end: "Berlin, pump hall 2" gives `berlin` and `berlin pump hall 2`; with `elide`, every elided form. It needs a `LIST` of `STRING` and ordered `parts` on its source.
 - The normalizer and the split are read from the source's `match`, so the source must declare a `normalizer`. A derived field declares no `match`, is never `reserved` and never merges by `union`.
 
 GraFlo sets derived fields before every vertex write and every digest, and overwrites a value a document states. A type sheet, element text and instance schema never show them: a model is never asked for a field GraFlo computes.

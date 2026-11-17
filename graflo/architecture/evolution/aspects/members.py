@@ -24,13 +24,19 @@ from graflo.architecture.schema.vertex import Vertex
 from .base import PROVENANCE, STATE
 from .provenance.vocabulary import (
     AGENT,
+    ASSERTION,
     MENTIONS,
+    OBJECT,
     SOURCE_RECORD,
+    SUBJECT,
     agent_vertex,
+    assertion_vertex,
     attributed_to_edge,
     derived_from_edge,
     mentions_edge,
+    object_edge,
     source_record_vertex,
+    subject_edge,
 )
 from .state.vocabulary import (
     feature_of_interest_edge,
@@ -89,6 +95,16 @@ def _lifted(edge: Edge) -> tuple[str, str | None, str | None] | None:
         and _same_shape(edge, mentions_edge(edge.target))
     ):
         return PROVENANCE, SOURCE_RECORD, edge.target
+    if (
+        edge.source == ASSERTION
+        and edge.relation == SUBJECT
+        and _same_shape(edge, subject_edge(edge.target))
+    ) or (
+        edge.source == ASSERTION
+        and edge.relation == OBJECT
+        and _same_shape(edge, object_edge(edge.target))
+    ):
+        return PROVENANCE, ASSERTION, edge.target
     if _same_shape(edge, attributed_to_edge()):
         return PROVENANCE, SOURCE_RECORD, None
     if edge.source == state_type_name(edge.target) and _same_shape(
@@ -115,7 +131,7 @@ def aspect_members(schema: Schema) -> AspectMembers:
     core = schema.core_schema
     vertices = {v.name: v for v in core.vertex_config.vertices}
     types: dict[str, str] = {}
-    for built in (source_record_vertex(), agent_vertex()):
+    for built in (source_record_vertex(), agent_vertex(), assertion_vertex()):
         found = vertices.get(built.name)
         if found is not None and _iri(found) == _iri(built):
             types[built.name] = PROVENANCE

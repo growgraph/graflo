@@ -27,7 +27,7 @@
 
   // Group colours are addressed by hue so no group name ever appears in CSS or
   // JS; bands and accents read `--group-hue` off the element.
-  const GROUP_HUES = [210, 145, 28, 275, 340, 190, 60, 12];
+  const GROUP_HUES = [214, 28, 170, 250, 200, 340, 45, 190];
 
   // Ignore sub-pixel jitter so tap/click can select nodes instead of being treated as drag.
   const DRAG_THRESHOLD_PX = 5;
@@ -43,9 +43,9 @@
 
   const defs = document.createElementNS(SVG_NS, "defs");
   [
-    ["subClassOf", "#546e7a", 8],
-    ["equivalentClass", "#009688", 7],
-    ["objectProperty", "#1565c0", 6],
+    ["subClassOf", "#7b8799", 8],
+    ["equivalentClass", "#2f7a6b", 7],
+    ["objectProperty", "#3f6cb0", 6],
   ].forEach(function (entry) {
     const marker = document.createElementNS(SVG_NS, "marker");
     marker.setAttribute("id", "arrow-" + entry[0]);

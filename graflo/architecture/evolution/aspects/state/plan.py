@@ -26,7 +26,7 @@ from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.semantics import FieldSemantics, Semantics
-from graflo.architecture.schema.vertex import Field, Vertex
+from graflo.architecture.schema.vertex import Field, FieldType, Vertex
 
 from ...ops import (
     FieldSemanticsTarget,
@@ -300,9 +300,15 @@ def _scaffold_ops(
                 "nothing to point back to"
             )
         name = vocab.state_type_name(subject)
+        names = spec.stateful[subject]
+        relations = _single_relations(subject, names, core)
         moved = _moved_fields(
-            subject, spec.stateful[subject], vertex, key_fields, by_name.get(name)
-        )
+            subject,
+            [n for n in names if n not in relations],
+            vertex,
+            key_fields,
+            by_name.get(name),
+        ) + [Field(name=relation, type=FieldType.STRING) for relation in relations]
         vertices.append(vocab.state_vertex(subject, key_fields, moved))
         edges.append(vocab.specialization_edge(subject))
 
@@ -318,6 +324,28 @@ def _scaffold_ops(
         edges.append(vocab.feature_of_interest_edge(subject))
 
     return join(core, vertices=vertices, edges=edges), [v.name for v in vertices]
+
+
+def _single_relations(subject: str, names: list[str], core: Any) -> list[str]:
+    """The names in *names* that are relations from *subject*, in order.
+
+    A relation's history is the target it held over each interval, so only a
+    single-valued one (``merge: replace``) has one to keep. Its state column
+    holds the target's key; the edge stays on the entity as the current value.
+    """
+    edges = {
+        edge.relation: edge
+        for edge in core.edge_config.edges
+        if edge.source == subject and edge.relation
+    }
+    relations = [name for name in names if name in edges]
+    many = sorted(name for name in relations if edges[name].merge != "replace")
+    if many:
+        raise LiftError(
+            f"{subject!r}: relations {many} hold many targets (merge 'union'), so "
+            "they have no single value to keep history of; declare merge 'replace'"
+        )
+    return relations
 
 
 def _moved_fields(

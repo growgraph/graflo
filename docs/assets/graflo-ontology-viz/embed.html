@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>GraFlo Ontology (v1.11.0)</title>
+  <title>GraFlo Ontology (v1.12.0)</title>
   <link rel="stylesheet" href="graph-view.css" />
 </head>
 <body class="embed">
@@ -967,7 +967,15 @@
                     "range": "boolean"
                 },
                 {
+                    "label": "edgeExclusive",
+                    "range": "boolean"
+                },
+                {
                     "label": "edgeIdentities",
+                    "range": "string"
+                },
+                {
+                    "label": "edgeMergeMode",
                     "range": "string"
                 },
                 {
@@ -1098,6 +1106,10 @@
         {
             "comment": "How a stated value of a field is compared with a stored one: its normalizer, how it splits into parts, and whether a difference is a conflict. Structure only, never meaning.",
             "datatypeProperties": [
+                {
+                    "label": "matchElide",
+                    "range": "boolean"
+                },
                 {
                     "label": "matchExclusive",
                     "range": "boolean"
@@ -1689,7 +1701,7 @@
         }
     ],
     "universalRoot": "https://ontology.growgraph.dev/graflo/GrafloArtifact",
-    "version": "1.11.0"
+    "version": "1.12.0"
 };</script>
   <script src="graph-view.js"></script>
 </body>

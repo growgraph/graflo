@@ -78,6 +78,17 @@ class ConnectionManager:
         ]
 
     @classmethod
+    def declares(
+        cls, connection_config: DBConfig, capability: ConnectionCapability
+    ) -> bool:
+        """Whether the connection class for *connection_config* declares *capability*.
+
+        ``False`` for a flavor with no implementation.
+        """
+        conn_cls = cls.target_conn_mapping.get(connection_config.connection_type)
+        return bool(getattr(conn_cls, capability.value, False))
+
+    @classmethod
     def graph_export_flavors(cls) -> list[DBType]:
         """Database types that support bulk graph export."""
         return cls.flavors_supporting(ConnectionCapability.GRAPH_EXPORT)

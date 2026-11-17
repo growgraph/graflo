@@ -39,6 +39,10 @@ HOST: dict[str, Any] = {
     "normalizer": "label_v1",
     "parts": {"split": ["."], "order": "specific_first"},
 }
+ELIDED: dict[str, Any] = {
+    "normalizer": "label_v1",
+    "parts": {"split": [","], "order": "general_first", "elide": True},
+}
 WORDS: dict[str, Any] = {
     "normalizer": "label_v1",
     "parts": {"split": "words", "order": "unordered"},
@@ -102,6 +106,7 @@ def test_a_field_without_match_or_derived_dumps_as_before():
         ({"parts": {"split": [], "order": "general_first"}}, "separators"),
         ({"parts": {"split": "words"}}, "order"),
         ({"parts": {"order": "general_first"}}, "split"),
+        ({"parts": {"split": "words", "order": "unordered", "elide": True}}, "elide"),
     ],
 )
 def test_a_match_states_its_structure_completely(declaration, message):
@@ -218,6 +223,27 @@ def test_keys_are_the_runs_that_keep_the_general_end(match, value, keys):
     assert value_keys(_field(match=match), value) == keys
 
 
+def test_elided_keys_keep_parts_in_order_and_the_last_kept_one_whole():
+    keys = value_keys(_field(match=ELIDED), "Berlin, Spandau depot, bay 3")
+    assert keys[0] == "berlin spandau depot bay 3"
+    assert {
+        "berlin",
+        "berlin spandau depot",
+        "spandau bay 3",
+        "bay 3",
+    } <= set(keys)
+    assert not {
+        "3",
+        "bay",
+        "spandau",
+        "spandau bay",
+        "depot bay 3",
+        "bay 3 spandau",
+        "",
+    } & set(keys)
+    assert len(keys) == len(set(keys)) <= 3**3 - 1
+
+
 def test_without_a_normalizer_parts_are_kept_as_written():
     field = _field(match={"parts": {"split": ["/"], "order": "general_first"}})
     assert value_parts(field, "Lab/ Bay 3") == ["Lab", "Bay 3"]
@@ -251,6 +277,11 @@ def test_derivation_overwrites_a_stated_value_and_drops_one_without_its_source()
         (HOST, "example.com", "eu.example.com", True, "compatible"),
         (HOST, "eu.example", "eu.example.com", True, "conflict"),
         (WORDS, "controller", "P-200 controller", False, "compatible"),
+        (SITE, "Spandau bay 3", "Berlin, Spandau depot, bay 3", False, "differs"),
+        (ELIDED, "Spandau bay 3", "Berlin, Spandau depot, bay 3", False, "compatible"),
+        (ELIDED, "Berlin, Spandau depot, bay 3", "Spandau bay 3", False, "compatible"),
+        (ELIDED, "Spandau bay 4", "Berlin, Spandau depot, bay 3", False, "differs"),
+        (ELIDED, "depot bay 3", "Berlin, Spandau depot, bay 3", False, "differs"),
         (
             {
                 **LABEL,
@@ -345,6 +376,7 @@ def test_match_and_derived_round_trip_through_rdf():
                                         "match": {**HOST, "exclusive": False},
                                     },
                                     {"name": "tags", "match": {}},
+                                    {"name": "site", "match": ELIDED},
                                 ],
                             },
                         ]

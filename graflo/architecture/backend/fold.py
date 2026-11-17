@@ -9,12 +9,21 @@ sits where its first record was.
 
 A record whose identity is incomplete is not an upsert target and is kept as
 written.
+
+An edge declared ``merge: replace`` holds one target per source, so its records
+fold by source: a record to another target replaces the edge (or, when the
+edge is ``exclusive``, is dropped and the first target stays), and a record to
+the same target is an upsert of it.
 """
 
 from __future__ import annotations
 
 from collections.abc import Collection, Iterable, Sequence
-from typing import Any
+from typing import Any, Literal
+
+#: How a single-valued edge folds a record to another target: ``last`` replaces
+#: the edge (``merge: replace``), ``first`` keeps it (``exclusive``).
+SingleValued = Literal["last", "first"]
 
 from graflo.architecture.graph_types.merge import union_members
 
@@ -68,11 +77,14 @@ def fold_edges(
     target_identity: Sequence[str],
     key_fields: Sequence[str] = (),
     union: Collection[str] = (),
+    single: SingleValued | None = None,
 ) -> list[list[Any]]:
     """One ``[source, target, properties]`` record per edge of *records*.
 
     An edge is keyed by its endpoints' identities and the values of
     *key_fields* among its properties (the relation is the collection's own).
+    With *single*, by its source alone: one edge per source, folded as the
+    module says.
     """
     out: list[list[Any]] = []
     position: dict[tuple[Any, ...], int] = {}
@@ -89,17 +101,26 @@ def fold_edges(
         if source_key is None or target_key is None:
             out.append(record)
             continue
-        extra = tuple(str(properties.get(field)) for field in key_fields)
-        key = (source_key, target_key, extra)
+        if single is None:
+            extra = tuple(str(properties.get(field)) for field in key_fields)
+            key: tuple[Any, ...] = (source_key, target_key, extra)
+        else:
+            key = (source_key,)
         at = position.get(key)
         if at is None:
             position[key] = len(out)
             out.append([dict(source), dict(target), _first(properties, union)])
-        else:
-            folded = out[at]
+            continue
+        folded = out[at]
+        if single is not None and _key(folded[1], target_identity) != target_key:
+            if single == "first":
+                continue
             folded[0].update(source)
-            folded[1].update(target)
-            merge_record(folded[2], properties, union)
+            out[at] = [folded[0], dict(target), _first(properties, union)]
+            continue
+        folded[0].update(source)
+        folded[1].update(target)
+        merge_record(folded[2], properties, union)
     return out
 
 

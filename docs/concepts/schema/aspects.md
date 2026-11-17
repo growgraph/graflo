@@ -121,18 +121,22 @@ is still read from its schema.
 
 ## The provenance aspect
 
-Two types and two edges:
+Three types and their edges:
 
 | Type | Key | Properties | Grounded as |
 |---|---|---|---|
 | `SourceRecord` | `source_record_id` | `source_uri`, `media_type`, `content_hash`, `written_at`, `retrieved_at` | `prov:Entity` |
 | `Agent` | `agent_id` | `label`, `agent_kind` | `prov:Agent`, `sosa:Sensor` |
+| `Assertion` | `assertion_id` | `predicate` (`rdf:predicate`), `value`, `polarity`, `modality`, `valid_from` (`time:hasBeginning`), `valid_to` (`time:hasEnd`), `granularity`, `quote`, `span_start`, `span_end`, `basis` | `rdf:Statement` |
 
 | Edge | Properties | Grounded as |
 |---|---|---|
 | `<Type> -wasDerivedFrom-> SourceRecord` | — | `prov:wasDerivedFrom` |
 | `SourceRecord -wasAttributedTo-> Agent` | `role` | `prov:wasAttributedTo` |
 | `SourceRecord -mentions-> <Type>` | — | `schema:mentions` |
+| `Assertion -wasDerivedFrom-> SourceRecord` | — | `prov:wasDerivedFrom` |
+| `Assertion -subject-> <Type>` | — | `rdf:subject` |
+| `Assertion -object-> <Type>` | — | `rdf:object` |
 
 `written_at` is when the record itself was written, grounded as `prov:generatedAtTime`: a
 relative time in its text ("this morning") is read against it. `retrieved_at` is when it was read.
@@ -151,6 +155,21 @@ Which types gain `wasDerivedFrom`:
 
 `SourceRecord -wasAttributedTo-> Agent` is added even when nothing else is, so
 the schema can always say who produced a record.
+
+An `Assertion` is one statement a record makes, one triple: its `subject` edge
+is the entity, `predicate` names the property or relation stated, and the value
+is a literal `value` for a property (text, read back as the property's type) or
+an `object` edge for a relation. It keeps the `quote` it was read from, the time
+the statement says it holds (`valid_from`, `valid_to`, `granularity`: `instant`,
+`day`, `week`, `month` or `year`), its `modality` (`actual`, `planned` or
+`hedged`), its `polarity` (`stated` or `denied`) and its `basis`, how it was
+obtained: `extracted` (read from text by a model), `confirmed` (by a person) or
+`recorded` (by a system of record). A fact's current value is resolved from its
+assertions, which are never overwritten; `graflo.link.assertions` writes and
+reads them, and `graflo.link.reconcile` keeps the stored relations to what they
+resolve to. The lift adds `Assertion` when `mentions_for` names any type, with
+`subject` and `object` edges to each: a type a record can name is one it can
+state something about.
 
 `mentions` says a record names an entity, for the types in the spec's
 `mentions_for`. It answers "which records name this?" in one hop for any type,
@@ -220,6 +239,12 @@ The state aspect also makes the manifest say what it left implicit: it grounds
 the types you list, states `directed` on every edge, sets the units you declare
 on existing properties, and pins an identity for types that only had one by
 fallback.
+
+`stateful` may also name a relation from the type when it is single-valued
+(`merge: replace`): the state row then holds the target's key in a column named
+after the relation, and the edge stays on the entity as the current value. A
+relation with many targets has no single value to keep history of, and is
+refused.
 
 By default the moved properties are removed from their type (`retire: move`);
 `retire: keep` leaves them in place as the current value beside the history.

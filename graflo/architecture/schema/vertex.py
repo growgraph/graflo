@@ -163,6 +163,11 @@ class FieldParts(ConfigBaseModel):
     end: "Berlin" of "Berlin, pump hall 2" (``general_first``), "example.com" of
     "eu.example.com" (``specific_first``). ``unordered`` parts have no such run:
     one value is less specific when its parts are a subset of the other's.
+
+    With ``elide``, a less specific form may also keep any of the parts, in
+    order, and may cut each but the last to its first word: "Spandau bay 3"
+    of "Berlin, Spandau depot, bay 3". A value of n parts has at most 3**n - 1
+    such forms, so declare it on short hierarchical values only.
     """
 
     split: Literal["words"] | list[str] = PydanticField(
@@ -179,6 +184,22 @@ class FieldParts(ConfigBaseModel):
             "or ``unordered``. Required: no order is assumed."
         ),
     )
+    elide: bool = PydanticField(
+        default=False,
+        description=(
+            "Whether a less specific form may keep any of the parts, in order, "
+            "each but the last kept one whole or cut to its first word "
+            "(``general_first`` or ``specific_first`` only)."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _elide_needs_an_order(self) -> FieldParts:
+        if self.elide and self.order == "unordered":
+            raise ValueError(
+                "elide needs ordered parts: unordered parts already match by subset"
+            )
+        return self
 
     @field_validator("split")
     @classmethod

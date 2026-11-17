@@ -20,7 +20,8 @@ a directory on disk.
 It is for engineers who build a graph from several sources and want its
 description in one reviewable file rather than spread across load scripts.
 
-**Documentation:** [growgraph.github.io/graflo](https://growgraph.github.io/graflo/)
+**Documentation:** [growgraph.github.io/graflo](https://growgraph.github.io/graflo/) ·
+**Project page:** [growgraph.dev/open-source/graflo](https://growgraph.dev/open-source/graflo)
 
 ## What you can do with it
 

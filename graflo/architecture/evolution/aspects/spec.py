@@ -75,9 +75,10 @@ class LiftSpec(ConfigBaseModel):
     stateful: dict[str, list[str]] = PydanticField(
         default_factory=dict,
         description=(
-            "Per-type mutable properties: ``{type_name: [property, ...]}``. Each "
-            "named type gains a ``<Type>State`` carrying those properties over a "
-            "validity interval."
+            "Per-type facts that change: ``{type_name: [name, ...]}``, each a "
+            "property or a single-valued relation (``merge: replace``) from that "
+            "type. Each named type gains a ``<Type>State`` carrying them over a "
+            "validity interval; a relation's column holds its target's key."
         ),
     )
     observed: list[str] = PydanticField(

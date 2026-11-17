@@ -7,6 +7,15 @@ was landed, and the graph points at it. ``Agent`` is who or what produced the
 record. Both are ``prov:`` types; ``wasDerivedFrom`` and ``wasAttributedTo`` are
 the PROV-O relations. ``mentions`` says a record names an entity, which holds
 whether or not the entity's facts were read from that record.
+
+``Assertion`` is one statement a record makes, one triple (``rdf:Statement``):
+its ``subject`` edge names the entity, ``predicate`` the property or relation
+stated, and the stated value is a literal ``value`` for a property or an
+``object`` edge for a relation. It carries the quote it was read from, when the
+statement says it holds, whether it reports something done, planned or
+uncertain, whether it denies it, and how it was obtained (``basis``). A fact's
+current value is resolved from its assertions; the assertions are never
+overwritten.
 """
 
 from __future__ import annotations
@@ -21,13 +30,20 @@ from ..iris import (
     PROV_GENERATED_AT,
     PROV_WAS_ATTRIBUTED_TO,
     PROV_WAS_DERIVED_FROM,
+    RDF_OBJECT,
+    RDF_PREDICATE,
+    RDF_STATEMENT,
+    RDF_SUBJECT,
     RDFS_LABEL,
     SCHEMA_MENTIONS,
     SOSA_SENSOR,
+    TIME_HAS_BEGINNING,
+    TIME_HAS_END,
 )
 
 SOURCE_RECORD = "SourceRecord"
 AGENT = "Agent"
+ASSERTION = "Assertion"
 
 SOURCE_RECORD_ID = "source_record_id"
 SOURCE_URI = "source_uri"
@@ -38,6 +54,22 @@ RETRIEVED_AT = "retrieved_at"
 ROLE = "role"
 
 MENTIONS = "mentions"
+DERIVED_FROM = "wasDerivedFrom"
+SUBJECT = "subject"
+OBJECT = "object"
+
+ASSERTION_ID = "assertion_id"
+PREDICATE = "predicate"
+VALUE = "value"
+POLARITY = "polarity"
+MODALITY = "modality"
+VALID_FROM = "valid_from"
+VALID_TO = "valid_to"
+GRANULARITY = "granularity"
+QUOTE = "quote"
+SPAN_START = "span_start"
+SPAN_END = "span_end"
+BASIS = "basis"
 
 
 def source_record_vertex() -> Vertex:
@@ -88,6 +120,57 @@ def agent_vertex() -> Vertex:
     )
 
 
+def assertion_vertex() -> Vertex:
+    """One statement a record makes: one triple, with its quote, time and mood."""
+    string = FieldType.STRING
+    return Vertex(
+        name=ASSERTION,
+        description=(
+            "One statement a record makes, one triple: the entity it is about "
+            "(subject), the property or relation stated (predicate), and a "
+            "property's value or a relation's target (object). With the quote it "
+            "was read from, when it says the fact holds, whether it reports "
+            "something done, planned or uncertain, whether it denies it, and how "
+            "it was obtained."
+        ),
+        semantics=Semantics(iri=RDF_STATEMENT, exact_match=[RDF_STATEMENT]),
+        properties=[
+            Field(name=ASSERTION_ID, type=string),
+            Field(
+                name=PREDICATE,
+                type=string,
+                semantics=FieldSemantics(iri=RDF_PREDICATE),
+            ),
+            # A property's value as text, read back as the property's type; a
+            # relation's target is its `object` edge instead.
+            Field(name=VALUE, type=string),
+            # `stated` or `denied`.
+            Field(name=POLARITY, type=string),
+            # `actual`, `planned` or `hedged`.
+            Field(name=MODALITY, type=string),
+            Field(
+                name=VALID_FROM,
+                type=FieldType.DATETIME,
+                semantics=FieldSemantics(iri=TIME_HAS_BEGINNING),
+            ),
+            Field(
+                name=VALID_TO,
+                type=FieldType.DATETIME,
+                semantics=FieldSemantics(iri=TIME_HAS_END),
+            ),
+            # `instant`, `day`, `week`, `month` or `year`.
+            Field(name=GRANULARITY, type=string),
+            Field(name=QUOTE, type=string),
+            Field(name=SPAN_START, type=FieldType.INT),
+            Field(name=SPAN_END, type=FieldType.INT),
+            # `extracted` (read from text by a model), `confirmed` (by a
+            # person) or `recorded` (by a system of record).
+            Field(name=BASIS, type=string),
+        ],
+        identity=[ASSERTION_ID],
+    )
+
+
 def grounded_edge(
     source: str,
     target: str,
@@ -114,7 +197,7 @@ def derived_from_edge(source: str) -> Edge:
     return grounded_edge(
         source,
         SOURCE_RECORD,
-        "wasDerivedFrom",
+        DERIVED_FROM,
         PROV_WAS_DERIVED_FROM,
         "What this fact was read from.",
     )
@@ -128,6 +211,28 @@ def mentions_edge(target: str) -> Edge:
         MENTIONS,
         SCHEMA_MENTIONS,
         "An entity this record names.",
+    )
+
+
+def subject_edge(target: str) -> Edge:
+    """``Assertion -subject-> <target>``: the vertex stated, or a relation's source."""
+    return grounded_edge(
+        ASSERTION,
+        target,
+        SUBJECT,
+        RDF_SUBJECT,
+        "The vertex this statement is about, or the source of the relation it states.",
+    )
+
+
+def object_edge(target: str) -> Edge:
+    """``Assertion -object-> <target>``: the target of a stated relation."""
+    return grounded_edge(
+        ASSERTION,
+        target,
+        OBJECT,
+        RDF_OBJECT,
+        "The target of the relation this statement states.",
     )
 
 
@@ -145,19 +250,38 @@ def attributed_to_edge() -> Edge:
 
 __all__ = [
     "AGENT",
+    "ASSERTION",
+    "ASSERTION_ID",
+    "BASIS",
     "CONTENT_HASH",
+    "DERIVED_FROM",
+    "GRANULARITY",
     "MEDIA_TYPE",
     "MENTIONS",
+    "MODALITY",
+    "OBJECT",
+    "POLARITY",
+    "PREDICATE",
+    "QUOTE",
     "RETRIEVED_AT",
     "ROLE",
     "SOURCE_RECORD",
     "SOURCE_RECORD_ID",
     "SOURCE_URI",
+    "SPAN_END",
+    "SPAN_START",
+    "SUBJECT",
+    "VALID_FROM",
+    "VALID_TO",
+    "VALUE",
     "WRITTEN_AT",
     "agent_vertex",
+    "assertion_vertex",
     "attributed_to_edge",
     "derived_from_edge",
     "grounded_edge",
     "mentions_edge",
+    "object_edge",
     "source_record_vertex",
+    "subject_edge",
 ]

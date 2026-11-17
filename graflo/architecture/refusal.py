@@ -83,6 +83,8 @@ RefusalKind = Literal[
     "field-type-declaration",
     # ── query ────────────────────────────────────────────────────────────────
     "reserved-field",
+    # ── write ────────────────────────────────────────────────────────────────
+    "exclusive-conflict",
 ]
 
 #: What each refusal kind means, one line each.
@@ -141,6 +143,7 @@ REFUSAL_KINDS: dict[RefusalKind, str] = {
     "field-units-conflict": "merged fields declare different units",
     "field-type-declaration": "a field type declaration names a field that does not exist",
     "reserved-field": "a reserved field name is used",
+    "exclusive-conflict": "an exclusive edge's source already holds another target",
 }
 
 
@@ -172,6 +175,15 @@ class Refusal(ValueError):
 
 class OpRefusal(Refusal):
     """An evolution op whose precondition does not hold on the manifest."""
+
+    def __init__(
+        self, message: str, *, check: RefusalKind, subjects: tuple[str, ...] = ()
+    ) -> None:
+        super().__init__(message, check=check, subjects=subjects)
+
+
+class WriteRefusal(Refusal):
+    """Edges a write did not store because the stored graph forbids them."""
 
     def __init__(
         self, message: str, *, check: RefusalKind, subjects: tuple[str, ...] = ()

@@ -28,7 +28,12 @@ from graflo.db.bulk import (
     BulkVertexChunk,
     StoredEdgeId,
 )
-from graflo.db.conn import Connection, NamespaceNotFoundError, SchemaExistsError
+from graflo.db.conn import (
+    DEFAULT_DELETE_CHUNK_SIZE,
+    Connection,
+    NamespaceNotFoundError,
+    SchemaExistsError,
+)
 from graflo.db.traversal import bfs_neighbors, edge_query_name
 from graflo.filter.onto import FilterExpression, conjoin
 from graflo.onto import AggregationType, DBType
@@ -67,6 +72,20 @@ def _first_value(doc: Any, fields: list[str]) -> str | None:
     return None
 
 
+def _key_of(doc: Any, fields: Sequence[str]) -> tuple[str, ...] | None:
+    """The values of *fields* in *doc* as strings, or ``None`` when one is missing."""
+    if not isinstance(doc, dict):
+        return None
+    values = [doc.get(field) for field in fields]
+    if any(value is None for value in values):
+        return None
+    return tuple(str(value) for value in values)
+
+
+#: Index-only keys: each edge row's stored endpoint types, never returned.
+_FROM_TYPE, _TO_TYPE = "_from_type", "_to_type"
+
+
 class GraFloBackendConnection(Connection):
     """Read/write graph data through a chunked on-disk GraFlo backend.
 
@@ -90,6 +109,10 @@ class GraFloBackendConnection(Connection):
     supports_union_merge = True
     supports_membership_read = True
     supports_bulk_load = True
+    #: Appends cannot be deleted, so a ``merge: replace`` edge is folded on
+    #: read to one record per source; :meth:`fetch_edge_targets` reads the fold.
+    supports_single_valued_fold = True
+    supports_edge_target_read = True
     #: Reads run in process with nothing to cancel them, so ``timeout_s`` is
     #: accepted and ignored.
     supports_query_timeout = False
@@ -353,28 +376,23 @@ class GraFloBackendConnection(Connection):
         keep = _matcher(filters)
         matched: list[dict[str, Any]] = []
         for row in entries:
-            source_id = row.get("_from_key")
-            target_id = row.get("_to_key")
-            if direction is EdgeDirection.OUT:
-                anchored = source_id == from_id
-                far = target_id
-            elif direction is EdgeDirection.IN:
-                anchored = target_id == from_id
-                far = source_id
+            out = row.get(_FROM_TYPE) == from_type and row.get("_from_key") == from_id
+            into = row.get(_TO_TYPE) == from_type and row.get("_to_key") == from_id
+            if out and direction is not EdgeDirection.IN:
+                far, far_type = row.get("_to_key"), row.get(_TO_TYPE)
+            elif into and direction is not EdgeDirection.OUT:
+                far, far_type = row.get("_from_key"), row.get(_FROM_TYPE)
             else:
-                if source_id == from_id:
-                    anchored, far = True, target_id
-                elif target_id == from_id:
-                    anchored, far = True, source_id
-                else:
-                    anchored, far = False, None
-            if not anchored:
+                continue
+            if to_type is not None and far_type != to_type:
                 continue
             if to_id is not None and far != to_id:
                 continue
             if not keep(row):
                 continue
-            matched.append(row)
+            matched.append(
+                {k: v for k, v in row.items() if k not in (_FROM_TYPE, _TO_TYPE)}
+            )
             if limit is not None and len(matched) >= limit:
                 break
 
@@ -395,7 +413,8 @@ class GraFloBackendConnection(Connection):
         """Edge query name -> flat edge rows, built once per connection.
 
         Rows carry ``_from_key`` / ``_to_key`` so both orientations are
-        answerable from one pass over the chunked files.
+        answerable from one pass over the chunked files, and their endpoint
+        types, since one relation name may join several pairs of types.
         """
         if self._edge_index_cache is not None:
             return self._edge_index_cache
@@ -418,6 +437,10 @@ class GraFloBackendConnection(Connection):
             target_identity = keys.vertex_fields(
                 edge.target, db_aware.vertex_config.identity_fields(edge.target)
             )
+            types = {
+                _FROM_TYPE: db_aware.vertex_config.vertex_dbname(edge.source),
+                _TO_TYPE: db_aware.vertex_config.vertex_dbname(edge.target),
+            }
             for record in self._reader.edge_records(
                 edge_chunk_key(schema, edge.edge_id)
             ):
@@ -430,6 +453,7 @@ class GraFloBackendConnection(Connection):
                         **(weight if isinstance(weight, dict) else {}),
                         "_from_key": _first_value(source_doc, source_identity),
                         "_to_key": _first_value(target_doc, target_identity),
+                        **types,
                     }
                 )
                 total += 1
@@ -583,6 +607,42 @@ class GraFloBackendConnection(Connection):
         self._sync_for_read()
         docs = self._reader.edge_records((source_class, target_class, relation_name))
         return docs if limit is None else docs[:limit]
+
+    def fetch_edge_targets(
+        self,
+        source_class: str,
+        target_class: str,
+        relation_name: str | None,
+        sources: list[dict[str, Any]],
+        match_keys_source: tuple[str, ...],
+        match_keys_target: tuple[str, ...],
+        *,
+        collection_name: str | None = None,
+        chunk_size: int = DEFAULT_DELETE_CHUNK_SIZE,
+    ) -> dict[int, list[dict[str, Any]]]:
+        """The stored targets of each source's edges, read from the folded records."""
+        found: dict[int, list[dict[str, Any]]] = {}
+        if not match_keys_source or not match_keys_target:
+            return found
+        self._sync_for_read()
+        stored: dict[tuple[str, ...], list[dict[str, Any]]] = {}
+        for record in self._reader.edge_records(
+            (source_class, target_class, relation_name)
+        ):
+            if not isinstance(record, list) or len(record) < 2:
+                continue
+            source_key = _key_of(record[0], match_keys_source)
+            target_key = _key_of(record[1], match_keys_target)
+            if source_key is None or target_key is None:
+                continue
+            stored.setdefault(source_key, []).append(
+                {k: record[1][k] for k in match_keys_target}
+            )
+        for position, doc in enumerate(sources):
+            key = _key_of(doc, match_keys_source)
+            if key is not None and key in stored:
+                found[position] = [dict(target) for target in stored[key]]
+        return found
 
     def _graph_neighbors(
         self,

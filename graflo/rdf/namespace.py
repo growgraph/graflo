@@ -26,7 +26,7 @@ from graflo.architecture.contract.bindings.connectors import (
 )
 
 GF_ONTOLOGY_IRI = "https://ontology.growgraph.dev/graflo"
-GF_VERSION = "1.11.0"
+GF_VERSION = "1.12.0"
 GF_VERSION_IRI = f"{GF_ONTOLOGY_IRI}/{GF_VERSION}"
 GF_BASE = "https://ontology.growgraph.dev/graflo/"
 GF = Namespace(GF_BASE)
@@ -165,6 +165,7 @@ fieldMatch = GF.fieldMatch
 matchNormalizer = GF.matchNormalizer
 matchSplit = GF.matchSplit
 matchOrder = GF.matchOrder
+matchElide = GF.matchElide
 matchExclusive = GF.matchExclusive
 derivedSource = GF.derivedSource
 derivedForm = GF.derivedForm
@@ -205,6 +206,8 @@ edgeIdentities = GF.edgeIdentities
 edgeType = GF.edgeType
 edgeBy = GF.edgeBy
 edgeDirected = GF.edgeDirected
+edgeMergeMode = GF.edgeMergeMode
+edgeExclusive = GF.edgeExclusive
 vertexIndexes = GF.vertexIndexes
 edgeSpecs = GF.edgeSpecs
 profileVertexName = GF.profileVertexName

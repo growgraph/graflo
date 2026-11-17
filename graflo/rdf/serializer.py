@@ -427,6 +427,8 @@ class ManifestRdfSerializer:
                 split if isinstance(split, str) else json.dumps(split),
             )
             add_literal(graph, match_uri, ns.matchOrder, match.parts.order)
+            if match.parts.elide:
+                add_literal(graph, match_uri, ns.matchElide, True)
         if match.exclusive is not None:
             add_literal(graph, match_uri, ns.matchExclusive, match.exclusive)
 
@@ -464,6 +466,11 @@ class ManifestRdfSerializer:
             )
         if edge.identities:
             graph.add((edge_uri, ns.edgeIdentities, json_literal(edge.identities)))
+        # Emitted only when not the default, as `directed` is.
+        if edge.merge != "union":
+            add_literal(graph, edge_uri, ns.edgeMergeMode, edge.merge)
+        if edge.exclusive:
+            add_literal(graph, edge_uri, ns.edgeExclusive, edge.exclusive)
         if edge.type is not None:
             add_literal(graph, edge_uri, ns.edgeType, str(edge.type))
         if edge.by is not None:
