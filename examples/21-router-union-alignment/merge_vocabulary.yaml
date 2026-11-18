@@ -12,7 +12,8 @@ canonical_maps:
 
 # 2. Machines and devices are one type. The vocabulary already makes production
 #    lines Equipment too, so they join it without being listed here, and `into`
-#    comes from the vocabulary.
+#    comes from the vocabulary. Machines and production lines take their ids
+#    from one register, so their own keys are one key space.
 vertex_equivalences:
 -   left: Machine
     right: Device
@@ -21,6 +22,6 @@ vertex_equivalences:
         sources:
             register: {Machine: {input: [serial_number]}}
             devices: {input: [serial]}
-    -   local_key:
-            register: {Machine: {field: asset_id, tag: maintenance}}
-            devices: {field: device_id, tag: sensors}
+    fallback: own_key
+    key_spaces:
+        left: {Machine: maintenance, ProductionLine: maintenance}

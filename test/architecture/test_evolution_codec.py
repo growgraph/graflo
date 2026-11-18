@@ -130,7 +130,7 @@ OP_PAYLOADS: dict[str, dict] = {
                             "foo": "tagged_key",
                             "params": {"tag": "a"},
                             "input": ["party_id"],
-                            "output": ["local_key"],
+                            "output": ["own_ref"],
                         }
                     }
                 }
@@ -139,7 +139,7 @@ OP_PAYLOADS: dict[str, dict] = {
         "at": {"crm": [1]},
     },
     "ensure_extracted_fields": {
-        "additions": {"crm": [{"vertex": "party", "fields": ["local_key"], "at": [1]}]}
+        "additions": {"crm": [{"vertex": "party", "fields": ["own_ref"], "at": [1]}]}
     },
     "add_resources": {
         "resources": [{"name": "crm", "pipeline": [{"vertex": "party"}]}]

@@ -144,7 +144,7 @@ NodeKind = Literal[
 #: where a merged attribute comes from: ``fusion`` is a member attribute that
 #: keeps its name, ``demotion`` a member key renamed to ``<space>__<field>``,
 #: ``property_rename`` a ``renames`` entry on a class no group holds, and
-#: ``derivation`` / ``local_key`` a raw field an identity branch reads.
+#: ``derivation`` a raw field a derived identity branch reads.
 EdgeKind = Literal[
     "member",
     "map",
@@ -155,7 +155,6 @@ EdgeKind = Literal[
     "demotion",
     "property_rename",
     "derivation",
-    "local_key",
 ]
 
 #: Which declaration put a member attribute where it lands on the merged
@@ -209,7 +208,6 @@ FindingKind = Literal[
     "attach_order",
     "double-home",
     "vocabulary_override",
-    "auto_local_key",
     "reference_only",
     "self-relation",
     "observation-fusion",
@@ -399,7 +397,7 @@ class PreviewCluster(ConfigBaseModel):
     )
     derived_identity: bool = PydanticField(
         default=False,
-        description="Whether its `identity` has a derived or `local_key` branch.",
+        description="Whether its `identity` has a derived branch.",
     )
     identity: PreviewIdentity | None = PydanticField(
         default=None,
@@ -1196,9 +1194,6 @@ class _Builder:
                     f for fields in declaration.raw_branches() for f in fields
                 }
                 derived = [b.name for b in declaration.derivations()]
-                local_key = declaration.local_key_branch()
-                if local_key is not None:
-                    derived.append(local_key.name)
                 declared_identity.update(derived)
             for side in _SIDES:
                 schema = self.manifests[side].graph_schema
@@ -1326,7 +1321,7 @@ class _Builder:
     def identity_blocks(self) -> None:
         """Each vertex group's identity, and an edge from every raw field a branch reads.
 
-        A derivation or local key reads raw fields of a resource's documents,
+        A derivation reads raw fields of a resource's documents,
         not a member's attributes, so its sources are drawn as the resource
         and the fields it reads, each pointing at the branch attribute.
         """
@@ -1342,6 +1337,10 @@ class _Builder:
             block = identity_block(cluster, self.resolution, sides, self.composite)
             for branch in (*block.derive, *block.branches):
                 if branch.kind == "raw":
+                    continue
+                if branch.kind == "own_key":
+                    for name in branch.fields:
+                        self.attribute("merged", cluster.into, name, identity=True)
                     continue
                 target = self.attribute(
                     "merged", cluster.into, branch.id, identity=True
@@ -1375,9 +1374,8 @@ class _Builder:
                     exists=source.exists,
                 )
             )
-        fields = source.input if branch.kind == "derived" else [source.field or ""]
-        kind: EdgeKind = "derivation" if branch.kind == "derived" else "local_key"
-        for name in fields:
+        kind: EdgeKind = "derivation"
+        for name in source.input:
             if not name:
                 continue
             field_id = self.add_node(

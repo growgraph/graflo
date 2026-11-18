@@ -216,7 +216,7 @@ def _vertex(
 
 def _sources(graph: _Graph, branch: PreviewBranch, into: str, cluster_id: str) -> None:
     target = subject("merged", into, branch.id)
-    kind: EdgeKind = "derivation" if branch.kind == "derived" else "local_key"
+    kind: EdgeKind = "derivation"
     for source in branch.sources:
         if source.resource is None:
             continue
@@ -227,8 +227,7 @@ def _sources(graph: _Graph, branch: PreviewBranch, into: str, cluster_id: str) -
                 name=source.resource,
             )
         )
-        fields = source.input if branch.kind == "derived" else [source.field or ""]
-        for name in fields:
+        for name in source.input:
             if not name:
                 continue
             field_id = graph.attribute(

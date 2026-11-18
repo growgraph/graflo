@@ -85,7 +85,6 @@ from .ops import (
     AddSecondaryIdentitiesOp,
     CanonicalizeOp,
     DerivedBranch,
-    LocalKeyBranch,
     ManifestOp,
     MergeManifestsOp,
     MergeRenames,
@@ -461,8 +460,8 @@ def _composed_identity(
     keys: the equivalence declares ``identity``. Branches over properties the
     members carry are decided here -- one as a natural key, several as a
     funnel -- and must be ones every member can complete
-    (:func:`_check_identity_coverage`). A declaration with a derived or
-    ``local_key`` branch keeps the members' merged key for now: its steps
+    (:func:`_check_identity_coverage`). A declaration with a derived
+    branch keeps the members' merged key for now: its steps
     need the assembled manifest, and :func:`_apply_derived_identities`
     replaces it. Either way the members' pre-merge keys are demoted afterwards.
 
@@ -876,8 +875,8 @@ def _attach_uncovered_producers(
                     f"merge_manifests: resource {resource!r} upserts {side} "
                     f"members {members} of {plan.vertex!r}, whose keys were "
                     f"demoted to different secondary identities {keys}; it "
-                    "cannot find the class by one of them. Tag the members' "
-                    "`local_key` alike (one key space), produce each member from "
+                    "cannot find the class by one of them. Put the members in one "
+                    "key space (`key_spaces`), produce each member from "
                     "its own resource, or add the resource to a derived "
                     "branch's sources.",
                     check="ambiguous-reference",
@@ -1124,8 +1123,8 @@ def _pin_member_references(
                     f"merge_manifests: resource {resource.name!r} references "
                     f"{side} members {members} of {cluster.into!r}, whose keys were "
                     f"demoted to different secondary identities {named}; its edges "
-                    "cannot be pointed at one of them. Tag the members' "
-                    "`local_key` alike (one key space), or reference each member "
+                    "cannot be pointed at one of them. Put the members in one "
+                    "key space (`key_spaces`), or reference each member "
                     "from its own resource.",
                     check="ambiguous-reference",
                     subjects=(
@@ -1381,7 +1380,7 @@ def _union_schema(
     Returns the merged schema, the merged names whose ``identity`` is
     declared -- whose members' pre-merge keys :func:`_retire_member_keys`
     demotes once the manifest is complete -- and, among them, the ones with a
-    derived or ``local_key`` branch, which :func:`_apply_derived_identities`
+    derived branch, which :func:`_apply_derived_identities`
     lowers onto the assembled manifest.
     """
     left_vc = left.core_schema.vertex_config
@@ -1711,8 +1710,8 @@ def merge_manifests(
     ``union_right`` so it reconciles exactly as a declared one, and kept apart
     under ``prefix_right``.
 
-    A vertex equivalence whose ``identity`` has a derived or ``local_key``
-    branch further rewrites the merged union with the fundamental ops that
+    A vertex equivalence whose ``identity`` has a derived branch further
+    rewrites the merged union with the fundamental ops that
     identity lowers to (see
     :func:`~graflo.architecture.evolution.alignment.identity_to_ops`);
     member-keyed sources are resolved against the sides as handed in.
@@ -1803,7 +1802,7 @@ def _merge_manifests(
     )
     index = resolution.index
     side_maps = resolution.side_maps
-    # An origin names demoted keys and default local-key tags: refuse one
+    # An origin names demoted keys: refuse one
     # that cannot before anything is renamed by it.
     refusals = [
         *origin_refusals(op, {"left": out_left, "right": out_right}, resolution),
@@ -1921,7 +1920,6 @@ def _merge_manifests(
             sides=sides,
             side_maps=side_maps,
             member_identity=member_identity,
-            origins=resolution.origins,
             canonical_maps=[
                 ("left", resolution.declared.left),
                 ("right", resolution.declared.right),
@@ -2008,7 +2006,8 @@ def _completable_branches(
     """Funnel branches a member's records can complete, up to its own key's.
 
     A branch is completable when each field it requires is one the member
-    carries or one a derived or ``local_key`` branch adds *for this member*:
+    carries, one of its own fallback branches, or one a derived branch adds
+    *for this member*:
     some resource producing it has an entry for the branch that applies to it.
     The walk stops at the branch over the member's own key: a record carrying
     the key always completes it, so nothing after it is reachable.
@@ -2025,10 +2024,7 @@ def _completable_branches(
     declaration = cluster.declaration
     derived: set[str] = set()
     if isinstance(declaration, VertexEquivalence):
-        stepped: list[DerivedBranch | LocalKeyBranch] = [*declaration.derivations()]
-        local_key = declaration.local_key_branch()
-        if local_key is not None:
-            stepped.append(local_key)
+        stepped: list[DerivedBranch] = [*declaration.derivations()]
         derived = {
             branch.name
             for branch in stepped
@@ -2046,7 +2042,7 @@ def _completable_branches(
 
 
 def _branch_reaches(
-    branch: DerivedBranch | LocalKeyBranch,
+    branch: DerivedBranch,
     cluster: Cluster,
     side: Side,
     member: str,
@@ -2100,7 +2096,6 @@ def _apply_derived_identities(
     sides: Mapping[str, GraphManifest],
     side_maps: SideMaps,
     member_identity: Mapping[str, set[str]],
-    origins: Mapping[Side, str],
     canonical_maps: Sequence[tuple[Side, CanonicalMap]],
     finish_init: bool,
     strict_references: bool,
@@ -2112,8 +2107,7 @@ def _apply_derived_identities(
     and before the per-side relabel: member-keyed sources resolve against
     them, since the relabel rewrites router ``type_map`` values to the
     merged name. Member keys are first re-keyed through the cluster, so a
-    member may be keyed by its own name or its canonical one. A ``local_key``
-    source with no tag takes its side's entry in *origins*.
+    member may be keyed by its own name or its canonical one.
     """
     from .alignment import IdentityPlan, identity_to_ops, rekey_members
     from .apply import apply_evolution
@@ -2146,7 +2140,6 @@ def _apply_derived_identities(
             sides=sides,
             cluster_members={"left": set(cluster.left), "right": set(cluster.right)},
             member_identity=member_identity.get(cluster.into),
-            origins=origins,
             # Attached by their own key once the member keys are demoted:
             # see _attach_uncovered_producers.
             uncovered_producers="allow",

@@ -14,9 +14,7 @@ vertex_equivalences:
         sources:
             assets: {input: [serial_number]}
             devices: {input: [serial]}
-    -   local_key:
-            assets: {field: asset_id, tag: maintenance}
-            devices: {field: device_id, tag: sensors}
+    fallback: own_key
 
 # Everything no equivalence holds is renamed here, in its side's own names.
 renames:

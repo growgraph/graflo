@@ -303,14 +303,14 @@ def _identity(preview: MergePreview, cluster: PreviewCluster) -> _Figure | None:
     for upper, lower in pairwise(order):
         fig.graph.add_edge(upper, lower, style="invis", kind="order")
 
-    # Raw fields into derived and local-key branches, in branch order so each
+    # Raw fields into derived branches, in branch order so each
     # resource lists its fields the way the branches read them.
     position = {b.id: b.position for b in (*identity.derive, *identity.branches)}
     sources = sorted(
         (
             e
             for e in preview.edges
-            if e.kind in ("derivation", "local_key") and e.declared_by == cluster.id
+            if e.kind == "derivation" and e.declared_by == cluster.id
         ),
         key=lambda e: position.get(e.target.rsplit(".", 1)[-1], 0),
     )
@@ -366,10 +366,10 @@ def _branch_label(branch: PreviewBranch) -> str:
         else f"#{branch.position} {branch.id}"
     )
     lines = [head]
-    if branch.kind == "local_key" and branch.sep is not None:
-        lines.append(f"tag{branch.sep}value")
-    elif branch.kind == "raw" and branch.fields != [branch.id]:
+    if branch.kind != "derived" and branch.fields != [branch.id]:
         lines.append(", ".join(branch.fields))
+    if branch.kind == "own_key" and branch.sources:
+        lines.append(branch.sources[0].label)
     return "\\n".join(_plain(line) for line in lines)
 
 

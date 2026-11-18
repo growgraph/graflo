@@ -43,25 +43,21 @@
             },
             "joined_by_vocabulary": [],
             "allow": [],
-            "identity": "Keyed by a funnel: a record tries 2 branches in order and the first it completes is digested into `id`. Each member's own key becomes a lookup.",
+            "identity": "Keyed by a funnel: a record tries 3 branches in order and the first it completes is digested into `id`. Each member's own key becomes a lookup.",
             "lookups": [
                 {
                     "member": "left:Asset",
                     "field": "asset_id",
                     "lookup": "maintenance__asset_id",
                     "key_space": "maintenance",
-                    "tags": [
-                        "maintenance"
-                    ]
+                    "tags": []
                 },
                 {
                     "member": "right:Device",
                     "field": "device_id",
                     "lookup": "sensors__device_id",
                     "key_space": "sensors",
-                    "tags": [
-                        "sensors"
-                    ]
+                    "tags": []
                 }
             ],
             "views": {
@@ -75,13 +71,13 @@
                     "index": 0,
                     "severity": "note",
                     "kind": "lookup_demotion",
-                    "message": "records of left:Asset key on the first of ['match_key', 'local_key'] they complete, so two with the same ['maintenance__asset_id'] that complete different ones become two 'Machine' vertices; ['maintenance__asset_id'] is now the lookup-only secondary 'maintenance' and no longer deduplicates them"
+                    "message": "records of left:Asset key on the first of ['match_key', 'maintenance__asset_id'] they complete, so two with the same ['maintenance__asset_id'] that complete different ones become two 'Machine' vertices; ['maintenance__asset_id'] is now the lookup-only secondary 'maintenance' and no longer deduplicates them"
                 },
                 {
                     "index": 1,
                     "severity": "note",
                     "kind": "lookup_demotion",
-                    "message": "records of right:Device key on the first of ['match_key', 'local_key'] they complete, so two with the same ['sensors__device_id'] that complete different ones become two 'Machine' vertices; ['sensors__device_id'] is now the lookup-only secondary 'sensors' and no longer deduplicates them"
+                    "message": "records of right:Device key on the first of ['match_key', 'sensors__device_id'] they complete, so two with the same ['sensors__device_id'] that complete different ones become two 'Machine' vertices; ['sensors__device_id'] is now the lookup-only secondary 'sensors' and no longer deduplicates them"
                 }
             ]
         }

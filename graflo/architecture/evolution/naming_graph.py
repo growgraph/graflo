@@ -41,7 +41,7 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Collection, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal, cast
 
 from graflo.architecture.contract.manifest import GraphManifest
@@ -79,8 +79,6 @@ from .ops import (
     CanonicalMap,
     DerivedBranch,
     IdentityBranchDecl,
-    LocalKeyBranch,
-    LocalKeySource,
     MergeManifestsOp,
     PropertyEquivalence,
     RelationEquivalence,
@@ -365,46 +363,19 @@ def is_key_space_name(name: str) -> bool:
     return key_space_name_problem(name) is None
 
 
-def member_key_tags(
-    op: MergeManifestsOp,
-    cluster: Cluster,
-    side: Side,
-    member: str,
-    producing: Collection[str],
-    origin: str,
+def member_key_spaces(
+    op: MergeManifestsOp, cluster: Cluster, side: Side, member: str
 ) -> set[str]:
-    """The key spaces the op's own ``local_key`` entries put *member*'s ids in.
+    """The key spaces the op's ``key_spaces`` entries name for *member*.
 
-    A ``local_key`` tag names the key space of a source's own ids. An entry
-    keyed by member applies to that member; an unkeyed one to every member its
-    resource produces (*producing*: the union names of the resources producing
-    *member* on *side*). An omitted or ``null`` tag is the side's *origin*.
-    Automatic keys are not read: those merge adds are not the op's, and one
-    written into the op keeps its ``<origin>:<Member>`` tag, which namespaces
-    the member's values but names no key space.
+    An entry may spell the member by its own name or its canonical one.
     """
-    automatic = f"{origin}:{member}"
-    tags: set[str] = set()
+    names: set[str] = set()
     for declaration in op.vertex_equivalences:
-        if not any(
-            cluster.resolved(s, m) in cluster.members(s)
-            for s in _SIDES
-            for m in declaration.members(s)
-        ):
-            continue
-        branch = declaration.local_key_branch()
-        if branch is None:
-            continue
-        for resource, entry in branch.local_key.items():
-            if resource not in producing:
-                continue
-            sources = (
-                [src for k, src in entry.items() if cluster.resolved(side, k) == member]
-                if isinstance(entry, dict)
-                else [entry]
-            )
-            tags.update(src.tag or origin for src in sources if src.tag != automatic)
-    return tags
+        for spelled, name in declaration.key_spaces.get(side, {}).items():
+            if cluster.resolved(side, spelled) == member:
+                names.add(name)
+    return names
 
 
 def key_space_name(tags: Collection[str], origin: str) -> str:
@@ -455,17 +426,19 @@ class _Naming:
     #: The same shape for ``renames`` entries whose source the side declares.
     renames: dict[Kind, dict[Side, dict[str, str]]] = field(default_factory=dict)
     edges: list[NamingEdge] = field(default_factory=list)
-    #: Each side's merged classes whose local keys its origin tags: see
-    #: :class:`ClusterResolution`.
-    origin_tagged: dict[Side, set[str]] = field(default_factory=dict)
     demoted_keys: dict[tuple[Side, str], tuple[str, ...]] = field(default_factory=dict)
     key_spaces: dict[tuple[Side, str], str] = field(default_factory=dict)
     key_tags: dict[tuple[Side, str], tuple[str, ...]] = field(default_factory=dict)
+    #: Each demoted member to its key's fields as the union names them.
+    kept_keys: dict[tuple[Side, str], tuple[str, ...]] = field(default_factory=dict)
+    #: See :class:`ClusterResolution`.
+    fallback_branches: dict[str, tuple[tuple[Side, str, tuple[str, ...]], ...]] = field(
+        default_factory=dict
+    )
     #: See :class:`ClusterResolution`.
     property_layers: dict[tuple[Side, str, str], list[tuple[PropertyLayer, str]]] = (
         field(default_factory=dict)
     )
-    auto_key_sources: dict[str, set[tuple[str, str]]] = field(default_factory=dict)
 
     # ── findings ────────────────────────────────────────────────────────────
 
@@ -549,8 +522,8 @@ class _Naming:
                 if isinstance(c.declaration, RelationEquivalence)
             ),
         )
-        self._untagged_local_keys(index)
         side_maps = self._side_maps(components, index)
+        index = self._with_fallbacks(index, side_maps)
         self._consequences(components)
         self._property_checks(index, side_maps)
         graph = self._graph(components)
@@ -563,18 +536,12 @@ class _Naming:
                 findings=tuple(f for f in findings if not f.blocking),
                 graph=graph,
                 origins=dict(self.origins),
-                origin_tagged={
-                    side: frozenset(names) for side, names in self.origin_tagged.items()
-                },
                 demoted_keys=dict(self.demoted_keys),
                 key_spaces=dict(self.key_spaces),
                 key_tags=dict(self.key_tags),
+                fallback_branches=dict(self.fallback_branches),
                 property_layers={
                     key: tuple(writes) for key, writes in self.property_layers.items()
-                },
-                auto_key_sources={
-                    name: frozenset(pairs)
-                    for name, pairs in self.auto_key_sources.items()
                 },
             ),
             graph=graph,
@@ -952,6 +919,7 @@ class _Naming:
             "extend_cluster",
             "set_into",
             "add_key_source",
+            "set_fallback",
             "declare_equivalences",
             "acknowledge",
         ],
@@ -1523,21 +1491,30 @@ class _Naming:
         )
         identity = source.identity
         derive = source.derive if identity is not None else None
+        key_spaces = self._group_key_spaces(component, declarations)
+        repair = self._fallback_repair(keyed[0] if keyed else None)
         if identity is not None and (
-            derive
-            or any(isinstance(b, DerivedBranch | LocalKeyBranch) for b in identity)
+            derive or any(isinstance(b, DerivedBranch) for b in identity)
         ):
-            identity = self._with_own_keys(
+            self._derived_key_coverage(
                 component,
                 identity,
                 ordered,
                 aliases,
                 derive_at,
                 derive=source.derive_attributes(),
+                fallback=source.fallback is not None,
+                repair=repair,
             )
         elif identity is not None:
             self._property_key_coverage(
-                component, identity, ordered, properties, derive_at
+                component,
+                identity,
+                ordered,
+                properties,
+                derive_at,
+                fallback=source.fallback is not None,
+                repair=repair,
             )
         try:
             return VertexEquivalence(
@@ -1550,11 +1527,61 @@ class _Naming:
                 digest_field=source.digest_field,
                 derive_at=derive_at if identity is not None else {},
                 retire=source.retire,
+                fallback=source.fallback if identity is not None else None,
+                key_spaces=key_spaces if identity is not None else {},
                 allow=allow,  # type: ignore[arg-type]
             )
         except ValueError as exc:
             self.from_refusal(exc, kind="disagreement")
             return None
+
+    def _group_key_spaces(
+        self, component: _Component, declarations: Sequence[_Declaration]
+    ) -> dict[Side, dict[str, str]]:
+        """The group's ``key_spaces``, every declaration's entries together."""
+        assert component.name is not None
+        out: dict[Side, dict[str, str]] = {}
+        for declaration in declarations:
+            equivalence = cast(VertexEquivalence, declaration.declaration)
+            for side, entries in equivalence.key_spaces.items():
+                bucket = out.setdefault(side, {})
+                for member, name in entries.items():
+                    prior = bucket.get(member)
+                    if prior is not None and prior != name:
+                        self.finding(
+                            "key-space",
+                            f"key space: {side}:{member} is put in key space "
+                            f"{prior!r} by one equivalence and {name!r} by "
+                            "another; give it one",
+                            subjects=(
+                                subject("merged", component.name),
+                                subject(side, member),
+                            ),
+                            check="key-space",
+                        )
+                    bucket[member] = name
+        return out
+
+    def _fallback_repair(
+        self, declaration: _Declaration | None
+    ) -> tuple[Completion, ...]:
+        """The repair setting ``fallback: own_key`` on *declaration*, if it can carry one."""
+        if declaration is None:
+            return ()
+        equivalence = cast(VertexEquivalence, declaration.declaration)
+        if equivalence.retire != "demote" or equivalence.fallback is not None:
+            return ()
+        payload = self._payload(declaration)
+        payload["fallback"] = "own_key"
+        return (
+            self._completion(
+                "set_fallback",
+                "vertex",
+                payload,
+                label="key the others on their own key",
+                replaces=None if declaration.synthesized else declaration.position,
+            ),
+        )
 
     def _group_properties(
         self,
@@ -1688,11 +1715,14 @@ class _Naming:
         ordered: Mapping[Side, Sequence[str]],
         properties: Sequence[PropertyEquivalence],
         derive_at: Mapping[str, Sequence[int]],
+        *,
+        fallback: bool,
+        repair: tuple[Completion, ...],
     ) -> None:
         """Refuse a vocabulary-joined member that completes no branch of a property-only key.
 
-        Such a member keeps its own key only under a funnel, so the repair
-        carries the ``local_key`` branch to append to ``identity``. A declared
+        Under ``fallback: own_key`` a member with a key of its own completes
+        its own branch; otherwise the repair sets ``fallback``. A declared
         member is left to the schema union, which names the property to map.
         """
         assert component.name is not None
@@ -1701,7 +1731,6 @@ class _Naming:
             side: {m for d in component.declarations for m in d.members[side]}
             for side in _SIDES
         }
-        resource_names = self._resource_names()
         for side in _SIDES:
             schema = self.manifests[side].graph_schema
             if schema is None:
@@ -1721,42 +1750,32 @@ class _Naming:
                 }
                 if any(branch <= carried for branch in branches):
                     continue
-                own = list(vertex_config[member].identity)
-                tag = f"{self.origins[side]}:{member}"
-                entry = {
-                    "local_key": {
-                        union_name: {
-                            member: {"field": "|".join(own) or "?", "tag": tag}
-                        }
-                        for _, union_name in self._keyable(
-                            side, member, resource_names, derive_at
-                        )
-                    }
-                }
+                vertex = vertex_config[member]
+                own = not (vertex.blank or vertex.assigned)
+                if fallback and own:
+                    continue
                 self.finding(
                     "identity-coverage",
                     f"identity coverage: merged vertex {component.name!r} is keyed "
                     f"on {[sorted(b) for b in branches]}, which {side}:{member} "
                     "cannot complete; the vocabulary joins it to the group, so its "
-                    "records would have no key. A member the vocabulary joins keeps "
-                    "its own key only when the identity is a funnel: append the "
-                    "local_key branch the repair carries to `identity`",
+                    "records would have no key. "
+                    + (
+                        "Set `fallback: own_key` to key them on its own key "
+                        f"{list(vertex.identity)}"
+                        if own
+                        else "It has no key of its own to fall back on: map a "
+                        "property onto it, or leave it out of the group"
+                    ),
                     subjects=(
                         subject("merged", component.name),
                         subject(side, member),
                     ),
-                    repairs=(
-                        Completion(
-                            kind="add_key_source",
-                            side=side,
-                            vertex_equivalences=(entry,),
-                            label=f"key {side}:{member} on its own key",
-                        ),
-                    ),
+                    repairs=repair if own else (),
                     check="identity-coverage",
                 )
 
-    def _with_own_keys(
+    def _derived_key_coverage(
         self,
         component: _Component,
         identity: Sequence[IdentityBranchDecl],
@@ -1765,37 +1784,39 @@ class _Naming:
         derive_at: Mapping[str, Sequence[int]],
         *,
         derive: Sequence[DerivedBranch] = (),
-    ) -> list[IdentityBranchDecl]:
-        """*identity* plus a tagged own key for each member a producing resource leaves unkeyed.
+        fallback: bool,
+        repair: tuple[Completion, ...],
+    ) -> None:
+        """Refuse a member some producing resource leaves without a key.
 
         A member's records from a resource complete the funnel when some
-        stepped branch has an entry for the resource that applies to it: one
+        derived branch has an entry for the resource that applies to it: one
         unkeyed spec, or one keyed by that member. A resource keying other
-        members only would drop its records; a vocabulary-joined member's
-        resource with no entry at all would otherwise be attached by its key.
-        Both get the member's own key behind ``origin:Member``. A declared member
-        whose resource has no entry is left to merge, which attaches that
-        resource to the merged class by its own key — as is a resource that
-        produces the member through routers in several roles, which no
-        derivation at its level can serve (:func:`_keyable`).
+        members only, or a vocabulary-joined member's resource with no entry
+        at all, leaves its records with no key: refused, unless ``fallback``
+        keys them on the member's own key. A declared member whose resource
+        has no entry is left to merge, which attaches that resource to the
+        merged class by its own key -- as is a resource that produces the
+        member through routers in several roles, which no derivation at its
+        level can serve (:func:`_keyable`).
         """
         assert component.name is not None
         resource_names = self._resource_names()
-        stepped = [
-            *derive,
-            *(b for b in identity if isinstance(b, DerivedBranch | LocalKeyBranch)),
-        ]
+        stepped = [*derive, *(b for b in identity if isinstance(b, DerivedBranch))]
         declared = {
             side: {m for d in component.declarations for m in d.members[side]}
             for side in _SIDES
         }
-        additions: dict[str, dict[str, LocalKeySource]] = {}
         for side in _SIDES:
             schema = self.manifests[side].graph_schema
             if schema is None:
                 continue
             vertex_config = schema.core_schema.vertex_config
             for member in ordered[side]:
+                vertex = vertex_config[member]
+                own = not (vertex.blank or vertex.assigned)
+                if fallback and own:
+                    continue
                 producing = self._producing_pairs(side, member, resource_names)
                 keyable = dict(self._keyable(side, member, resource_names, derive_at))
                 for resource_name, union_name in producing:
@@ -1810,19 +1831,7 @@ class _Naming:
                         )
 
                     entries = [b.sources.get(union_name) for b in stepped]
-                    local = next(
-                        (
-                            b.sources.get(union_name)
-                            for b in stepped
-                            if isinstance(b, LocalKeyBranch)
-                        ),
-                        None,
-                    )
-                    # The local key is the fallback every record completes; a
-                    # member-keyed one that skips this member drops its records.
-                    if any(applies(entry) for entry in entries) and not (
-                        isinstance(local, dict) and not applies(local)
-                    ):
+                    if any(applies(entry) for entry in entries):
                         continue
                     if (
                         all(entry is None for entry in entries)
@@ -1843,87 +1852,26 @@ class _Naming:
                             ),
                         )
                         continue
-                    vertex = vertex_config[member]
-                    plain = not (
-                        vertex.blank
-                        or vertex.assigned
-                        or vertex.hash_identity_properties
-                        or vertex.identity_funnel is not None
-                    )
-                    tag = f"{self.origins[side]}:{member}"
-                    self.origin_tagged.setdefault(side, set()).add(component.name)
-                    if plain and len(vertex.identity) == 1:
-                        additions.setdefault(union_name, {})[member] = LocalKeySource(
-                            field=vertex.identity[0], tag=tag
-                        )
-                        self.auto_key_sources.setdefault(component.name, set()).add(
-                            (union_name, member)
-                        )
-                        self.note(
-                            "auto_local_key",
-                            f"{side}:{member} joins {component.name!r} without a key "
-                            f"source for resource {union_name!r}; its records key on "
-                            f"their own {vertex.identity[0]!r} as '{tag}:<value>' "
-                            "and never fuse with another member's",
-                            subjects=(
-                                subject(side, member),
-                                subject("merged", component.name),
-                            ),
-                        )
-                        continue
-                    entry = {
-                        "local_key": {
-                            union_name: {
-                                member: {
-                                    "field": "|".join(vertex.identity) or "?",
-                                    "tag": tag,
-                                }
-                            }
-                        }
-                    }
                     self.finding(
                         "identity-coverage",
-                        f"identity coverage: merged vertex {component.name!r} is keyed by a derived "
-                        f"identity, but resource {union_name!r} derives nothing for "
-                        f"{side}:{member}, whose own key {list(vertex.identity)} is "
-                        "not one field, so it cannot be keyed on it automatically; add "
-                        "a key source for it (the repair carries a local_key entry to "
-                        "fill in)",
+                        f"identity coverage: merged vertex {component.name!r} is "
+                        f"keyed by a derived identity, but resource {union_name!r} "
+                        f"derives nothing for {side}:{member}, so its records from "
+                        "there would have no key. Derive one for it, or "
+                        + (
+                            "set `fallback: own_key` to key them on the member's "
+                            f"own key {list(vertex.identity)}"
+                            if own
+                            else "produce the member elsewhere: it has no key of "
+                            "its own to fall back on"
+                        ),
                         subjects=(
                             subject("merged", component.name),
                             subject(side, member),
                         ),
-                        repairs=(
-                            Completion(
-                                kind="add_key_source",
-                                side=side,
-                                vertex_equivalences=(entry,),
-                                label=f"key {side}:{member} from {union_name!r}",
-                            ),
-                        ),
+                        repairs=repair if own else (),
                         check="identity-coverage",
                     )
-        if not additions:
-            return list(identity)
-        out = list(identity)
-        position = next(
-            (i for i, b in enumerate(out) if isinstance(b, LocalKeyBranch)), None
-        )
-        if position is None:
-            out.append(LocalKeyBranch(local_key=dict(additions)))  # type: ignore[arg-type]
-            return out
-        branch = out[position]
-        assert isinstance(branch, LocalKeyBranch)
-        local_key: dict[str, LocalKeySource | dict[str, LocalKeySource]] = dict(
-            branch.local_key
-        )
-        for resource, members in additions.items():
-            existing = local_key.get(resource)
-            local_key[resource] = (
-                {**existing, **members} if isinstance(existing, dict) else dict(members)
-            )
-        out[position] = branch.model_copy(update={"local_key": local_key})
-        return out
 
     def _side_maps(
         self, components: Sequence[_Component], index: ClusterIndex
@@ -2153,14 +2101,13 @@ class _Naming:
         key field a property equivalence names, or a vocabulary entry renames,
         is refused, whatever the target: the key is named by its key space.
 
-        The key space is the member's ``local_key`` tag, else the side's
-        origin (:func:`member_key_tags`, :func:`key_space_name`).
+        The key space is the member's ``key_spaces`` entry, else the side's
+        origin (:func:`member_key_spaces`, :func:`key_space_name`).
         """
         schema = self.manifests[side].graph_schema
         if schema is None:
             return
         vertex_config = schema.core_schema.vertex_config
-        resource_names = self._resource_names()
         for cluster in index.vertices:
             declaration = cluster.declaration
             if (
@@ -2170,10 +2117,14 @@ class _Naming:
             ):
                 continue
             branched = {f for branch in declaration.raw_branches() for f in branch}
-            restated = {
-                frozenset(f for b in declaration.identity for f in branch_fields(b))
-            }
-            if declaration.has_derivation or len(declaration.identity) > 1:
+            # Under `fallback` the primary is the digest over every branch,
+            # the members' own included, so no member key restates it.
+            restated: set[frozenset[str]] = set()
+            if declaration.fallback is None:
+                restated.add(
+                    frozenset(f for b in declaration.identity for f in branch_fields(b))
+                )
+            if not declaration.is_natural_key:
                 restated.add(frozenset({declaration.digest_field}))
             equated: dict[str, set[str]] = {}
             for pe in declaration.properties:
@@ -2193,7 +2144,13 @@ class _Naming:
                 vertex = vertex_config[member]
                 bucket = properties.get(member, {})
                 own_key = self._demotable_key(
-                    cluster, side, member, vertex, declaration.identity, bucket
+                    cluster,
+                    side,
+                    member,
+                    vertex,
+                    declaration.identity,
+                    bucket,
+                    fallback=declaration.fallback is not None,
                 )
                 if own_key is None:
                     continue
@@ -2201,20 +2158,16 @@ class _Naming:
                 if not key or frozenset(key) in restated:
                     continue
                 self.demoted_keys[(side, member)] = key
-                tags = member_key_tags(
-                    self.op,
-                    cluster,
-                    side,
-                    member,
-                    self._producing(side, member, resource_names),
-                    self.origins[side],
-                )
+                tags = member_key_spaces(self.op, cluster, side, member)
                 origin = key_space_name(tags, self.origins[side])
                 self.key_spaces[(side, member)] = origin
                 if tags:
                     self.key_tags[(side, member)] = tuple(sorted(tags))
+                kept: list[str] | None = []
                 for own, canonical in zip(own_key, key, strict=True):
                     if canonical in branched:
+                        if kept is not None:
+                            kept.append(canonical)
                         continue
                     if canonical != own or own in equated.get(member, set()):
                         self.finding(
@@ -2232,9 +2185,14 @@ class _Naming:
                             ),
                             check="double-home",
                         )
+                        kept = None
                         continue
                     properties.setdefault(member, {})[own] = f"{origin}__{own}"
                     self._layer(side, member, own, "demotion", f"{origin}__{own}")
+                    if kept is not None:
+                        kept.append(f"{origin}__{own}")
+                if kept is not None:
+                    self.kept_keys[(side, member)] = tuple(kept)
 
     def _demotable_key(
         self,
@@ -2244,6 +2202,8 @@ class _Naming:
         vertex: Vertex,
         identity: Sequence[IdentityBranchDecl],
         renames: Mapping[str, str],
+        *,
+        fallback: bool,
     ) -> tuple[str, ...] | None:
         """The fields *member*'s records are found by, kept when its key is replaced.
 
@@ -2251,9 +2211,10 @@ class _Naming:
         computed from: either way the records carry them, so they stay
         addressable. A generated key (blank, assigned) has nothing to keep. A
         funnel of several branches has no one field set its records all carry:
-        it is kept only when *identity* restates every branch (the merged type
-        is then keyed as the member was, plus what the other side adds), else
-        that is a finding, since the old key would be lost silently.
+        nothing is demoted, and its branches stay keys of the merged type when
+        *identity* restates every one of them or *fallback* carries the others
+        (:meth:`_with_fallbacks`); else that is a finding, since the old key
+        would be lost silently.
         """
         if vertex.blank or vertex.assigned:
             return None
@@ -2265,7 +2226,7 @@ class _Naming:
         if len(funnel.branches) == 1:
             return tuple(funnel.branches[0].fields)
         declared = {frozenset(branch_fields(branch)) for branch in identity}
-        if all(
+        if fallback or all(
             frozenset(renames.get(f, f) for f in branch.fields) in declared
             for branch in funnel.branches
         ):
@@ -2274,8 +2235,9 @@ class _Naming:
             "identity-coverage",
             f"{side}:{member} is keyed by a funnel of {len(funnel.branches)} "
             f"branches, and the identity {cluster.into!r} declares replaces it: "
-            "no one field set of its records can stay as a lookup key. Make one "
-            "of its branches a branch of `identity`, or retire: keep",
+            "no one field set of its records can stay as a lookup key. Restate "
+            "its branches in `identity`, set `fallback: own_key` to keep them "
+            "after the declared ones, or retire: keep",
             subjects=(subject(side, member), subject("merged", cluster.into)),
             check="identity-coverage",
         )
@@ -2287,26 +2249,110 @@ class _Naming:
         """Record that *layer* renames ``side:cls.old`` to *new*."""
         self.property_layers.setdefault((side, cls, old), []).append((layer, new))
 
-    def _untagged_local_keys(self, index: ClusterIndex) -> None:
-        """Record the class of each ``local_key`` source whose tag defaults to its origin."""
-        side_of = {
-            union: side
-            for side, names in self._resource_names().items()
-            for union in names.values()
-        }
+    def _with_fallbacks(self, index: ClusterIndex, side_maps: SideMaps) -> ClusterIndex:
+        """*index* with each ``fallback: own_key`` cluster's own-key branches appended.
+
+        After the declared branches, in member order (left, then right), one
+        branch per member: its kept key as the union names it
+        (``<space>__<field>``), or, for a member keyed by a funnel of several
+        branches, each of those branches the declared identity does not
+        restate. Nothing is named by the mechanism itself, so a merged class
+        merges again: its branches are carried, and the next side's kept keys
+        follow them. Two members whose branches coincide share one key space
+        and one key: their ids fuse, which only both members' ``key_spaces``
+        entries may say; otherwise that is refused.
+        """
+        clusters: list[Cluster[Any]] = []
         for cluster in index.vertices:
             declaration = cluster.declaration
-            if not isinstance(declaration, VertexEquivalence):
+            if (
+                not isinstance(declaration, VertexEquivalence)
+                or declaration.fallback is None
+                or declaration.identity is None
+            ):
+                clusters.append(cluster)
                 continue
-            branch = declaration.local_key_branch()
-            if branch is None:
+            seen = {tuple(branch_fields(b)) for b in declaration.identity}
+            claimed: dict[tuple[str, ...], tuple[Side, str]] = {}
+            added: list[tuple[Side, str, tuple[str, ...]]] = []
+            for side in _SIDES:
+                schema = self.manifests[side].graph_schema
+                if schema is None:
+                    continue
+                vertex_config = schema.core_schema.vertex_config
+                renames = side_maps[side].properties
+                for member in cluster.members(side):
+                    if member not in vertex_config.vertex_set:
+                        continue
+                    for fields in self._fallback_keys(
+                        side, member, vertex_config[member], renames.get(member, {})
+                    ):
+                        if fields in seen and fields not in claimed:
+                            continue
+                        prior = claimed.get(fields)
+                        if prior is None:
+                            claimed[fields] = (side, member)
+                            seen.add(fields)
+                            added.append((side, member, fields))
+                            continue
+                        if self._unnamable(prior) or self._unnamable((side, member)):
+                            continue  # its invalid key_spaces name is the refusal
+                        if prior[0] == side and {prior, (side, member)} <= set(
+                            self.key_tags
+                        ):
+                            continue  # declared one registry
+                        self.finding(
+                            "key-space",
+                            f"key space: {prior[0]}:{prior[1]} and {side}:{member} "
+                            f"would fall back on one key {list(fields)} of "
+                            f"{cluster.into!r}, so a record of one and a record "
+                            "of the other with the same id would become one "
+                            "vertex. Name both members' key space in "
+                            "`key_spaces`: alike if their ids are one registry, "
+                            "differently if not",
+                            subjects=(
+                                subject("merged", cluster.into),
+                                subject(*prior),
+                                subject(side, member),
+                            ),
+                            check="key-space",
+                        )
+            if not added:
+                clusters.append(cluster)
                 continue
-            for resource, entry in branch.local_key.items():
-                sources = entry.values() if isinstance(entry, dict) else [entry]
-                if resource in side_of and any(s.tag_omitted for s in sources):
-                    self.origin_tagged.setdefault(side_of[resource], set()).add(
-                        cluster.into
-                    )
+            self.fallback_branches[cluster.into] = tuple(added)
+            identity = [*declaration.identity, *(list(f) for _s, _m, f in added)]
+            clusters.append(
+                replace(
+                    cluster,
+                    declaration=declaration.model_copy(update={"identity": identity}),
+                )
+            )
+        return replace(index, vertices=tuple(clusters))
+
+    def _unnamable(self, node: tuple[Side, str]) -> bool:
+        """Whether ``key_spaces`` names *node* by something that cannot name a key space.
+
+        Its key then falls back to the origin's space; the invalid name is
+        refused on its own (:func:`key_space_refusals`), not as a collision.
+        """
+        names = self.key_tags.get(node)
+        return names is not None and self.key_spaces.get(node) not in names
+
+    def _fallback_keys(
+        self, side: Side, member: str, vertex: Vertex, renames: Mapping[str, str]
+    ) -> list[tuple[str, ...]]:
+        """The fallback branches *member* contributes, in the union's names."""
+        kept = self.kept_keys.get((side, member))
+        if kept is not None:
+            return [kept]
+        funnel = vertex.identity_funnel
+        if funnel is None or vertex.blank or vertex.assigned:
+            return []
+        return [
+            tuple(renames.get(f, f) for f in branch.fields)
+            for branch in funnel.branches
+        ]
 
     def _property_checks(self, index: ClusterIndex, side_maps: SideMaps) -> None:
         for cluster in index.vertices:
@@ -2515,7 +2561,7 @@ def apply_repair(op: MergeManifestsOp, repair: Completion) -> MergeManifestsOp |
         ):
             if added:
                 payload[key] = [*payload.get(key, []), *(dict(p) for p in added)]
-    elif repair.kind in ("set_into", "extend_cluster"):
+    elif repair.kind in ("set_into", "extend_cluster", "set_fallback"):
         if repair.replaces is None:
             return None
         key = (
@@ -2543,38 +2589,6 @@ def apply_repair(op: MergeManifestsOp, repair: Completion) -> MergeManifestsOp |
     return MergeManifestsOp.model_validate(payload)
 
 
-def _with_explicit_keys(op: MergeManifestsOp, result: NamingResult) -> MergeManifestsOp:
-    """*op* with each automatic own key written into the equivalence that carries the identity."""
-    named = {
-        subject_id
-        for finding in result.findings
-        if finding.kind == "auto_local_key"
-        for subject_id in finding.subjects
-        if subject_id.startswith("merged:")
-    }
-    if not named:
-        return op
-    equivalences = list(op.vertex_equivalences)
-    for cluster in result.resolution.index.vertices:
-        if subject("merged", cluster.into) not in named:
-            continue
-        effective = cluster.declaration
-        members = {*cluster.left, *cluster.right}
-        for position, equivalence in enumerate(equivalences):
-            spelled = {*equivalence.left_members, *equivalence.right_members}
-            resolved = {
-                cluster.resolved(side, name)
-                for side in _SIDES
-                for name in equivalence.members(side)
-            }
-            if equivalence.identity is not None and (spelled | resolved) & members:
-                equivalences[position] = equivalence.model_copy(
-                    update={"identity": effective.identity}
-                )
-                break
-    return op.model_copy(update={"vertex_equivalences": equivalences})
-
-
 def suggest_merge_op(
     left: GraphManifest,
     right: GraphManifest,
@@ -2588,8 +2602,7 @@ def suggest_merge_op(
     Without *op*, a scaffold: an equivalence for every name both sides share.
     With one, *op* with the first repair of each blocking finding applied —
     a rename away before a new ``into``, and either before fusing entities —
-    until no finding has one left, and each automatic own key written out
-    where the identity is declared. Two spellings of one concept are never
+    until no finding has one left. Two spellings of one concept are never
     unioned: that is a guess, left to the author. Nothing is applied to a
     manifest; the result is a value to read, edit and save.
     """
@@ -2617,10 +2630,7 @@ def suggest_merge_op(
                 break
         if not progressed:
             break
-    result = build_naming(
-        current, left=left, right=right, canonical_maps=canonical_maps
-    )
-    return _with_explicit_keys(current, result)
+    return current
 
 
 __all__ = [

@@ -36,7 +36,7 @@ def _manifest(path: Path) -> GraphManifest:
 
 @pytest.fixture(scope="module")
 def preview() -> MergePreview:
-    """Example 20: ``Asset`` + ``Device`` into ``Machine``, a derived key then local keys."""
+    """Example 20: ``Asset`` + ``Device`` into ``Machine``, a derived key then own keys."""
     op = MergeManifestsOp.model_validate(FileHandle.load(EXAMPLE / "merge.yaml"))
     return preview_merge(
         _manifest(EXAMPLE / "manifest_maintenance.yaml"),
@@ -104,11 +104,16 @@ def test_a_cluster_records_what_its_declaration_allows(with_relation):
     assert person.allow == ["self_relations"]
 
 
-def test_a_local_key_branch_carries_its_separator(preview):
+def test_a_cluster_identity_records_its_fallback(preview):
     (cluster,) = preview.clusters
     assert cluster.identity is not None
-    seps = {b.id: b.sep for b in cluster.identity.branches}
-    assert seps == {"match_key": None, "local_key": ":"}
+    assert cluster.identity.fallback == "own_key"
+    kinds = {b.id: b.kind for b in cluster.identity.branches}
+    assert kinds == {
+        "match_key": "derived",
+        "maintenance__asset_id": "own_key",
+        "sensors__device_id": "own_key",
+    }
 
 
 def test_the_new_fields_survive_a_round_trip_through_json(preview):
@@ -126,7 +131,6 @@ def test_the_default_targets_are_the_cluster_then_its_nontrivial_attributes(prev
         "merged:Machine.maintenance__asset_id",
         "merged:Machine.sensors__device_id",
         "merged:Machine.match_key",
-        "merged:Machine.local_key",
         "merged:Machine.id",
     ]
 
@@ -195,7 +199,6 @@ def test_a_cluster_focus_holds_its_members_resources_and_findings(preview):
         "demotion",
         "fusion",
         "derivation",
-        "local_key",
     }
     assert [f.kind for f in focused.findings] == ["lookup_demotion"] * 2
     assert [c.id for c in focused.clusters] == ["vertex-cluster-0"]

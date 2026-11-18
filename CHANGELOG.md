@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## 1.27.4
+## [1.27.4]
 
 ### Changed
 
@@ -21,8 +21,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hash), as `merge_manifests` does without a declared `identity`; `merge_manifests` now also
   refuses a natural key beside a hash.
 - Merging edges refuses two declarations that differ in `merge`, `exclusive` or `identities`.
-- A `merge_manifests` identity that replaces a funnel of several branches without restating each of them is refused
-  (`identity-coverage`): no one field set of its records can stay as a lookup key.
+- A `merge_manifests` identity that replaces a funnel of several branches without restating
+  each of them or setting `fallback: own_key` is refused (`identity-coverage`).
+- The `local_key` identity branch of a vertex equivalence is replaced by `fallback: own_key`:
+  after the declared branches, each member's own key, kept on the merged type as
+  `<key space>__<field>`, is one more branch. No `local_key` property or `tagged_key` step is
+  added, and a merged type merges again with the same rule. A member's key space is its side's
+  origin unless the new `key_spaces` names it; a `local_key` entry is refused with the
+  replacement named. Records keyed through the old fallback get a new key on re-ingest.
+- A member a merge used to key automatically on a tagged own key (`auto_local_key`) is refused
+  (`identity-coverage`); the repair sets `fallback: own_key`. Two members of one side that would
+  share a fallback branch are refused (`key-space`) until `key_spaces` names both.
 
 ### Fixed
 

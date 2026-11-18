@@ -49,8 +49,8 @@ the position matters.
    `_concat_ingestion`, `_union_bindings`), combining each name both sides
    carry and deciding the merged identity. A declared `identity` of property
    branches is applied here and checked: every member can fill it, and no
-   branch is one no member declares. One with a derived or `local_key` branch
-   is only marked: its steps need the assembled manifest.
+   branch is one no member declares. One with a derived branch is only
+   marked: its steps need the assembled manifest.
 10. **Refuse a canonical split** (`_assert_no_canonical_split`): no two merged
     types may be spellings of one name.
 11. **Bump the version, then lower each derived identity**
@@ -134,7 +134,7 @@ The checks are predicates on that graph:
 | every declared name exists | `unknown-member`, `dangling-entry` |
 | a group has one identity: one natural key, or one digest, unless `identity` is declared | `identity-disagreement` |
 | a member's replaced key stays findable: a natural key, or the fields of a flat hash or a one-branch funnel | `identity-coverage` for a funnel of several branches the new identity does not restate |
-| a vocabulary-joined member can fill a property-only key | `identity-coverage`, repaired by a `local_key` branch that makes the key a funnel |
+| a vocabulary-joined member can fill a property-only key | `identity-coverage`, repaired by `fallback: own_key` (`set_fallback`) |
 | a group's merge is acknowledged | `self-relation`, `observation-fusion`; see below |
 | a name both sides carry, no group | `name-collision` under `error`, synthesized under `union_right`, prefixed later under `prefix_right` |
 | two spellings of one name | `near-collision` under `error` and `union_right`; kept apart under `prefix_right` |
@@ -158,16 +158,26 @@ raised after naming.
 Each cluster's `declaration` is one `VertexEquivalence` over the closed sets:
 the property equivalences of all its equivalences, a bare property name
 expanded over the members its own equivalence lists, and the one `identity`.
-When that identity derives, a member keeps its own key behind `<origin>:Type` for
-every resource that produces it and that its stepped branches do not key for
-it: a resource whose entries are keyed by other members, a member-keyed local
-key that skips it, or, for a member the vocabulary joins, a resource with no
-entry at all. A member an equivalence lists whose resource has no entry is
-left to be attached in step 12, as is a resource that produces
-the member through routers in several roles (`hosts_member_derivation` is
-false: one level's transform buffer cannot hold a derived value per role; a
-`reference_only` note). Each automatic key is an `auto_local_key` note. Downstream code iterates `cluster.members(side)` and
-needs nothing else.
+When that identity derives, a resource that produces a member and that its
+derived branches do not key for it -- one whose entries are keyed by other
+members or, for a member the vocabulary joins, one with no entry at all -- is
+refused (`identity-coverage`, repair `set_fallback`) unless the equivalence
+sets `fallback: own_key` and the member has a key of its own. A member an
+equivalence lists whose resource has no entry is left to be attached in step
+12, as is a resource that produces the member through routers in several roles
+(`hosts_member_derivation` is false: one level's transform buffer cannot hold
+a derived value per role; a `reference_only` note).
+
+After the per-side relabels are built (`_side_maps`, which records each demoted
+member's kept key), `_with_fallbacks` appends the fallback branches to each
+`fallback: own_key` cluster's identity: per member, left then right, its kept
+key (`<space>__f`), or, for a member keyed by a funnel of several branches,
+each branch the declared identity does not restate. Coinciding branches of two
+members of one side are refused (`key-space`) unless both members are named
+alike in `key_spaces`. The branches are listed in
+`ClusterResolution.fallback_branches`. Downstream code iterates
+`cluster.members(side)` and reads `cluster.declaration.identity`, which
+already ends with them.
 
 The composite rename per side sends every node of a multi-node component, self
 entries included, onto the component's name, and every renamed singleton onto
@@ -289,7 +299,7 @@ builds a preview from the op alone, with the same ids, so the plots take either.
 `derive_at` -- into basic ops, in this order:
 
 1. `AddVertexPropertiesOp`: declare the derived attributes (`derive` entries,
-   then derived branches) and the local key.
+   then derived branches).
 2. `AddResourceTransformsOp`: the derivation steps per resource, with inline
    calls.
 3. `EnsureExtractedFieldsOp`, when a producing router restricts `keep_fields`

@@ -81,8 +81,8 @@ This is the equivalence's `identity`: the keys of the combined type, tried in
 order. Each resource computes a `match_key` from its serial number column; the
 default function, `normalized_key`, trims and lowercases the value. `input`
 names the column as it appears in that resource's file, so the sensor feed
-still says `serial`. A record with no serial number falls back to `local_key`,
-its own key behind a tag: `maintenance:A2`.
+still says `serial`. `fallback: own_key` keeps a record with no serial number:
+it is keyed on its own key instead, so the conveyor `A2` is still written.
 
 ```yaml
 vertex_equivalences:
@@ -93,9 +93,7 @@ vertex_equivalences:
         sources:
             assets: {input: [serial_number]}
             devices: {input: [serial]}
-    -   local_key:
-            assets: {field: asset_id, tag: maintenance}
-            devices: {field: device_id, tag: sensors}
+    fallback: own_key
 ```
 
 ### 4. Merge
@@ -118,16 +116,16 @@ source's own key is named after its manifest.
 ```text
 resource  own key  serial   vertex id
 assets    A1       HP-0042  303d50890862
-assets    A2       -        d154517d907c
+assets    A2       -        dc3af44f0fe1
 devices   D7       hp-0042  303d50890862
 devices   D9       LT-0007  27ded24b71df
 4 records -> 3 vertices
 W1 -> Hydraulic press (vertex 303d50890862)
-W2 -> Conveyor (vertex d154517d907c)
+W2 -> Conveyor (vertex dc3af44f0fe1)
 ```
 
 The asset id is now a key to look machines up by, not the key that makes them
-one. A record of `A1` without a serial number would key on `maintenance:A1`
+one. A record of `A1` without a serial number would key on its own key `A1`
 and become a second machine beside the one matched on `hp-0042`. The preview
 of this merge says so, as a `lookup_demotion` note.
 
@@ -150,8 +148,10 @@ uv run graflo merge manifest_maintenance.yaml manifest_sensors.yaml \
 ```
 
 How a machine is keyed: a record tries `#1 match_key`, which each source
-derives from its serial number, then `#2 local_key`, its own key behind a tag.
-The first it completes is digested into `id`.
+derives from its serial number, then its own key, `#2 maintenance__asset_id`
+for an asset or `#3 sensors__device_id` for a device. The first it completes
+is digested into `id`, so a record that falls back never fuses with the other
+source's.
 
 ![Raw fields of assets and devices feeding the two branches, which feed Machine.id](figs/vertex-Machine.identity.svg)
 

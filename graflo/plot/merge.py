@@ -74,7 +74,6 @@ EDGE_STYLE: dict[str, dict[str, str]] = {
     "demotion": {"style": "dashed", "color": "#8E5A2B", "penwidth": "0.9"},
     "property_rename": {"style": "dashed", "color": "#6B4C9A", "penwidth": "0.7"},
     "derivation": {"style": "solid", "color": "#B9770E", "penwidth": "1.1"},
-    "local_key": {"style": "solid", "color": "#117A65", "penwidth": "1.1"},
 }
 
 #: An edge a later declaration overrode: still drawn, so the override shows.

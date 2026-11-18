@@ -138,10 +138,12 @@ class MergeManifestsOp(ConfigBaseModel):
     the one spelling its members share. Empty equivalences yield a disjoint
     union, subject to ``name_conflict``.
 
-    A vertex equivalence's ``identity`` with a derived or ``local_key`` branch
-    is applied to the merged union before return (canonical attributes →
-    resource derivations → priority funnel), then the members' own keys are
-    demoted to secondary identities named by each side's origin.
+    A vertex equivalence's ``identity`` with a derived branch is applied to
+    the merged union before return (canonical attributes → resource
+    derivations → priority funnel), then the members' own keys are demoted to
+    secondary identities named by their key space (the side's origin unless
+    ``key_spaces`` says otherwise); with ``fallback: own_key`` each kept key
+    is also a last branch of the funnel.
     """
 
     op: Literal["merge_manifests"] = "merge_manifests"
@@ -239,8 +241,8 @@ class MergeManifestsOp(ConfigBaseModel):
         description=(
             "Each side's origin name; unset, the side's schema name. A re-keyed "
             "member's demoted key is named by it -- property ``<origin>__<field>`` "
-            "and secondary identity ``<origin>`` -- as is an omitted "
-            "``local_key`` tag. Needed only when the union names something by "
+            "and secondary identity ``<origin>`` -- unless the equivalence's "
+            "``key_spaces`` names it. Needed only when the union names something by "
             "it: then it must be an identifier without ``__``, the two must "
             "differ, and no member may author a secondary identity of that name."
         ),

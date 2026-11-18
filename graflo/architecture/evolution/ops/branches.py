@@ -6,7 +6,7 @@ from collections.abc import Collection, Mapping, Sequence
 from typing import Any
 
 from pydantic import Field as PydanticField
-from pydantic import field_validator, model_validator
+from pydantic import model_validator
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.contract.ingestion.steps.models import TransformGuardConfig
@@ -49,55 +49,6 @@ class DerivationSpec(ConfigBaseModel):
             "Not allowed on a spec keyed by member: the member decides."
         ),
     )
-
-
-class LocalKeySource(ConfigBaseModel):
-    """Where one resource's side-local key comes from, and its namespace tag.
-
-    The tag is what keeps records of different sources apart once they fail to
-    fuse: ``f2`` from one source and ``f2`` from another are different
-    entities, and ``a:f2`` / ``b:f2`` say so. Omitted, it is the origin of the
-    resource's side (see :attr:`MergeManifestsOp.origins`). An explicit
-    ``tag=None`` (stored as ``""``, the neutral element, so it survives
-    serialization) keeps the raw value as the local key with no separator —
-    the author's claim that the values are already unique across every source
-    of the class (UUIDs, IRIs, ids the source itself prefixes).
-    """
-
-    field: str = PydanticField(
-        ...,
-        description="RAW doc field carrying the side-local key.",
-    )
-    tag: str | None = PydanticField(
-        default=None,
-        description=(
-            "Namespace tag: tag 'a' turns 'f2' into 'a:f2'. Omitted, the "
-            'origin of the resource\'s side. ``null`` or ``""`` keeps the raw '
-            "value, no separator — only for values already unique across every "
-            "source of the class."
-        ),
-    )
-    when: TransformGuardConfig | None = PydanticField(
-        default=None,
-        description=(
-            "Same as :attr:`DerivationSpec.when`: an explicit guard replacing "
-            "the one the merge derives. Not allowed on a source keyed by member."
-        ),
-    )
-
-    @field_validator("tag", mode="before")
-    @classmethod
-    def _none_is_the_empty_tag(cls, value: Any) -> Any:
-        return "" if value is None else value
-
-    @property
-    def tag_omitted(self) -> bool:
-        """Whether ``tag`` was left out, so the side's origin tags the key.
-
-        Read from the fields set rather than from ``tag is None``: a copy that
-        sets ``tag=None`` skips the validator, and still sets the tag.
-        """
-        return "tag" not in self.model_fields_set
 
 
 def _refuse_member_keyed_guards(
@@ -179,62 +130,13 @@ class DerivedBranch(ConfigBaseModel):
         return list(spec) if isinstance(spec, dict) else None
 
 
-class LocalKeyBranch(ConfigBaseModel):
-    """The last funnel branch: each source's own key behind a namespace tag.
-
-    A record that completes no earlier branch keys on this one, so it is still
-    written — as its own vertex, not joined with records of another source.
-    ``local_key`` maps each resource to the column carrying its own key, or,
-    like :attr:`DerivedBranch.sources`, to one such source per member class.
-    """
-
-    local_key: dict[str, LocalKeySource | dict[str, LocalKeySource]] = PydanticField(
-        ...,
-        min_length=1,
-        description=(
-            "Per-resource local-key wiring: ``{resource: source}``, or "
-            "``{resource: {member_class: source}}`` when the member decides."
-        ),
-    )
-    name: str = PydanticField(
-        default="local_key",
-        description="Canonical fallback property name on the class.",
-    )
-    sep: str = PydanticField(
-        default=":",
-        description="Separator between tag and key.",
-    )
-
-    @model_validator(mode="after")
-    def _validate_sources(self) -> LocalKeyBranch:
-        _refuse_member_keyed_guards("local_key branch", self.local_key, self.name)
-        return self
-
-    @property
-    def sources(self) -> dict[str, LocalKeySource | dict[str, LocalKeySource]]:
-        """The per-resource wiring, under the name :class:`DerivedBranch` uses."""
-        return self.local_key
-
-    def sources_for(self, resource: str) -> list[LocalKeySource]:
-        """Local-key sources *resource* contributes, in order."""
-        source = self.local_key.get(resource)
-        if source is None:
-            return []
-        return [source] if isinstance(source, LocalKeySource) else list(source.values())
-
-    def members_for(self, resource: str) -> list[str] | None:
-        """Member classes keying *resource*'s sources, or ``None`` if unkeyed."""
-        source = self.local_key.get(resource)
-        return list(source) if isinstance(source, dict) else None
-
-
 #: A funnel branch over canonical properties the members already carry: one
 #: name, or a composite ``[a, b]`` whose fields must all be present.
 RawBranch = str | list[str]
 
 
 #: One entry of :attr:`VertexEquivalence.identity`.
-IdentityBranchDecl = RawBranch | DerivedBranch | LocalKeyBranch
+IdentityBranchDecl = RawBranch | DerivedBranch
 
 
 def branch_fields(branch: IdentityBranchDecl) -> list[str]:
@@ -269,15 +171,14 @@ def check_identity_branches(
 ) -> None:
     """Refuse a branch list no funnel can be built from, naming *label*.
 
-    Non-empty; no empty composite; at most one ``local_key``, and it last --
-    every record completes it, so a branch after it never fires; unique
-    branch ids, since they take part in the digest; and no derived name that
-    a property branch keys on, which the derivation would overwrite.
+    Non-empty; no empty composite; unique branch ids, since they take part
+    in the digest; and no derived name that a property branch keys on, which
+    the derivation would overwrite.
 
     *derived* names the attributes a ``derive`` block computes. A name or
     composite branch may key on them, but a composite is all derived or all
     properties, every derived attribute is keyed on, and none shares a name
-    with a derived or local-key branch.
+    with a derived branch.
     """
     if not branches:
         raise ValueError(
@@ -287,14 +188,6 @@ def check_identity_branches(
     for branch in branches:
         if isinstance(branch, list) and not branch:
             raise ValueError(f"{label}: an identity branch is empty")
-    local = [i for i, b in enumerate(branches) if isinstance(b, LocalKeyBranch)]
-    if len(local) > 1:
-        raise ValueError(f"{label}: identity has more than one local_key")
-    if local and local[0] != len(branches) - 1:
-        raise ValueError(
-            f"{label}: the local_key branch must be the last one; a record keys "
-            "on its first complete branch, and every record completes the local key"
-        )
     ids = [branch_id(branch) for branch in branches]
     repeated = sorted({i for i in ids if ids.count(i) > 1})
     if repeated:
@@ -302,9 +195,7 @@ def check_identity_branches(
     raw_fields = {
         f for b in branches if isinstance(b, str | list) for f in branch_fields(b)
     }
-    stepped = {
-        b.name for b in branches if isinstance(b, DerivedBranch | LocalKeyBranch)
-    }
+    stepped = {b.name for b in branches if isinstance(b, DerivedBranch)}
     shadowing = sorted(stepped & raw_fields)
     if shadowing:
         raise ValueError(

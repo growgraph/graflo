@@ -13,17 +13,23 @@ from .branches import (
     DerivationSpec,
     DerivedBranch,
     IdentityBranchDecl,
-    LocalKeyBranch,
     branch_fields,
     check_identity_branches,
 )
 
 
 def _describe_branch_shapes() -> str:
-    return (
-        "a branch is a property name, a list of names, `{name, sources}`, or "
-        "`{local_key: {resource: {field, tag}}}`"
-    )
+    return "a branch is a property name, a list of names, or `{name, sources}`"
+
+
+#: Why an identity entry ``{local_key: ...}`` is refused, and what replaces it.
+_LOCAL_KEY_REMOVED = (
+    "the `local_key` identity branch was removed. Set `fallback: own_key` on "
+    "the equivalence instead: each member's own key, kept on the merged class "
+    "as `<key space>__<field>`, becomes a branch after the declared ones. A "
+    "`tag` that is not the side's origin becomes `key_spaces: {<side>: "
+    "{<member>: <tag>}}`"
+)
 
 
 def _member_list(value: str | list[str]) -> list[str]:
@@ -97,11 +103,18 @@ class VertexEquivalence(ConfigBaseModel):
 
     ``identity`` is the merged key, as ordered funnel branches in canonical
     names. A branch is a property the members carry (a name, or a composite
-    ``[a, b]``), a :class:`DerivedBranch` each source computes from its own
-    columns, or a :class:`LocalKeyBranch` (the tagged fallback, last). One
-    property branch keys the class on that natural key; anything else keys it
-    on a funnel, where a record keys on its first complete branch. A funnel's
-    digest is stored in ``digest_field`` (``id`` by default).
+    ``[a, b]``) or a :class:`DerivedBranch` each source computes from its own
+    columns. One property branch keys the class on that natural key; anything
+    else keys it on a funnel, where a record keys on its first complete
+    branch. A funnel's digest is stored in ``digest_field`` (``id`` by
+    default).
+
+    ``fallback: own_key`` keeps the records that complete no declared branch:
+    each member's own key, kept on the merged class under its key space
+    (``<space>__<field>``), becomes one more branch, after the declared ones
+    and in member order. Such a record becomes a vertex of its own, never
+    fused with another source's. A member's key space is its side's origin
+    unless ``key_spaces`` names it.
 
     ``derive`` declares attributes each source computes, without making each
     one a branch: a name or composite branch in ``identity`` keys on them, so
@@ -134,11 +147,31 @@ class VertexEquivalence(ConfigBaseModel):
         default=None,
         description=(
             "The merged key, as ordered funnel branches in canonical names: a "
-            "property the members carry, a composite ``[a, b]``, a derived "
-            "branch ``{name, sources}``, or ``{local_key: ...}`` (last). One "
-            "property branch is a natural key; anything else is a funnel. When "
-            "unset, identity is carried through only if every member agrees; "
-            "disagreement raises `MergeIdentityError`."
+            "property the members carry, a composite ``[a, b]``, or a derived "
+            "branch ``{name, sources}``. One property branch is a natural key; "
+            "anything else is a funnel. When unset, identity is carried through "
+            "only if every member agrees; disagreement raises "
+            "`MergeIdentityError`."
+        ),
+    )
+    fallback: Literal["own_key"] | None = PydanticField(
+        default=None,
+        description=(
+            "`own_key`: a record that completes no branch of `identity` keys on "
+            "its member's own key, kept on the merged class as "
+            "`<key space>__<field>`; one branch per member, after the declared "
+            "ones. Unset, such a record has no key. Requires `identity` and "
+            "`retire: demote`."
+        ),
+    )
+    key_spaces: dict[Literal["left", "right"], dict[str, str]] = PydanticField(
+        default_factory=dict,
+        description=(
+            "The key space a member's own key is kept under, per side and "
+            "member: it names the kept property (`<space>__<field>`) and the "
+            "lookup identity. Unset, the side's origin. Two members of one side "
+            "keyed on the same fields share a fallback branch only when both "
+            "are named here alike (their ids are one registry)."
         ),
     )
     derive: dict[str, dict[str, DerivationSpec | dict[str, DerivationSpec]]] | None = (
@@ -165,7 +198,7 @@ class VertexEquivalence(ConfigBaseModel):
     derive_at: dict[str, list[int]] = PydanticField(
         default_factory=dict,
         description=(
-            "Per-resource pipeline level the derived and local-key branches "
+            "Per-resource pipeline level the derived branches "
             "derive at, as ``descend`` step indices. Omitted resources resolve "
             "to the single level producing the class (for member-keyed "
             "sources: the level producing the member on its side); supply a "
@@ -197,15 +230,17 @@ class VertexEquivalence(ConfigBaseModel):
     @field_validator("identity", mode="before")
     @classmethod
     def _branch_shapes(cls, value: Any) -> Any:
-        """Name the four branch shapes instead of pydantic's union error."""
+        """Name the branch shapes instead of pydantic's union error, and refuse `local_key`."""
         if not isinstance(value, list):
             return value
         for entry in value:
-            if isinstance(entry, str | DerivedBranch | LocalKeyBranch):
+            if isinstance(entry, str | DerivedBranch):
                 continue
             if isinstance(entry, list) and all(isinstance(f, str) for f in entry):
                 continue
-            if isinstance(entry, dict) and ("sources" in entry or "local_key" in entry):
+            if isinstance(entry, dict) and "local_key" in entry:
+                raise ValueError(f"VertexEquivalence: {_LOCAL_KEY_REMOVED}")
+            if isinstance(entry, dict) and "sources" in entry:
                 continue
             raise ValueError(
                 f"VertexEquivalence: identity branch {entry!r} has no known "
@@ -236,17 +271,11 @@ class VertexEquivalence(ConfigBaseModel):
         """Every derived attribute: the ``derive`` entries, then derived branches."""
         return [*self.derive_attributes(), *self.derived_branches()]
 
-    def local_key_branch(self) -> LocalKeyBranch | None:
-        """The ``local_key`` branch of ``identity``, if declared."""
-        return next(
-            (b for b in self.identity or [] if isinstance(b, LocalKeyBranch)), None
-        )
-
     @property
     def has_derivation(self) -> bool:
-        """Whether the key needs pipeline steps: ``derive``, a derived or local-key branch."""
+        """Whether the key needs pipeline steps: ``derive`` or a derived branch."""
         return bool(self.derive) or any(
-            isinstance(b, DerivedBranch | LocalKeyBranch) for b in self.identity or []
+            isinstance(b, DerivedBranch) for b in self.identity or []
         )
 
     @property
@@ -322,6 +351,16 @@ class VertexEquivalence(ConfigBaseModel):
                 )
             # Each entry is validated as a derived branch's sources are.
             self.derive_attributes()
+        if self.identity is None and (self.fallback or self.key_spaces):
+            raise ValueError(
+                "VertexEquivalence: fallback and key_spaces apply to a declared "
+                "identity; declare identity"
+            )
+        if self.fallback is not None and self.retire != "demote":
+            raise ValueError(
+                "VertexEquivalence: fallback keys records on the members' kept "
+                "keys, which `retire: keep` does not keep; drop one of them"
+            )
         if self.identity is None:
             if self.derive_at:
                 raise ValueError(
@@ -366,7 +405,7 @@ class VertexEquivalence(ConfigBaseModel):
     def is_natural_key(self) -> bool:
         """Whether ``identity`` is one property branch, kept as a natural key."""
         return self.identity is not None and (
-            len(self.identity) == 1 and not self.has_derivation
+            len(self.identity) == 1 and not self.has_derivation and not self.fallback
         )
 
 

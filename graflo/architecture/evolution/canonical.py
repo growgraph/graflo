@@ -132,8 +132,11 @@ class MergeCanonicalConflictError(Refusal):
 #: ``declare_equivalences`` adds the payloads (or ``name_conflict="union_right"``
 #: declares them itself); ``set_into`` replaces one equivalence by the payload,
 #: renamed; ``rename_away`` adds the ``renames`` entry; ``add_key_source``
-#: adds the identity entry carried in the payload; ``acknowledge`` replaces one
-#: equivalence by the payload with a consequence added to its ``allow``.
+#: adds the identity entry carried in the payload; ``set_fallback`` replaces
+#: one equivalence by the payload with ``fallback: own_key``, which keys
+#: records no branch keys on their own key and fuses nothing; ``acknowledge``
+#: replaces one equivalence by the payload with a consequence added to its
+#: ``allow``.
 #: ``add_key_source`` and ``acknowledge`` are left to the author, because each
 #: decides which records fuse.
 CompletionKind = Literal[
@@ -142,6 +145,7 @@ CompletionKind = Literal[
     "set_into",
     "rename_away",
     "add_key_source",
+    "set_fallback",
     "acknowledge",
 ]
 
@@ -162,7 +166,7 @@ class Completion:
     relation_equivalences: tuple[dict[str, Any], ...] = ()
     renames: dict[str, Any] = field(default_factory=dict)
     label: str = ""
-    #: For ``set_into`` / ``extend_cluster``: the position of the equivalence
+    #: For ``set_into`` / ``extend_cluster`` / ``set_fallback``: the position of the equivalence
     #: the payload replaces, in the op's list of its kind.
     replaces: int | None = None
 
@@ -554,7 +558,7 @@ class ClusterResolution:
     ``declared`` is the folded vocabulary as seen from each side;
     ``side_maps`` is the composite — every group member onto its merged
     name, every other class onto its rename or vocabulary name, every demoted
-    key field onto ``<space>__<field>`` (its ``local_key`` tag, else the
+    key field onto ``<space>__<field>`` (its ``key_spaces`` entry, else the
     side's origin) — one
     :class:`~graflo.architecture.evolution.ops.CanonicalizeOp` per side.
     ``index`` includes any group merge synthesized; each cluster's members
@@ -571,32 +575,29 @@ class ClusterResolution:
     origins: Mapping[Side, str] = field(
         default_factory=lambda: {"left": "left", "right": "right"}
     )
-    #: Each side's merged classes whose local keys its origin tags: a
-    #: ``local_key`` source with its tag omitted, or a key merge adds for a
-    #: member no key source covers. With the demoted keys whose key space is
-    #: the origin, these are what the union names by a side's origin.
-    origin_tagged: Mapping[Side, frozenset[str]] = field(default_factory=dict)
     #: Each re-keyed member whose own key is demoted, ``(side, member)``, to
     #: that key's canonical fields before the origin prefix.
     demoted_keys: Mapping[tuple[Side, str], tuple[str, ...]] = field(
         default_factory=dict
     )
     #: Each of those members to the key space its key is named by: its
-    #: ``local_key`` tag, else its side's origin.
+    #: ``key_spaces`` entry, else its side's origin.
     key_spaces: Mapping[tuple[Side, str], str] = field(default_factory=dict)
-    #: Each of those members the op tags, to every key space its tags name.
+    #: Each of those members the op's ``key_spaces`` name, to every name given.
     key_tags: Mapping[tuple[Side, str], tuple[str, ...]] = field(default_factory=dict)
+    #: Each merged class with ``fallback: own_key`` to the branches the
+    #: fallback adds after the declared ones, in order, as
+    #: ``(side, member, fields)``: one member's kept key, or one branch of a
+    #: member keyed by a funnel. Already part of the cluster's ``identity``.
+    fallback_branches: Mapping[str, tuple[tuple[Side, str, tuple[str, ...]], ...]] = (
+        field(default_factory=dict)
+    )
     #: Each attribute ``side_maps`` renames, ``(side, class, field)``, to
     #: every declaration that wrote it, in order, as ``(layer, target)``; the
     #: last is the one applied.
     property_layers: Mapping[
         tuple[Side, str, str], tuple[tuple[PropertyLayer, str], ...]
     ] = field(default_factory=dict)
-    #: Each merged class to the ``(resource, member)`` pairs whose
-    #: ``local_key`` source merge added because nothing declared one.
-    auto_key_sources: Mapping[str, frozenset[tuple[str, str]]] = field(
-        default_factory=dict
-    )
 
 
 def fold_declared_maps(

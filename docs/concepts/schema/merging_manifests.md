@@ -50,9 +50,7 @@ vertex_equivalences:
         sources:
             assets: {input: [serial_number]}
             devices: {input: [serial]}
-    -   local_key:
-            assets: {field: asset_id, tag: maintenance}
-            devices: {field: device_id, tag: sensors}
+    fallback: own_key
 ```
 
 The first manifest you pass is the left side and the second the right side.
@@ -356,21 +354,17 @@ are keyed by the members' own names, and the union reads each side before
 renaming it, so a derivation keyed by `Press` still runs only for the rows a
 router sends to `Press`.
 
-When the identity is a funnel, a member the map joins that the identity gives
-no key source for its resource keeps its own key behind the tag
-`<origin>:Type`, such as `maintenance:Bench:B1`. Its records belong to
-`Machine`, but never fuse with a device. The preview lists each such key as an `auto_local_key` note, and
-[`--suggest`](#suggesting-the-declarations) writes it out so you can edit it.
-A resource that produces the member through routers in several roles, such as
-a link table whose source and target routers both reach it, gets no such key:
-one level has one transform buffer, which cannot hold a derived value per role.
-The union attaches it to the merged type by the member's own key instead
-(a `reference_only` note).
-
-A plain property key, such as `identity: [serial_number]`, has no place for an
-own key. A member the map joins that does not carry the key is refused
-(`identity-coverage`), and the repair carries the `local_key` branch to append.
-With it, the identity becomes a funnel, and the member keeps its own key.
+A member the map joins whose records complete no branch of `identity`, because
+the identity derives nothing for it or names properties it does not carry, is
+refused (`identity-coverage`). The repair sets
+[`fallback: own_key`](#records-that-complete-no-branch): its records are then
+keyed on the member's own key, belong to `Machine`, and never fuse with a
+device. [`--suggest`](#suggesting-the-declarations) applies that repair. A
+resource that produces the member through routers in several roles, such as a
+link table whose source and target routers both reach it, is not refused: one
+level has one transform buffer, which cannot hold a derived value per role, so
+the union attaches it to the merged type by the member's own key (a
+`reference_only` note).
 
 ### One type, one group
 
@@ -438,7 +432,10 @@ branch is one of these:
 | a property | `serial_number`, or `[plant, tag]` for a composite | the value of a property the members carry, under its canonical name |
 | a derived branch | `{name: match_key, sources: {...}}` | an attribute each resource computes from its own columns; see [Deriving the key per source](#deriving-the-key-per-source) |
 | derived attributes | `[machine_key, group_key]`, with both in `derive` | several attributes each resource computes, all required; see [A key over several columns](#a-key-over-several-columns) |
-| a local key | `{local_key: {...}}`, always last | the record's own key behind a per-source tag |
+
+After the declared branches, `fallback: own_key` adds one branch per member,
+over that member's own key; see
+[Records that complete no branch](#records-that-complete-no-branch).
 
 One property branch is a plain natural key. Any other list is an
 [identity funnel](../glossary.md#identity-funnel), whose digest is stored in
@@ -448,8 +445,9 @@ One property branch is a plain natural key. Any other list is an
 |---|---|---|
 | `[serial_number]` | that natural key | every member carries the field, under its canonical name |
 | `[asset_id, device_id]` | a funnel, one branch per member's own key | the members stay distinct records under one type |
-| a derived branch, then a `local_key` | a funnel over derived attributes | the key must be normalized, filtered or namespaced per source |
-| `[machine_key, group_key]` from `derive`, then a `local_key` | a funnel over a composite of derived attributes | that key spans several columns |
+| a derived branch | a funnel over derived attributes | the key must be normalized or filtered per source |
+| `[machine_key, group_key]` from `derive` | a funnel over a composite of derived attributes | that key spans several columns |
+| any of these, with `fallback: own_key` | a funnel, ending with one branch per member's own key | records that complete no declared branch must still be written |
 
 For example, keying on a property the sensor feed spells differently:
 
@@ -483,13 +481,14 @@ replace the value that branch is computed from.
 The check reads the manifests, not the data. A record whose key field is empty
 still has no identity: it is not written, and the cast logs a warning such as
 `Cast dropped 1 'Machine' document(s) with no value for its identity
-['serial_number']`. In the example, the conveyor `A2` has no serial number. A
-`local_key` branch keeps such records.
+['serial_number']`. In the example, the conveyor `A2` has no serial number.
+`fallback: own_key` keeps such records.
 
 Once the merged type has its new key, each member's own key is demoted to a
-[secondary identity](../glossary.md#secondary-identity) named after its side's
-**origin**: the side's schema name, unless the op sets `origins`. Each key field
-`f` becomes the property `<origin>__f`. In the example, `Machine` has three
+[secondary identity](../glossary.md#secondary-identity) named after its **key
+space**: its side's **origin** (the side's schema name, unless the op sets
+`origins`), unless the equivalence's `key_spaces` names another one. Each key
+field `f` becomes the property `<space>__f`. In the example, `Machine` has three
 identities:
 
 | Identity | Fields | Used for |
@@ -510,8 +509,8 @@ origins: {left: maintenance, right: sensors}
 - An origin is a letter followed by letters, digits or single underscores, and
   not `identity` or `secondary`. The two must differ, and neither may name a
   secondary identity a member declares (`origin`).
-- A member whose `local_key` tag differs from its origin is its own key space:
-  its key is named by the tag (`<tag>__f`, identity `<tag>`). Members of one
+- `key_spaces: {left: {Bench: benches}}` puts a member in its own key space:
+  its key is named by it (`benches__f`, identity `benches`). Members of one
   side share a lookup identity only when they share the key field and the key
   space.
 - When one key space brings two different key fields to one type, each
@@ -520,24 +519,87 @@ origins: {left: maintenance, right: sensors}
 - A key listed as a property branch of `identity` is still demoted, but keeps
   its name. Two members of one side in different key spaces whose key is that
   one field are refused (`key space`), even when a member declares it as a
-  secondary identity: their ids would share one column. Tag them alike, or do
-  not list the key as a branch.
+  secondary identity: their ids would share one column. Put them in one key
+  space, or do not list the key as a branch.
 - A key a member already declares as a secondary identity keeps that
   declaration and its name, for one key space.
 - A demoted key is named by its origin, so renaming it in `properties` or a
   canonical map is refused (`double-home`).
 - On a PostgreSQL target, a `<space>__f` name longer than 63 bytes is refused
-  (`identifier`); set a shorter `origins` or `local_key` tag.
+  (`identifier`); set a shorter `origins` or `key_spaces` name.
 
 Set `retire: keep` on the equivalence to leave the old key fields as plain
 properties instead.
+
+### Records that complete no branch
+
+A record that completes no branch of `identity` has no key and is not
+written. `fallback: own_key` on the equivalence keeps it: after the declared
+branches, the merged funnel gets one branch per member, over that member's
+own key as the merged type keeps it, `<space>__f`. In the example, `Machine`
+is keyed on:
+
+| Branch | Fields | A record keys on it when |
+|---|---|---|
+| #1 | `match_key` | it has a serial number |
+| #2 | `maintenance__asset_id` | it comes from the maintenance system |
+| #3 | `sensors__device_id` | it comes from the sensor feed |
+
+The conveyor `A2` keys on `maintenance__asset_id = A2`: it is written, and it
+never fuses with a device, whose own key is another field. The fallback adds
+no property and no pipeline step; the branch fields are the demoted keys
+above, so the same column keys a record and finds it.
+
+- Members follow in order, left then right. A composite or hash key is one
+  branch over all its fields. A member keyed by a funnel of several branches
+  keeps those branches, after the declared ones; a blank or assigned member
+  has no key to fall back on.
+- Two members of one side keyed on the same field in the same key space would
+  share a branch, so a record of one and a record of the other with the same id
+  would become one vertex. The union refuses that (`key space`) until
+  `key_spaces` names both: alike when their ids come from one registry,
+  differently when they do not.
+- `fallback` needs `identity`, and `retire: demote`: under `retire: keep` there
+  is no kept key to fall back on.
+
+Every name in the fallback comes from a key space, so a merged type merges
+again. Merging a third manifest onto `Machine` with `fallback: own_key` keeps
+its branches and adds the third side's own key after them; the key does not
+depend on the order the manifests were merged in, and a key space already on
+the type is refused (`origin`).
+
+### Replacing `local_key`
+
+Earlier versions declared the fallback as a `local_key` branch of `identity`,
+which added a `local_key` property and a `tagged_key` step to each resource.
+That branch is refused now; an op that declares it is rewritten as follows:
+
+| Earlier | Now |
+|---|---|
+| `- local_key: {res: {field: f, tag: t}}` as the last branch | `fallback: own_key` on the equivalence; drop the branch |
+| a `tag` other than the side's origin | `key_spaces: {<side>: {<Member>: t}}`, or `origins.<side>: t` for the whole side |
+| `tag` omitted | nothing: the origin is the default |
+| `tag: null`, for ids unique across every source | map both sides' id onto one property and list it as a property branch |
+| `name` or `sep` on the branch | nothing: there is no fallback property and no separator |
+| member-keyed sources | nothing: each member's own key is read from its schema |
+| a `field` that is not the member's key | a derived branch over that column |
+| an automatic own key (`auto_local_key` note) | the union refuses (`identity-coverage`); add `fallback: own_key` |
+| `LocalKeyBranch`, `LocalKeySource` in Python | `VertexEquivalence(fallback="own_key", key_spaces=...)` |
+| reading `local_key` from a merged record | read the kept key, `<space>__f` |
+
+A merged manifest written with a `local_key` branch stays valid: its
+`local_key` is an ordinary property and its funnel an ordinary funnel, and
+merging it again carries both. Rewriting its op changes the vertex id of every
+record that was keyed through the old fallback; records keyed on an earlier
+branch keep theirs. The library does not re-key stored vertices: reload the
+type, or keep the manifest written earlier.
 
 ### The old key no longer deduplicates
 
 Before the union, two maintenance records with `asset_id: A1` were one vertex.
 After it, a record keys on the first branch it completes, so `A1` read once with
 a serial number and once without becomes two machines, one keyed by the serial
-number and one by `maintenance:A1`, and the `maintenance` key finds both. The funnel
+number and one by its own key `A1`, and the `maintenance` key finds both. The funnel
 fuses records on the branch they reach first, not on any key they happen to
 share.
 
@@ -558,9 +620,7 @@ the same value:
         sources:
             assets: {input: [serial_number]}
             devices: {input: [serial]}
-    -   local_key:
-            assets: {field: asset_id, tag: maintenance}
-            devices: {field: device_id, tag: sensors}
+    fallback: own_key
 ```
 
 - `name` is the attribute the branch keys on; the union adds it to the merged
@@ -570,15 +630,10 @@ the same value:
   attribute from its own columns. `input` names those columns as they appear in
   the resource's records: `serial` for the sensor feed, even though the merged
   property is `serial_number`.
-- `local_key` is the fallback: a record with no derived attribute is keyed by
-  its own key behind a tag, so `A2` from the maintenance system becomes
-  `maintenance:A2`. The tag keeps two sources whose own keys overlap apart.
-  `tag` defaults to the side's origin; write `tag: null` only when the values
-  are already unique across every source of the type, such as UUIDs. A tag
-  other than the origin also names the member's
-  [key space](#keying-the-merged-type). `name` (default `local_key`) and `sep`
-  (default `:`) sit beside `local_key`.
-- `when` (optional, on a derivation or a local-key source) runs it only for
+- `fallback: own_key` keys a record with no derived attribute on its own key,
+  so `A2` from the maintenance system is keyed on `maintenance__asset_id`; see
+  [Records that complete no branch](#records-that-complete-no-branch).
+- `when` (optional, on a derivation) runs it only for
   records whose raw column holds one of the listed values:
   `when: {field: kind, in: [firm]}`.
 
@@ -593,7 +648,7 @@ keyword `params`:
 | `affix_gated_key` | the value | the value without its marker when it carries `params.prefix` and `params.suffix`, else nothing |
 
 A function that returns nothing does not drop the record: the record skips that
-branch and falls back to the next one, or to its local key. It is written, but
+branch and falls back to the next one, or to its own key. It is written, but
 not joined with records from the other source. Use `gated_normalized_key` when
 another column decides whether a record takes part, and `affix_gated_key` when
 the key value carries its own marker, such as `ext_A42`.
@@ -620,9 +675,7 @@ branch:
             api_vertex: {input: [group_id]}
     identity:
     -   [machine_key, group_key]
-    -   local_key:
-            inventory: {field: machine_id, tag: inventory}
-            api_vertex: {field: vertex_id, tag: api}
+    fallback: own_key
 ```
 
 - `derive` is keyed by attribute name, and each entry has the shape of a derived
@@ -682,8 +735,7 @@ The union refuses a derived branch (`AlignmentConflictError`) when:
   one level's transform buffer cannot hold a derived value per role;
 - a function does not accept its `input` and `params`;
 - a `derive` attribute is keyed on by no branch, shares its name with a derived
-  or local-key branch, or sits in a composite beside a property: derive that
-  property too.
+  branch, or sits in a composite beside a property: derive that property too.
 
 Every resource that writes a re-keyed type is one of two kinds:
 
@@ -710,8 +762,8 @@ The rules:
   `endpoints_on_ambiguous` (`all`, the default, writes onto each). The counts
   are in `DBWriter.stats` and logged at the end of the ingest.
 - A resource finds a type by one key space. One whose members' keys were
-  demoted to different identities is refused (`ambiguous reference`): tag the
-  members alike, or produce each from its own resource.
+  demoted to different identities is refused (`ambiguous reference`): put the
+  members in one key space, or produce each from its own resource.
 - Under `retire: keep` no key is demoted to find the type by, so a resource
   that would be attached is refused (`uncovered producer`).
 
@@ -855,9 +907,10 @@ The schema union refuses on its own after the names are settled:
 |---|---|---|
 | `MergeIdentityError` | members disagree on their key, a declared key some member cannot fill, or a funnel over a member declaring its `digest_field` | [declare the key](#keying-the-merged-type), or set `digest_field` |
 | `MergeIdentityError` (`origin`) | an origin that is not a valid name, two sides with one origin, or an origin a member's secondary identity already uses | set `origins` on the op |
-| `MergeIdentityError` (`key space`) | a member tagged differently by two resources, a tag that is not a valid name or names a member's secondary identity, or one key space on both sides | give the member one tag, or another one |
-| `MergeIdentityError` (`identifier`) | on a PostgreSQL target, a demoted key's `<space>__f` name longer than 63 bytes | set a shorter `origins` or `local_key` tag |
-| `MergeIdentityError` (`ambiguous reference`, finding `ambiguous-reference`) | a resource that would find one type by two demoted keys | tag the members alike, or produce each from its own resource |
+| `MergeIdentityError` (`key space`) | a member given two key spaces, a key space that is not a valid name or names a member's secondary identity, or one key space on both sides | give the member one key space, or another one |
+| `MergeNamingError` (`key space`) | under `fallback: own_key`, two members of one side that would share a fallback branch | name both in `key_spaces`: alike for one registry, differently for two |
+| `MergeIdentityError` (`identifier`) | on a PostgreSQL target, a demoted key's `<space>__f` name longer than 63 bytes | set a shorter `origins` or `key_spaces` name |
+| `MergeIdentityError` (`ambiguous reference`, finding `ambiguous-reference`) | a resource that would find one type by two demoted keys | put the members in one key space, or produce each from its own resource |
 | type or unit conflict | a property declared with two types or two units | retype or re-ground one side first |
 | `AlignmentConflictError` | a derived branch breaks [its rules](#rules-a-derived-branch-must-follow) | fix the derivation |
 
@@ -904,7 +957,8 @@ guessing: for each problem, the first of its repairs an edit of the op can
 express — a rename away before a new `into`, and either before adding a type
 to a group, which fuses its records. Accepting a self-relation or a fused
 observation, and adding a key source, are left to you, because each decides
-which records fuse. It also writes out every automatic own key. Without `--op`, it writes a scaffold: one equivalence for every name both
+which records fuse; `fallback: own_key` fuses nothing, so it is set when a
+member would otherwise have no key. Without `--op`, it writes a scaffold: one equivalence for every name both
 sides share. Two spellings of one name are listed as comments, never declared.
 In Python the same is `suggest_merge_op(left, right, op)`. Nothing is
 applied: read the file, edit it, and pass it with `--op`.
@@ -925,8 +979,8 @@ for finding in preview.blocking:
 
 A finding has one of three severities: `refusal` is one the union raised,
 `possible` is one the preview found on its own, and `note` records an accepted
-default, such as an `into` overriding the vocabulary, an automatic own key, or
-a map entry taken as already applied. Three notes describe resources a union
+default, such as an `into` overriding the vocabulary, or a map entry taken
+as already applied. Three notes describe resources a union
 changes: `attached` (a resource that now finds a type instead of creating it),
 `shared_key_space` (members of one side whose keys became one identity) and
 `attach_order` (a resource that runs before the one whose vertices it finds,
@@ -966,7 +1020,7 @@ graflo merge manifest_maintenance.yaml manifest_sensors.yaml \
 |---|---|---|
 | members | `vertex-Machine.members.png` | The types that become the merged type. A dashed edge marks a member a vocabulary joins rather than one the equivalence names. |
 | attributes | `vertex-Machine.attributes.png` | Where each member property lands on the merged type: a dark edge for a declared equivalence, blue for a vocabulary rename, thin grey for a name kept as it is, dotted for a mapping a later declaration overrode. |
-| identity | `vertex-Machine.identity.png` | The raw fields each identity branch reads, labelled with the transform or the tag, the branches in the order a record tries them, and the key they feed. |
+| identity | `vertex-Machine.identity.png` | The raw fields each derived branch reads, labelled with the transform, the branches in the order a record tries them (an own-key branch names its member), and the key they feed. |
 | lookups | `vertex-Machine.lookups.png` | Each member's own key, kept on the merged type as a lookup; the edge names the key space. |
 
 ![The identity of example 20: raw fields of two resources feeding two branches, which feed the digest](../../examples/manifest-union/figs/vertex-Machine.identity.svg)
