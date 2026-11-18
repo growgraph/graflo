@@ -224,6 +224,98 @@ class TestTransformsBesideTheRouter:
         ) in caplog.text
 
 
+#: A call renaming keys; ``str`` stands for any key function.
+KEYS = {"module": "builtins", "foo": "str", "target": "keys"}
+
+
+def _joined_view() -> SelectSpec:
+    return SelectSpec.model_validate(
+        {
+            "joins": [
+                {
+                    "table": "all_classes",
+                    "alias": "machine_types",
+                    "on_self": "machine_id",
+                    "on_other": "entity_id",
+                }
+            ],
+            "select": [
+                "all_base",
+                {
+                    "from_join": "machine_types",
+                    "column": "type_name",
+                    "as": "machine_type",
+                },
+            ],
+        }
+    )
+
+
+class TestRelabellingBesideTheRouter:
+    """A rename or a key-renaming call leaves the read narrowed, on the source column."""
+
+    @pytest.mark.parametrize(
+        "transform,where",
+        [
+            pytest.param({"call": KEYS}, "\"kind\" IN ('mch')", id="keys-all"),
+            pytest.param(
+                {"call": {**KEYS, "keys": {"mode": "exclude", "names": ["kind"]}}},
+                "\"kind\" IN ('mch')",
+                id="keys-exclude",
+            ),
+            pytest.param(
+                {"rename": {"kind": "kind", "first_name": "firstName"}},
+                "\"kind\" IN ('mch')",
+                id="identity-entry",
+            ),
+        ],
+    )
+    def test_the_filter_stays_on_the_routed_column(
+        self, transform: dict[str, Any], where: str
+    ) -> None:
+        connector = TableConnector(name="items", table_name="items")
+
+        query = _query(connector, {"transform": transform}, _router())
+
+        assert query.endswith(f"WHERE {where}")
+
+    def test_a_rename_onto_the_field_filters_the_renamed_column(self) -> None:
+        connector = TableConnector(name="items", table_name="items")
+
+        query = _query(
+            connector, {"transform": {"rename": {"category": "kind"}}}, _router()
+        )
+
+        assert query.endswith("WHERE \"category\" IN ('mch')")
+
+    @pytest.mark.parametrize(
+        "transform,type_field",
+        [
+            pytest.param({"call": KEYS}, "machine_type", id="keys-all"),
+            pytest.param({"rename": {"machine_type": "kind"}}, "kind", id="rename"),
+        ],
+    )
+    def test_a_joined_column_is_filtered_under_its_alias(
+        self, transform: dict[str, Any], type_field: str
+    ) -> None:
+        connector = TableConnector(
+            name="items", table_name="equipment", view=_joined_view()
+        )
+
+        query = _query(
+            connector, {"transform": transform}, _router(type_field=type_field)
+        )
+
+        assert query.endswith("WHERE machine_types.\"type_name\" IN ('mch')")
+
+    def test_a_view_without_the_routed_field_is_refused(self) -> None:
+        view = SelectSpec.model_validate({"select": [{"base": "id"}]})
+        connector = TableConnector(name="items", table_name="items", view=view)
+
+        with pytest.raises(ValueError, match=r"routes on \['kind'\]"):
+            _sources(connector, _router())
+
+
 class TestNothingIsPushed:
     def test_a_static_vertex_step_leaves_the_query_whole(self) -> None:
         connector = TableConnector(name="items", table_name="items")

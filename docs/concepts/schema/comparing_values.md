@@ -21,7 +21,7 @@ properties:
 | `normalizer` | A registered normalizer, applied to the whole value and to each part. `label_v1` folds case, Unicode width, punctuation and spacing: `"PUMP-x1!"` and `"Pump X1"` are both `"pump x1"`. Without one, values compare after type coercion alone. |
 | `parts.split` | `words`, or the separators between parts. Required with `parts`. |
 | `parts.order` | Which end of the value is the general one: `general_first`, `specific_first` or `unordered`. Required with `parts`. |
-| `parts.elide` | Whether a less specific form may keep any of the parts, in order, cutting each but the last to its first word: "Spandau bay 3" of "Berlin, Spandau depot, bay 3". Ordered `parts` only; default false. A value of n parts has up to 3ⁿ − 1 such forms, so declare it on short hierarchical values. |
+| `parts.elide` | Whether a less specific form may keep any of the parts, in order, cutting each but the last to its first word: "East bay 3" of "Northfield, East depot, bay 3". Ordered `parts` only; default false. A value of n parts has up to 3ⁿ − 1 such forms, so declare it on short hierarchical values. |
 | `exclusive` | Whether two different values are evidence against a match. Unset: true on a key or alternate-key field, false otherwise. |
 
 Some shapes, as examples:

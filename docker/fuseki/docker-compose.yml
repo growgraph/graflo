@@ -11,7 +11,7 @@ services:
 
     fuseki:
         image: ${IMAGE_VERSION}
-        restart: "unless-stopped"
+        restart: "no"
         depends_on:
             fix-perms:
                 condition: service_completed_successfully

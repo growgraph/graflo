@@ -338,6 +338,19 @@ def test_target_keys_collision_raises():
         t({"raw_id": "1", "id": "2"})
 
 
+def test_target_keys_refuses_a_key_renamed_onto_another_input_key():
+    # 'raw_raw_id' becomes 'raw_id', a key of the record that is itself renamed:
+    # no two outputs collide, but the record's own 'raw_id' would be replaced.
+    t = Transform(
+        module="graflo.util.transform",
+        foo="remove_prefix",
+        params={"prefix": "raw_"},
+        target="keys",
+    )
+    with pytest.raises(BaseException, match="collision"):
+        t({"raw_id": "1", "raw_raw_id": "2"})
+
+
 def test_target_keys_rejects_explicit_strategy():
     with pytest.raises(ValueError, match="implicit per-key execution"):
         Transform(

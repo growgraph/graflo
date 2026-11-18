@@ -267,6 +267,33 @@ def test_a_transform_writing_other_fields_does_not_hide_the_router() -> None:
     assert "person_api" not in _names(out)
 
 
+@pytest.mark.parametrize(
+    "transform,field",
+    [
+        pytest.param({"rename": {"raw_cls": "cls"}}, "raw_cls", id="rename"),
+        pytest.param(
+            {
+                "call": {
+                    "module": "graflo.util.transform",
+                    "foo": "snake_to_camel",
+                    "target": "keys",
+                }
+            },
+            "cls",
+            id="key-renaming-call",
+        ),
+    ],
+)
+def test_a_relabelled_router_field_is_read_at_its_source(
+    transform: dict[str, Any], field: str
+) -> None:
+    pipeline = [{"transform": transform}, ROUTER]
+    out = _remove(_manifest(*_per_class(field), pipeline=pipeline), "person")
+
+    assert "person_api" not in _names(out)
+    assert {"org_api", "place_api"} <= _names(out)
+
+
 def test_a_router_under_a_descend_counts_with_all_it_can_produce() -> None:
     pipeline = [{"descend": {"key": "items", "pipeline": [ROUTER]}}]
     out = _remove(_manifest(*_per_class(), pipeline=pipeline), "person")

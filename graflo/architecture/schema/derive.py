@@ -89,9 +89,9 @@ def elided_forms(parts: list[str]) -> list[str]:
     """Every form of *parts* that keeps some of them in order, the last one whole.
 
     A kept part before the last may be cut to its first word: speech shortens the
-    general parts and says the most specific one it keeps in full. "berlin",
-    "spandau depot", "bay 3" gives "berlin spandau depot bay 3", "spandau bay 3",
-    "bay 3", "berlin spandau depot", ... but not "spandau" or "bay". At most
+    general parts and says the most specific one it keeps in full. "northfield",
+    "east depot", "bay 3" gives "northfield east depot bay 3", "east bay 3",
+    "bay 3", "northfield east depot", ... but not "east" or "bay". At most
     3**n - 1 forms for n parts, joined by spaces, the value itself first.
     """
     choices = [

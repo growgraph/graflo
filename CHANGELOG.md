@@ -11,18 +11,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The development database containers under `docker/` publish their ports on `127.0.0.1` only.
   Recreate a running container (`docker compose up -d`) to apply it.
+- A key-renaming transform (`target: keys`) refuses to rename a key onto another key of the
+  record, which it used to replace silently.
+- A table connector whose `view` names its columns but not a router's source column is refused
+  when ingestion starts.
 
 ### Fixed
 
 - Merging vertices or edges keeps one copy of an identical description instead of joining it
   to itself with ` / `.
+- A table connector stays narrowed by its resource's routers when a transform renames keys
+  (`target: keys`) or a `rename` maps a column onto the `type_field`: the condition goes on the
+  source column, through views and joins. Connector pruning in projections follows the same rule.
+- A `rename` that maps a field onto its own name no longer removes that field from the record.
 
 ## [1.27.3]
 
 ### Added
 
 - `match.parts.elide`: a less specific form may keep any of a value's parts, in order, cutting
-  each but the last to its first word ("Spandau bay 3" of "Berlin, Spandau depot, bay 3"). Keys
+  each but the last to its first word ("East bay 3" of "Northfield, East depot, bay 3"). Keys
   derived from the field include those forms, and the comparator grades them `compatible`.
 - `Edge.merge` (`union` by default, or `replace`: one target per source) and `Edge.exclusive` (a
   different target is a conflict). Ontology 1.12.0 adds `gf:edgeMergeMode` and `gf:edgeExclusive`.

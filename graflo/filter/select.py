@@ -377,6 +377,22 @@ class SelectSpec(ConfigBaseModel):
         )
         return name if all_base and not unnamed else None
 
+    def lacks_output(self, name: str) -> bool:
+        """Whether the view is known not to output a column called *name*.
+
+        ``False`` when it outputs one, or its output names are not all known
+        (a ``type_lookup``, every base column, or an unnamed SQL expression).
+        """
+        if self.kind == "type_lookup":
+            return False
+        columns = self._select_columns()
+        return not any(
+            column.name == name
+            or column.source[0] == "all_base"
+            or (column.name is None and column.source[0] == "sql")
+            for column in columns
+        )
+
     def _type_lookup_source_column(self, name: str) -> str | None:
         source_type = (
             self.source_type_column

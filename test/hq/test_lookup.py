@@ -443,9 +443,9 @@ def test_an_elided_form_finds_the_one_value_it_shortens(tmp_path: Path) -> None:
     schema = _sites(ELIDED)
     (unit,) = schema.core_schema.vertex_config.vertices
     rows = [
-        {"serial": "SD-1", "site": "Berlin, Spandau depot, bay 3"},
-        {"serial": "SD-2", "site": "Berlin, Spandau depot, bay 4"},
-        {"serial": "SD-3", "site": "Lyon, Gerland depot, bay 1"},
+        {"serial": "SD-1", "site": "Northfield, East depot, bay 3"},
+        {"serial": "SD-2", "site": "Northfield, East depot, bay 4"},
+        {"serial": "SD-3", "site": "Southport, West depot, bay 1"},
     ]
     with GraFloBackendWriter(tmp_path) as writer:
         writer.write_schema(schema)
@@ -454,12 +454,12 @@ def test_an_elided_form_finds_the_one_value_it_shortens(tmp_path: Path) -> None:
     with ConnectionManager(
         connection_config=GraFloBackendConfig(output_dir=tmp_path)
     ) as connection:
-        found = lookup_candidates(connection, schema, "Spandau bay 3 tripped again")
+        found = lookup_candidates(connection, schema, "East bay 3 tripped again")
 
     best = found[0]
     assert (best.key["serial"], best.hits[0].matched, best.hits[0].targets) == (
         "SD-1",
-        "Spandau bay 3",
+        "East bay 3",
         1,
     )
     assert "SD-3" not in {c.key["serial"] for c in found}

@@ -481,6 +481,14 @@ class RegistryBuilder:
                     )
 
             if routed is not None:
+                missing = sorted(f for f in routed if connector.lacks_output(f))
+                if missing:
+                    raise ValueError(
+                        f"resource '{resource_name}' routes on {missing}, which "
+                        f"connector '{connector.name or connector.hash}' does not "
+                        "output; a vertex_router's type_field names a field of "
+                        "the source"
+                    )
                 pushed = self._routed_filter(connector, routed)
                 if pushed is not None:
                     run_filters.append(pushed)
@@ -545,8 +553,8 @@ class RegistryBuilder:
         """Say when *connector* reads records its resource's routers drop.
 
         When routing cannot narrow the resource (a step produces records
-        without a router, or a transform writes or may write a routed
-        ``type_field``), the step that prevents it is named: at WARNING for a
+        without a router, or a routed ``type_field`` is not a field of the
+        source), the step that prevents it is named: at WARNING for a
         router that keeps a chosen subset (closed, or bounded by
         ``vertex_types``), at INFO otherwise. When it can, a warning is given
         for a router keeping a subset whose fields the connector fixes on none

@@ -712,6 +712,16 @@ class TableConnector(ResourceConnector):
                     return f"{alias}.{col}"
         return name
 
+    def lacks_output(self, name: str) -> bool:
+        """Whether the query is known not to output a column called *name*.
+
+        Only a ``view`` declares all its output names; any other query reads
+        every base column, so nothing is known to be missing.
+        """
+        from graflo.filter.select import SelectSpec
+
+        return isinstance(self.view, SelectSpec) and self.view.lacks_output(name)
+
     @staticmethod
     def _qualified_column_ref(column: str, base_alias: str | None) -> str:
         if base_alias:

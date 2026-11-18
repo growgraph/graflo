@@ -12,7 +12,7 @@ from graflo.architecture.contract.ingestion.resource import (
     step_produces_vertices,
 )
 from graflo.architecture.contract.ingestion.routing import (
-    fields_written_before_routing,
+    routed_field_source,
 )
 from graflo.architecture.contract.ingestion.steps import (
     ActorConfig,
@@ -207,26 +207,23 @@ def _record_reach(
 ) -> set[str]:
     """Classes *pipeline* can produce from a record carrying *constants*.
 
-    A top-level ``vertex_router`` whose ``type_field`` the constants fix routes
-    that value the way the runtime does, unless a transform of the level may
-    write the field (transforms run before routers, wherever they are listed).
-    Every other producing step, at any level, counts with all it can produce.
+    A top-level ``vertex_router`` routes the value the constants fix for the
+    source field its ``type_field`` reads (:func:`routed_field_source`), the
+    way the runtime does. Every other producing step, at any level, counts
+    with all it can produce.
     """
     reach: set[str] = set()
-    written = fields_written_before_routing(pipeline, transforms)
     for step in pipeline:
         if isinstance(step, TransformActorConfig):
             continue
-        if (
-            isinstance(step, VertexRouterActorConfig)
-            and isinstance(constants.get(step.type_field), str | int | float | bool)
-            and written is not None
-            and step.type_field not in written
-        ):
-            vertex = step.route(constants[step.type_field], declared)
-            if vertex is not None:
-                reach.add(vertex)
-            continue
+        if isinstance(step, VertexRouterActorConfig):
+            source = routed_field_source(pipeline, step.type_field, transforms).name
+            fixed = constants.get(source) if source is not None else None
+            if isinstance(fixed, str | int | float | bool):
+                vertex = step.route(fixed, declared)
+                if vertex is not None:
+                    reach.add(vertex)
+                continue
         for inner in iter_steps([step]):
             reach.update(step_produces_vertices(inner, known_vertices=declared))
     return reach

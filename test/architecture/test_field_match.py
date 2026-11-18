@@ -224,21 +224,21 @@ def test_keys_are_the_runs_that_keep_the_general_end(match, value, keys):
 
 
 def test_elided_keys_keep_parts_in_order_and_the_last_kept_one_whole():
-    keys = value_keys(_field(match=ELIDED), "Berlin, Spandau depot, bay 3")
-    assert keys[0] == "berlin spandau depot bay 3"
+    keys = value_keys(_field(match=ELIDED), "Northfield, East depot, bay 3")
+    assert keys[0] == "northfield east depot bay 3"
     assert {
-        "berlin",
-        "berlin spandau depot",
-        "spandau bay 3",
+        "northfield",
+        "northfield east depot",
+        "east bay 3",
         "bay 3",
     } <= set(keys)
     assert not {
         "3",
         "bay",
-        "spandau",
-        "spandau bay",
+        "east",
+        "east bay",
         "depot bay 3",
-        "bay 3 spandau",
+        "bay 3 east",
         "",
     } & set(keys)
     assert len(keys) == len(set(keys)) <= 3**3 - 1
@@ -277,11 +277,11 @@ def test_derivation_overwrites_a_stated_value_and_drops_one_without_its_source()
         (HOST, "example.com", "eu.example.com", True, "compatible"),
         (HOST, "eu.example", "eu.example.com", True, "conflict"),
         (WORDS, "controller", "P-200 controller", False, "compatible"),
-        (SITE, "Spandau bay 3", "Berlin, Spandau depot, bay 3", False, "differs"),
-        (ELIDED, "Spandau bay 3", "Berlin, Spandau depot, bay 3", False, "compatible"),
-        (ELIDED, "Berlin, Spandau depot, bay 3", "Spandau bay 3", False, "compatible"),
-        (ELIDED, "Spandau bay 4", "Berlin, Spandau depot, bay 3", False, "differs"),
-        (ELIDED, "depot bay 3", "Berlin, Spandau depot, bay 3", False, "differs"),
+        (SITE, "East bay 3", "Northfield, East depot, bay 3", False, "differs"),
+        (ELIDED, "East bay 3", "Northfield, East depot, bay 3", False, "compatible"),
+        (ELIDED, "Northfield, East depot, bay 3", "East bay 3", False, "compatible"),
+        (ELIDED, "East bay 4", "Northfield, East depot, bay 3", False, "differs"),
+        (ELIDED, "depot bay 3", "Northfield, East depot, bay 3", False, "differs"),
         (
             {
                 **LABEL,
