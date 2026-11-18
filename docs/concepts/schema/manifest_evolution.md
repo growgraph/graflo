@@ -49,7 +49,7 @@ does, and whether it can be [undone](#undoing-ops).
 | `add_vertices` | Adds vertex types, given as full definitions. Refuses a name that exists. | yes |
 | `remove_vertices` | Removes vertex types, the edges that touch them, and the pipeline steps, profile entries and bindings that refer only to them. A vertex router keeps routing the surviving types, and a connector request whose records the router sent only to removed types is dropped. | only when nothing else was removed with it; remove the edges first |
 | `rename_vertices` | Renames vertex types everywhere they are named. The map must not send two names to one. | yes |
-| `merge_vertices` | Merges `sources` into one type `into`: edges are redirected, and properties are combined by name. Refuses two different types or units for one property. | no |
+| `merge_vertices` | Merges `sources` into one type `into`: edges are redirected, and properties are combined by name. Refuses two different types or units for one property, and types keyed differently (two natural keys, or a natural key and a hash). Edges that become one keep `merge`, `exclusive` and `identities` only when both declare the same. | no |
 
 ### Properties
 

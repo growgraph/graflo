@@ -39,6 +39,7 @@ from .apply import (
     apply_rename_relations,
     apply_rename_resources,
     apply_rename_vertices,
+    name_referenced_positional_secondaries,
 )
 from .canonical import (
     CanonicalMap,
@@ -488,11 +489,18 @@ def _composed_identity(
         if (fields := member_keys.get((side, member))) is not None
     ]
     plain_keys = {frozenset(fields) for _side, _member, fields in plain_members}
-    if len(plain_keys) <= 1:
+    # A digest-keyed merge over a member with a natural key: that member's
+    # records cannot compute the digest.
+    digest_keyed = bool(merged.hash_identity_properties) or (
+        merged.identity_funnel is not None
+    )
+    if len(plain_keys) <= 1 and not (plain_members and digest_keyed):
         return list(merged.identity), False
     detail = "; ".join(
         f"{side}:{member}={list(fields)}" for side, member, fields in plain_members
     )
+    if digest_keyed:
+        detail += "; the others key on a digest"
     raise MergeIdentityError(
         f"merge_manifests: merged vertex {cluster.into!r} has members "
         f"that disagree on identity ({detail}) and nothing resolves it. "
@@ -673,12 +681,22 @@ def _retire_member_keys(
         # A funnel keys on its digest field; a member key spelled like it
         # cannot be demoted beside it without restating the primary.
         restated = {primary, frozenset(vertex.identity)}
+        names = set(vertex.property_names)
         members: list[tuple[Side, str, tuple[str, ...], tuple[str, ...]]] = []
         for side in ("left", "right"):
             for member in cluster.members(side):
                 key = demoted_keys.get((side, member))
+                if key is None:
+                    continue
                 fields = member_keys.get((side, member))
-                if key is None or not fields or frozenset(fields) in restated:
+                if fields is None:
+                    # A digest-keyed member: its key fields carry the key-space
+                    # name the naming pass gave them, unless they kept their own.
+                    space = (key_spaces or {}).get((side, member), origins[side])
+                    fields = tuple(
+                        f"{space}__{f}" if f"{space}__{f}" in names else f for f in key
+                    )
+                if not fields or frozenset(fields) in restated:
                     continue
                 members.append((side, member, fields, key))
         plan = plan_demoted_key_names(
@@ -1813,6 +1831,14 @@ def _merge_manifests(
     )
     if clash is not None:
         raise clash
+
+    # A merged type re-numbers unnamed secondaries; name each one a step
+    # refers to by its member first, so the step keeps its field set.
+    for side, side_manifest in (("left", out_left), ("right", out_right)):
+        name_referenced_positional_secondaries(
+            side_manifest,
+            {member for cluster in index.vertices for member in cluster.members(side)},
+        )
 
     member_keys, member_property_names = _capture_all_member_state(
         index, left_schema, right_schema, side_maps

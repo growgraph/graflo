@@ -38,12 +38,13 @@ def _manifest(
     resources: list[dict] | None = None,
     extra_edges: list[dict] | None = None,
     inverses: dict[str, str] | None = None,
+    vertices: list[dict] | None = None,
 ):
     payload: dict = {
         "schema": {
             "metadata": {"name": "inverse-demo", "version": "1.0.0"},
             "graph": {
-                "vertex_config": {"vertices": [PARTY, ORDER, INVOICE]},
+                "vertex_config": {"vertices": vertices or [PARTY, ORDER, INVOICE]},
                 "edge_config": {
                     "edges": [PLACES, *(extra_edges or [])],
                     "inverses": [
@@ -712,7 +713,11 @@ class TestInvertSequence:
             ),
         ]
 
-        inverses, blockers = invert_ops(ops, manifest=_manifest())
+        # A merge needs one key for both types: ``order`` keyed like ``party``.
+        order = {"name": "order", "properties": ["id", "total"], "identity": ["id"]}
+        manifest = _manifest(vertices=[PARTY, order, INVOICE])
+
+        inverses, blockers = invert_ops(ops, manifest=manifest)
 
         assert len(inverses) == 1
         assert any("merge_vertices" in blocker for blocker in blockers)

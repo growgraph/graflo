@@ -46,6 +46,7 @@ from typing import Any, Literal, cast
 
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.refusal import Refusal, RefusalKind, is_refusal_kind
+from graflo.architecture.schema.vertex import Vertex
 from graflo.onto import PRIMARY_IDENTITY_SELECTOR, SECONDARY_IDENTITY_SUGAR
 
 from .canonical import (
@@ -2190,15 +2191,11 @@ class _Naming:
                 if member not in vertex_config.vertex_set:
                     continue
                 vertex = vertex_config[member]
-                if (
-                    vertex.blank
-                    or vertex.assigned
-                    or vertex.hash_identity_properties
-                    or vertex.identity_funnel is not None
-                ):
+                own_key = self._demotable_key(cluster, side, member, vertex)
+                if own_key is None:
                     continue
                 bucket = properties.get(member, {})
-                key = tuple(bucket.get(f, f) for f in vertex.identity)
+                key = tuple(bucket.get(f, f) for f in own_key)
                 if not key or frozenset(key) in restated:
                     continue
                 self.demoted_keys[(side, member)] = key
@@ -2214,7 +2211,7 @@ class _Naming:
                 self.key_spaces[(side, member)] = origin
                 if tags:
                     self.key_tags[(side, member)] = tuple(sorted(tags))
-                for own, canonical in zip(vertex.identity, key, strict=True):
+                for own, canonical in zip(own_key, key, strict=True):
                     if canonical in branched:
                         continue
                     if canonical != own or own in equated.get(member, set()):
@@ -2236,6 +2233,37 @@ class _Naming:
                         continue
                     properties.setdefault(member, {})[own] = f"{origin}__{own}"
                     self._layer(side, member, own, "demotion", f"{origin}__{own}")
+
+    def _demotable_key(
+        self, cluster: Cluster, side: Side, member: str, vertex: Vertex
+    ) -> tuple[str, ...] | None:
+        """The fields *member*'s records are found by, kept when its key is replaced.
+
+        A natural key is its fields, a digest key the fields the digest is
+        computed from: either way the records carry them, so they stay
+        addressable. A generated key (blank, assigned) has nothing to keep. A
+        funnel of several branches has no one field set its records all carry:
+        that is a finding, since the old key would be lost silently.
+        """
+        if vertex.blank or vertex.assigned:
+            return None
+        if vertex.hash_identity_properties:
+            return tuple(vertex.hash_identity_properties)
+        funnel = vertex.identity_funnel
+        if funnel is None:
+            return tuple(vertex.identity)
+        if len(funnel.branches) == 1:
+            return tuple(funnel.branches[0].fields)
+        self.finding(
+            "identity-coverage",
+            f"{side}:{member} is keyed by a funnel of {len(funnel.branches)} "
+            f"branches, and the identity {cluster.into!r} declares replaces it: "
+            "no one field set of its records can stay as a lookup key. Make one "
+            "of its branches a branch of `identity`, or retire: keep",
+            subjects=(subject(side, member), subject("merged", cluster.into)),
+            check="identity-coverage",
+        )
+        return None
 
     def _layer(
         self, side: Side, cls: str, old: str, layer: PropertyLayer, new: str

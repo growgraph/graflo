@@ -187,9 +187,10 @@ def _identify_many(
     out: list[Identity] = []
     keyed: list[int] = []
     waiting: list[int] = []
+    # Derived fields first: a key may name one its source completes, and the
+    # secondary-identity reads below take the same completed values.
+    values = [complete_derived(vertex, given) for given in values]
     for position, given in enumerate(values):
-        # Derived fields first: a key may name one its source completes.
-        given = complete_derived(vertex, given)
         status = key_status(contract, given)
         identity = None
         if status.state == "primary":

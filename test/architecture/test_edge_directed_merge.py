@@ -10,6 +10,7 @@ from __future__ import annotations
 import pytest
 
 from graflo.architecture.evolution.merge_core import (
+    EdgeMergeError,
     merge_edge_pair,
     redirect_and_merge_edges,
     remap_relation_and_merge_edges,
@@ -66,3 +67,60 @@ def test_relation_remap_collision_preserves_undirected() -> None:
     merged = remap_relation_and_merge_edges(edges, {"acquainted": "knows"})
     assert len(merged) == 1
     assert merged[0].directed is False
+
+
+class TestSingleValuedEdgesSurviveAMerge:
+    """``merge`` / ``exclusive`` and parallel-edge keys are part of what an edge is."""
+
+    def test_replace_and_exclusive_are_carried(self) -> None:
+        a = Edge(source="m", target="l", relation="in", merge="replace", exclusive=True)
+        b = Edge(source="m", target="l", relation="in", merge="replace", exclusive=True)
+
+        merged = merge_edge_pair(a, b)
+
+        assert (merged.merge, merged.exclusive) == ("replace", True)
+
+    @pytest.mark.parametrize(
+        "other",
+        [
+            pytest.param({}, id="union"),
+            pytest.param({"merge": "replace"}, id="replace-not-exclusive"),
+        ],
+    )
+    def test_a_different_merge_mode_is_refused(self, other: dict) -> None:
+        a = Edge(source="m", target="l", relation="in", merge="replace", exclusive=True)
+        b = Edge(source="m", target="l", relation="in", **other)
+
+        with pytest.raises(EdgeMergeError, match="how many targets a source holds"):
+            merge_edge_pair(a, b)
+
+    def test_endpoint_redirect_refuses_a_merge_mode_clash(self) -> None:
+        edges = [
+            Edge(source="a", target="l", relation="in", merge="replace"),
+            Edge(source="b", target="l", relation="in"),
+        ]
+
+        with pytest.raises(EdgeMergeError):
+            redirect_and_merge_edges(edges, {"a": "m", "b": "m"})
+
+
+class TestParallelEdgeKeys:
+    def test_one_side_without_keys_takes_the_others(self) -> None:
+        a = Edge(source="p", target="o", relation="r", identities=[["since"]])
+        b = Edge(source="p", target="o", relation="r")
+
+        assert merge_edge_pair(a, b).identities == [["since"]]
+        assert merge_edge_pair(b, a).identities == [["since"]]
+
+    def test_the_same_keys_are_kept_once(self) -> None:
+        a = Edge(source="p", target="o", relation="r", identities=[["since"]])
+        b = Edge(source="p", target="o", relation="r", identities=[["since"]])
+
+        assert merge_edge_pair(a, b).identities == [["since"]]
+
+    def test_different_keys_are_refused(self) -> None:
+        a = Edge(source="p", target="o", relation="r", identities=[["since"]])
+        b = Edge(source="p", target="o", relation="r", identities=[["role"]])
+
+        with pytest.raises(EdgeMergeError, match="key parallel edges differently"):
+            merge_edge_pair(a, b)

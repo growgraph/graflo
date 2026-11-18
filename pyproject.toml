@@ -45,7 +45,7 @@ license-files = ["LICENSE", "NOTICE"]
 name = "graflo"
 readme = "README.md"
 requires-python = ">=3.11"
-version = "1.27.3"
+version = "1.27.4"
 
 [project.optional-dependencies]
 bulk = [
@@ -127,4 +127,4 @@ ignore = [
 [tool.uv]
 # One uv line for every contributor and for CI: a different minor rewrites uv.lock
 # wholesale with identical content. Bump this together with the workflow pins.
-required-version = ">=0.12.21,<0.13"
+required-version = ">=0.12.21,<0.14"

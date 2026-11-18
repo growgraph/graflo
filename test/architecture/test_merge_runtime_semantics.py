@@ -37,8 +37,17 @@ _MAPPED = {"extraction_scope": "mapped_only"}
 
 
 def _manifest(
-    *, edges: list[Edge], pipeline: list[dict], b_declares_a_id: bool = False
+    *,
+    edges: list[Edge],
+    pipeline: list[dict],
+    b_declares_a_id: bool = False,
+    b_keyed_like_a: bool = False,
 ) -> GraphManifest:
+    """A, B and C, each keyed on its own id.
+
+    ``b_keyed_like_a`` keys B on ``a_id`` too, so a ``merge_vertices`` of B into
+    A has one key to merge onto; a merge of differently keyed types is refused.
+    """
     schema = Schema(
         metadata=GraphMetadata(name="g", version="1.0.0"),
         core_schema=CoreSchema(
@@ -50,8 +59,12 @@ def _manifest(
                     Vertex(
                         name="B",
                         properties=[Field(name="b_id")]
-                        + ([Field(name="a_id")] if b_declares_a_id else []),
-                        identity=["b_id"],
+                        + (
+                            [Field(name="a_id")]
+                            if b_declares_a_id or b_keyed_like_a
+                            else []
+                        ),
+                        identity=["a_id"] if b_keyed_like_a else ["b_id"],
                     ),
                     Vertex(
                         name="C", properties=[Field(name="c_id")], identity=["c_id"]
@@ -137,9 +150,10 @@ def test_a_reference_beside_a_write_of_one_vertex_is_one_endpoint() -> None:
 
 class TestMergeGuardsProtectTheEmittedGraph:
     @staticmethod
-    def _joined() -> GraphManifest:
+    def _joined(*, b_keyed_like_a: bool = True) -> GraphManifest:
         """A and B are joined by an edge and both produced by one resource."""
         return _manifest(
+            b_keyed_like_a=b_keyed_like_a,
             edges=[
                 Edge(source="A", target="C", relation="ac"),
                 Edge(source="B", target="C", relation="bc"),
@@ -149,7 +163,7 @@ class TestMergeGuardsProtectTheEmittedGraph:
         )
 
     def test_the_emitted_graph_before_the_merge(self) -> None:
-        vertices, edges = _emit(self._joined())
+        vertices, edges = _emit(self._joined(b_keyed_like_a=False))
         assert vertices == {
             "A": [{"a_id": "a1"}],
             "B": [{"b_id": "b1"}],
@@ -180,6 +194,7 @@ class TestMergeGuardsProtectTheEmittedGraph:
     def test_row_fusion_is_reported_separately_from_self_relations(self) -> None:
         """No edge joins A and B, so only the shared pipeline level is a problem."""
         manifest = _manifest(
+            b_keyed_like_a=True,
             edges=[
                 Edge(source="A", target="C", relation="ac"),
                 Edge(source="B", target="C", relation="bc"),
@@ -218,6 +233,7 @@ class TestMergeGuardsProtectTheEmittedGraph:
     def test_a_merge_with_no_shared_level_and_no_joining_edge_is_clean(self) -> None:
         """The guards fire on real hazards, not on every merge."""
         manifest = _manifest(
+            b_keyed_like_a=True,
             edges=[Edge(source="A", target="C", relation="ac")],
             pipeline=[{"vertex": "A"}, {"vertex": "C"}],
         )
@@ -247,10 +263,11 @@ class TestFusionIsJudgedPerSlot:
     def test_role_separated_steps_are_not_fusion(self) -> None:
         """Distinct roles: the merge applies unflagged and both nodes survive."""
         manifest = _manifest(
+            b_keyed_like_a=True,
             edges=self._edges(),
             pipeline=[
                 {"vertex": "A", "role": "a", "from": {"a_id": "a_id"}, **_MAPPED},
-                {"vertex": "B", "role": "b", "from": {"b_id": "b_id"}, **_MAPPED},
+                {"vertex": "B", "role": "b", "from": {"a_id": "b_id"}, **_MAPPED},
                 {"vertex": "C"},
             ],
         )
@@ -260,7 +277,7 @@ class TestFusionIsJudgedPerSlot:
             bump_version=False,
         )
         vertices, _edges = _emit(out)
-        assert vertices["A"] == [{"a_id": "a1"}, {"b_id": "b1"}]
+        assert vertices["A"] == [{"a_id": "a1"}, {"a_id": "b1"}]
 
     @staticmethod
     def _composed(pipeline: list[dict], *, allow_fusion: bool) -> GraphManifest:
@@ -359,6 +376,7 @@ class TestFusionIsJudgedPerSlot:
 
     def test_same_role_slot_is_still_fusion(self) -> None:
         manifest = _manifest(
+            b_keyed_like_a=True,
             edges=self._edges(),
             pipeline=[
                 {"vertex": "A", "role": "s"},
@@ -375,6 +393,7 @@ class TestFusionIsJudgedPerSlot:
 
     def test_the_refusal_points_at_roles(self) -> None:
         manifest = _manifest(
+            b_keyed_like_a=True,
             edges=self._edges(),
             pipeline=[{"vertex": "A"}, {"vertex": "B"}, {"vertex": "C"}],
         )
@@ -401,7 +420,9 @@ class TestFusionIsJudgedPerSlot:
         self, pipeline: list[dict]
     ) -> None:
         """A level that repeated one class before the merge is unchanged by it."""
-        manifest = _manifest(edges=self._edges(), pipeline=pipeline)
+        manifest = _manifest(
+            edges=self._edges(), pipeline=pipeline, b_keyed_like_a=True
+        )
         out = apply_evolution(
             manifest,
             [MergeVerticesOp(sources=["B"], into="A")],
@@ -413,6 +434,7 @@ class TestFusionIsJudgedPerSlot:
         """A router stores at ``(role or type_field, 0)``; a bare step at the level."""
         router = {"type_field": "kind", "type_map": {"a": "A"}}
         manifest = _manifest(
+            b_keyed_like_a=True,
             edges=self._edges(),
             pipeline=[router, {"vertex": "B"}, {"vertex": "C"}],
         )
@@ -424,6 +446,7 @@ class TestFusionIsJudgedPerSlot:
         assert "B" not in out.require_schema().core_schema.vertex_config.vertex_set
 
         manifest = _manifest(
+            b_keyed_like_a=True,
             edges=self._edges(),
             pipeline=[router, {"vertex": "B", "role": "kind"}, {"vertex": "C"}],
         )
