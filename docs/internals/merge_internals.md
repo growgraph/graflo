@@ -133,7 +133,7 @@ The checks are predicates on that graph:
 | a name is declared in one place | `cluster-overlap` (one type in two equivalences), `double-home` (a `renames` entry for a group member) |
 | every declared name exists | `unknown-member`, `dangling-entry` |
 | a group has one identity: one natural key, or one digest, unless `identity` is declared | `identity-disagreement` |
-| a member's replaced key stays findable: a natural key, or the fields of a flat hash or a one-branch funnel | `identity-coverage` for a funnel of several branches |
+| a member's replaced key stays findable: a natural key, or the fields of a flat hash or a one-branch funnel | `identity-coverage` for a funnel of several branches the new identity does not restate |
 | a vocabulary-joined member can fill a property-only key | `identity-coverage`, repaired by a `local_key` branch that makes the key a funnel |
 | a group's merge is acknowledged | `self-relation`, `observation-fusion`; see below |
 | a name both sides carry, no group | `name-collision` under `error`, synthesized under `union_right`, prefixed later under `prefix_right` |

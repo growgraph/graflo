@@ -149,6 +149,24 @@ class TestADigestKeyStaysFindable:
 
         assert refused.value.check == "identity-coverage"
 
+    def test_a_funnel_the_new_identity_restates_is_kept(self) -> None:
+        """A third manifest joins a type already keyed by a funnel."""
+        funnel = {
+            "name": "Y",
+            "properties": ["k", "x", "y"],
+            "identity_funnel": {
+                "branches": [
+                    {"id": "y", "fields": ["y"]},
+                    {"id": "x_y", "fields": ["x", "y"]},
+                ]
+            },
+        }
+
+        z = self._merged(funnel, ["y", ["x", "y"]])
+
+        assert z.identity_funnel is not None
+        assert [b.fields for b in z.identity_funnel.branches] == [["y"], ["x", "y"]]
+
 
 def _with_finds(
     name: str, *steps: tuple[str, str], vertices: list[dict]

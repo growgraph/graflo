@@ -2191,10 +2191,12 @@ class _Naming:
                 if member not in vertex_config.vertex_set:
                     continue
                 vertex = vertex_config[member]
-                own_key = self._demotable_key(cluster, side, member, vertex)
+                bucket = properties.get(member, {})
+                own_key = self._demotable_key(
+                    cluster, side, member, vertex, declaration.identity, bucket
+                )
                 if own_key is None:
                     continue
-                bucket = properties.get(member, {})
                 key = tuple(bucket.get(f, f) for f in own_key)
                 if not key or frozenset(key) in restated:
                     continue
@@ -2235,7 +2237,13 @@ class _Naming:
                     self._layer(side, member, own, "demotion", f"{origin}__{own}")
 
     def _demotable_key(
-        self, cluster: Cluster, side: Side, member: str, vertex: Vertex
+        self,
+        cluster: Cluster,
+        side: Side,
+        member: str,
+        vertex: Vertex,
+        identity: Sequence[IdentityBranchDecl],
+        renames: Mapping[str, str],
     ) -> tuple[str, ...] | None:
         """The fields *member*'s records are found by, kept when its key is replaced.
 
@@ -2243,6 +2251,8 @@ class _Naming:
         computed from: either way the records carry them, so they stay
         addressable. A generated key (blank, assigned) has nothing to keep. A
         funnel of several branches has no one field set its records all carry:
+        it is kept only when *identity* restates every branch (the merged type
+        is then keyed as the member was, plus what the other side adds), else
         that is a finding, since the old key would be lost silently.
         """
         if vertex.blank or vertex.assigned:
@@ -2254,6 +2264,12 @@ class _Naming:
             return tuple(vertex.identity)
         if len(funnel.branches) == 1:
             return tuple(funnel.branches[0].fields)
+        declared = {frozenset(branch_fields(branch)) for branch in identity}
+        if all(
+            frozenset(renames.get(f, f) for f in branch.fields) in declared
+            for branch in funnel.branches
+        ):
+            return None
         self.finding(
             "identity-coverage",
             f"{side}:{member} is keyed by a funnel of {len(funnel.branches)} "

@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hash), as `merge_manifests` does without a declared `identity`; `merge_manifests` now also
   refuses a natural key beside a hash.
 - Merging edges refuses two declarations that differ in `merge`, `exclusive` or `identities`.
-- A `merge_manifests` identity that replaces a funnel of several branches is refused
+- A `merge_manifests` identity that replaces a funnel of several branches without restating each of them is refused
   (`identity-coverage`): no one field set of its records can stay as a lookup key.
 
 ### Fixed
