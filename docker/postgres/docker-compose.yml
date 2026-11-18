@@ -5,7 +5,7 @@ services:
         restart: "no"
         profiles: ["${SPEC}.postgres"]
         ports:
-        -   "${POSTGRES_PORT:-5432}:5432"
+        -   "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
         environment:
             POSTGRES_USER: ${POSTGRES_USER:-postgres}
             POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}

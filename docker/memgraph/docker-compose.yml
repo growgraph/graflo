@@ -6,7 +6,7 @@ services:
         profiles: ["${SPEC}.memgraph"]
 
         ports:
-        -   "${MEMGRAPH_PORT}:7687"  # Memgraph Bolt protocol
+        -   "127.0.0.1:${MEMGRAPH_PORT}:7687"  # Memgraph Bolt protocol
 
         volumes:
         -   memgraph_data:/var/lib/memgraph

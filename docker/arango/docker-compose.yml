@@ -4,7 +4,7 @@ services:
         restart: "no"
         profiles: ["${SPEC}.arango"]
         ports:
-        -   "${ARANGO_PORT}:8529"
+        -   "127.0.0.1:${ARANGO_PORT}:8529"
         container_name: ${CONTAINER_NAME}
         volumes:
         -   arango_data:/var/lib/arangodb3

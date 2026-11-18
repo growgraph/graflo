@@ -4,9 +4,9 @@ services:
         restart: "no"
         profiles: ["${SPEC}.tigergraph"]
         ports:
-        -   "${TG_SSH}:22"
-        -   "${TG_REST}:9000"  # REST++ API port
-        -   "${TG_WEB}:14240"  # GSQL port
+        -   "127.0.0.1:${TG_SSH}:22"
+        -   "127.0.0.1:${TG_REST}:9000"  # REST++ API port
+        -   "127.0.0.1:${TG_WEB}:14240"  # GSQL port
         container_name: ${CONTAINER_NAME}
         volumes:
         -   tigergraph_data:/home/tigergraph/data

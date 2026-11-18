@@ -6,8 +6,8 @@ services:
         profiles: ["${SPEC}.falkordb"]
 
         ports:
-        -   "${FALKORDB_PORT}:6379"  # FalkorDB (Redis protocol)
-        -   "${FALKORDB_BROWSER_PORT}:3000" # FalkorDB Browser UI
+        -   "127.0.0.1:${FALKORDB_PORT}:6379"  # FalkorDB (Redis protocol)
+        -   "127.0.0.1:${FALKORDB_BROWSER_PORT}:3000" # FalkorDB Browser UI
 
         volumes:
         -   falkordb_data:/data

@@ -4,8 +4,8 @@ services:
         restart: "no"
         profiles: ["${SPEC}.neo4j"]
         ports:
-        -   "${NEO4J_PORT}:7474"
-        -   "${NEO4J_BOLT_PORT}:7687"
+        -   "127.0.0.1:${NEO4J_PORT}:7474"
+        -   "127.0.0.1:${NEO4J_BOLT_PORT}:7687"
         container_name: ${CONTAINER_NAME}
         volumes:
         -   neo4j_data:/data

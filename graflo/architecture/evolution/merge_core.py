@@ -93,6 +93,15 @@ def _merge_identity_funnels(
 _POSITIONAL_SECONDARY_NAME = re.compile(r"secondary_\d+")
 
 
+def _joined_descriptions(descriptions: list[str | None]) -> str | None:
+    """The distinct non-empty *descriptions*, in order, joined by `` / ``.
+
+    Distinct, so merging a concept with an identical one keeps its description.
+    """
+    distinct = list(dict.fromkeys(d for d in descriptions if d))
+    return " / ".join(distinct) if distinct else None
+
+
 def _is_positional_name(name: str | None) -> bool:
     """Whether *name* is the auto-name ``Vertex`` assigns by list position."""
     return name is not None and _POSITIONAL_SECONDARY_NAME.fullmatch(name) is not None
@@ -200,13 +209,7 @@ def merge_vertex_models(
                 seen_filters.add(key)
                 filters_out.append(f)
 
-    descriptions = [v.description for v in vertices if v.description]
-    if not descriptions:
-        desc_out: str | None = None
-    elif len(descriptions) == 1:
-        desc_out = descriptions[0]
-    else:
-        desc_out = " / ".join(descriptions)
+    desc_out = _joined_descriptions([v.description for v in vertices])
 
     blank_out = any(v.blank for v in vertices)
     assigned_out = any(v.assigned for v in vertices)
@@ -343,13 +346,7 @@ def merge_edge_pair(a: Edge, b: Edge, *, retype_remedy: str | None = None) -> Ed
             seen_identities.add(t)
             identities_out.append(list(identity))
 
-    descriptions = [a.description, b.description]
-    descriptions = [d for d in descriptions if d]
-    desc_out: str | None = None
-    if len(descriptions) == 1:
-        desc_out = descriptions[0]
-    elif len(descriptions) > 1:
-        desc_out = " / ".join(descriptions)
+    desc_out = _joined_descriptions([a.description, b.description])
 
     return Edge(
         source=a.source,

@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- The development database containers under `docker/` publish their ports on `127.0.0.1` only.
+  Recreate a running container (`docker compose up -d`) to apply it.
+
+### Fixed
+
+- Merging vertices or edges keeps one copy of an identical description instead of joining it
+  to itself with ` / `.
+
 ## [1.27.3]
 
 ### Added
