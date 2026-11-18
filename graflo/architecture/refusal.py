@@ -138,7 +138,7 @@ REFUSAL_KINDS: dict[RefusalKind, str] = {
     "identity-mode-conflict": "merged vertices declare different identity modes",
     "identity-funnel-conflict": "merged vertices declare conflicting identity funnels",
     "secondary-identity-conflict": "merged vertices declare conflicting secondary identities",
-    "edge-type-disagreement": "merged edges disagree on their type",
+    "edge-type-disagreement": "merged edges disagree on what the edge is: its type, merge mode or parallel-edge keys",
     "field-type-conflict": "merged fields declare different types",
     "field-units-conflict": "merged fields declare different units",
     "field-type-declaration": "a field type declaration names a field that does not exist",

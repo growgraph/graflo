@@ -65,9 +65,9 @@ def main() -> None:
         for vertex_type, docs in cast(caster, resource, filename).vertices.items():
             key = keys[vertex_type]
             for doc in docs:
-                # The derived key a machine is matched on. A production line has
-                # none: it keeps its own identity, asset_id.
-                matched_on = doc.get("match_key") or doc.get("local_key") or "-"
+                # The derived key a machine is matched on; without one, a record
+                # of the combined type is keyed on its own key.
+                matched_on = doc.get("match_key") or ("own key" if "id" in doc else "-")
                 # A machine is keyed by a digest; a production line by its asset_id.
                 vertex_id = doc.get("id", doc[key])[:ID_WIDTH]
                 print(

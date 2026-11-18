@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from graflo.architecture.contract.ingestion.steps import (
+    TransformActorConfig,
     VertexActorConfig,
     VertexRouterActorConfig,
 )
@@ -12,6 +13,7 @@ from graflo.architecture.graph_types import (
     TransformPayload,
 )
 from graflo.architecture.pipeline.runtime.actor.base import ActorInitContext
+from graflo.architecture.pipeline.runtime.actor.transform import TransformActor
 from graflo.architecture.pipeline.runtime.actor.vertex import VertexActor
 from graflo.architecture.pipeline.runtime.actor.vertex_router import VertexRouterActor
 from graflo.architecture.schema.edge import EdgeConfig
@@ -259,3 +261,44 @@ def test_vertex_actor_and_router_overlap_extract_same_fields() -> None:
     vra(ctx_vra, loc, doc={"kind": "Widget", "external_id": "from_doc"})
     slot = loc.extend(("kind", 0))
     assert ctx_vra.acc_vertex["Widget"][slot][0].vertex == {"id": "from_tf"}
+
+
+def _routed_after(transform: dict, doc: dict, type_field: str = "kind") -> set[str]:
+    """The classes a router on *type_field* produces from *doc* after *transform*."""
+    init = ActorInitContext(
+        vertex_config=_vertices_widget_and_post(),
+        edge_config=EdgeConfig(),
+        transforms={},
+    )
+    step = TransformActor.from_config(TransformActorConfig.model_validate(transform))
+    step.finish_init(init)
+    router = VertexRouterActor.from_config(
+        VertexRouterActorConfig(type="vertex_router", type_field=type_field)
+    )
+    router.finish_init(init)
+
+    loc = LocationIndex(())
+    ctx = step(ExtractionContext(), loc, doc=doc)
+    out = router(ctx, loc, doc=doc)
+    return {name for name, slots in out.acc_vertex.items() if any(slots.values())}
+
+
+def test_a_router_reads_the_record_key_beside_a_key_renaming_call() -> None:
+    keys = {
+        "type": "transform",
+        "call": {
+            "module": "graflo.util.transform",
+            "foo": "snake_to_camel",
+            "target": "keys",
+        },
+    }
+
+    assert _routed_after(keys, {"asset_kind": "Widget", "id": "w-1"}, "asset_kind") == {
+        "Widget"
+    }
+
+
+def test_a_rename_onto_its_own_name_keeps_the_field() -> None:
+    rename = {"type": "transform", "rename": {"kind": "kind", "name": "label"}}
+
+    assert _routed_after(rename, {"kind": "Post", "id": "p1", "name": "n"}) == {"Post"}

@@ -22,8 +22,6 @@ from graflo.architecture.evolution.ops import (
     DerivationSpec,
     DerivedBranch,
     FieldTypeSpec,
-    LocalKeyBranch,
-    LocalKeySource,
     MergeFieldTypes,
     MergeManifestsOp,
     PropertyEquivalence,
@@ -675,18 +673,22 @@ def _rekeyed_pair(
 
 
 def _key_space_pair(
-    left_tag: str,
-    other_left_tag: str,
+    left_space: str | None,
+    other_left_space: str | None,
     *,
     l1_secondaries: list[dict] | None = None,
     both_router: bool = False,
+    fallback: bool = True,
     lid_branch: bool = False,
     r_secondaries: list[dict] | None = None,
 ) -> tuple[GraphManifest, GraphManifest, MergeManifestsOp]:
-    """``[L1, L2] ~ R`` on a derived name; ``L1`` and ``L2`` key on ``lid``, tagged as given.
+    """``[L1, L2] ~ R`` on a derived name, falling back on each member's own key.
+
+    ``L1`` and ``L2`` key on ``lid``, in the key spaces given (``None``: the
+    origin's, unnamed); ``R`` keys on ``rid``, in its origin's.
 
     *both_router* adds ``r_both``, a router writing both left members that no
-    derived branch names: it is attached by their keys. *lid_branch* also
+    derived branch names: without *fallback*, it is attached by their keys. *lid_branch* also
     lists ``lid`` as a property branch, so both left keys keep its spelling.
     *r_secondaries* are declared on ``R``, which then also carries ``lid``.
     """
@@ -764,14 +766,18 @@ def _key_space_pair(
                             },
                         ),
                         *(["lid"] if lid_branch else []),
-                        LocalKeyBranch(
-                            local_key={
-                                "r_l1": LocalKeySource(field="lid", tag=left_tag),
-                                "r_l2": LocalKeySource(field="lid", tag=other_left_tag),
-                                "r_r": LocalKeySource(field="rid"),
-                            }
-                        ),
                     ],
+                    fallback="own_key" if fallback else None,
+                    key_spaces={
+                        "left": {
+                            member: space
+                            for member, space in (
+                                ("L1", left_space),
+                                ("L2", other_left_space),
+                            )
+                            if space is not None
+                        }
+                    },
                 )
             ]
         ),
@@ -897,14 +903,19 @@ def _union_cases() -> dict[str, tuple[GraphManifest, GraphManifest, MergeManifes
                 "identity": ["p"],
             },
         ),
-        # A local_key tag names the key space of a member's ids: `o:ne` cannot.
-        "key-space-invalid-tag": _key_space_pair("o:ne", "two"),
-        # A tag naming a secondary identity a member declares.
+        # A `key_spaces` name names the key space of a member's ids: `o:ne` cannot.
+        "key-space-invalid-name": _key_space_pair("o:ne", "two"),
+        # A key space named like a secondary identity a member declares.
         "key-space-named-like-a-secondary": _key_space_pair(
             "sec", "sec", l1_secondaries=[{"name": "sec", "fields": ["name"]}]
         ),
         # A router writing members in two key spaces cannot find by one key.
-        "attached-across-key-spaces": _key_space_pair("one", "two", both_router=True),
+        "attached-across-key-spaces": _key_space_pair(
+            "one", "two", both_router=True, fallback=False
+        ),
+        # Two members of one side falling back on one key, `kl__lid`, named
+        # in no `key_spaces` entry: their ids would fuse unasked.
+        "fallback-branches-coincide": _key_space_pair(None, None),
         # Two key spaces of one side whose key is one property-branch field
         # would share its lookup column.
         "key-spaces-share-a-branch-key": _key_space_pair("one", "two", lid_branch=True),
@@ -980,8 +991,13 @@ def _clean_cases() -> dict[str, tuple[GraphManifest, GraphManifest, MergeManifes
         _schema_manifest("union-right", [_natural("Same")], []),
         MergeManifestsOp(name_conflict="prefix_right"),
     )
-    cases["key-space-tags-agree"] = _key_space_pair("kl", "kl")
-    cases["key-space-tags-differ"] = _key_space_pair("one", "two")
+    cases["key-space-names-agree"] = _key_space_pair("kl", "kl")
+    cases["key-space-names-differ"] = _key_space_pair("one", "two")
+    # Under the fallback, the router's records complete each member's own
+    # branch: nothing is attached, so two key spaces are no ambiguity.
+    cases["fallback-router-across-key-spaces"] = _key_space_pair(
+        "one", "two", both_router=True
+    )
     cases["key-spaces-agree-on-a-branch-key"] = _key_space_pair(
         "kl", "kl", lid_branch=True
     )
@@ -1128,8 +1144,8 @@ def test_an_invalid_origin_finding_is_about_the_classes_it_names_keys_of():
     assert all(f.nodes == ["merged:Party"] for f in origin)
 
 
-def test_a_tag_that_cannot_name_a_key_space_is_refused_and_found():
-    case_left, case_right, op = _union_cases()["key-space-invalid-tag"]
+def test_a_name_that_cannot_name_a_key_space_is_refused_and_found():
+    case_left, case_right, op = _union_cases()["key-space-invalid-name"]
 
     attempted = preview_merge(case_left, case_right, op)
     alone = preview_merge(case_left, case_right, op, attempt=False)
@@ -1144,6 +1160,7 @@ def test_a_tag_that_cannot_name_a_key_space_is_refused_and_found():
     [
         ("key-space-named-like-a-secondary", "key-space", "key-space"),
         ("attached-across-key-spaces", "ambiguous-reference", "ambiguous-reference"),
+        ("fallback-branches-coincide", "key-space", "key-space"),
         ("key-spaces-share-a-branch-key", "key-space", "key-space"),
         ("key-spaces-share-an-authored-branch-key", "key-space", "key-space"),
         ("fallback-key-name-like-a-secondary", "key-space", "key-space"),
@@ -1256,13 +1273,6 @@ def _attach_triple() -> tuple[GraphManifest, GraphManifest, MergeManifestsOp]:
                             r: DerivationSpec(input=["name"])
                             for r in ("r_l1", "r_l2", "r_r")
                         },
-                    ),
-                    LocalKeyBranch(
-                        local_key={
-                            "r_l1": LocalKeySource(field="lid"),
-                            "r_l2": LocalKeySource(field="lid"),
-                            "r_r": LocalKeySource(field="rid"),
-                        }
                     ),
                 ],
             )

@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Any
 
 from graflo.architecture.graph_types.container import GraphContainer
 from graflo.architecture.graph_types.identifiers import EdgeId
+from graflo.architecture.schema.derive import complete_derived
 from graflo.architecture.schema.document import Schema
 from graflo.architecture.schema.identity_uuid import mint_uuid
 from graflo.architecture.schema.key_contract import KeyContract, KeySet, key_contract
@@ -133,6 +134,14 @@ class _Batch:
             self.contracts[vertex_type] = key_contract(vertex)
         return self.contracts[vertex_type]
 
+    def values(self, record: PartialRecord) -> dict[str, Any]:
+        """*record*'s values with the derived fields its sources complete.
+
+        The same completion :func:`~graflo.hq.identify.identify_many` applies,
+        so a secondary identity over a derived field is read as it was matched.
+        """
+        return complete_derived(self.vertex_config[record.type], record.values())
+
     def identify(
         self,
         keys: Sequence[_Key],
@@ -168,7 +177,7 @@ class _Batch:
         )
         frozen = _frozen(identity)
         self.identities[frozen] = identity
-        values = record.values()
+        values = self.values(record)
         for alternate in self.contract(record.type).alternates:
             if all(values.get(f) not in (None, "") for f in alternate.fields):
                 entry = (
@@ -185,8 +194,8 @@ class _Batch:
         self.resolve(key, {field: minted}, by="minted")
 
 
-def _values(record: PartialRecord, key: KeySet) -> tuple[Any, ...]:
-    values = record.values()
+def _values(batch: _Batch, record: PartialRecord, key: KeySet) -> tuple[Any, ...]:
+    values = batch.values(record)
     return tuple(values[f] for f in key.fields)
 
 
@@ -355,7 +364,8 @@ def resolve_records(
                 if alternate.name not in stated[key].alternates:
                     continue
                 hits = batch.index.get(
-                    (record.type, alternate.name, _values(record, alternate)), set()
+                    (record.type, alternate.name, _values(batch, record, alternate)),
+                    set(),
                 )
                 if len(hits) == 1:
                     (frozen,) = hits

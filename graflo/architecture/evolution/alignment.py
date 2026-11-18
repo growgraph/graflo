@@ -3,14 +3,13 @@
 A :class:`~graflo.architecture.evolution.ops.VertexEquivalence` declares the
 merged key as ordered funnel branches. A branch over properties the members
 already carry needs nothing but the funnel. A
-:class:`~graflo.architecture.evolution.ops.DerivedBranch` or
-:class:`~graflo.architecture.evolution.ops.LocalKeyBranch` needs each source to
+:class:`~graflo.architecture.evolution.ops.DerivedBranch` needs each source to
 compute its attribute, and :func:`identity_to_ops` emits only fundamental ops
 for that —
 
 1. ``AddVertexPropertiesOp`` — declare the derived attributes on the class;
 2. ``AddResourceTransformsOp`` — per-resource derivation steps
-   (normalization, local-key namespacing) appended to the pipelines;
+   (normalization) appended to the pipelines;
 3. ``EnsureExtractedFieldsOp`` — when a producing router restricts what it
    extracts;
 4. ``ReplaceIdentityOp`` — a priority funnel over the branches, in declared
@@ -59,7 +58,7 @@ import dataclasses
 import logging
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 from graflo.architecture.contract.ingestion.resource import (
     find_vertex_producing_levels,
@@ -93,8 +92,6 @@ from .ops import (
     FunnelIdentityTarget,
     IdentityBranchDecl,
     IdentityReplacement,
-    LocalKeyBranch,
-    LocalKeySource,
     ManifestOp,
     NaturalIdentityTarget,
     ReplaceIdentityOp,
@@ -126,7 +123,7 @@ SideManifests = Mapping[str, GraphManifest]
 ClusterMembers = Mapping[str, Collection[str]]
 
 #: A branch that derives its attribute in the pipelines.
-SteppedBranch = DerivedBranch | LocalKeyBranch
+SteppedBranch = DerivedBranch
 
 
 class AlignmentConflictError(ValueError):
@@ -177,17 +174,9 @@ class IdentityPlan:
         ]
 
     @property
-    def local_key(self) -> LocalKeyBranch | None:
-        """The ``local_key`` branch, if declared."""
-        return next((b for b in self.branches if isinstance(b, LocalKeyBranch)), None)
-
-    @property
     def stepped(self) -> list[SteppedBranch]:
-        """Branches whose attribute the pipelines derive, derived ones first."""
-        out: list[SteppedBranch] = list(self.derived)
-        if self.local_key is not None:
-            out.append(self.local_key)
-        return out
+        """Branches whose attribute the pipelines derive."""
+        return list(self.derived)
 
     @property
     def raw(self) -> list[tuple[str, ...]]:
@@ -204,7 +193,7 @@ class IdentityPlan:
         ]
 
     def derived_names(self) -> list[str]:
-        """Attributes the pipelines derive: every derived branch, then the local key."""
+        """Attributes the pipelines derive, one per derived branch."""
         return [branch.name for branch in self.stepped]
 
     def funnel(self) -> IdentityFunnel:
@@ -212,12 +201,8 @@ class IdentityPlan:
         return identity_branches_funnel(self.branches)
 
 
-def _specs(
-    branch: SteppedBranch, resource: str
-) -> list[DerivationSpec | LocalKeySource]:
-    if isinstance(branch, DerivedBranch):
-        return list(branch.specs_for(resource))
-    return list(branch.sources_for(resource))
+def _specs(branch: SteppedBranch, resource: str) -> list[DerivationSpec]:
+    return list(branch.specs_for(resource))
 
 
 def _canonical_rename_targets(canonical_maps: Sequence[VocabularyMap]) -> set[str]:
@@ -526,8 +511,6 @@ def rekey_members(
     for branch in plan.branches:
         if isinstance(branch, DerivedBranch):
             branch = branch.model_copy(update={"sources": _rekeyed(branch.sources)})
-        elif isinstance(branch, LocalKeyBranch):
-            branch = branch.model_copy(update={"local_key": _rekeyed(branch.local_key)})
         branches.append(branch)
     derive = tuple(
         d.model_copy(update={"sources": _rekeyed(d.sources)}) for d in plan.derive
@@ -884,10 +867,11 @@ def validate_identity(
         for resource in productions:
             _warn_on_partial_member_coverage(plan, resource, sides, cluster_members)
 
-    if plan.local_key is None and not plan.raw:
+    if not plan.raw:
         logger.warning(
-            "identity for %r has no local_key branch: records deriving none of "
-            "its attributes complete no funnel branch and are dropped",
+            "identity for %r has no property branch: records deriving none of "
+            "its attributes complete no funnel branch and are dropped; "
+            "`fallback: own_key` keys them on their own key",
             plan.vertex,
         )
 
@@ -1161,7 +1145,6 @@ def identity_to_ops(
     member_identity: Collection[str] | None = None,
     uncovered_producers: Literal["refuse", "allow"] = "refuse",
     completes_property_branch: Callable[[str], bool] | None = None,
-    origins: Mapping[Side, str] | None = None,
 ) -> list[ManifestOp]:
     """Lower *plan* to an ordered list of fundamental ops.
 
@@ -1169,9 +1152,7 @@ def identity_to_ops(
     :func:`~graflo.architecture.evolution.apply.apply_evolution`. When
     *manifest* is given, :func:`validate_identity` runs first. Member-keyed
     sources need *sides* (the pre-merge manifests) to resolve how each
-    resource produces each member; ``merge_manifests`` passes them. A
-    ``local_key`` source with no ``tag`` is tagged with the origin of its
-    resource's side: *origins* keyed by side, resolved through *sides*.
+    resource produces each member; ``merge_manifests`` passes them.
     """
     if manifest is not None:
         validate_identity(
@@ -1217,8 +1198,6 @@ def identity_to_ops(
                     resource,
                     productions=productions,
                     class_guard=class_guards.get(resource),
-                    sides=sides,
-                    origins=origins,
                 )
             )
     if additions:
@@ -1288,29 +1267,12 @@ def _call_step(
     return TransformActorConfig.model_validate(transform)
 
 
-def _origin_tag(
-    resource: str, sides: SideManifests | None, origins: Mapping[Side, str] | None
-) -> str:
-    """The tag an untagged ``local_key`` source of *resource* takes: its side's origin."""
-    if sides is None or origins is None:
-        raise _conflict(
-            "local key without a tag",
-            f"the local_key source for resource {resource!r} sets no tag, and "
-            "only a merge knows the origin it defaults to",
-            "Set `tag`, or `tag: null` to keep the raw values.",
-        )
-    side, _ = _side_of(resource, sides)
-    return origins[cast(Side, side)]
-
-
 def _branch_steps(
     branch: SteppedBranch,
     resource: str,
     *,
     productions: MemberProductions,
     class_guard: dict[str, Any] | None,
-    sides: SideManifests | None = None,
-    origins: Mapping[Side, str] | None = None,
 ) -> list[TransformActorConfig]:
     """The steps *resource* derives *branch*'s attribute with, in order.
 
@@ -1333,34 +1295,16 @@ def _branch_steps(
         ]
     steps: list[TransformActorConfig] = []
     for spec, guard in zip(specs, guards, strict=True):
-        if isinstance(spec, DerivationSpec):
-            steps.append(
-                _call_step(
-                    module=spec.module,
-                    foo=spec.foo,
-                    params=dict(spec.params),
-                    output=branch.name,
-                    input_fields=list(spec.input),
-                    when=guard,
-                )
+        steps.append(
+            _call_step(
+                module=spec.module,
+                foo=spec.foo,
+                params=dict(spec.params),
+                output=branch.name,
+                input_fields=list(spec.input),
+                when=guard,
             )
-        else:
-            assert isinstance(branch, LocalKeyBranch)
-            tag = (
-                _origin_tag(resource, sides, origins)
-                if spec.tag_omitted
-                else spec.tag or ""
-            )
-            steps.append(
-                _call_step(
-                    module="graflo.util.transform",
-                    foo="tagged_key",
-                    params={"tag": tag, "sep": branch.sep},
-                    output=branch.name,
-                    input_fields=[spec.field],
-                    when=guard,
-                )
-            )
+        )
     return steps
 
 

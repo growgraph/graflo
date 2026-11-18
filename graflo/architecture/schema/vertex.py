@@ -165,8 +165,8 @@ class FieldParts(ConfigBaseModel):
     one value is less specific when its parts are a subset of the other's.
 
     With ``elide``, a less specific form may also keep any of the parts, in
-    order, and may cut each but the last to its first word: "Spandau bay 3"
-    of "Berlin, Spandau depot, bay 3". A value of n parts has at most 3**n - 1
+    order, and may cut each but the last to its first word: "East bay 3"
+    of "Northfield, East depot, bay 3". A value of n parts has at most 3**n - 1
     such forms, so declare it on short hierarchical values only.
     """
 

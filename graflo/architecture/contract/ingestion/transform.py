@@ -776,7 +776,9 @@ class Transform(ProtoTransform):
                 raise TransformException(
                     "Key transform functions must return str values."
                 )
-            if new_key in out:
+            # A renamed key must not take the name of another input key either:
+            # the record keeps its keys, so that one's value would be replaced.
+            if new_key in out or (new_key != key and new_key in doc):
                 raise TransformException(
                     f"Key transform collision detected for key '{new_key}'."
                 )

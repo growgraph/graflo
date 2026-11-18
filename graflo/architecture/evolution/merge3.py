@@ -1326,8 +1326,7 @@ def build_merge_recipe(
     joined", and a re-merge that had only the equivalences would reconstruct a
     different manifest.
 
-    When the union names a demoted key or an untagged local key by a side's
-    origin, the resolved ``origins`` are recorded with the op, so a re-merge
+    When the union names a demoted key by a side's origin, the resolved ``origins`` are recorded with the op, so a re-merge
     names them alike after a parent's schema is renamed. Otherwise the op is
     recorded as given.
     """
@@ -1339,7 +1338,7 @@ def build_merge_recipe(
     names_by_origin = any(
         space == resolution.origins[side]
         for (side, _member), space in resolution.key_spaces.items()
-    ) or any(resolution.origin_tagged.values())
+    )
     recorded = (
         op.model_copy(update={"origins": merge_origins(op, left, right)})
         if names_by_origin

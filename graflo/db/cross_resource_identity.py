@@ -566,7 +566,7 @@ class CrossResourceIdentityInferencer:
             return None
         return minimal
 
-    def _search_local_key(
+    def _search_resource_key(
         self,
         docs: list[dict],
         cfg: CrossResourceIdentityConfig,
@@ -665,7 +665,7 @@ class CrossResourceIdentityInferencer:
         branches: list[IdentityBranch] = []
         per_resource: dict[str, list[str]] = {}
         for name in sorted(projected):
-            local = self._search_local_key(projected[name], cfg)
+            local = self._search_resource_key(projected[name], cfg)
             if local is None:
                 continue
             per_resource[name] = local

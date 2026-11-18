@@ -26,7 +26,7 @@ def _manifest(*, with_ingestion: bool = True) -> GraphManifest:
                     "vertices": [
                         {
                             "name": "party",
-                            "properties": ["party_id", "local_key"],
+                            "properties": ["party_id", "own_ref"],
                             "identity": ["party_id"],
                         }
                     ]
@@ -52,7 +52,7 @@ _INLINE_STEP = {
             "foo": "tagged_key",
             "params": {"tag": "a"},
             "input": ["party_id"],
-            "output": ["local_key"],
+            "output": ["own_ref"],
         }
     }
 }
@@ -97,7 +97,7 @@ class TestApply:
             caster.cast_batch([{"party_id": "p1"}], "crm", params=IngestionParams())
         )
         docs = list(result.graph.vertices["party"])
-        assert docs and docs[0]["local_key"] == "a:p1"
+        assert docs and docs[0]["own_ref"] == "a:p1"
 
     def test_registry_use_resolution(self) -> None:
         proto = ProtoTransform(
@@ -106,7 +106,7 @@ class TestApply:
             foo="tagged_key",
             params={"tag": "a"},
             input=("party_id",),
-            output=("local_key",),
+            output=("own_ref",),
         )
         manifest = apply_evolution(
             _manifest(),
@@ -123,7 +123,7 @@ class TestApply:
         result = asyncio.run(
             caster.cast_batch([{"party_id": "p1"}], "crm", params=IngestionParams())
         )
-        assert next(iter(result.graph.vertices["party"]))["local_key"] == "a:p1"
+        assert next(iter(result.graph.vertices["party"]))["own_ref"] == "a:p1"
 
     def test_unresolved_use_raises(self) -> None:
         op = AddResourceTransformsOp(
@@ -149,7 +149,7 @@ class TestApply:
             foo="tagged_key",
             params={"tag": "a"},
             input=("party_id",),
-            output=("local_key",),
+            output=("own_ref",),
         )
         base = apply_evolution(
             _manifest(),
@@ -195,7 +195,7 @@ class TestApply:
                     "module": "graflo.util.no_such_module",
                     "foo": "nope",
                     "input": ["party_id"],
-                    "output": ["local_key"],
+                    "output": ["own_ref"],
                 }
             }
         }

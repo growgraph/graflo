@@ -699,12 +699,7 @@ def test_disagreeing_into_on_shared_node_raises() -> None:
 
 
 def test_a_derived_identity_applies_inside_compose() -> None:
-    from graflo.architecture.evolution import (
-        DerivationSpec,
-        DerivedBranch,
-        LocalKeyBranch,
-        LocalKeySource,
-    )
+    from graflo.architecture.evolution import DerivationSpec, DerivedBranch
 
     left = _manifest(
         name="l",
@@ -744,12 +739,6 @@ def test_a_derived_identity_applies_inside_compose() -> None:
                 "r_b": DerivationSpec(input=["shared_raw"]),
             },
         ),
-        LocalKeyBranch(
-            local_key={
-                "r_a": LocalKeySource(field="company_id", tag="a"),
-                "r_b": LocalKeySource(field="org_id", tag="b"),
-            }
-        ),
     ]
     merged = merge_manifests(
         left,
@@ -757,7 +746,12 @@ def test_a_derived_identity_applies_inside_compose() -> None:
         MergeManifestsOp(
             vertex_equivalences=[
                 VertexEquivalence(
-                    left="Company", right="Org", into="Company", identity=identity
+                    left="Company",
+                    right="Org",
+                    into="Company",
+                    identity=identity,
+                    fallback="own_key",
+                    key_spaces={"left": {"Company": "a"}, "right": {"Org": "b"}},
                 )
             ],
         ),
@@ -765,10 +759,12 @@ def test_a_derived_identity_applies_inside_compose() -> None:
     )
     assert merged.graph_schema is not None
     vc = merged.graph_schema.core_schema.vertex_config
-    assert {"match_key", "local_key"} <= set(vc.property_names("Company"))
+    props = set(vc.property_names("Company"))
+    assert {"match_key", "a__company_id", "b__org_id"} <= props
+    assert "local_key" not in props
     assert vc.identity_fields("Company") == ["id"]
     # Each member's own key, demoted beside the funnel, named by its key
-    # space: the local_key tag (``a``, ``b``), not the origin (``l``, ``r``).
+    # space: the `key_spaces` name (``a``, ``b``), not the origin (``l``, ``r``).
     assert {s.name for s in vc.secondary_identities("Company")} == {"a", "b"}
 
 

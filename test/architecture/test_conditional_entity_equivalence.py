@@ -3,11 +3,12 @@
 The full recipe merged from fundamental ops — canonicalize the left
 manifest, then merge with a derived identity declared on the equivalence:
 ordered funnel branches over canonical attributes each source derives from
-its own columns, ending in a namespaced local key. Merge lowers them into
-per-resource derivation transforms and a priority funnel, and demotes each
-member's own key to a lookup-only secondary. The class definition stays
-side-agnostic; records that pass a derivation gate fuse with the right-hand
-entities (same synthetic id), records that fail it keep a namespaced local key.
+its own columns, and ``fallback: own_key`` after them. Merge lowers them into
+per-resource derivation transforms and a priority funnel, demotes each
+member's own key to a lookup-only secondary, and appends that kept key
+(``<key space>__<field>``) as one more branch per member. Records that pass a
+derivation gate fuse with the right-hand entities (same synthetic id); records
+that fail it key on their member's kept key.
 """
 
 from __future__ import annotations
@@ -32,8 +33,6 @@ from graflo.architecture.evolution import (
     DerivationSpec,
     DerivedBranch,
     IdentityBranchDecl,
-    LocalKeyBranch,
-    LocalKeySource,
     MergeManifestsOp,
     ReplaceIdentityOp,
     VertexEquivalence,
@@ -117,14 +116,6 @@ _CANONICAL = CanonicalMap(
     properties={"Firm": {"firm_id": "company_id"}},
 )
 
-_LOCAL_KEY = LocalKeyBranch(
-    local_key={
-        # RAW doc field: renamed documents still carry firm_id.
-        "r_a": LocalKeySource(field="firm_id", tag="a"),
-        "r_b": LocalKeySource(field="org_id", tag="b"),
-    }
-)
-
 _IDENTITY: list[IdentityBranchDecl] = [
     DerivedBranch(
         name="match_key",
@@ -142,7 +133,6 @@ _IDENTITY: list[IdentityBranchDecl] = [
             ),
         },
     ),
-    _LOCAL_KEY,
 ]
 
 
@@ -178,7 +168,11 @@ def _merge_op(identity: list[IdentityBranchDecl] = _IDENTITY) -> MergeManifestsO
     return MergeManifestsOp(
         vertex_equivalences=[
             VertexEquivalence(
-                left="Company", right="Org", into="Company", identity=list(identity)
+                left="Company",
+                right="Org",
+                into="Company",
+                identity=list(identity),
+                fallback="own_key",
             )
         ],
     )
@@ -209,14 +203,17 @@ class TestComposedSchema:
         assert vc.identity_fields("Company") == ["id"]
         vertex = next(v for v in vc.vertex_list if v.name == "Company")
         assert vertex.identity_funnel is not None
-        # The identity references ONLY canonical attributes — no side-specific
-        # branches (company_id / org_id do not appear in the funnel).
+        # The declared branch references ONLY canonical attributes; the raw
+        # side keys (company_id / org_id) do not appear in the funnel, only
+        # the fallback's kept keys, each named by its key space.
         assert [b.id for b in vertex.identity_funnel.branches] == [
             "match_key",
-            "local_key",
+            "a__company_id",
+            "b__org_id",
         ]
         funnel_fields = {f for b in vertex.identity_funnel.branches for f in b.fields}
-        assert funnel_fields == {"match_key", "local_key"}
+        assert funnel_fields == {"match_key", "a__company_id", "b__org_id"}
+        assert "local_key" not in vertex.property_names
         # The retired side keys survive as lookup-only secondary identities,
         # named by the side each came from.
         assert {s.name for s in vc.secondary_identities("Company")} == {"a", "b"}
@@ -265,13 +262,14 @@ class TestConditionalFusion:
         assert gated["match_key"] == "alpha"
         assert gated["id"] == b_doc["id"]
 
-        # ...while the non-gated record keys off its namespaced local key,
-        # despite carrying the same raw shared value.
+        # ...while the non-gated record keys off its kept own key, despite
+        # carrying the same raw shared value.
         assert non_gated.get("match_key") is None
-        assert non_gated["local_key"] == "a:f2"
+        assert non_gated["a__company_id"] == "f2"
         assert non_gated["id"] != gated["id"]
         assert non_gated["id"] != b_doc["id"]
-        assert b_doc["local_key"] == "b:o1"
+        assert b_doc["b__org_id"] == "o1"
+        assert not any("local_key" in doc for doc in (gated, non_gated, b_doc))
 
 
 class TestPrefixMarkerAdmission:
@@ -289,7 +287,6 @@ class TestPrefixMarkerAdmission:
         return [
             # Literally the same call on both sides: one normal form.
             DerivedBranch(name="match_key", sources={"r_a": spec, "r_b": spec}),
-            _LOCAL_KEY,
         ]
 
     def test_marked_values_fuse_across_sources(self) -> None:
@@ -310,7 +307,7 @@ class TestPrefixMarkerAdmission:
         b = _cast(union, "r_b", [{"org_id": "o1", "shared_raw": "ABC-ALPHA"}])
 
         assert a[0].get("match_key") is None
-        assert a[0]["local_key"] == "a:f2"
+        assert a[0]["a__company_id"] == "f2"
         assert a[0]["id"] != b[0]["id"]
 
 
@@ -349,7 +346,6 @@ class TestPriorityFunnel:
                     ),
                 },
             ),
-            _LOCAL_KEY,
         ]
 
     def test_same_top_priority_attribute_fuses(self) -> None:
@@ -415,7 +411,7 @@ class TestPriorityFunnel:
         assert x[0]["id"] != y[0]["id"]  # no fusion: X keyed by c1, Y by c2
 
     def test_preview_notes_the_demoted_key_no_longer_deduplicates(self) -> None:
-        """A derived branch plus local_key: each member's records reach two
+        """A derived branch plus the fallback: each member's records reach two
         branches, so its demoted own key is flagged as no longer unique."""
         canonical_a = apply_evolution(_manifest_a(), canonical_map_to_ops(_CANONICAL))
 
@@ -486,16 +482,23 @@ _ROUTED_IDENTITY: list[IdentityBranchDecl] = [
             ),
         },
     ),
-    LocalKeyBranch(
-        local_key={
-            "r_view": {
-                "Company": LocalKeySource(field="firm_id", tag="firm"),
-                "Shop": LocalKeySource(field="shop_id", tag="shop"),
-            },
-            "r_b": LocalKeySource(field="org_id", tag="b"),
-        }
-    ),
 ]
+
+#: The two left members keep their own keys in key spaces of their own; the
+#: right member's is its side's origin, ``b``.
+_MEMBER_KEY_SPACES: dict[str, str] = {"Company": "firm", "Shop": "shop"}
+
+#: Each kept key field, to the key space that names it.
+_KEPT_KEYS = {"firm__company_id": "firm", "shop__shop_id": "shop", "b__org_id": "b"}
+
+
+def _by_kept_key(docs: list[dict]) -> dict[str, dict]:
+    """Each record by the member key it keeps, spelled ``<key space>:<value>``."""
+    out: dict[str, dict] = {}
+    for doc in docs:
+        (field,) = [f for f in _KEPT_KEYS if doc.get(f) is not None]
+        out[f"{_KEPT_KEYS[field]}:{doc[field]}"] = doc
+    return out
 
 
 def _routed_manifest_a() -> GraphManifest:
@@ -567,7 +570,12 @@ def _routed_manifest_a() -> GraphManifest:
 
 def _member_equivalence(identity: list[IdentityBranchDecl]) -> VertexEquivalence:
     return VertexEquivalence(
-        left=["Company", "Shop"], right="Org", into="Company", identity=list(identity)
+        left=["Company", "Shop"],
+        right="Org",
+        into="Company",
+        identity=list(identity),
+        fallback="own_key",
+        key_spaces={"left": dict(_MEMBER_KEY_SPACES)},
     )
 
 
@@ -617,13 +625,13 @@ class TestRoutedSourceFusion:
         view = _cast(union, "r_view", _VIEW)
         b = _cast(union, "r_b", [{"org_id": "o1", "shared_raw": "ABC-ALPHA"}])
 
-        by_local = {doc["local_key"]: doc for doc in view}
+        by_local = _by_kept_key(view)
         assert set(by_local) == {"firm:f1", "firm:f2", "shop:s1"}
         # The gated firm row and B's row key alike on the shared match_key.
         assert by_local["firm:f1"]["match_key"] == "alpha"
         assert by_local["firm:f1"]["id"] == b[0]["id"]
         # The non-gated firm row carries the same raw value but no match_key,
-        # so it falls through to its namespaced local key and stays separate.
+        # so it falls through to its kept own key and stays separate.
         assert by_local["firm:f2"].get("match_key") is None
         assert by_local["firm:f2"]["id"] != b[0]["id"]
 
@@ -633,7 +641,7 @@ class TestRoutedSourceFusion:
         view = _cast(union, "r_view", _VIEW)
         branch = _cast(union, "r_b", [{"org_id": "br1", "shared_raw": "ABC-BETA"}])
 
-        shop = next(d for d in view if d["local_key"] == "shop:s1")
+        shop = _by_kept_key(view)["shop:s1"]
         assert shop["match_key"] == "beta"
         assert shop["id"] == branch[0]["id"]
 
@@ -649,7 +657,7 @@ class TestRoutedSourceFusion:
         people = result.graph.vertices["Person"]
         assert [p["person_id"] for p in people] == ["p1"]
         assert "match_key" not in people[0]
-        assert "local_key" not in people[0]
+        assert not set(_KEPT_KEYS) & set(people[0])
 
     def test_every_routed_record_gets_an_identity(self) -> None:
         """The regression: root-level derivations left all of these keyless."""
@@ -673,16 +681,6 @@ def _marker(prefix: str) -> DerivationSpec:
     )
 
 
-_MEMBER_LOCAL_KEY = LocalKeyBranch(
-    local_key={
-        "r_view": {
-            "Company": LocalKeySource(field="firm_id", tag="firm"),
-            "Shop": LocalKeySource(field="shop_id", tag="shop"),
-        },
-        "r_b": LocalKeySource(field="org_id", tag="b"),
-    }
-)
-
 _MEMBER_IDENTITY: list[IdentityBranchDecl] = [
     DerivedBranch(
         name="match_key",
@@ -696,7 +694,6 @@ _MEMBER_IDENTITY: list[IdentityBranchDecl] = [
             ),
         },
     ),
-    _MEMBER_LOCAL_KEY,
 ]
 
 
@@ -723,10 +720,6 @@ def _map_branches(
         if isinstance(branch, DerivedBranch):
             branch = branch.model_copy(
                 update={"sources": rewrite(dict(branch.sources))}, deep=True
-            )
-        elif isinstance(branch, LocalKeyBranch):
-            branch = branch.model_copy(
-                update={"local_key": rewrite(dict(branch.local_key))}, deep=True
             )
         out.append(branch)
     return out
@@ -773,7 +766,7 @@ class TestMemberKeyedRoutedFusion:
             ],
         )
 
-        by_local = {doc["local_key"]: doc for doc in view}
+        by_local = _by_kept_key(view)
         assert by_local["firm:f1"]["match_key"] == "alpha"
         assert by_local["firm:f1"]["id"] == orgs[0]["id"]
         assert by_local["shop:s1"]["match_key"] == "beta"
@@ -784,13 +777,13 @@ class TestMemberKeyedRoutedFusion:
 
         Under a value-only gate ``abc_alpha`` would admit it and strip the
         marker, fusing s2 with f1 and o1. Keyed by member, the shop derivation
-        requires ``def_``, so s2 falls through to its own local key.
+        requires ``def_``, so s2 falls through to its own kept key.
         """
         union = _build_member_union()
 
         view = _cast(union, "r_view", _SHARED_COLUMN_VIEW)
 
-        by_local = {doc["local_key"]: doc for doc in view}
+        by_local = _by_kept_key(view)
         assert by_local["shop:s2"].get("match_key") is None
         assert by_local["shop:s2"]["id"] != by_local["firm:f1"]["id"]
 
@@ -799,7 +792,7 @@ class TestMemberKeyedRoutedFusion:
 
         view = _cast(union, "r_view", _SHARED_COLUMN_VIEW)
 
-        by_local = {doc["local_key"]: doc for doc in view}
+        by_local = _by_kept_key(view)
         assert by_local["firm:f2"].get("match_key") is None
         assert by_local["firm:f2"]["id"] != by_local["firm:f1"]["id"]
 
@@ -814,7 +807,7 @@ class TestMemberKeyedRoutedFusion:
         people = result.graph.vertices["Person"]
         assert [p["person_id"] for p in people] == ["p1"]
         assert "match_key" not in people[0]
-        assert "local_key" not in people[0]
+        assert not set(_KEPT_KEYS) & set(people[0])
 
     def test_records_collapse_to_the_expected_vertices(self) -> None:
         union = _build_member_union()
@@ -832,26 +825,6 @@ class TestMemberKeyedRoutedFusion:
         ids = [doc["id"] for doc in [*view, *orgs]]
         assert len(ids) == 6
         assert len(set(ids)) == 4
-
-    def test_an_untagged_local_key_is_the_raw_value(self) -> None:
-        """``tag=None``: the author claims the values are globally unique."""
-        identity: list[IdentityBranchDecl] = [
-            _MEMBER_IDENTITY[0],
-            LocalKeyBranch(
-                local_key={
-                    "r_view": {
-                        "Company": LocalKeySource(field="firm_id", tag=None),
-                        "Shop": LocalKeySource(field="shop_id", tag="shop"),
-                    },
-                    "r_b": LocalKeySource(field="org_id", tag="b"),
-                }
-            ),
-        ]
-        union = _build_member_union(identity)
-
-        view = _cast(union, "r_view", _SHARED_COLUMN_VIEW)
-
-        assert {doc["local_key"] for doc in view} == {"f1", "f2", "shop:s1", "shop:s2"}
 
     def test_the_rename_policy_is_honoured_when_resolving_members(self) -> None:
         """Member keys name resources as the union names them."""
@@ -876,7 +849,7 @@ class TestMemberKeyedRoutedFusion:
         names = {r.name for r in union.require_ingestion_model().resources}
         assert names == {"r_view", "r_orgs"}
         view = _cast(union, "r_view", _SHARED_COLUMN_VIEW)
-        assert {doc["local_key"] for doc in view} >= {"firm:f1", "shop:s1"}
+        assert set(_by_kept_key(view)) >= {"firm:f1", "shop:s1"}
 
 
 def _rekeyed(identity: list[IdentityBranchDecl], key: str) -> list[IdentityBranchDecl]:
@@ -896,16 +869,24 @@ def _rekeyed(identity: list[IdentityBranchDecl], key: str) -> list[IdentityBranc
     return _map_branches(identity, rekey)
 
 
-def _raw_member_union(identity: list[IdentityBranchDecl]) -> GraphManifest:
+def _raw_member_union(
+    identity: list[IdentityBranchDecl], company: str = "Company"
+) -> GraphManifest:
     """The member union authored against the raw left side: `Firm`, no `into`.
 
     The vocabulary renames the class only: `firm_id` is a key the union
-    demotes, which is named by its origin rather than by the vocabulary.
+    demotes, which is named by its key space rather than by the vocabulary.
+    *company* spells the `Firm` member in `key_spaces`.
     """
+    spaces = {company: _MEMBER_KEY_SPACES["Company"], "Shop": "shop"}
     op = MergeManifestsOp(
         vertex_equivalences=[
             VertexEquivalence(
-                left=["Firm", "Shop"], right="Org", identity=list(identity)
+                left=["Firm", "Shop"],
+                right="Org",
+                identity=list(identity),
+                fallback="own_key",
+                key_spaces={"left": spaces},
             )
         ],
         canonical_maps={"left": CanonicalMap(vertices={"Firm": "Company"})},
@@ -914,8 +895,21 @@ def _raw_member_union(identity: list[IdentityBranchDecl]) -> GraphManifest:
 
 
 def _keyed_by(docs: list[dict]) -> list[dict]:
-    """What each cast record is keyed by, whatever its demoted key is called."""
-    return [{k: doc.get(k) for k in ("id", "match_key", "local_key")} for doc in docs]
+    """What each cast record is keyed by, whatever its demoted key is called.
+
+    A record with a ``match_key`` keys on it: its id is compared. One without
+    keys on its member's kept key, a branch named by the member's own field
+    (``firm__firm_id`` on the raw side, ``firm__company_id`` after the
+    vocabulary): it is compared as key space and value.
+    """
+    out: list[dict] = []
+    for doc in docs:
+        if doc.get("match_key") is not None:
+            out.append({"id": doc["id"], "match_key": doc["match_key"]})
+            continue
+        (kept,) = [(f.split("__")[0], v) for f, v in doc.items() if "__" in f]
+        out.append({"kept": kept})
+    return out
 
 
 class TestMemberKeysResolveThroughTheMap:
@@ -923,7 +917,7 @@ class TestMemberKeysResolveThroughTheMap:
 
     @pytest.mark.parametrize("key", ["Firm", "Company"])
     def test_a_raw_side_takes_the_own_or_the_canonical_key(self, key: str) -> None:
-        union = _raw_member_union(_rekeyed(_MEMBER_IDENTITY, key))
+        union = _raw_member_union(_rekeyed(_MEMBER_IDENTITY, key), company=key)
         reference = _build_member_union()
         assert _keyed_by(_cast(union, "r_view", _SHARED_COLUMN_VIEW)) == _keyed_by(
             _cast(reference, "r_view", _SHARED_COLUMN_VIEW)
@@ -1032,7 +1026,7 @@ class TestDynamicRouterFusion:
             {"Shop": "Company"},
         ]
         assert [r.vertex_from_map for r in routers] == [
-            # Each demoted key is named by its member's local_key tag.
+            # Each demoted key is named by its member's `key_spaces` name.
             {"Company": {"firm__company_id": "firm_id"}},
             {"Company": {"shop__shop_id": "shop_id"}},
         ]
@@ -1051,7 +1045,7 @@ class TestDynamicRouterFusion:
             ],
         )
 
-        by_local = {doc["local_key"]: doc for doc in view}
+        by_local = _by_kept_key(view)
         assert by_local["firm:f1"]["match_key"] == "alpha"
         assert by_local["firm:f1"]["id"] == orgs[0]["id"]
         assert by_local["shop:s1"]["match_key"] == "beta"
@@ -1070,7 +1064,7 @@ class TestDynamicRouterFusion:
         people = result.graph.vertices["Person"]
         assert [p["person_id"] for p in people] == ["p1"]
         assert "match_key" not in people[0]
-        assert "local_key" not in people[0]
+        assert not set(_KEPT_KEYS) & set(people[0])
 
 
 # --------------------------------------------------------------------------- #
@@ -1183,15 +1177,8 @@ def _physical_equivalence(left: str, right: str, into: str, marker: str):
                 "api_vertex": DerivationSpec(input=["group_id"]),
             },
         },
-        identity=[
-            ["machine_key", "group_key"],
-            LocalKeyBranch(
-                local_key={
-                    "all_classes": {left: LocalKeySource(field="aid", tag="inventory")},
-                    "api_vertex": LocalKeySource(field="vertex_id", tag="api"),
-                }
-            ),
-        ],
+        identity=[["machine_key", "group_key"]],
+        fallback="own_key",
     )
 
 
@@ -1266,7 +1253,8 @@ class TestCompositeDerivedKey:
             assert funnel is not None
             assert [(b.id, b.fields) for b in funnel.branches] == [
                 ("machine_key_group_key", ["machine_key", "group_key"]),
-                ("local_key", ["local_key"]),
+                ("inventory__aid", ["inventory__aid"]),
+                ("api__key", ["api__key"]),
             ]
 
     def test_each_part_is_derived_behind_its_member_and_class_guard(self) -> None:
@@ -1277,20 +1265,16 @@ class TestCompositeDerivedKey:
         assert _derivations(_pipeline(union, "all_classes")) == [
             ("machine_key", machine),
             ("group_key", machine),
-            ("local_key", machine),
             ("machine_key", dev),
             ("group_key", dev),
-            ("local_key", dev),
         ]
         press = {"field": "_class", "in": ["Machine", "Press"]}
         gauge = {"field": "_class", "in": ["Dev", "Gauge"]}
         assert _derivations(_pipeline(union, "api_vertex")) == [
             ("machine_key", press),
             ("group_key", press),
-            ("local_key", press),
             ("machine_key", gauge),
             ("group_key", gauge),
-            ("local_key", gauge),
         ]
 
     def test_records_fuse_when_every_part_matches(self) -> None:
@@ -1305,7 +1289,7 @@ class TestCompositeDerivedKey:
         assert inventory["Dev"][0]["id"] == api["Dev"][0]["id"]
         assert presses["v1"]["id"] != api["Dev"][0]["id"]
 
-    def test_a_record_failing_a_part_falls_back_to_its_local_key(self) -> None:
+    def test_a_record_failing_a_part_falls_back_to_its_own_key(self) -> None:
         union = _physical_union()
 
         inventory = _cast_all(union, "all_classes", _INVENTORY_ROWS)
@@ -1315,10 +1299,10 @@ class TestCompositeDerivedKey:
             doc for doc in inventory["Machine"] if doc["inventory__aid"] == "a2"
         )
         assert unmarked.get("machine_key") is None
-        assert unmarked["local_key"] == "inventory:a2"
+        assert "local_key" not in unmarked
         partial = next(doc for doc in api["Machine"] if doc["api__key"] == "v2")
         assert partial.get("group_key") is None
-        assert partial["local_key"] == "api:v2"
+        assert "local_key" not in partial
         ids = [doc["id"] for doc in [*inventory["Machine"], *api["Machine"]]]
         assert len(set(ids)) == 3
 
@@ -1333,14 +1317,6 @@ class TestCompositeDerivedKey:
         spec = DerivationSpec(input=["machine_name"])
         sources = {"all_classes": {"MachineA": DerivationSpec(input=["machine"])}}
         sources["api_vertex"] = spec  # type: ignore[assignment]
-        local = LocalKeyBranch(
-            local_key={
-                "all_classes": {
-                    "MachineA": LocalKeySource(field="aid", tag="inventory")
-                },
-                "api_vertex": LocalKeySource(field="vertex_id", tag="api"),
-            }
-        )
 
         def union(equivalence: VertexEquivalence) -> dict:
             op = MergeManifestsOp(vertex_equivalences=[equivalence])
@@ -1351,7 +1327,8 @@ class TestCompositeDerivedKey:
                 left="MachineA",
                 right="Press",
                 into="Machine",
-                identity=[DerivedBranch(name="machine_key", sources=sources), local],
+                identity=[DerivedBranch(name="machine_key", sources=sources)],
+                fallback="own_key",
             )
         )
         as_derive = union(
@@ -1360,7 +1337,8 @@ class TestCompositeDerivedKey:
                 right="Press",
                 into="Machine",
                 derive={"machine_key": sources},
-                identity=["machine_key", local],
+                identity=["machine_key"],
+                fallback="own_key",
             )
         )
         assert as_branch == as_derive

@@ -82,9 +82,7 @@ vertex_equivalences:
         sources:
             register: {input: [serial_number]}
             devices: {input: [serial]}
-    -   local_key:
-            register: {field: asset_id, tag: maintenance}
-            devices: {field: device_id, tag: sensors}
+    fallback: own_key
 ```
 
 The `identity` names the `register` resource as a whole. Nothing in it
@@ -105,8 +103,8 @@ written: artifacts/manifest_union.yaml
 ```
 
 In [`artifacts/manifest_union.yaml`](artifacts/manifest_union.yaml) the
-`register` resource keeps its one router, followed by the steps that compute
-the keys:
+`register` resource keeps its one router, followed by the step that computes
+the key:
 
 ```yaml
 - vertex_router:
@@ -134,7 +132,6 @@ the keys:
       in:
       - Machine
       - machine
-# the step that computes local_key follows, with the same `when`
 ```
 
 The router is not split. GraFlo adds the type names themselves to `type_map`
@@ -143,9 +140,11 @@ and closes the table with `type_map_only: true`, so the router accepts the same
 `asset_id` as `maintenance__asset_id`, the lookup key `maintenance`, beside the
 device's `sensors__device_id`; a production line keeps `asset_id`.
 
-Each key step carries `when: {field: type, in: [Machine, machine]}`. GraFlo
+The key step carries `when: {field: type, in: [Machine, machine]}`. GraFlo
 derived that condition from the router: the step runs only for the rows the
-router sends to `Machine`, and a production line row never gets a key.
+router sends to `Machine`, and a production line row never gets a key. A
+machine without a serial number falls back to its own key,
+`maintenance__asset_id`.
 
 ## What you should see
 
@@ -155,7 +154,7 @@ and prints the vertex each record becomes:
 ```text
 resource  own key  vertex type     matched on      vertex id
 register  A1       Machine         hp-0042         303d50890862
-register  A2       Machine         maintenance:A2  d154517d907c
+register  A2       Machine         own key         dc3af44f0fe1
 register  L1       ProductionLine  -               L1
 devices   D7       Machine         hp-0042         303d50890862
 devices   D9       Machine         lt-0007         27ded24b71df
@@ -195,11 +194,23 @@ canonical_maps:
 vertex_equivalences:
 -   left: Machine
     right: Device
+    identity:
+    -   name: match_key
+        sources:
+            register: {Machine: {input: [serial_number]}}
+            devices: {input: [serial]}
+    fallback: own_key
+    key_spaces:
+        left: {Machine: maintenance, ProductionLine: maintenance}
 ```
 
 The combined type is `Equipment`, and production lines are part of it without
-being listed. Only machines are matched with devices: the derivations are keyed
-by `Machine`, and a production line keeps its own key behind a tag:
+being listed. Only machines are matched with devices: the derivation is keyed
+by `Machine`, and a production line is keyed on its own key. Machines and
+production lines take their ids from one register, so `key_spaces` puts both
+in one key space, `maintenance`; without it the merge refuses, since an id of
+one would then key a vertex of the other (two registers would get two names,
+and two branches). The merge names the group and keys each record:
 
 ```text
 naming (vertex):
@@ -209,12 +220,12 @@ naming (vertex):
 ```
 
 ```text
-resource  own key  vertex type  matched on                     vertex id
-register  A1       Equipment    hp-0042                        303d50890862
-register  A2       Equipment    maintenance:A2                 d154517d907c
-register  L1       Equipment    maintenance:ProductionLine:L1  4619849c5d54
-devices   D7       Equipment    hp-0042                        303d50890862
-devices   D9       Equipment    lt-0007                        27ded24b71df
+resource  own key  vertex type  matched on  vertex id
+register  A1       Equipment    hp-0042     303d50890862
+register  A2       Equipment    own key     dc3af44f0fe1
+register  L1       Equipment    own key     09aafea67779
+devices   D7       Equipment    hp-0042     303d50890862
+devices   D9       Equipment    lt-0007     27ded24b71df
 ```
 
 `--plot-dir figs` draws the group:
@@ -230,7 +241,7 @@ equivalence names only `Machine` and `Device`:
 ![Machine and Device into Equipment, ProductionLine joined by a dashed edge](figs/vertex-Equipment.members.svg)
 
 The register's sources are keyed by type. Machines derive `match_key`;
-production lines get only the local key merge adds for them, marked `auto`:
+every record can also fall back on its own key, one branch per key space:
 
 ![Raw fields of register and devices feeding the two branches, labelled with the type each is for](figs/vertex-Equipment.identity.svg)
 

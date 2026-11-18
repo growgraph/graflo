@@ -11,13 +11,13 @@ services:
 
     fuseki:
         image: ${IMAGE_VERSION}
-        restart: "unless-stopped"
+        restart: "no"
         depends_on:
             fix-perms:
                 condition: service_completed_successfully
         profiles: ["${CONTAINER_NAME}"]
         ports:
-        -   "${TS_PORT}:3030"
+        -   "127.0.0.1:${TS_PORT}:3030"
         container_name: ${CONTAINER_NAME}
         volumes:
         -   fuseki_data:/fuseki/run

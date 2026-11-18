@@ -51,7 +51,7 @@ def _preview(directory: Path, op: str) -> MergePreview:
 
 @pytest.fixture(scope="module")
 def preview() -> MergePreview:
-    """``Asset`` + ``Device`` into ``Machine``: a derived branch, then local keys."""
+    """``Asset`` + ``Device`` into ``Machine``: a derived branch, then own keys."""
     return _preview(UNION, "merge.yaml")
 
 
@@ -238,30 +238,39 @@ def test_raw_fields_feed_branches_that_feed_the_digest(preview):
     assert sources == {
         ("serial_number", "normalized_key(serial_number)"),
         ("serial", "normalized_key(serial)"),
-        ("asset_id", "tag maintenance"),
-        ("device_id", "tag sensors"),
     }
-    keys = {head for _, head, _ in _edges(graph, "key")}
-    assert keys == {"merged:Machine.id"}
+    keys = [head for _, head, _ in _edges(graph, "key")]
+    assert keys == ["merged:Machine.id"] * 3, "every branch, own keys too"
 
 
-def test_branches_are_ordered_and_say_their_value_format(preview):
+def test_branches_are_ordered_and_an_own_key_says_whose_it_is(preview):
     graph = _view(preview, "identity")
     (rank,) = graph.graph["ranks"]
     assert [graph.nodes[n]["label"] for n in rank] == [
         "#1 match_key",
-        "#2 local_key\\ntag:value",
+        "#2 maintenance__asset_id\\nown key of left:Asset",
+        "#3 sensors__device_id\\nown key of right:Device",
     ]
-    (order,) = [(u, v) for u, v, d in graph.edges(data=True) if d["kind"] == "order"]
-    assert order == (rank[0], rank[1])
+    order = [(u, v) for u, v, d in graph.edges(data=True) if d["kind"] == "order"]
+    assert order == [(rank[0], rank[1]), (rank[1], rank[2])]
 
 
 def test_a_member_keyed_source_names_its_member(vocabulary):
     labels = {d["label"] for _, _, d in _edges(_view(vocabulary, "identity"), "source")}
 
     assert "Machine: normalized_key(serial_number)" in labels
-    assert "ProductionLine: tag maintenance:ProductionLine · auto" in labels
     assert "normalized_key(serial)" in labels, "an unkeyed source has no prefix"
+
+
+def test_members_in_one_key_space_share_one_own_key_branch(vocabulary):
+    """``Machine`` and ``ProductionLine`` are one register: ``maintenance``."""
+    graph = _view(vocabulary, "identity")
+    (rank,) = graph.graph["ranks"]
+    assert [graph.nodes[n]["label"] for n in rank] == [
+        "#1 match_key",
+        "#2 maintenance__asset_id\\nown key of left:Machine",
+        "#3 sensors__device_id\\nown key of right:Device",
+    ]
 
 
 def test_a_property_branch_reads_the_members_own_attribute(boundary):
@@ -309,7 +318,9 @@ def test_a_declaration_alone_draws_members_and_identity():
         ("left:Asset", "merged:Machine"),
         ("right:Device", "merged:Machine"),
     }
-    assert len(_edges(_view(declared, "identity", 0), "source")) == 4
+    assert len(_edges(_view(declared, "identity", 0), "source")) == 2
+    identity = declared.clusters[0].identity
+    assert identity is not None and identity.fallback == "own_key"
     assert build_equivalence_view(declared, 0, "lookups") is None
 
 

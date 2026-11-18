@@ -5,12 +5,58 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.27.4]
+
+### Changed
+
+- The development database containers under `docker/` publish their ports on `127.0.0.1` only.
+  Recreate a running container (`docker compose up -d`) to apply it.
+- A key-renaming transform (`target: keys`) refuses to rename a key onto another key of the
+  record, which it used to replace silently.
+- A table connector whose `view` names its columns but not a router's source column is refused
+  when ingestion starts.
+- An empty string in a hash identity field counts as no value, as a missing field does. Vertices
+  stored from records with `""` in such a field get a new key on re-ingest.
+- `merge_vertices` refuses types keyed differently (two natural keys, or a natural key and a
+  hash), as `merge_manifests` does without a declared `identity`; `merge_manifests` now also
+  refuses a natural key beside a hash.
+- Merging edges refuses two declarations that differ in `merge`, `exclusive` or `identities`.
+- A `merge_manifests` identity that replaces a funnel of several branches without restating
+  each of them or setting `fallback: own_key` is refused (`identity-coverage`).
+- The `local_key` identity branch of a vertex equivalence is replaced by `fallback: own_key`:
+  after the declared branches, each member's own key, kept on the merged type as
+  `<key space>__<field>`, is one more branch. No `local_key` property or `tagged_key` step is
+  added, and a merged type merges again with the same rule. A member's key space is its side's
+  origin unless the new `key_spaces` names it; a `local_key` entry is refused with the
+  replacement named. Records keyed through the old fallback get a new key on re-ingest.
+- A member a merge used to key automatically on a tagged own key (`auto_local_key`) is refused
+  (`identity-coverage`); the repair sets `fallback: own_key`. Two members of one side that would
+  share a fallback branch are refused (`key-space`) until `key_spaces` names both.
+
+### Fixed
+
+- Merging vertices or edges keeps one copy of an identical description instead of joining it
+  to itself with ` / `.
+- A table connector stays narrowed by its resource's routers when a transform renames keys
+  (`target: keys`) or a `rename` maps a column onto the `type_field`: the condition goes on the
+  source column, through views and joins. Connector pruning in projections follows the same rule.
+- A `rename` that maps a field onto its own name no longer removes that field from the record.
+- A merged edge keeps `merge: replace` and `exclusive`; it used to come out `union`.
+- A type keyed by a hash or a one-branch funnel, merged under a declared `identity`, keeps its
+  hash fields as a lookup-only secondary identity, as a natural key does.
+- A step's `find` or endpoint selector naming an unnamed secondary identity (`secondary_<n>`)
+  keeps its field set through a merge.
+- A natural `identity` on a `derived` field is derived before the cast checks it; every record
+  used to be dropped.
+- `identify` and `graflo.link` read a secondary identity over a derived field from its source;
+  they used to raise `KeyError`.
+
 ## [1.27.3]
 
 ### Added
 
 - `match.parts.elide`: a less specific form may keep any of a value's parts, in order, cutting
-  each but the last to its first word ("Spandau bay 3" of "Berlin, Spandau depot, bay 3"). Keys
+  each but the last to its first word ("East bay 3" of "Northfield, East depot, bay 3"). Keys
   derived from the field include those forms, and the comparator grades them `compatible`.
 - `Edge.merge` (`union` by default, or `replace`: one target per source) and `Edge.exclusive` (a
   different target is a conflict). Ontology 1.12.0 adds `gf:edgeMergeMode` and `gf:edgeExclusive`.
@@ -1135,7 +1181,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`docs/_build/gen_examples.py`), under `examples/<slug>/` instead of `examples/example-<N>/`.
 
   | New | Old | New | Old |
-  |---|---|---|---|
+  | --- | --- | --- | --- |
   | `01-csv-two-resources` | 1 | `13-tigergraph-bulk-s3` | 10 |
   | `02-json-self-edges` | 2 | `14-file-backend-export` | 13 |
   | `03-csv-relation-field` | 3 | `15-identity-inference` | 15 |
@@ -1555,7 +1601,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `fetch_edges` ids (Neo4j, FalkorDB) are query parameters. A `{field: value}`
   key must name a declared vertex property.
 
-
 ## [1.13.3] - 2026-09-16
 
 ### Added
@@ -1789,24 +1834,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   model-management literature its design cites (Rondo; Pottinger–Bernstein)
   calls **Merge**, and what GraFlo called `merge_canonical_maps` is that
   literature's **Compose**. The two were exactly inverted. They are swapped:
-    - `ComposeManifestsOp` → `MergeManifestsOp`, and the serialized
+  - `ComposeManifestsOp` → `MergeManifestsOp`, and the serialized
       discriminator `op: compose_manifests` → `op: merge_manifests`.
-    - `compose_manifests` → `merge_manifests`; `evolution/compose.py` →
+  - `compose_manifests` → `merge_manifests`; `evolution/compose.py` →
       `evolution/merge.py`; `preview_compose` → `preview_merge`;
       `Compose{Identity,NameConflict,Incomplete,CanonicalConflict}Error` →
       `Merge*Error`; `ComposePreview` / `ComposeFinding` / `ComposeOutcome` →
       `MergePreview` / `MergeFinding` / `MergeOutcome`.
-    - `merge_canonical_maps` → `compose_canonical_maps`, and
+  - `merge_canonical_maps` → `compose_canonical_maps`, and
       `_merge_name_maps` → `_compose_name_maps` — the other half of the
       inversion. Renaming only one of the two would have left *two* things
       called merge and the word `compose` unused.
-    - CLI: `graflo compose` → `graflo merge`, and the three-way `graflo merge`
+  - CLI: `graflo compose` → `graflo merge`, and the three-way `graflo merge`
       → `graflo merge3`.
-    - Commit kinds: `compose` → `merge`, and the three-way `merge` → `merge3`.
+  - Commit kinds: `compose` → `merge`, and the three-way `merge` → `merge3`.
       `COMMIT_KINDS` is now `{root, edit, merge, merge3, revert}`.
       `MergeRecipe.kind` `"compose"` → `"merge"`; the `"merge3"` recipe flavour
       already spelled itself that way and is unchanged.
-    - Commit ids do **not** change: `compute_commit_id` hashes only the ops and
+  - Commit ids do **not** change: `compute_commit_id` hashes only the ops and
       the parents. Only a merge recipe's `content_hash()` moves, because its
       payload embeds the op document and therefore the discriminator.
 - **No alias for the old discriminator.** A discriminated union resolves its tag
@@ -2038,7 +2083,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`merge_row_doc_with_transform_buffer`.** Alias introduced alongside the canonical name and never called.
 
-
 ## [1.12.1] - 2026-09-04
 
 ### Added
@@ -2053,7 +2097,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   **The composed identity is declared, not guessed.** Members that disagree on their identity field-set after alignment used to compose into the union of both — a natural key no record carries. That now raises `ComposeIdentityError` naming each member's key, unless the cluster declares `identity` (a natural key, an `IdentityFunnel`, or a `SideIdentity` shorthand — per-side or per-member branch chains merged into one global funnel order, with an order inversion between members refused), a `PropertyEquivalence(identity=True)` flag resolves it, or an `identity_alignments` entry replaces it. A declared `identity` demotes each member's retired key to a lookup-only secondary identity unless `retire: keep`.
 
   Also: `ComposeManifestsOp.identity_alignments` is typed (`list[IdentityAlignment]`) rather than `list[Any]` behind an `object.__setattr__` validator — the alignment declaration models moved into `ops.py` beside the equivalences, re-exported from `alignment.py`; `compose_manifests(canonical_maps=...)` takes side-tagged `(side, CanonicalMap)` pairs; and `apply_rename_relations` gained the edge-id collision guard vertices already had. Example 19 is one n-ary declaration, and its conflicting-cluster demo authors an overlap.
-
 
 ## [1.12.0] - 2026-09-02
 
@@ -2180,7 +2223,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - `FunnelIdentityTarget` was missing from the `graflo.architecture.evolution` façade exports (every other identity target was there); importing it required reaching into `evolution.ops`.
-
 
 ## [1.11.1] - 2026-08-31
 
@@ -2324,7 +2366,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed (CLI)
 
 - **`graflo ingest` raised `TypeError` on every invocation.** `--n-threads` was removed from `IngestionParams` but its `click.option` was left behind, so Click always passed an argument the callback did not accept. The option is gone and `--batch-size` now takes its default from `IngestionParams` rather than drifting from it.
-
 
 ## [1.10.4] - 2026-08-06
 
@@ -2474,7 +2515,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.10.0] - 2026-07-29
 
-
 ### Changed
 
 **Module composition refactor** — the package is now explicitly layered and free of cross-package import-time cycles. Before, 117 of 211 modules formed a single import-time strongly-connected component: importing the declarative contract loaded every DB driver, and the top-level façade needed lazy-loading band-aids to survive its own recursion. Behavior is unchanged; import paths are not. **Breaking — no compatibility shims.** Full old→new path table: [`docs/guides/importing.md`](docs/guides/importing.md).
@@ -2538,7 +2578,6 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 - Pre-commit / `ty`: NebulaGraph 5 client uses `addresses` / `user_name`; Memgraph `conn` typed as `Any` (C-extension star-import); `GraphContainer` hashable helper return type; drop unused type ignores.
 
 ### Added
-
 
 - **`ComposeManifestsOp`** / **`compose_manifests(left, right, op)`**: binary union of two full `GraphManifest`s (schema + resources + bindings) driven by explicit `VertexEquivalence` / `PropertyEquivalence` / `RelationEquivalence` maps and optional derived identity. Deterministic only — no semantic inference. Unary `apply_evolution` rejects the op. Resource/connector collisions via `resource_renames` or `name_conflict` (`error` | `prefix_right`).
 - **Kafka ingest datasource**: `BoundSourceKind.KAFKA` / `KafkaConnector` / `KafkaDataSource` / `KafkaConnConfig` (+ `KafkaGeneralizedConnConfig`) for finite-batch JSON topic consumption via `conn_proxy`, wired through `RegistryBuilder` like API/SQL. Depends on `confluent-kafka` (default package dependency; lazy import). Pytest marker `kafka` / `--run-kafka` for live broker tests against `docker/kafka` (`localhost:9092`).
@@ -2704,6 +2743,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 ## [1.8.0] - 2026-05-29
 
 ### Added
+
 - **GraFlo meta-ontology** — OWL vocabulary at `https://ontology.growgraph.dev/graflo` (`owl:versionIRI` `…/1.0.0`, `owl:versionInfo` `1.0.0`) describing `GraphManifest`, `Schema`, `IngestionModel`, `ProtoTransform`, pipeline actor steps, bindings, and related enumerations. Shipped as `graflo/rdf/ontology/graflo.ttl` plus JSON-LD context `graflo-context.jsonld`.
 - **`graflo.rdf`** — `ManifestRdfSerializer` / `ManifestRdfDeserializer` for bidirectional conversion between `GraphManifest` (YAML/Pydantic) and RDF (Turtle, JSON-LD, N-Triples, RDF/XML).
 - **CLI** — `manifest-to-rdf` and `rdf-to-manifest` console scripts (`graflo.rdf.cli`).
@@ -2812,7 +2852,6 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 - **[Table connector views](docs/concepts/connectors/table_views.md)** — cross-link to time filters vs `view` / `joins`.
 - **[Example 5 – PostgreSQL](docs/examples/infer-from-postgres/index.md)** — `datetime_columns` now documented as setting **`time_filter.column`** on connectors; ingestion date-range comment aligned.
 - **`creating_manifest.md`** — `connectors` may include optional **`time_filter`** on file/table connectors.
-
 
 ## [1.7.26] - 2026-05-11
 
@@ -3158,7 +3197,6 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 
 ## [1.7.13] - 2026-04-07
 
-
 ### Changed
 
 - **`SQLDataSource`**: Executes the configured query once per `iter_batches` call and streams rows with SQLAlchemy **`stream_results`** and **`fetchmany`**, instead of mutating SQL with **`LIMIT`/`OFFSET`** and re-running per page. This avoids large-offset discarded scans on backends that support server-side cursors. Optional **`limit`** still caps the number of rows read in application code (no SQL **`OFFSET`** pagination).
@@ -3191,7 +3229,6 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 ### Added
 
 - **`DatabaseProfile.default_property_values`**: optional **`DefaultPropertyValues`** model (with per-vertex maps and per-edge **`EdgePropertyDefaults`** entries) to declare **GSQL `DEFAULT`** literals for physical schema DDL—vertex keys are logical vertex names; edge entries match logical `(source, target, relation)`.
-
 
 ## [1.7.10] - 2026-04-04
 
@@ -3226,7 +3263,6 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 
 ### Breaking
 
-
 - **`DBWriter`**: The **`dynamic_edges`** constructor argument was removed (it only drove the redundant `finish_init` call). Configure dynamic edge behavior via **`Caster`** / **`IngestionParams.dynamic_edges`** and ingestion **`finish_init`** as before.
 - **`ResourceType`** removed in favor of **`BoundSourceKind`**; **`get_resource_type()`** removed in favor of **`bound_source_kind()`** on connectors (update imports and call sites).
 - **`Bindings`**: **`get_connector_for_resource`**, **`get_resource_type`**, and **`get_table_info`** removed; use **`get_connectors_for_resource`** and connector fields / `bound_source_kind()` instead.
@@ -3241,32 +3277,38 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 ## [1.7.7] - 2026-03-27
 
 ### Changed
+
 - **Edge identity policy (Cypher property-graph targets)**: For Neo4j, Memgraph, and FalkorDB, relationship upserts use `MERGE` with properties that distinguish **parallel** edges (same endpoints and relationship type). `EdgeConfigDBAware.relationship_merge_property_names` now **prefers the first** logical `Edge.identities` key: tokens `source` and `target` are omitted (endpoints are already matched on nodes); the `relation` token maps to the relationship property where applicable. If `identities` is empty or yields no relationship fields, behavior falls back to **all** `weights.direct` field names so existing schemas keep stable merge keys.
 - **Cypher MERGE map builders**: `graflo.db.cypher.rel_merge_props_map_from_row_index` and `rel_merge_props_map_from_row_props` normalize property names and emit safe map entries for batched `MERGE` clauses.
 
 ## [1.7.6] - 2026-03-26
 
 ### Added
+
 - **Bindings `connector_connection`**: optional manifest block mapping each source connector to a non-secret `conn_proxy` name (`{"connector": ..., "conn_proxy": ...}`). Manifests describe *which* connector uses *which* proxy; credentials live in runtime configs resolved by `ConnectionProvider` (`GeneralizedConnConfig`).
 - **`ConnectorConnectionBinding`** and **`ResourceConnectorBinding`**: typed rows for `connector_connection` and `resource_connector` with dict coercion and index-scoped validation errors.
 - **`Bindings.connector_connection_bindings`** (typed view), **`get_conn_proxy_for_connector`**, and **`bind_connector_to_conn_proxy`**: API aligned with HQ loaders (`ResourceMapper`, `GraphEngine`) for proxy-based source wiring.
 
 ### Changed
+
 - **Connector reference resolution**: `connector_connection` entries may reference a connector by canonical **hash**, declared **`name`**, or a **`resource` name** when that resource is already mapped to the connector (mirrors validation in `Bindings`). **Update (1.7.8):** resource-name aliasing for `connector` refs was removed; use **connector `name` or `hash`** only.
 - **`Bindings` validation**: duplicate connector `name` values and conflicting `conn_proxy` for the same connector hash now fail fast with explicit errors. **Update (1.7.8):** many connectors may attach to the same ingestion resource (1→n); overlapping resource rows no longer raise “conflicting resource binding” for distinct connectors.
 
 ### Breaking
+
 - **`Bindings.from_dict` / manifest validation**: legacy top-level keys `postgres_connections`, `table_connectors`, `file_connectors`, and `sparql_connectors` are rejected. Migrate to the unified `connectors` + `resource_connector` (+ optional `connector_connection`) shape.
 
 ## [1.7.5] - 2026-03-25
 
 ### Added
+
 - **`SelectSpec` `type_lookup` per-side overrides** (edge SQL views / `TableConnector.view`): `source_table`, `target_table`, `source_identity`, `target_identity`, `source_type_column`, `target_type_column` (each falls back to `table`, `identity`, `type_column`) for different lookup tables, join keys, or discriminator columns on the two endpoints.
 - **Row-level cast errors**: `IngestionParams` gains `on_row_error` (`skip` | `fail`, default `skip`), optional `row_error_dead_letter_path` (JSONL), `max_row_errors`, `row_error_doc_preview_max_bytes`, and `row_error_doc_keys` for bounded, debug-friendly failure records. Skip mode logs each failure at ERROR when no dead-letter path is set.
 - **`CastBatchResult`**, **`RowCastFailure`**, and **`RowErrorBudgetExceeded`** exported from `graflo` / `graflo.hq`.
 - CLI `ingest`: `--on-row-error` and `--row-error-dead-letter`.
 
 ### Changed
+
 - **`SelectSpec` `type_lookup`**: always emits both lookup joins and `source_type` / `target_type` columns. Static vertex types on one side belong only in `EdgeRouterActorConfig`; views that omit a type column or join use `kind="select"`. Removed `source_type_literal`, `target_type_literal`, `omit_source_type`, and `omit_target_type`.
 - **`ProtoTransform`**: **`target`** (`values` | `keys`) is defined on the proto/base transform model (with **`keys`** selection alongside it), not only on **`Transform`** — shared targeting semantics for vocabulary-style and full transform definitions.
 - **`Caster.cast_normal_resource`** now returns **`CastBatchResult`** with `.graph` and `.failures` instead of a bare `GraphContainer`.
@@ -3275,6 +3317,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 ## [1.7.4] - 2026-03-19
 
 ### Added
+
 - **Grouped value transforms** (`input_groups` / `output_groups`):
   - Invoke the same function once per **group** of input fields; each group’s values are passed as positional arguments to the callable.
   - Optional `output`: one scalar field name per group, aligned to `input_groups` order.
@@ -3282,14 +3325,17 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
   - When both `output` and `output_groups` are omitted, **unary groups** (exactly one input field per group) may **passthrough** results back onto those keys (see `Transform.passthrough_group_output` in `Transform`, default `true`). Multi-field groups require explicit `output` / `output_groups`.
 
 ### Changed
+
 - **Packaging**: `[project.optional-dependencies]` is limited to tooling extras (`dev`, `docs`, `plot`). RDF/SPARQL libraries (`rdflib`, `SPARQLWrapper`) stay in the core dependency set. User-facing install docs, README, CI (`uv sync --extra dev`), and runtime error hints were updated to match.
 
 ### Documentation
+
 - Concepts: [Transforms](docs/concepts/ingestion/transforms.md) — grouped calls, YAML shorthands, strategy rules, and config reference tidying.
 
 ## [1.7.3] - 2026-03-18
 
 ### Added
+
 - **Key-target transform support**:
   - `transform.call.target: keys` enables key-level transforms in pipelines
   - `transform.call.keys.mode` supports key selection via `all`, `include`, and `exclude`
@@ -3300,16 +3346,19 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
     - `snake_to_camel`
 
 ### Changed
+
 - **Edge spec relation discriminator cleanup**:
   - Removed legacy `logical_relation` from `database_features.edge_specs` and related API surfaces
   - Edge spec/index/name resolution now relies on relation-aware `EdgeId` (`source`, `target`, `relation`) plus optional `purpose`
 
 ### Documentation
+
 - Added concepts documentation examples for key-level transforms (`target: keys`).
 
 ## [1.7.2] - 2026-03-17
 
 ### Changed
+
 - **Transform declarations and actor DSL**:
   - `ingestion_model.transforms` is now modeled and validated as an ordered list of named transforms (instead of map-like declarations)
   - Transform execution and resolution preserve declaration/appearance order in resource pipelines
@@ -3319,6 +3368,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
   - Default plot naming now includes schema version when available, improving traceability across manifest versions
 
 ### Fixed
+
 - **Graph model consistency validation**:
   - Added graph-level validation so vertex/edge config consistency is checked at `GraphModel` initialization time
 - **Plotting correctness**:
@@ -3328,11 +3378,13 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
   - Fixed transform initialization edge cases where declaration style caused inconsistent actor wiring
 
 ### Documentation
+
 - Updated docs to clarify GraFlo as a graph schema transformation DSL and refreshed transform declaration examples for list-based transform registries and `transform.call.use` references
 
 ## [1.7.0] - 2026-03-13
 
 ### Added
+
 - **Schema migration framework (v1)**:
   - New `graflo.migrate` package with typed migration models, schema diffing, risk classification, planning, execution, and file-backed history store
   - New operation typing via `OperationType` enum (`StrEnum`) for safer operation ordering and classification
@@ -3348,6 +3400,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
   - Unified configuration into manifest blocks (`schema`, `ingestion_model`, `bindings`) with explicit validation and initialization flow
 
 ### Documentation
+
 - Extended migration docs in Concepts:
   - command examples for `plan`, `apply`, `status`, `history`
   - explicit guidance on schema comparison (`from` vs `to`) and risk interpretation
@@ -3356,6 +3409,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 ## [1.6.6] - 2026-03-05
 
 ### Added
+
 - **SelectSpec**: Declarative view specification for advanced filtering and projection of data before feeding into Resources
   - Alternative to `TableConnector`'s `table_name` + `joins` + `filters`; use `view: SelectSpec` for full control over the SQL query
   - Two modes: `kind="select"` (full SQL-like spec with `from`, `joins`, `select`, `where`) and `kind="type_lookup"` (shorthand for edge tables where source/target types come from a lookup table via FK joins)
@@ -3368,6 +3422,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
   - Use `vertex_router` and `edge_router` steps in resource `apply`/`pipeline` for polymorphic data (e.g. CSV with type discriminator columns, relations tables)
 
 ### Documentation
+
 - Updated docs and concepts to describe VertexRouter and EdgeRouter actor types
 - Added `vertex_router` and `edge_router` step examples to creating-schema guide
 - Schema architecture diagram now includes VertexRouterActor and EdgeRouterActor in the Actor hierarchy
@@ -3376,6 +3431,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 ## [1.6.5] - 2026-03-02
 
 ### Changed
+
 - **Vertex identity indexes**: Neo4j, Memgraph, and FalkorDB now automatically create identity indexes in `define_vertex_indexes` when schema is provided. Previously, identity had to be manually added to `database_features.vertex_indexes`.
 - **Index naming**: All index-related method names and docstrings now use "indexes" instead of "indices".
 - **Logical vs DB-aware architecture split finalized**:
@@ -3418,13 +3474,14 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
   - Test schemas depending on implicit behavior were migrated to explicit vertex declarations
 
 ### Breaking
+
 - Schemas that still define `edge.indexes` under `edge_config.edges[*]` now fail validation.
 - Migrate by moving physical edge specs/indexes to `database_features.edge_specs` and logical uniqueness keys to `edge.identities`.
 - `database_features.edge_variants` was renamed to `database_features.edge_specs`.
 - **Backend index documentation**: New `docs/concepts/schema/backend_indexes.md` describing which backends have implicit vs explicit identity indexes and how `vertex_indexes` relates to identity.
 
-
 ### Breaking (vertex projection)
+
 - **Vertex projection replaces `target_vertex`**:
   - `target_vertex` on transform steps has been removed
   - Use vertex `from` for doc-to-vertex field mapping: `vertex: X` with `"from": {vertex_field: doc_field}`
@@ -3432,11 +3489,13 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
   - `buffer_vertex` was removed from `ExtractionContext`; transforms always write to `buffer_transforms`
 
 ### Added
+
 - **Typed extraction artifacts**:
   - Added `VertexObservation`, `TransformObservation`, `EdgeIntent`, and `ProvenancePath`
   - Added regression tests for new context/artifact APIs in `test/architecture/test_onto.py`
 
 ### Documentation
+
 - Updated schema authoring docs to use canonical `infer_edges` naming and describe explicit vertex requirements for transform outputs
 - Added concepts documentation for the extraction/assembly runtime split and `ActorExecutor` ownership
 - Updated docs and README to describe the DB-aware projection layer and `Schema.resolve_db_aware(...)` flow
@@ -3445,6 +3504,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 ## [1.6.4] - 2026-02-25
 
 ### Changed
+
 - **Logical identity vs physical indexes**:
   - `Vertex` now models logical identity via `identity` fields instead of owning physical index definitions
   - Secondary indexes were moved to `Schema.database_features.vertex_indexes` / `Schema.database_features.edge_indexes`
@@ -3456,28 +3516,33 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 ## [1.6.3] - 2026-02-25
 
 ### Fixed
+
 - **Multi-edge emission from a single row**: Corrected edge rendering so repeated metric-like values in one source record produce distinct edges instead of collapsing into a linear/pair-only result
   - Edge casting selection now differentiates pair/product/combinations based on source/target branch layout and same-leaf scenarios
   - Same-vertex multi-sample cases are handled with combinations logic to preserve all expected links
 - **Edge weight alignment**: Fixed weight propagation to keep per-edge weights aligned with each emitted edge tuple rather than reusing a single accumulated weight payload
 
 ### Changed
+
 - **`edge_greedy` semantics clarified and tightened**:
   - `edge_greedy=True` now infers extra edges only when both endpoint vertex sets are populated, while avoiding duplicate source-target emissions already present in the accumulator
   - `edge_greedy=False` now behaves as "explicit-only" mode (emit edges created directly by edge actors in the pipeline)
 - **Runtime cleanup/performance**: Simplified several actor-path operations (context merging, wrapper step normalization, and logging formatting) for lower overhead and clearer execution flow
 
 ### Added
+
 - **Regression coverage for multi-edge casting**:
   - Added actor tests for multi-edge creation from one row and for filter-constrained variants to ensure cardinality remains correct
 
 ### Documentation
+
 - **Example 7 rewritten**: Replaced placeholder content with a full multi-edge/weights walkthrough using `dress` transforms and vertex filters
   - Added updated schema/pipeline guidance and generated visuals for ticker-to-metric relationships
 
 ## [1.6.2] - 2026-02-23
 
 ### Changed
+
 - **Messaging & positioning**: GraFlo is now presented as a **Graph Schema & Transformation Language (GSTL)** for Labeled Property Graphs (LPG) across all documentation
   - README, docs landing page, concepts, and creating-schema guide rewritten to lead with the GSTL / LPG identity
   - Pipeline description standardised to **Source Instance → Resource → Graph Schema → Covariant Graph Representation → Graph DB**
@@ -3490,12 +3555,14 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 ## [1.6.1] - 2026-02-22
 
 ### Fixed
+
 - **Filter expression parsing**: Fixed several bugs in `FilterExpression` deserialization
   - Added support for `foo` key (dunder-method shorthand, e.g. `foo: __eq__`) as an alternative to `operator` in YAML filter definitions
   - `cmp_operator` is now auto-inferred from dunder operator names (`__eq__` → `EQ`, `__gt__` → `GT`, etc.) via the new `DUNDER_TO_CMP` mapping, fixing cases where `cmp_operator` remained `None`
   - Fixed case-insensitive logical operator parsing in `from_dict` — lowercase keys like `or`, `and`, `if_then` from YAML are now correctly matched to `LogicalOperator` enum values
 
 ### Added
+
 - **NebulaGraph adapter**: Full support for NebulaGraph as a target graph database, with dual-version support for both v3.x (nGQL via `nebula3-python`, Thrift) and v5.x (ISO GQL via `nebula5-python`, gRPC)
   - `NebulaConnection` implementing the full `Connection` interface: space lifecycle (`create_database`, `delete_database`, `init_db`), schema DDL (`define_schema`, `define_vertex_classes`, `define_edge_classes`), index management with rebuild/retry, batched vertex upserts and edge inserts, `fetch_docs`, `fetch_edges`, `fetch_present_documents`, `keep_absent_documents`, and `aggregate` (COUNT, MAX, MIN, AVG, SORTED_UNIQUE)
   - Version-agnostic adapter layer (`NebulaClientAdapter`, `NebulaV3Adapter`, `NebulaV5Adapter`, `NebulaResultSet`) abstracting driver differences behind a unified interface, with `create_adapter()` factory
@@ -3507,6 +3574,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
   - Test suite with ~76 tests: unit tests for config, query builders, and utilities; integration tests (gated behind `pytest --run-nebula`) covering connection lifecycle, CRUD, fetch, edges, and aggregation
 
 ### Documentation
+
 - Added NebulaGraph to all supported-targets lists across README, docs landing page, quickstart, installation, and concepts pages
 - Added `NebulaConfig` environment variable examples and `from_docker_env()` usage to quickstart guide
 - Added NebulaGraph API reference pages (connection, adapter, query, utilities)
@@ -3514,6 +3582,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 ## [1.6.0] - 2026-02-17
 
 ### Added
+
 - **SPARQL / RDF resource support**: Ingest data from SPARQL endpoints (e.g. Apache Fuseki) and local RDF files (`.ttl`, `.rdf`, `.n3`, `.jsonld`) into property graphs
   - New `SparqlConnector` for mapping `rdf:Class` instances to resources, alongside existing `FileConnector` and `TableConnector`
   - New `RdfDataSource` abstract parent with shared RDF-to-dict conversion logic; concrete subclasses `RdfFileDataSource` (local files via rdflib) and `SparqlEndpointDataSource` (remote endpoints via SPARQLWrapper)
@@ -3528,6 +3597,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
   - Test suite with 22 tests: RDF file parsing, ontology inference, and live Fuseki integration
 
 ### Changed
+
 - **Top-level imports optimized**: Key classes are now importable directly from `graflo`:
   - `GraphEngine`, `IngestionParams` promoted to top-level alongside existing `Caster`
   - Architecture classes `Resource`, `Vertex`, `VertexConfig`, `Edge`, `EdgeConfig`, `FieldType` now at top-level
@@ -3537,6 +3607,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 - **`graflo.filter` package exports**: `FilterExpression`, `ComparisonOperator`, and `LogicalOperator` are now re-exported from `graflo.filter.__init__` (previously only available via `graflo.filter.onto`)
 
 ### Documentation
+
 - Added data-flow diagram (Connector -> DataSource -> Resource -> GraphContainer -> Target DB) to Concepts page
 - Added **Mermaid class diagrams** to Concepts page showing:
   - `GraphEngine` orchestration: how `GraphEngine` delegates to `InferenceManager`, `ResourceMapper`, `Caster`, and `ConnectionManager`
@@ -3548,12 +3619,14 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 ## [1.5.0] - 2026-02-02
 
 ### Added
+
 - **Ingestion date range**: `IngestionParams` supports `datetime_after`, `datetime_before`, and `datetime_column` so ingestion can be restricted to a date range
   - Use with `GraphEngine.create_bindings(..., datetime_columns={...})` for per-resource datetime columns, or set `IngestionParams.datetime_column` for a single default column
   - Rows are included when the datetime column value is in `[datetime_after, datetime_before)` (inclusive lower, exclusive upper)
   - Applies to SQL/PostgreSQL table ingestion; enables sampling or incremental loads by time window
 
 ### Changed
+
 - **Configs use Pydantic**: Schema and all schema-related configs now use Pydantic `BaseModel` (via `ConfigBaseModel`) instead of dataclasses
   - `Schema`, `SchemaMetadata`, `VertexConfig`, `Vertex`, `EdgeConfig`, `Edge`, `Resource`, `WeightConfig`, `Field`, and actor configs are Pydantic models
   - Validation, YAML/dict loading via `model_validate()` / `from_dict()` / `from_yaml()`, and consistent serialization
@@ -3562,16 +3635,19 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 ## [1.4.5] - 2026-02-02
 
 ### Added
+
 - **Inferencer**: Row count estimates and row samples
 - **Discard disconnected vertices**: Option to discard disconnected vertices during graph operations
 
 ### Changed
+
 - **clean_start**: Refactored into `recreate_schema` and `clear_data` for clearer separation of schema and data reset
 - **output_config**: Renamed to `target_db_config`
 
 ## [1.4.3] - 2026-01-25
 
 ### Added
+
 - **SchemaSanitizer for TigerGraph**: Added comprehensive schema sanitization for TigerGraph compatibility
   - `SchemaSanitizer` class in `graflo.hq.sanitizer` module for sanitizing schema attributes
   - Sanitizes vertex names and field names to avoid reserved words (appends `_vertex` suffix for vertex names, `_attr` for attributes)
@@ -3596,14 +3672,17 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 ## [1.4.0] - 2026-01-15
 
 ### Removed
+
 - `pyTigergraph` dependence remove
 
 ### Added
+
 - reserved Tigergraph words are modified during automated schema generation
 
 ## [1.3.11] - 2026-01-12
 
 ### Added
+
 - **TigerGraph Version 4+ Compatibility Enhancements**: Improved support for TigerGraph 4.1+ and 4.2.x versions
   - **Automatic Version Detection**: Connection now auto-detects TigerGraph version and adjusts behavior accordingly
     - Parses version from various formats returned by `getVersion()` API
@@ -3626,6 +3705,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
     - Future-proofs for Python 3.11+ while maintaining Python 3.10 compatibility
 
 ### Changed
+
 - **TigerGraph Port Configuration for Version 4+**: Updated default ports to align with TigerGraph 4.1+ architecture
   - **Port 9000 (REST++)**: Marked as internal-only in TG 4.1+ (not publicly accessible)
   - **Port 14240 (GSQL Server)**: Now the primary interface for all API requests in TG 4.1+
@@ -3643,6 +3723,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
   - Enhanced class docstrings in `TigerGraphConnection` and `TigergraphConfig` with usage examples
 
 ### Documentation
+
 - Added comprehensive TigerGraph 4+ integration guide covering:
   - Port configuration changes (9000 → 14240)
   - Token-based authentication (recommended approach)
@@ -3655,6 +3736,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 ## [1.3.10] - 2026-01-07
 
 ### Added
+
 - **Docker management scripts**: Added unified docker service management scripts
   - `start-all.sh`: Start all docker compose services at once with automatic SPEC detection from `.env` files
   - `stop-all.sh`: Stop all docker compose services with profile-based management
@@ -3685,6 +3767,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
     - Graceful handling of schema change job errors
 
 ### Changed
+
 - **Improved connection typing and signatures**: Enhanced type hints and method signatures across all database connectors
   - Improved type annotations for ArangoDB, Neo4j, TigerGraph, FalkorDB, and Memgraph connection classes
   - Better IDE support and type checking for database connection methods
@@ -3697,6 +3780,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 ## [1.3.9] - 2026-01-06
 
 ### Added
+
 - **FalkorDB documentation**: Added comprehensive FalkorDB support documentation across all documentation files
   - Added FalkorDB to main README.md database support list
   - Added FalkorDB to examples and quickstart guides
@@ -3704,6 +3788,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
   - Added FalkorDB to documentation reference index
 
 ### Changed
+
 - **Enhanced PostgreSQL Schema Inference documentation**: Significantly improved documentation clarity and prominence
   - Added explicit requirements section: normalized databases (3NF) with proper primary keys (PK) and foreign keys (FK) decorated
   - Clarified that intelligent heuristics are used to classify tables as vertices or edges
@@ -3728,6 +3813,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 ## [1.3.6] - 2025-12-17
 
 ### Added
+
 - **Database-agnostic terminology**: Renamed database-specific terminology to be more generic
   - `Edge.collection_name` → `Edge.database_name`: More generic field name that works across all database types
     - For ArangoDB, `database_name` corresponds to the edge collection name
@@ -3754,6 +3840,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 ## [1.3.5] - 2025-12-16
 
 ### Added
+
 - **Unified Database Configuration Architecture**: Simplified database configuration system
   - **Capability-based Design**: Replaced `GraphDBConfig`/`SourceDBConfig` hierarchy with capability sets
     - `SOURCE_DATABASES`: Set of database types that can be used as data sources
@@ -3857,6 +3944,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
     - Backward compatible: fields without types default to `None` (suitable for databases like ArangoDB)
 
 ### Changed
+
 - **Database Configuration Architecture Simplification**: Unified and simplified database configuration
   - **Renamed `BackendType` to `DBType`**: More accurate naming reflecting unified database configuration
     - Updated all references throughout codebase
@@ -3928,10 +4016,12 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
     - `schema` field renamed to `schema_name` (accepts `"schema"` key in dict/JSON for backward compatibility via validation alias)
 
 ### Deprecated
+
 - `ChunkerFactory`: Still functional but now used internally by FileDataSource
 - Direct file path processing: Use DataSource configuration for new code
 
 ### Fixed
+
 - **File Discovery Path Bug**: Fixed incorrect path combination in `Caster.discover_files()`
   - Previously combined `fpath` with `pattern.sub_path` again, causing `data/data` errors
   - Now correctly uses `fpath` directly as the search directory
@@ -3940,6 +4030,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 ## [1.2.1] - 2025-01-XX
 
 ### Added
+
 - **`any_key` parameter for `DescendActor`**: Added support for processing all keys in a dictionary dynamically
   - When `any_key: true` is set, `DescendActor` will iterate over all key-value pairs in the document dictionary
   - Useful for handling nested structures where you want to process all keys without explicitly listing them
@@ -3947,6 +4038,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
   - Automatically displayed in actor tree visualizations
 
 ### Changed
+
 - **Python version requirement**: Reduced minimum Python version requirement from 3.11 to 3.10
   - Updated `requires-python` to `~=3.10.0` in `pyproject.toml`
   - Maintains compatibility with Python 3.10 while using modern type hints
@@ -3954,6 +4046,7 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
 ## [1.2.0] - 2025-01-XX
 
 ### Added
+
 - **TigerGraph backend support**: Full support for TigerGraph as a graph database backend
   - Complete implementation of `TigerGraphConnection` with all core operations
   - Support for vertex and edge creation, deletion, and querying
@@ -3965,25 +4058,29 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
   - Field type-aware filter generation for proper REST++ filter formatting
 
 ### Changed
+
 - **API refactoring**: Renamed `delete_collections` to `delete_graph_structure` for better clarity
   - Method now uses `vertex_types` and `graph_names` parameters instead of `cnames` and `gnames`
   - Updated terminology across codebase to use generic "vertex type" and "edge type" instead of database-specific "collection" terminology
   - Added comprehensive documentation about database organization terminology differences between ArangoDB, Neo4j, and TigerGraph
 
 ### Documentation
+
 - Added comprehensive database organization terminology documentation explaining:
   - ArangoDB: Database → Collections (vertex/edge) → Graphs
   - Neo4j: Database → Labels (vertex types) → Relationship Types (edge types)
   - TigerGraph: Graph (like database) → Global Vertex/Edge Types → Associated with graphs
 
 ## [1.0.1] - 2025-01
+
 ### Changed
 
 Package renamed from `graphcast` to `graflo`.
 
-
 ## [1.0.0] - 2025-01
+
 ### Changed
+
 - **Major refactoring of Edge class architecture:**
   - Removed `EdgeCastingType` dependency and related casting logic
   - Simplified Edge class by removing complex discriminant handling
@@ -4019,6 +4116,7 @@ Package renamed from `graphcast` to `graflo`.
   - Added types-pytz 2025.2.0.20250809 for type annotations
 
 ### Removed
+
 - `EdgeCastingType` enum and related casting logic
 - Complex discriminant handling in Edge class
 - `source_collection` and `target_collection` fields (now private)
@@ -4027,6 +4125,7 @@ Package renamed from `graphcast` to `graflo`.
 - `_reset_edges()` method from EdgeConfig
 
 ### Added
+
 - `LocationIndex` type for better location handling
 - `VertexRep` class for vertex representation
 - `keep_vertex_name` option in ABCFields
@@ -4034,10 +4133,13 @@ Package renamed from `graphcast` to `graflo`.
 - Better error handling and validation
 
 ## [0.14.0] - 2025-05
+
 ### Changes
+
 - Refactored Tree-like and table-like resources to `Resource`, using actors. All schema configs must be adopted.
 
 ## [0.13.14] - 2024-08
+
     `manange_dbs` script accepts parameters parameters `--db-host`, `--db-password` and `--db-user` (defaults to `root`).  
 
 ## [0.13.6] - 2024-02
@@ -4047,6 +4149,7 @@ Package renamed from `graphcast` to `graflo`.
 ## [0.13.0] - 2023-12
 
 ### Changed
+
 - In `Vertex`
   - `index` and `extra_index` are joined into `indexes`
 - In VertexConfig
@@ -4062,39 +4165,37 @@ Package renamed from `graphcast` to `graflo`.
   - `maps` key becomes `children`
   - `type`: `dict` becomes `type`: `vertex`
 
-
 ### Added
 
 - `cli/plot_schema.py` became a standalone script available with the package installation
--  basic `neo4j` ingestion added:
-     - create_database
-     - delete_database
-     - define_vertex_indices
-     - define_edge_indices
-     - delete_collections
-     - init_db
-     - upsert_docs_batch
-     - insert_edges_batch
+- basic `neo4j` ingestion added:
+  - create_database
+  - delete_database
+  - define_vertex_indices
+  - define_edge_indices
+  - delete_collections
+  - init_db
+  - upsert_docs_batch
+  - insert_edges_batch
 
 ### Fixed
 
 - ***
-
 
 ## [0.12.0] - 2023-10
 
 ### Added
 
 - `cli/plot_schema.py` became a standalone script available with the package installation
--  basic `neo4j` ingestion added:
-     - create_database
-     - delete_database
-     - define_vertex_indices
-     - define_edge_indices
-     - delete_collections
-     - init_db
-     - upsert_docs_batch
-     - insert_edges_batch
+- basic `neo4j` ingestion added:
+  - create_database
+  - delete_database
+  - define_vertex_indices
+  - define_edge_indices
+  - delete_collections
+  - init_db
+  - upsert_docs_batch
+  - insert_edges_batch
 
 ### Fixed
 
@@ -4104,7 +4205,7 @@ Package renamed from `graphcast` to `graflo`.
 
 - in `ingest_json_files`: ncores -> n_threads
 - schema config changes:
-    - `type` specification removed in Transform (field mapping) specification, whenever ambiguous, `image` is used  
+  - `type` specification removed in Transform (field mapping) specification, whenever ambiguous, `image` is used  
 - `ConnectionConfigType` -> `DBConnectionConfig`
 
 ## [0.11.5] - 2023-08-30
@@ -4121,7 +4222,6 @@ Package renamed from `graphcast` to `graflo`.
 - added docker-compose config for Arango; all tests talk to it automatically
 - `init_db` now is member of `Connection`
 - Introduced `InputType` as `Enum` : {`TABLE`, `JSON`}
-
 
 ## [0.11.3] - 2023-06-24
 

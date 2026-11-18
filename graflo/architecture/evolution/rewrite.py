@@ -1176,6 +1176,85 @@ def _collect_endpoint_selectors_in_step(
             _collect_endpoint_selectors_in_step(nested, out)
 
 
+@rewrites_pipeline
+def rename_secondary_selectors_in_pipeline(
+    pipeline: list[dict[str, Any]], renames: Mapping[str, Mapping[str, str]]
+) -> list[dict[str, Any]]:
+    """*pipeline* with every reference to a renamed secondary identity renamed.
+
+    *renames* maps a class to ``{old name: new name}``. A vertex or router
+    ``find`` and an edge endpoint's ``source_match`` / ``target_match`` that
+    name an old name of their class take the new one; nothing else moves.
+    """
+    out = deepcopy(pipeline)
+    if renames:
+        _rename_selectors_in_step(out, renames)
+    return out
+
+
+def _rename_selectors_in_step(
+    step: Any, renames: Mapping[str, Mapping[str, str]]
+) -> None:
+    if isinstance(step, list):
+        for item in step:
+            _rename_selectors_in_step(item, renames)
+        return
+    if not isinstance(step, dict):
+        return
+    normalized = normalize_actor_step(dict(step))
+    step_type = normalized.get("type")
+    if step_type == "vertex" and isinstance(step.get("find"), str):
+        vertex = normalized.get("vertex")
+        if isinstance(vertex, str):
+            step["find"] = renames.get(vertex, {}).get(step["find"], step["find"])
+    elif step_type == "vertex_router":
+        payload = router_payload(step)
+        found = payload.get("find") if payload is not None else None
+        if payload is not None and isinstance(found, dict):
+            payload["find"] = {
+                vertex: renames.get(vertex, {}).get(selector, selector)
+                if isinstance(selector, str)
+                else selector
+                for vertex, selector in found.items()
+            }
+    for payload in edge_payloads(step):
+        _rename_selectors_in_edge_payload(payload, renames)
+
+    descend_payload = step.get("descend")
+    if isinstance(descend_payload, dict):
+        for key in ("apply", "pipeline"):
+            _rename_selectors_in_step(descend_payload.get(key), renames)
+    for key in ("apply", "pipeline"):
+        if isinstance(step.get(key), list):
+            _rename_selectors_in_step(step[key], renames)
+
+
+def _rename_selectors_in_edge_payload(
+    payload: dict[str, Any], renames: Mapping[str, Mapping[str, str]]
+) -> None:
+    for endpoint_keys, match_key in (
+        (("source", "from"), "source_match"),
+        (("target", "to"), "target_match"),
+    ):
+        current = payload.get(match_key)
+        if isinstance(current, dict):
+            payload[match_key] = {
+                vertex: renames.get(vertex, {}).get(selector, selector)
+                if isinstance(selector, str)
+                else selector
+                for vertex, selector in current.items()
+            }
+            continue
+        vertex = _endpoint_vertex(payload, *endpoint_keys)
+        if vertex is not None and isinstance(current, str):
+            payload[match_key] = renames.get(vertex, {}).get(current, current)
+    links = payload.get("links")
+    if isinstance(links, list):
+        for link in links:
+            if isinstance(link, dict):
+                _rename_selectors_in_edge_payload(link, renames)
+
+
 @reads_pipeline
 def collect_endpoint_selectors(
     pipeline: list[dict[str, Any]],

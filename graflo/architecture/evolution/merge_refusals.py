@@ -159,8 +159,8 @@ def plan_demoted_key_names(
                 f"merge_manifests: key space: {detail} demote the key "
                 f"{sorted(fields)} onto {into!r} from different key spaces, so "
                 "their ids would share one lookup column and an id of one would "
-                "find a node of another; tag the members' `local_key` alike "
-                "(one key space), or do not list the key as a property branch "
+                "find a node of another; put the members in one key space "
+                "(`key_spaces`), or do not list the key as a property branch "
                 "of `identity`",
                 check="key-space",
                 subjects=(subject("merged", into),),
@@ -182,8 +182,8 @@ def plan_demoted_key_names(
                             f"demotes on {into!r} would be the secondary identity "
                             f"{name!r}, which a member already declares over "
                             f"{sorted(authored[name])}; rename that secondary, or "
-                            f"set `origins.{side}` on the op, or tag the member's "
-                            "`local_key` otherwise",
+                            f"set `origins.{side}` on the op, or name the member's "
+                            "key space in `key_spaces`",
                             check="key-space",
                             subjects=(subject("merged", into),),
                         )
@@ -313,7 +313,7 @@ def identifier_refusals(
             tag = (
                 f"`origins.{side}`"
                 if space == resolution.origins[side]
-                else "the member's `local_key` tag"
+                else "`key_spaces` name for the member"
             )
             out.append(
                 MergeIdentityError(
@@ -336,9 +336,7 @@ def origin_refusals(
     """Every problem with the origins *resolution* names something by.
 
     Only a side whose origin names something is checked: a demoted key whose
-    key space is the origin, or a local key the origin tags (see
-    :attr:`~graflo.architecture.evolution.canonical.ClusterResolution.origin_tagged`).
-    Its origin must be a valid key space name (see
+    key space is the origin. Its origin must be a valid key space name (see
     :func:`~graflo.architecture.evolution.naming_graph.key_space_name_problem`;
     it is joined to field names with ``__``); two named origins must differ;
     and no member of a re-keyed cluster may declare a secondary identity of
@@ -358,8 +356,7 @@ def origin_refusals(
         into = into_of.get((side, member))
         if into is not None and space == origins[side]:
             demoting[side].add(into)
-    tagged = {side: set(resolution.origin_tagged.get(side, ())) for side in sides}
-    used = [side for side in sides if demoting[side] or tagged[side]]
+    used = [side for side in sides if demoting[side]]
     if not used:
         return []
     rekeyed = [
@@ -376,13 +373,7 @@ def origin_refusals(
         return f"the {side} schema name"
 
     def names(side: Side) -> str:
-        demoted = f"the {side} side's demoted keys"
-        untagged = "local keys the op leaves untagged"
-        if demoting[side] and tagged[side]:
-            return f"names {demoted} and tags its {untagged}"
-        if demoting[side]:
-            return f"names {demoted}"
-        return f"tags the {side} side's {untagged}"
+        return f"names the {side} side's demoted keys"
 
     def classes(*intos: str) -> tuple[str, ...]:
         """The merged classes *intos*, in the index's order."""
@@ -402,7 +393,7 @@ def origin_refusals(
                     f"merge_manifests: origin {origin!r} ({source(side)}) "
                     f"{names(side)}, but {problem}; set `origins.{side}` on the op",
                     check="origin",
-                    subjects=classes(*demoting[side], *tagged[side]),
+                    subjects=classes(*demoting[side]),
                 )
             )
         authors = sorted(
@@ -436,12 +427,10 @@ def origin_refusals(
         out.append(
             MergeIdentityError(
                 f"merge_manifests: both sides' origin is {origins['left']!r}, "
-                "so the keys it names or tags on each side would share one "
+                "so the keys it names on each side would share one "
                 "name; set `origins` on the op",
                 check="origin",
-                subjects=classes(
-                    *(into for side in sides for into in demoting[side] | tagged[side])
-                ),
+                subjects=classes(*(into for side in sides for into in demoting[side])),
             )
         )
     return out
@@ -452,11 +441,11 @@ def key_space_refusals(
 ) -> list[MergeIdentityError]:
     """Every problem with the key spaces *resolution* names demoted keys by.
 
-    A ``local_key`` tag names the key space of a member's own ids, and its
-    demoted key is named by it. Refused: a member two of its resources tag
-    differently (its ids would be in two spaces at once), a tag that cannot
+    A ``key_spaces`` entry names the key space of a member's own ids, and its
+    demoted key is named by it. Refused: a member named twice, differently
+    (its ids would be in two spaces at once), a name that cannot
     name a key space (see :func:`~graflo.architecture.evolution.naming_graph.key_space_name_problem`),
-    a tag a member of the cluster already declares as a secondary identity
+    a name a member of the cluster already declares as a secondary identity
     (the demoted key would take that name), and a key space both sides name
     (two sides' ids in one space). An origin colliding with a secondary is
     :func:`origin_refusals`' to report.
@@ -490,10 +479,10 @@ def key_space_refusals(
             continue
         out.append(
             MergeIdentityError(
-                f"merge_manifests: key space: {side}:{member} is tagged "
+                f"merge_manifests: key space: {side}:{member} is in key space "
                 f"{space!r}, which names its demoted key on {into!r}, but "
                 f"{', '.join(sorted(authors))} declare a secondary identity "
-                f"named {space!r}; give the member another tag, or rename that "
+                f"named {space!r}; give the member another key space, or rename that "
                 "secondary",
                 check="key-space",
                 subjects=(subject("merged", into or member), subject(side, member)),
@@ -507,9 +496,9 @@ def key_space_refusals(
         if len(tags) > 1:
             out.append(
                 MergeIdentityError(
-                    f"merge_manifests: key space: {side}:{member} is tagged "
-                    f"{list(tags)} by its resources' local_key entries, so its "
-                    "ids would be in several key spaces; give the member one tag",
+                    f"merge_manifests: key space: {side}:{member} is put in "
+                    f"{list(tags)} by `key_spaces`, so its ids would be in "
+                    "several key spaces; give the member one",
                     check="key-space",
                     subjects=nodes,
                 )
@@ -517,9 +506,9 @@ def key_space_refusals(
         elif tags[0] != origins[side] and (problem := key_space_name_problem(tags[0])):
             out.append(
                 MergeIdentityError(
-                    f"merge_manifests: key space: {side}:{member} is tagged "
+                    f"merge_manifests: key space: {side}:{member} is put in "
                     f"{tags[0]!r}, which names its demoted key but {problem}; "
-                    "give the member another tag",
+                    "give the member another key space",
                     check="key-space",
                     subjects=nodes,
                 )
@@ -541,7 +530,7 @@ def key_space_refusals(
             MergeIdentityError(
                 f"merge_manifests: key space: {named_members} would share "
                 f"the key space {space!r}, though they come from different "
-                "sides; tag one side's members otherwise, or set `origins`",
+                "sides; give one side's members another key space, or set `origins`",
                 check="key-space",
                 subjects=tuple(subject(side, member) for side, member in members),
             )
@@ -582,11 +571,9 @@ def ambiguous_reference_refusals(
             or declaration.retire != "demote"
         ):
             continue
-        local_key = declaration.local_key_branch()
         owners = {
             *declaration.derive_at,
             *(r for branch in declaration.derivations() for r in branch.sources),
-            *(local_key.local_key if local_key is not None else ()),
         }
         raw = declaration.raw_branches()
         for side in ("left", "right"):
@@ -644,8 +631,8 @@ def ambiguous_reference_refusals(
                         f"{'references' if references else 'upserts'} {side} "
                         f"members {members} of {cluster.into!r}, whose keys are "
                         f"demoted to different secondary identities {named}; it "
-                        "cannot find the class by one of them. Tag the members' "
-                        "`local_key` alike (one key space), or produce each "
+                        "cannot find the class by one of them. Put the members in "
+                        "one key space (`key_spaces`), or produce each "
                         "member from its own resource.",
                         check="ambiguous-reference",
                         subjects=(

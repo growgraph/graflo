@@ -5,7 +5,7 @@ Two field names recur across the models and mean two different things:
 rename, or an equivalence (``MergeVerticesOp``, ``MergeEdgesOp``,
 ``VertexEquivalence``, ``RelationEquivalence``, ``PropertyEquivalence``);
 ``name`` is *what a new thing is called* — an attribute an identity branch
-derives (``DerivedBranch``, ``LocalKeyBranch``). A model never uses one for
+derives (``DerivedBranch``). A model never uses one for
 the other.
 """
 
@@ -20,8 +20,6 @@ from .branches import (
     DerivationSpec,
     DerivedBranch,
     IdentityBranchDecl,
-    LocalKeyBranch,
-    LocalKeySource,
     RawBranch,
     branch_fields,
     branch_id,
@@ -161,8 +159,6 @@ __all__ = [
     "IdentityBranchDecl",
     "IdentityReplacement",
     "IdentityTarget",
-    "LocalKeyBranch",
-    "LocalKeySource",
     "ManifestOp",
     "MergeEdgesOp",
     "MergeFieldTypes",

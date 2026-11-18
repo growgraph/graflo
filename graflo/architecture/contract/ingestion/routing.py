@@ -5,6 +5,10 @@ produces something from a record only when a ``vertex_router`` routes the
 record's ``type_field`` value. Those values are a condition a source can apply
 before it reads (a table connector pushes them into its query), and connector
 pruning uses the same rule to decide which requests still reach a class.
+
+The condition is stated on the source's own field: a rename or a key-renaming
+call of the level only relabels the value a router reads, so the field is
+traced back through them (:func:`routed_field_source`).
 """
 
 from __future__ import annotations
@@ -26,11 +30,12 @@ from graflo.architecture.contract.ingestion.transform import ProtoTransform
 class RoutedRecordFilter(BaseModel):
     """The records a pipeline produces anything from, or why that cannot be said.
 
-    ``fields`` maps each routed ``type_field`` to the values its routers send
-    somewhere; a record counts when any field holds one of its values. An empty
-    mapping means no record produces anything. ``fields`` is ``None`` when a
-    record may produce something without a router; ``blocked_by`` then names
-    the step that allows it.
+    ``fields`` maps each source field a router's ``type_field`` reads to the
+    values the routers send somewhere; a record counts when any field holds one
+    of its values. An empty mapping means no record produces anything.
+    ``fields`` is ``None`` when a record may produce something without a
+    router, or a routed value is not a source field's; ``blocked_by`` then
+    names the step that causes it.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -63,23 +68,69 @@ def describe_step(step: ActorConfig, index: int) -> str:
     return f"step {index} ({step.type})"
 
 
-def fields_written_before_routing(
-    level: Sequence[ActorConfig], transforms: Mapping[str, ProtoTransform]
-) -> frozenset[str] | None:
-    """Fields the transforms of one pipeline level may write; ``None`` if one cannot say.
+class RoutedFieldSource(BaseModel):
+    """The source field a router reads its ``type_field`` from, or why there is none."""
 
-    Every transform of a level runs before the level's routers, whatever its
-    place in the list, so all of them count.
+    model_config = ConfigDict(frozen=True)
+
+    name: str | None
+    blocked_by: str | None = None
+
+
+def routed_field_source(
+    level: Sequence[ActorConfig],
+    field: str,
+    transforms: Mapping[str, ProtoTransform],
+) -> RoutedFieldSource:
+    """The source field whose value a router of *level* reads as *field*.
+
+    Every transform of a level runs before its routers, in the order listed,
+    and a record keeps its own keys beside what the transforms write. Read
+    backwards from the router: a ``rename`` onto the field leads to the field
+    it renames, a key-renaming call leaves the values under the record's own
+    keys alone, and any other step that does not write the field is passed.
+
+    ``name`` is ``None`` when the value is not a source field's: a call writes
+    it, a call's writes cannot be known, a ``rename`` takes the field away or
+    several fields onto it, or a guarded ``rename`` touches it (the source
+    would depend on the record). ``blocked_by`` names that step.
+
+    Args:
+        level: The steps of one pipeline level.
+        field: A router's ``type_field``.
+        transforms: ``ingestion_model.transforms`` by name, for ``call.use``.
     """
-    written: set[str] = set()
-    for step in level:
+    current = field
+
+    def blocked(index: int, step: ActorConfig, reason: str) -> RoutedFieldSource:
+        return RoutedFieldSource(
+            name=None, blocked_by=f"{describe_step(step, index)}: {reason}"
+        )
+
+    for index in range(len(level) - 1, -1, -1):
+        step = level[index]
         if not isinstance(step, TransformActorConfig):
             continue
-        fields = step.fields_written(transforms)
-        if fields is None:
-            return None
-        written |= fields
-    return frozenset(written)
+        if step.rename is not None:
+            onto = [old for old, new in step.rename.items() if new == current]
+            if not onto and current not in step.rename:
+                continue
+            if step.when is not None:
+                return blocked(index, step, f"it renames {current!r} under a guard")
+            if len(onto) > 1:
+                return blocked(index, step, f"it renames {sorted(onto)} to {current!r}")
+            if not onto:
+                return blocked(index, step, f"it renames {current!r} away")
+            current = onto[0]
+            continue
+        if step.call is not None and step.renames_keys(transforms):
+            continue
+        written = step.fields_written(transforms)
+        if written is None:
+            return blocked(index, step, "the fields it writes cannot be known")
+        if current in written:
+            return blocked(index, step, f"it writes {[current]}")
+    return RoutedFieldSource(name=current)
 
 
 def routers_keep_subset(pipeline: Sequence[ActorConfig]) -> bool:
@@ -98,10 +149,9 @@ def routed_record_filter(
     """The records *pipeline* produces anything from, as routed values per field.
 
     Holds when every top-level step is a transform, a ``vertex_router``, or an
-    ``edge`` between router roles, and no transform of the level writes a
-    router's ``type_field``. A transform's writes are resolved the way the
-    runtime resolves them (:meth:`TransformActorConfig.fields_written`): a
-    ``when`` guard on the ``type_field`` only reads it.
+    ``edge`` between router roles, and each router's ``type_field`` reads a
+    source field (:func:`routed_field_source`); the values are keyed by that
+    field. A ``when`` guard on the ``type_field`` only reads it.
 
     Args:
         pipeline: The resource's top-level steps.
@@ -112,7 +162,6 @@ def routed_record_filter(
     if not routers:
         return RoutedRecordFilter(fields=None, blocked_by="no top-level vertex_router")
     roles = {router.slot for router in routers}
-    routed_fields = {router.type_field for router in routers}
     for index, step in enumerate(pipeline):
         if isinstance(step, (VertexRouterActorConfig, TransformActorConfig)):
             continue
@@ -126,29 +175,12 @@ def routed_record_filter(
         return RoutedRecordFilter(
             fields=None, blocked_by=f"{describe_step(step, index)}: {reason}"
         )
-    for index, step in enumerate(pipeline):
-        if not isinstance(step, TransformActorConfig):
-            continue
-        written = step.fields_written(transforms)
-        if written is None:
-            return RoutedRecordFilter(
-                fields=None,
-                blocked_by=(
-                    f"{describe_step(step, index)}: the fields it writes cannot "
-                    "be known"
-                ),
-            )
-        rewritten = sorted(written & routed_fields)
-        if rewritten:
-            return RoutedRecordFilter(
-                fields=None,
-                blocked_by=f"{describe_step(step, index)}: it writes {rewritten}",
-            )
     values: dict[str, set[Any]] = {}
     for router in routers:
-        values.setdefault(router.type_field, set()).update(
-            router.routed_values(declared)
-        )
+        source = routed_field_source(pipeline, router.type_field, transforms)
+        if source.name is None:
+            return RoutedRecordFilter(fields=None, blocked_by=source.blocked_by)
+        values.setdefault(source.name, set()).update(router.routed_values(declared))
     return RoutedRecordFilter(
         fields={field: frozenset(vals) for field, vals in values.items() if vals}
     )

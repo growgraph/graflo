@@ -306,7 +306,7 @@ A group of a union taken as a whole: the types its equivalences name, every type
 
 ### identity branch
 
-One entry of a vertex equivalence's `identity`, the merged type's key in priority order: a property the members carry (`serial_number`, or a composite `[plant, tag]`), a derived branch that each resource computes from its own columns (`{name, sources}`, class `DerivedBranch`), a name or composite over attributes declared in `derive`, or a `local_key` fallback, always last (`LocalKeyBranch`). One property branch is a natural key; any other list keys the type on an identity funnel over the branches. See [Merging manifests](schema/merging_manifests.md#keying-the-merged-type).
+One entry of a vertex equivalence's `identity`, the merged type's key in priority order: a property the members carry (`serial_number`, or a composite `[plant, tag]`), a derived branch that each resource computes from its own columns (`{name, sources}`, class `DerivedBranch`), or a name or composite over attributes declared in `derive`. One property branch is a natural key; any other list keys the type on an identity funnel over the branches. `fallback: own_key` appends one branch per member, over its own key. See [Merging manifests](schema/merging_manifests.md#keying-the-merged-type).
 
 ### union
 

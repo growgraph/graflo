@@ -259,6 +259,20 @@ class TransformActorConfig(ConfigBaseModel):
             written.update(group)
         return frozenset(written) or None
 
+    def renames_keys(self, transforms: Mapping[str, ProtoTransform]) -> bool:
+        """Whether this step is a key-target call: it renames keys, never values.
+
+        A ``use`` call is resolved against *transforms*; one naming no entry
+        is not known to be a key-target call.
+        """
+        call = self.call
+        if call is None:
+            return False
+        named = transforms.get(call.use) if call.use is not None else None
+        if call.use is not None and named is None:
+            return False
+        return call.transform_kwargs(named)["target"] == "keys"
+
     def to_shorthand(self, mode: str = "python") -> dict[str, Any]:
         """``{transform: {...}}``, minimal."""
         return {"transform": _minimal(self, mode)}

@@ -38,14 +38,22 @@ def _digest(payload: dict[str, Any]) -> str:
     return hashlib.sha256(source.encode()).hexdigest()
 
 
+def _payload_value(doc: Mapping[str, Any], field: str) -> Any:
+    """*field*'s value as a digest reads it: missing, ``None`` and ``""`` alike."""
+    value = doc.get(field)
+    return None if _identity_value_is_empty(value) else value
+
+
 def compute_hash_identity(doc: dict[str, Any], source_fields: list[str]) -> str:
     """Compute a deterministic SHA256 hex digest from source field values.
 
     The payload is ``{field: value}`` with no branch marker, which is what makes
     a legacy ``hash_identity_properties`` digest byte-identical to the values
-    produced before funnels existed. Do not add keys to this payload.
+    produced before funnels existed. Do not add keys to this payload. An empty
+    value (missing, ``None`` or ``""``) is ``None`` in it, so one entity gets one
+    digest however its source spells "no value".
     """
-    payload = {field: doc.get(field) for field in source_fields}
+    payload = {field: _payload_value(doc, field) for field in source_fields}
     return _digest(payload)
 
 
@@ -58,7 +66,9 @@ def compute_derived_hash_identity(
     normalizer version gives new ids. Kept apart from
     :func:`compute_hash_identity`, whose payload is frozen.
     """
-    payload: dict[str, Any] = {field: doc.get(field) for field in source_fields}
+    payload: dict[str, Any] = {
+        field: _payload_value(doc, field) for field in source_fields
+    }
     payload["normalizers"] = dict(sorted(normalizers.items()))
     return _digest(payload)
 
@@ -92,7 +102,9 @@ def compute_funnel_identity(
             _identity_value_is_empty(doc.get(field)) for field in branch.required_fields
         ):
             continue
-        payload: dict[str, Any] = {field: doc.get(field) for field in branch.fields}
+        payload: dict[str, Any] = {
+            field: _payload_value(doc, field) for field in branch.fields
+        }
         if funnel.include_branch_id:
             payload[BRANCH_PAYLOAD_KEY] = branch.id
         return _digest(payload)

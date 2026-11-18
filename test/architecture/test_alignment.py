@@ -34,8 +34,6 @@ from graflo.architecture.evolution.ops import (
     EnsureExtractedFieldsOp,
     FunnelIdentityTarget,
     IdentityBranchDecl,
-    LocalKeyBranch,
-    LocalKeySource,
     NaturalIdentityTarget,
     ReplaceIdentityOp,
     VertexEquivalence,
@@ -121,24 +119,15 @@ def _match_key() -> DerivedBranch:
     )
 
 
-def _local_key() -> LocalKeyBranch:
-    return LocalKeyBranch(
-        local_key={
-            "r_a": LocalKeySource(field="firm_id", tag="a"),
-            "r_b": LocalKeySource(field="org_id", tag="b"),
-        }
-    )
-
-
 def _plan(
     *branches: IdentityBranchDecl,
     vertex: str = "Company",
     at: dict[str, list[int]] | None = None,
 ) -> IdentityPlan:
-    """The union's plan: *branches*, or the default derived + local-key pair."""
+    """The union's plan: *branches*, or the default derived branch."""
     return IdentityPlan(
         vertex=vertex,
-        branches=branches or (_match_key(), _local_key()),
+        branches=branches or (_match_key(),),
         at=at or {},
     )
 
@@ -157,22 +146,21 @@ class TestModel:
         with pytest.raises(ValueError, match="identity lists no branch"):
             _equivalence([])
 
-    def test_the_local_key_must_be_last(self) -> None:
-        with pytest.raises(ValueError, match="must be the last one"):
-            _equivalence([_local_key(), _match_key()])
+    def test_a_local_key_branch_is_refused_and_points_to_the_fallback(
+        self,
+    ) -> None:
+        with pytest.raises(ValueError) as excinfo:
+            _equivalence([_match_key(), {"local_key": {"r_a": {"field": "firm_id"}}}])
 
-    def test_the_local_key_is_unique(self) -> None:
-        second = LocalKeyBranch(
-            name="other_key",
-            local_key={"r_a": LocalKeySource(field="firm_id", tag="a")},
-        )
-        with pytest.raises(ValueError, match="more than one local_key"):
-            _equivalence([_local_key(), second])
+        assert (
+            "VertexEquivalence: the `local_key` identity branch was removed. "
+            "Set `fallback: own_key`"
+        ) in str(excinfo.value)
 
     def test_duplicate_branch_ids_are_refused(self) -> None:
-        clashing = LocalKeyBranch(
+        clashing = DerivedBranch(
             name="match_key",
-            local_key={"r_a": LocalKeySource(field="firm_id", tag="a")},
+            sources={"r_a": DerivationSpec(input=["firm_id"])},
         )
         with pytest.raises(ValueError, match="repeats the branches"):
             _equivalence([_match_key(), clashing])
@@ -195,13 +183,13 @@ class TestModel:
             VertexEquivalence(left="Firm", right="Org", derive_at={"r_a": [0]})
 
     @pytest.mark.parametrize("entry", [{"field": "x"}, 3, ["a", 1]])
-    def test_a_bad_branch_shape_names_the_four_shapes(self, entry) -> None:
+    def test_a_bad_branch_shape_names_the_three_shapes(self, entry) -> None:
         with pytest.raises(ValueError, match="no known shape") as excinfo:
             _equivalence([entry])
 
         message = str(excinfo.value)
-        assert "a property name, a list of names, `{name, sources}`" in message
-        assert "`{local_key:" in message
+        assert "a property name, a list of names, or `{name, sources}`" in message
+        assert "local_key" not in message
 
     def test_the_dict_form_parses_and_round_trips(self) -> None:
         equivalence = _equivalence(
@@ -215,20 +203,17 @@ class TestModel:
                         "r_b": {"Org": {"input": ["org_id"], "foo": "affix_gated_key"}},
                     },
                 },
-                {"local_key": {"r_a": {"field": "firm_id", "tag": "a"}}},
             ],
             derive_at={"r_a": []},
         )
 
         assert equivalence.identity is not None
-        raw, composite, derived, local = equivalence.identity
+        raw, composite, derived = equivalence.identity
         assert raw == "company_id"
         assert composite == ["org_id", "shared_raw"]
         assert isinstance(derived, DerivedBranch)
         assert derived.members_for("r_b") == ["Org"]
         assert derived.specs_for("r_a")[0].foo == "normalized_key"
-        assert isinstance(local, LocalKeyBranch)
-        assert (local.name, local.sep) == ("local_key", ":")
 
         reloaded = VertexEquivalence.model_validate(equivalence.to_dict())
         assert reloaded == equivalence
@@ -265,7 +250,7 @@ class TestDeriveModel:
         equivalence = _equivalence([["machine_key", "group_key"]], derive=_parts())
         assert VertexEquivalence.model_validate(equivalence.to_dict()) == equivalence
 
-        plain = _equivalence([_match_key(), _local_key()])
+        plain = _equivalence([_match_key()])
         assert "derive" not in plain.to_dict()
 
     def test_derive_without_identity_is_refused(self) -> None:
@@ -304,9 +289,7 @@ class TestDeriveModel:
             _equivalence([["machine_key", "group_key"]], derive=parts)
 
     def test_the_plan_lowers_each_part_and_one_composite_branch(self) -> None:
-        equivalence = _equivalence(
-            [["machine_key", "group_key"], _local_key()], derive=_parts()
-        )
+        equivalence = _equivalence([["machine_key", "group_key"]], derive=_parts())
         assert equivalence.identity is not None
         plan = IdentityPlan(
             vertex="Company",
@@ -318,13 +301,12 @@ class TestDeriveModel:
 
         props = ops[0]
         assert isinstance(props, AddVertexPropertiesOp)
-        assert props.additions == {"Company": ["machine_key", "group_key", "local_key"]}
+        assert props.additions == {"Company": ["machine_key", "group_key"]}
         steps = ops[1]
         assert isinstance(steps, AddResourceTransformsOp)
         assert [(c.output, c.input) for c in _calls_of(steps.additions["r_b"])] == [
             (["machine_key"], ["machine_name"]),
             (["group_key"], ["group_id"]),
-            (["local_key"], ["org_id"]),
         ]
         identity = ops[-1]
         assert isinstance(identity, ReplaceIdentityOp)
@@ -332,7 +314,6 @@ class TestDeriveModel:
         assert isinstance(target, FunnelIdentityTarget)
         assert [(b.id, b.fields) for b in target.funnel.branches] == [
             ("machine_key_group_key", ["machine_key", "group_key"]),
-            ("local_key", ["local_key"]),
         ]
         assert plan.raw == []
 
@@ -348,16 +329,13 @@ class TestComposedOps:
 
         props = ops[0]
         assert isinstance(props, AddVertexPropertiesOp)
-        assert props.additions == {"Company": ["match_key", "local_key"]}
+        assert props.additions == {"Company": ["match_key"]}
 
         derive = ops[1]
         assert isinstance(derive, AddResourceTransformsOp)
         assert set(derive.additions) == {"r_a", "r_b"}
-        # Derived-branch steps precede the local_key step per resource.
         r_a_calls = _calls_of(derive.additions["r_a"])
-        assert [c.output for c in r_a_calls] == [["match_key"], ["local_key"]]
-        assert r_a_calls[1].foo == "tagged_key"
-        assert r_a_calls[1].params == {"tag": "a", "sep": ":"}
+        assert [c.output for c in r_a_calls] == [["match_key"]]
 
         identity = ops[2]
         assert isinstance(identity, ReplaceIdentityOp)
@@ -365,7 +343,7 @@ class TestComposedOps:
         assert replacement.retire == "keep"
         assert isinstance(replacement.to, FunnelIdentityTarget)
         funnel = replacement.to.funnel
-        assert [b.id for b in funnel.branches] == ["match_key", "local_key"]
+        assert [b.id for b in funnel.branches] == ["match_key"]
         assert all(b.fields == [b.id] for b in funnel.branches)
 
     def test_a_restrictive_router_adds_ensure_before_the_funnel(self) -> None:
@@ -387,46 +365,38 @@ class TestComposedOps:
         )
         vc = _vertex_config(manifest)
         assert vc.identity_fields("Company") == ["id"]
-        assert {"match_key", "local_key"} <= set(vc.property_names("Company"))
+        assert "match_key" in vc.property_names("Company")
         # Secondaries are merge's job, against the final funnel.
         assert list(vc.secondary_identities("Company")) == []
 
 
 class TestIdentityPlan:
-    """Property, derived and local branches, lowered together in declared order."""
+    """Property and derived branches, lowered together in declared order."""
 
     def test_a_plan_built_directly_checks_its_branches(self) -> None:
-        """The rules an equivalence enforces hold for a plan built without one.
-
-        A ``local_key`` first would shadow every later branch: each record
-        completes it, so the derived branch would never fire.
-        """
-        with pytest.raises(AlignmentConflictError, match="must be the last one"):
-            _plan(_local_key(), _match_key())
+        """The rules an equivalence enforces hold for a plan built without one."""
+        with pytest.raises(AlignmentConflictError, match="named like properties"):
+            _plan(["match_key", "org_id"], _match_key())
         with pytest.raises(AlignmentConflictError, match="repeats the branches"):
             _plan("company_id", "company_id")
 
     def test_property_branches_lower_to_no_steps_but_join_the_funnel(self) -> None:
-        plan = _plan("company_id", _match_key(), _local_key())
+        plan = _plan("company_id", _match_key())
 
         ops = identity_to_ops(plan, manifest=_union_manifest())
 
         props = next(op for op in ops if isinstance(op, AddVertexPropertiesOp))
-        assert props.additions == {"Company": ["match_key", "local_key"]}
+        assert props.additions == {"Company": ["match_key"]}
         outputs = {
             _output(call)
             for steps in _transforms_op(ops).additions.values()
             for call in _calls_of(steps)
         }
-        assert outputs == {"match_key", "local_key"}
-        assert [b.id for b in _funnel(ops).branches] == [
-            "company_id",
-            "match_key",
-            "local_key",
-        ]
+        assert outputs == {"match_key"}
+        assert [b.id for b in _funnel(ops).branches] == ["company_id", "match_key"]
 
     def test_branch_order_is_funnel_order(self) -> None:
-        plan = _plan("company_id", _match_key(), ["org_id", "shared_raw"], _local_key())
+        plan = _plan("company_id", _match_key(), ["org_id", "shared_raw"])
 
         funnel = _funnel(identity_to_ops(plan, manifest=_union_manifest()))
 
@@ -434,7 +404,6 @@ class TestIdentityPlan:
             ("company_id", ["company_id"]),
             ("match_key", ["match_key"]),
             ("org_id_shared_raw", ["org_id", "shared_raw"]),
-            ("local_key", ["local_key"]),
         ]
 
     def test_a_single_property_branch_is_a_natural_key(self) -> None:
@@ -471,7 +440,9 @@ class TestValidation:
     def test_unknown_resource_raises(self) -> None:
         plan = _plan(
             _match_key(),
-            LocalKeyBranch(local_key={"ghost": LocalKeySource(field="x", tag="g")}),
+            DerivedBranch(
+                name="ghost_key", sources={"ghost": DerivationSpec(input=["x"])}
+            ),
         )
         with pytest.raises(AlignmentConflictError, match="unknown resources"):
             self._validate(plan)
@@ -482,13 +453,12 @@ class TestValidation:
                 name="company_id",
                 sources={"r_a": DerivationSpec(input=["firm_id"])},
             ),
-            _local_key(),
         )
         with pytest.raises(AlignmentConflictError, match="identity collision"):
             self._validate(plan)
 
     def test_an_undeclared_property_branch_raises(self) -> None:
-        plan = _plan("ghost_field", _match_key(), _local_key())
+        plan = _plan("ghost_field", _match_key())
         with pytest.raises(
             AlignmentConflictError, match="undeclared property branch"
         ) as excinfo:
@@ -502,14 +472,14 @@ class TestValidation:
             properties={"Firm": {"firm_id": "company_id"}},
         )
         plan = _plan(
-            _match_key(),
-            LocalKeyBranch(
-                local_key={
+            DerivedBranch(
+                name="match_key",
+                sources={
                     # WRONG: company_id is the canonical rename target; the
                     # raw docs still carry firm_id.
-                    "r_a": LocalKeySource(field="company_id", tag="a"),
-                    "r_b": LocalKeySource(field="org_id", tag="b"),
-                }
+                    "r_a": DerivationSpec(input=["company_id"]),
+                    "r_b": DerivationSpec(input=["org_id"]),
+                },
             ),
         )
         with pytest.raises(
@@ -517,10 +487,14 @@ class TestValidation:
         ):
             self._validate(plan, canonical_maps=[cm])
 
-    def test_derived_only_warns_about_missing_local_key(self, caplog) -> None:
+    def test_a_plan_without_a_property_branch_warns(self, caplog) -> None:
         with caplog.at_level(logging.WARNING):
             self._validate(_plan(_match_key()))
-        assert any("no local_key" in r.getMessage() for r in caplog.records)
+        assert any(
+            "has no property branch" in r.getMessage()
+            and "`fallback: own_key`" in r.getMessage()
+            for r in caplog.records
+        )
 
 
 def _routed_manifest(
@@ -602,21 +576,12 @@ def _routed_match_key() -> DerivedBranch:
     )
 
 
-def _routed_local_key() -> LocalKeyBranch:
-    return LocalKeyBranch(
-        local_key={
-            "r_view": LocalKeySource(field="record_id", tag="view"),
-            "r_b": LocalKeySource(field="org_id", tag="b"),
-        }
-    )
-
-
 def _routed_plan(
     *branches: IdentityBranchDecl, at: dict[str, list[int]] | None = None
 ) -> IdentityPlan:
     return IdentityPlan(
         vertex="Company",
-        branches=branches or (_routed_match_key(), _routed_local_key()),
+        branches=branches or (_routed_match_key(),),
         at=at or {},
     )
 
@@ -741,8 +706,8 @@ class TestSpecLowering:
             identity_to_ops(_routed_plan(), manifest=_routed_manifest()), resource
         )
 
-        assert [c.output for c in calls] == [["match_key"], ["local_key"]]
-        assert [c.foo for c in calls] == ["gated_normalized_key", "tagged_key"]
+        assert [c.output for c in calls] == [["match_key"]]
+        assert [c.foo for c in calls] == ["gated_normalized_key"]
         assert all(c.strategy is None for c in calls)
 
     def test_an_affix_gated_spec_lowers_to_a_single_input_call(self) -> None:
@@ -763,7 +728,6 @@ class TestSpecLowering:
                     ),
                 },
             ),
-            _routed_local_key(),
         )
         calls = self._calls(
             identity_to_ops(plan, manifest=_routed_manifest()), "r_view"
@@ -792,13 +756,14 @@ class TestExplicitGuard:
                     "r_b": DerivationSpec(input=["shared_raw"]),
                 },
             ),
-            LocalKeyBranch(
-                local_key={
-                    "r_a": LocalKeySource(
-                        field="firm_id", tag="a", when=_when("kind", "firm", "shop")
+            DerivedBranch(
+                name="other_key",
+                sources={
+                    "r_a": DerivationSpec(
+                        input=["firm_id"], when=_when("kind", "firm", "shop")
                     ),
-                    "r_b": LocalKeySource(field="org_id", tag="b"),
-                }
+                    "r_b": DerivationSpec(input=["org_id"]),
+                },
             ),
         )
 
@@ -829,7 +794,13 @@ class TestExplicitGuard:
                     "r_b": DerivationSpec(input=["shared_raw"]),
                 },
             ),
-            _routed_local_key(),
+            DerivedBranch(
+                name="other_key",
+                sources={
+                    "r_view": DerivationSpec(input=["record_id"]),
+                    "r_b": DerivationSpec(input=["org_id"]),
+                },
+            ),
         )
 
         steps = self._steps(
@@ -839,8 +810,8 @@ class TestExplicitGuard:
         by_output = {_output(_call(s)): s.when for s in steps}
         assert by_output == {
             "match_key": _when("kind", "firm"),
-            # The unguarded local key still gets the derived class guard.
-            "local_key": _when("kind", "Company", "firm", "shop"),
+            # The unguarded spec still gets the derived class guard.
+            "other_key": _when("kind", "Company", "firm", "shop"),
         }
 
     def test_a_member_keyed_spec_may_not_carry_when(self) -> None:
@@ -854,16 +825,6 @@ class TestExplicitGuard:
                         )
                     }
                 },
-            )
-        with pytest.raises(ValueError, match="the member already decides"):
-            LocalKeyBranch(
-                local_key={
-                    "r_view": {
-                        "Shop": LocalKeySource(
-                            field="shop_id", tag="shop", when=_when("kind", "shop")
-                        )
-                    }
-                }
             )
 
     def test_a_when_field_counts_as_a_raw_input(self) -> None:
@@ -879,7 +840,6 @@ class TestExplicitGuard:
                         "r_b": DerivationSpec(input=["shared_raw"]),
                     },
                 ),
-                _local_key(),
             )
 
         validate_identity(plan(None), _union_manifest(), canonical_maps=[cm])
@@ -909,7 +869,7 @@ class TestRouterDelivery:
         assert ensure is not None
         entries = ensure.additions["r_view"]
         assert [e.vertex for e in entries] == ["Company"]
-        assert entries[0].fields == ["match_key", "local_key"]
+        assert entries[0].fields == ["match_key"]
         assert entries[0].at == [0]
 
     def test_a_mapped_only_router_gets_the_canonical_attributes(self) -> None:
@@ -937,8 +897,8 @@ class TestRouterDelivery:
         )
 
         routed = _transforms_op(ops).additions["r_view"]
-        # match_key and local_key: one step each.
-        assert len(routed) == 2
+        # match_key: one step.
+        assert len(routed) == 1
         assert all(s.when == _when("kind", "Company", "firm", "shop") for s in routed)
         plain = _transforms_op(ops).additions["r_b"]
         assert plain and all(s.when is None for s in plain)
@@ -988,7 +948,7 @@ class TestRouterDelivery:
         pipeline = out.require_ingestion_model().resources[0].pipeline
         level = pipeline_level(pipeline, [0])
         transforms = [s for s in level if isinstance(s, TransformActorConfig)]
-        assert len(transforms) == 2
+        assert len(transforms) == 1
         assert all(s.when for s in transforms)
 
 
@@ -1013,12 +973,7 @@ class TestEnsureExtractedFieldsApplies:
         )
 
         router = self._router(out)
-        assert router.keep_fields == [
-            "firm_id",
-            "shop_id",
-            "match_key",
-            "local_key",
-        ]
+        assert router.keep_fields == ["firm_id", "shop_id", "match_key"]
 
     def test_mapped_only_gains_identity_mappings_for_the_class_only(self) -> None:
         manifest = _routed_manifest(extraction_scope="mapped_only")
@@ -1031,10 +986,7 @@ class TestEnsureExtractedFieldsApplies:
 
         vertex_from_map = self._router(out).vertex_from_map
         assert vertex_from_map is not None
-        assert vertex_from_map["Company"] == {
-            "match_key": "match_key",
-            "local_key": "local_key",
-        }
+        assert vertex_from_map["Company"] == {"match_key": "match_key"}
         # The router keeps serving its other types exactly as before.
         assert "Person" not in vertex_from_map
 
@@ -1055,7 +1007,6 @@ class TestEnsureExtractedFieldsApplies:
         assert vertex_from_map["Company"] == {
             "company_id": "firm_id",
             "match_key": "match_key",
-            "local_key": "local_key",
         }
 
 
@@ -1168,14 +1119,11 @@ def _member_spec(prefix: str) -> DerivationSpec:
     )
 
 
-def _member_match_key() -> DerivedBranch:
+def _member_match_key_with(r_view: dict[str, DerivationSpec]) -> DerivedBranch:
     return DerivedBranch(
         name="match_key",
         sources={
-            "r_view": {
-                "Company": _member_spec("abc_"),
-                "Shop": _member_spec("def_"),
-            },
+            "r_view": r_view,
             "r_b": DerivationSpec(
                 input=["shared_raw"],
                 foo="affix_gated_key",
@@ -1185,15 +1133,9 @@ def _member_match_key() -> DerivedBranch:
     )
 
 
-def _member_local_key() -> LocalKeyBranch:
-    return LocalKeyBranch(
-        local_key={
-            "r_view": {
-                "Company": LocalKeySource(field="firm_id", tag="firm"),
-                "Shop": LocalKeySource(field="shop_id", tag="shop"),
-            },
-            "r_b": LocalKeySource(field="org_id", tag="b"),
-        }
+def _member_match_key() -> DerivedBranch:
+    return _member_match_key_with(
+        {"Company": _member_spec("abc_"), "Shop": _member_spec("def_")}
     )
 
 
@@ -1202,14 +1144,8 @@ def _member_plan(
 ) -> IdentityPlan:
     return IdentityPlan(
         vertex="Company",
-        branches=branches or (_member_match_key(), _member_local_key()),
+        branches=branches or (_member_match_key(),),
         at=at or {},
-    )
-
-
-def _member_local_key_with(r_view: dict[str, LocalKeySource]) -> LocalKeyBranch:
-    return LocalKeyBranch(
-        local_key={"r_view": r_view, "r_b": LocalKeySource(field="org_id", tag="b")}
     )
 
 
@@ -1241,49 +1177,12 @@ class TestMemberKeyedModel:
         assert [s.input for s in branch.specs_for("r_view")] == [["secondary_key"]]
 
     def test_the_dict_form_round_trips_through_to_dict(self) -> None:
-        derived, local = _member_match_key(), _member_local_key()
+        derived = _member_match_key()
 
-        reloaded_derived = DerivedBranch.model_validate(derived.to_dict())
-        reloaded_local = LocalKeyBranch.model_validate(local.to_dict())
+        reloaded = DerivedBranch.model_validate(derived.to_dict())
 
-        assert (reloaded_derived, reloaded_local) == (derived, local)
-        assert reloaded_derived.members_for("r_view") == ["Company", "Shop"]
-        assert reloaded_local.members_for("r_view") == ["Company", "Shop"]
-
-    def test_tag_none_is_the_empty_tag_and_round_trips(self) -> None:
-        """``to_dict`` drops ``None``; the empty tag is what survives."""
-        source = LocalKeySource(field="uuid", tag=None)
-
-        assert source.tag == ""
-        assert LocalKeySource.model_validate(source.to_dict()) == source
-        assert LocalKeySource.model_validate({"field": "uuid", "tag": None}).tag == ""
-
-    def test_an_untagged_local_key_lowers_with_the_empty_tag(self) -> None:
-        plan = _member_plan(
-            _member_match_key(),
-            _member_local_key_with(
-                {
-                    "Company": LocalKeySource(field="firm_id", tag=None),
-                    "Shop": LocalKeySource(field="shop_id", tag="shop"),
-                }
-            ),
-        )
-        calls = _calls_of(_transforms_op(_member_ops(plan)).additions["r_view"])
-        local = [c for c in calls if c.output == ["local_key"]]
-
-        assert [c.params["tag"] for c in local] == ["", "shop"]
-
-    def test_a_member_keyed_local_key_may_not_set_when(self) -> None:
-        with pytest.raises(ValueError, match="member already decides"):
-            LocalKeyBranch(
-                local_key={
-                    "r_view": {
-                        "Shop": LocalKeySource(
-                            field="shop_id", tag="shop", when=_when("kind", "shop")
-                        )
-                    }
-                }
-            )
+        assert reloaded == derived
+        assert reloaded.members_for("r_view") == ["Company", "Shop"]
 
 
 class TestMemberKeyedLowering:
@@ -1301,16 +1200,6 @@ class TestMemberKeyedLowering:
         assert [_call(s).params["prefix"] for s in match] == ["abc_", "def_"]
         assert [_call(s).input for s in match] == [["secondary_key"]] * 2
         assert not any(_call(s).foo == "coalesce_fields" for s in steps)
-
-    def test_the_local_key_is_guarded_the_same_way(self) -> None:
-        steps = self._calls(_member_ops(), "r_view")
-
-        local = [s for s in steps if _call(s).output == ["local_key"]]
-        assert [_call(s).foo for s in local] == ["tagged_key", "tagged_key"]
-        assert [_guard(s).values for s in local] == [
-            ["Company", "firm"],
-            ["Shop", "shop"],
-        ]
 
     def test_an_unkeyed_resource_is_lowered_as_before(self) -> None:
         steps = self._calls(_member_ops(), "r_b")
@@ -1339,7 +1228,7 @@ class TestMemberKeyedLowering:
         pipeline = manifest.require_ingestion_model().resources[0].pipeline
         level = pipeline_level(pipeline, [0])
         guarded = [s for s in level if isinstance(s, TransformActorConfig) and s.when]
-        assert len(guarded) == 4
+        assert len(guarded) == 2
 
 
 class TestMemberKeyedValidation:
@@ -1348,10 +1237,7 @@ class TestMemberKeyedValidation:
             identity_to_ops(_member_plan())
 
     def test_an_unknown_member_is_rejected(self) -> None:
-        plan = _member_plan(
-            _member_match_key(),
-            _member_local_key_with({"Ghost": LocalKeySource(field="x", tag="g")}),
-        )
+        plan = _member_plan(_member_match_key_with({"Ghost": _member_spec("g_")}))
         with pytest.raises(
             AlignmentConflictError, match="resource does not produce the member"
         ) as excinfo:
@@ -1361,12 +1247,7 @@ class TestMemberKeyedValidation:
 
     def test_a_member_outside_the_cluster_is_rejected(self) -> None:
         """``Person`` is produced by the resource but is not being merged."""
-        plan = _member_plan(
-            _member_match_key(),
-            _member_local_key_with(
-                {"Person": LocalKeySource(field="person_id", tag="p")}
-            ),
-        )
+        plan = _member_plan(_member_match_key_with({"Person": _member_spec("p_")}))
         with pytest.raises(AlignmentConflictError, match="member outside the cluster"):
             _member_ops(plan)
 
@@ -1387,7 +1268,6 @@ class TestMemberKeyedValidation:
                     "r_b": DerivationSpec(input=["shared_raw"], foo="affix_gated_key"),
                 },
             ),
-            _member_local_key(),
         )
         with caplog.at_level(logging.WARNING):
             _member_ops(plan)
@@ -1525,10 +1405,7 @@ class TestDynamicRouterMembers:
         ]
 
     def test_a_class_the_side_does_not_declare_is_not_produced(self) -> None:
-        plan = _member_plan(
-            _member_match_key(),
-            _member_local_key_with({"Ghost": LocalKeySource(field="x", tag="g")}),
-        )
+        plan = _member_plan(_member_match_key_with({"Ghost": _member_spec("g_")}))
 
         with pytest.raises(
             AlignmentConflictError, match="does not produce the member"
@@ -1579,12 +1456,7 @@ class TestDynamicRouterUnion:
             bump_version=False,
         )
 
-        assert self._router(out).keep_fields == [
-            "firm_id",
-            "shop_id",
-            "match_key",
-            "local_key",
-        ]
+        assert self._router(out).keep_fields == ["firm_id", "shop_id", "match_key"]
 
 
 # --------------------------------------------------------------------------- #
@@ -1615,90 +1487,3 @@ class TestRoleRouters:
     def test_a_member_keyed_source_on_it_is_refused(self) -> None:
         with pytest.raises(AlignmentConflictError, match="shared by every router"):
             _dynamic_ops(_ROLE_ROUTERS)
-
-
-def _one_resource_side(resource: str) -> GraphManifest:
-    """A side manifest owning only *resource*, for resolving a resource's side."""
-    payload = _union_manifest().to_dict(skip_defaults=True)
-    payload["ingestion_model"]["resources"] = [
-        r for r in payload["ingestion_model"]["resources"] if r["name"] == resource
-    ]
-    manifest = GraphManifest.from_config(payload)
-    manifest.finish_init()
-    return manifest
-
-
-def _tagged_key_params(ops, resource: str) -> dict:
-    (transforms,) = [op for op in ops if isinstance(op, AddResourceTransformsOp)]
-    (call,) = [
-        call
-        for call in _calls_of(transforms.additions[resource])
-        if call.foo == "tagged_key"
-    ]
-    return call.params
-
-
-class TestLocalKeyTagDefault:
-    """An omitted ``tag`` is the origin of the resource's side; ``null`` is raw."""
-
-    def _ops(self, local_key: LocalKeyBranch, **kwargs):
-        return identity_to_ops(
-            _plan(_match_key(), local_key),
-            sides={
-                "left": _one_resource_side("r_a"),
-                "right": _one_resource_side("r_b"),
-            },
-            **kwargs,
-        )
-
-    def test_an_omitted_tag_is_the_sides_origin(self) -> None:
-        ops = self._ops(
-            LocalKeyBranch(
-                local_key={
-                    "r_a": LocalKeySource(field="firm_id"),
-                    "r_b": LocalKeySource(field="org_id"),
-                }
-            ),
-            origins={"left": "acme", "right": "beta"},
-        )
-        assert _tagged_key_params(ops, "r_a")["tag"] == "acme"
-        assert _tagged_key_params(ops, "r_b")["tag"] == "beta"
-
-    def test_an_explicit_null_tag_keeps_raw_values(self) -> None:
-        source = LocalKeySource(field="org_id", tag=None)
-        assert source.tag == ""
-        ops = self._ops(
-            LocalKeyBranch(
-                local_key={"r_a": LocalKeySource(field="firm_id"), "r_b": source}
-            ),
-            origins={"left": "acme", "right": "beta"},
-        )
-        assert _tagged_key_params(ops, "r_b")["tag"] == ""
-
-    def test_a_copy_setting_the_tag_to_null_keeps_raw_values(self) -> None:
-        """The copy skips the validator, so its tag is ``None`` yet set."""
-        source = LocalKeySource(field="org_id").model_copy(update={"tag": None})
-        assert source.tag is None
-        assert not source.tag_omitted
-        ops = self._ops(
-            LocalKeyBranch(
-                local_key={"r_a": LocalKeySource(field="firm_id"), "r_b": source}
-            ),
-            origins={"left": "acme", "right": "beta"},
-        )
-        assert _tagged_key_params(ops, "r_a")["tag"] == "acme"
-        assert _tagged_key_params(ops, "r_b")["tag"] == ""
-
-    def test_an_omitted_tag_round_trips_as_omitted(self) -> None:
-        source = LocalKeySource.model_validate({"field": "firm_id"})
-        assert source.tag is None
-        assert "tag" not in source.to_dict(skip_defaults=True)
-        assert LocalKeySource.model_validate({"field": "f", "tag": None}).to_dict(
-            skip_defaults=True
-        ) == {"field": "f", "tag": ""}
-
-    def test_an_omitted_tag_without_origins_is_refused(self) -> None:
-        with pytest.raises(AlignmentConflictError, match="tag"):
-            self._ops(
-                LocalKeyBranch(local_key={"r_a": LocalKeySource(field="firm_id")})
-            )

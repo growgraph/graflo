@@ -13,7 +13,6 @@ schema:
                 -   name: sensors__device_id
                 -   name: model
                 -   name: match_key
-                -   name: local_key
                 -   name: id
                 identity:
                 -   id
@@ -22,9 +21,12 @@ schema:
                     -   id: match_key
                         fields:
                         -   match_key
-                    -   id: local_key
+                    -   id: maintenance__asset_id
                         fields:
-                        -   local_key
+                        -   maintenance__asset_id
+                    -   id: sensors__device_id
+                        fields:
+                        -   sensors__device_id
                 secondary_identities:
                 -   name: maintenance
                     fields:
@@ -54,33 +56,19 @@ ingestion_model:
     -   name: assets
         pipeline:
         -   vertex: Machine
-            type: vertex
             from:
                 maintenance__asset_id: asset_id
         -   transform:
                 call:
                     module: graflo.util.transform
                     foo: normalized_key
-                    params: {}
-                    output:
-                    -   match_key
                     input:
                     -   serial_number
-        -   transform:
-                call:
-                    module: graflo.util.transform
-                    foo: tagged_key
-                    params:
-                        tag: maintenance
-                        sep: ':'
                     output:
-                    -   local_key
-                    input:
-                    -   asset_id
+                    -   match_key
     -   name: devices
         pipeline:
         -   vertex: Machine
-            type: vertex
             from:
                 serial_number: serial
                 sensors__device_id: device_id
@@ -88,33 +76,21 @@ ingestion_model:
                 call:
                     module: graflo.util.transform
                     foo: normalized_key
-                    params: {}
-                    output:
-                    -   match_key
                     input:
                     -   serial
-        -   transform:
-                call:
-                    module: graflo.util.transform
-                    foo: tagged_key
-                    params:
-                        tag: sensors
-                        sep: ':'
                     output:
-                    -   local_key
-                    input:
-                    -   device_id
+                    -   match_key
     -   name: work_orders
         pipeline:
         -   vertex: WorkOrder
-            type: vertex
         -   vertex: Machine
-            lookup_only: true
-            type: vertex
             from:
                 maintenance__asset_id: asset_id
-        -   from: WorkOrder
-            to: Machine
-            relation: targets
-            type: edge
-            target_match: maintenance
+            lookup_only: true
+        -   edge:
+                target_match: maintenance
+                from: WorkOrder
+                to: Machine
+                relation: targets
+metadata:
+    gstl: '1.0'

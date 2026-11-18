@@ -93,7 +93,16 @@ def _merge_identity_funnels(
 _POSITIONAL_SECONDARY_NAME = re.compile(r"secondary_\d+")
 
 
-def _is_positional_name(name: str | None) -> bool:
+def _joined_descriptions(descriptions: list[str | None]) -> str | None:
+    """The distinct non-empty *descriptions*, in order, joined by `` / ``.
+
+    Distinct, so merging a concept with an identical one keeps its description.
+    """
+    distinct = list(dict.fromkeys(d for d in descriptions if d))
+    return " / ".join(distinct) if distinct else None
+
+
+def is_positional_secondary_name(name: str | None) -> bool:
     """Whether *name* is the auto-name ``Vertex`` assigns by list position."""
     return name is not None and _POSITIONAL_SECONDARY_NAME.fullmatch(name) is not None
 
@@ -119,7 +128,7 @@ def _union_secondary_identities(
 
     for vertex in vertices:
         for entry in vertex.secondary_identities:
-            if _is_positional_name(entry.name):
+            if is_positional_secondary_name(entry.name):
                 entry = entry.model_copy(update={"name": None})
             # The name is claimed before any subsumption check: a name that
             # disappears because its field-set equals the primary must still
@@ -157,6 +166,45 @@ def _union_secondary_identities(
                 )
 
     return list(by_field_set.values())
+
+
+def _plain_key(vertex: Vertex) -> tuple[str, ...] | None:
+    """*vertex*'s natural key, or ``None`` if it keys another way."""
+    if (
+        vertex.blank
+        or vertex.assigned
+        or vertex.hash_identity_properties
+        or vertex.identity_funnel is not None
+    ):
+        return None
+    return tuple(vertex.identity)
+
+
+def refuse_disagreeing_keys(vertices: list[Vertex], into_name: str) -> None:
+    """Refuse merging *vertices* whose keys no merged key can serve.
+
+    Two members with different natural keys would merge onto the union of the
+    keys, which no record carries; a member with a natural key and one keyed by
+    a digest would merge onto the digest, which the first member's records
+    cannot compute. Either way the merged type keys on fields its records lack.
+    """
+    plain = {v.name: key for v in vertices if (key := _plain_key(v))}
+    digest = sorted(
+        v.name
+        for v in vertices
+        if v.hash_identity_properties or v.identity_funnel is not None
+    )
+    if len({frozenset(key) for key in plain.values()}) > 1 or (plain and digest):
+        keyed = "; ".join(f"{name}={list(key)}" for name, key in plain.items())
+        hashed = f"; digest-keyed: {digest}" if plain and digest else ""
+        raise VertexMergeError(
+            f"Cannot merge into vertex '{into_name}': its sources key their "
+            f"records differently ({keyed}{hashed}), so the merged key would "
+            "need fields some records lack. Give the sources one key first, or "
+            "declare the merged identity in a merge_manifests equivalence.",
+            check="identity-disagreement",
+            into_name=into_name,
+        )
 
 
 def merge_vertex_models(
@@ -200,13 +248,7 @@ def merge_vertex_models(
                 seen_filters.add(key)
                 filters_out.append(f)
 
-    descriptions = [v.description for v in vertices if v.description]
-    if not descriptions:
-        desc_out: str | None = None
-    elif len(descriptions) == 1:
-        desc_out = descriptions[0]
-    else:
-        desc_out = " / ".join(descriptions)
+    desc_out = _joined_descriptions([v.description for v in vertices])
 
     blank_out = any(v.blank for v in vertices)
     assigned_out = any(v.assigned for v in vertices)
@@ -329,27 +371,37 @@ def merge_edge_pair(a: Edge, b: Edge, *, retype_remedy: str | None = None) -> Ed
             check="edge-type-disagreement",
             edge_id=a.edge_id,
         )
+    if (a.merge, a.exclusive) != (b.merge, b.exclusive):
+        raise EdgeMergeError(
+            f"Cannot merge edge {a.edge_id!r}: sources disagree on how many "
+            f"targets a source holds (merge {a.merge!r}, exclusive {a.exclusive}) "
+            f"vs (merge {b.merge!r}, exclusive {b.exclusive}); align them before "
+            "merging",
+            check="edge-type-disagreement",
+            edge_id=a.edge_id,
+        )
     props = union_field_lists(
         a.properties + b.properties,
         owner=f"edge {a.edge_id!r}",
         retype_remedy=retype_remedy,
     )
 
-    identities_out: list[list[str]] = []
-    seen_identities: set[tuple[str, ...]] = set()
-    for identity in a.identities + b.identities:
-        t = tuple(identity)
-        if t not in seen_identities:
-            seen_identities.add(t)
-            identities_out.append(list(identity))
+    # Each key distinguishes parallel edges; a side that declares none has one
+    # edge per endpoint pair, so the other side's keys hold for it too. Two
+    # different key sets would constrain each side by keys its edges lack.
+    keys_a = {tuple(identity) for identity in a.identities}
+    keys_b = {tuple(identity) for identity in b.identities}
+    if keys_a and keys_b and keys_a != keys_b:
+        raise EdgeMergeError(
+            f"Cannot merge edge {a.edge_id!r}: sources key parallel edges "
+            f"differently ({a.identities} vs {b.identities}); declare the same "
+            "identities on both before merging",
+            check="edge-type-disagreement",
+            edge_id=a.edge_id,
+        )
+    identities_out = [list(identity) for identity in (a.identities or b.identities)]
 
-    descriptions = [a.description, b.description]
-    descriptions = [d for d in descriptions if d]
-    desc_out: str | None = None
-    if len(descriptions) == 1:
-        desc_out = descriptions[0]
-    elif len(descriptions) > 1:
-        desc_out = " / ".join(descriptions)
+    desc_out = _joined_descriptions([a.description, b.description])
 
     return Edge(
         source=a.source,
@@ -360,6 +412,8 @@ def merge_edge_pair(a: Edge, b: Edge, *, retype_remedy: str | None = None) -> Ed
         properties=props,
         type=a.type,
         by=a.by,
+        merge=a.merge,
+        exclusive=a.exclusive,
         # Undirected wins: it is the weaker assertion, and treating a merged
         # undirected edge as directed would let AddInverseEdgesOp synthesize an
         # inverse that duplicates it.

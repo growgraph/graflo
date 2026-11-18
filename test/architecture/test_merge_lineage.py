@@ -4,7 +4,7 @@ The naming pass records which declaration wrote each attribute rename; the
 preview turns that, the composite relabel and each group's effective
 identity into edges and an identity block. The cases run on the derived
 identity of ``examples/20-manifest-union`` (``Asset`` and ``Device`` into
-``Machine``, keyed by a derived ``match_key`` then a tagged ``local_key``)
+``Machine``, keyed by a derived ``match_key`` then each member's own key)
 and on the ``merge_union`` fixtures.
 """
 
@@ -227,9 +227,11 @@ class TestIdentityBlock:
 
         assert identity.mode == "funnel"
         assert identity.digest_field == "id"
+        assert identity.fallback == "own_key"
         assert [(b.position, b.id, b.kind) for b in identity.branches] == [
             (1, "match_key", "derived"),
-            (2, "local_key", "local_key"),
+            (2, "maintenance__asset_id", "own_key"),
+            (3, "sensors__device_id", "own_key"),
         ]
 
     def test_a_derived_branch_names_each_resource_and_what_it_reads(
@@ -256,12 +258,21 @@ class TestIdentityBlock:
             ),
         ]
 
-    def test_a_local_key_names_each_field_and_tag(self, preview) -> None:
-        local_key = _identity(preview, "Machine").branches[1]
+    def test_an_own_key_branch_names_the_member_whose_key_it_is(self, preview) -> None:
+        own_keys = _identity(preview, "Machine").branches[1:]
 
-        assert [(s.resource, s.field, s.tag, s.auto) for s in local_key.sources] == [
-            ("assets", "asset_id", "maintenance", False),
-            ("devices", "device_id", "sensors", False),
+        assert [
+            (b.fields, [(s.side, s.member, s.resource, s.label) for s in b.sources])
+            for b in own_keys
+        ] == [
+            (
+                ["maintenance__asset_id"],
+                [("left", "Asset", None, "own key of left:Asset")],
+            ),
+            (
+                ["sensors__device_id"],
+                [("right", "Device", None, "own key of right:Device")],
+            ),
         ]
 
     def test_demoted_member_keys_are_listed_with_their_merged_names(
@@ -279,9 +290,11 @@ class TestIdentityBlock:
             preview,
             "derivation:resource:assets.serial_number->merged:Machine.match_key",
         )
-        assert _edge(
-            preview, "local_key:resource:devices.device_id->merged:Machine.local_key"
-        )
+        assert not [
+            e
+            for e in preview.edges
+            if e.kind == "derivation" and e.target != "merged:Machine.match_key"
+        ], "only a derived branch is fed by resource fields"
         resource = preview.node("resource:assets")
         assert resource is not None and resource.kind == "resource"
         assert resource.side == "left"
@@ -291,6 +304,11 @@ class TestIdentityBlock:
     def test_the_digest_keys_the_merged_class(self, preview) -> None:
         digest = preview.node("merged:Machine.id")
         assert digest is not None and digest.identity
+
+    def test_an_own_key_branch_marks_its_fields_as_identity(self, preview) -> None:
+        for name in ("maintenance__asset_id", "sensors__device_id"):
+            row = preview.node(f"merged:Machine.{name}")
+            assert row is not None and row.identity, name
 
     def test_a_resource_no_side_has_is_drawn_absent(self) -> None:
         preview = _derived_preview({"nope": DerivationSpec(input=["shared_raw"])})
@@ -321,30 +339,38 @@ class TestIdentityBlock:
             "normalized_key(shared_raw)",
         }
 
-    def test_an_automatic_local_key_is_marked(self) -> None:
-        """``Bench`` joins only through the vocabulary, so merge keys it on its own key."""
+    def test_a_vocabulary_joined_member_gets_its_own_key_branch(self) -> None:
+        """``Bench`` joins only through the vocabulary; the fallback keys it on its own key."""
         resolution = resolve_clusters(
             _engineer_op(), left=_register_manifest(), right=_devices_manifest()
         )
-        assert resolution.auto_key_sources == {"Machine": {("register", "Bench")}}
+        assert ("left", "Bench", ("maintenance__asset_id",)) in (
+            resolution.fallback_branches["Machine"]
+        )
 
         preview = preview_merge(
             _register_manifest(), _devices_manifest(), _engineer_op()
         )
-        local_key = next(
-            b for b in _identity(preview, "Machine").branches if b.kind == "local_key"
-        )
-        (auto,) = [s for s in local_key.sources if s.auto]
-        assert (auto.resource, auto.member, auto.tag) == (
-            "register",
+        identity = _identity(preview, "Machine")
+        assert [(b.id, b.kind) for b in identity.branches] == [
+            ("match_key", "derived"),
+            ("press__asset_id", "own_key"),
+            ("lathe__asset_id", "own_key"),
+            ("maintenance__asset_id", "own_key"),
+            ("device__device_id", "own_key"),
+        ]
+        (bench,) = identity.branches[3].sources
+        assert (bench.side, bench.member, bench.label) == (
+            "left",
             "Bench",
-            "maintenance:Bench",
+            "own key of left:Bench",
         )
-        assert auto.label == "tag maintenance:Bench · auto"
-        assert _edge(
-            preview,
-            "local_key:resource:register.asset_id->merged:Machine.local_key#Bench",
-        )
+        assert sorted(d.tags for d in identity.demoted) == [
+            [],
+            ["device"],
+            ["lathe"],
+            ["press"],
+        ]
 
     def test_a_property_equivalence_is_tagged_with_its_layer(self) -> None:
         preview = preview_merge(

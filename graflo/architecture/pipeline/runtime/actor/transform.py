@@ -100,7 +100,11 @@ class TransformActor(Actor):
     def _rename_removed_keys(self, observation: Any) -> frozenset[str]:
         if self._rename_map is None or not isinstance(observation, dict):
             return frozenset()
-        return frozenset(src for src in self._rename_map if src in observation)
+        # A name the rename also writes stays: it holds the renamed value.
+        written = {new for src, new in self._rename_map.items() if src in observation}
+        return frozenset(
+            src for src in self._rename_map if src in observation and src not in written
+        )
 
     def fetch_important_items(self) -> dict[str, Any]:
         items = self._fetch_items_from_dict(("transform",))

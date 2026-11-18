@@ -85,8 +85,10 @@ therefore may not declare a property `id`, whose values would be lost; loading
 one is refused, as is `replace_identity` onto a hash or a funnel for a vertex
 that declares one.
 
-Only the listed fields enter the hash. A record whose listed fields are all
-empty gets no `id`, rather than the hash of `{sensor_id: null, taken_at: null}`;
+Only the listed fields enter the hash, and an empty string counts as no value:
+`{sensor_id: "S1", taken_at: ""}` hashes like `{sensor_id: "S1"}`. A record whose
+listed fields are all empty gets no `id`, rather than the hash of
+`{sensor_id: null, taken_at: null}`;
 otherwise every such record would fold onto one vertex. A record with no
 identity is dropped after casting, and the count is logged. That is
 `drop_empty_identity_docs` on `IngestionParams`, which defaults to `true`.
@@ -182,6 +184,9 @@ the primary identity. An unknown selector is refused when the manifest is
 initialized, before any record is read, and the error lists the declared names.
 A secondary identity written as a bare field list, without `name`, is named
 `secondary_<n>`, where `n` is its position in the list, counting from zero.
+Merging types renumbers those positions, so before a merge each such name a
+step uses becomes `<type>_secondary_<n>`, named by the type it came from, and
+the step is pointed at it.
 
 When the endpoint is filled by a [vertex router](../glossary.md#vertex-router),
 its rows belong to several vertex types, which need not declare the same

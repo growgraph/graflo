@@ -23,6 +23,7 @@ from graflo.architecture.pipeline.runtime.resource import (
     ResourceRuntime,
     resolve_effective_vertex_names,
 )
+from graflo.architecture.schema.derive import derive_fields
 from graflo.architecture.schema.vertex import VertexConfig
 from graflo.hq.cast_pool import (
     CastSpec,
@@ -120,6 +121,15 @@ def filter_graph_container_drop_empty_identity_inplace(
         if vcol in skip_minted or vcol not in vertex_set:
             continue
         id_fields = vertex_config.identity_fields(vcol)
+        vertex = vertex_config[vcol]
+        if vertex.derived_fields and set(id_fields) & {
+            f.name for f in vertex.derived_fields
+        }:
+            # A key on a derived field exists only once it is derived; the
+            # writer derives again, which changes nothing (derive_fields is
+            # idempotent).
+            for doc in docs:
+                derive_fields(vertex, doc)
         kept_docs = [
             d for d in docs if not _vertex_doc_has_empty_identity(d, id_fields)
         ]

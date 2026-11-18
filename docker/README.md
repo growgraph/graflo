@@ -4,6 +4,8 @@
 
 Each service is a compose project in its own folder. Its settings (image, ports, credentials, `SPEC`) are in `<service>/.env.example`. The scripts pass that file to compose with `--env-file`, and `XConfig.from_docker_env()` reads the same file, so the containers and the tests agree.
 
+Every service publishes its ports on `127.0.0.1` only, so the development credentials in the templates are not reachable from the network. To use a service from another machine, open an SSH tunnel.
+
 ```shell
 ./start-all.sh                  # every service; waits for health checks
 ./start-all.sh neo4j postgres   # just these
@@ -69,7 +71,7 @@ Alternatively, you can run TigerGraph manually:
 ```shell
 docker load -i ./tigergraph-4.2.0-community-docker-image.tar.gz  # Change the .gz file name depending on what you have downloaded
 docker images  # Find image id
-docker run -d --init -p 14240:14240 --name tigergraph tigergraph/community:4.2.0  # Run a container named tigergraph from the imported image
+docker run -d --init -p 127.0.0.1:14240:14240 --name tigergraph tigergraph/community:4.2.0  # Run a container named tigergraph from the imported image
 docker exec -it tigergraph /bin/bash  # Start a shell on this container
 gadmin start all  # Start all tigergraph component services
 gadmin status  # Should see all services are up

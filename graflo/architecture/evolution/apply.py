@@ -12,7 +12,7 @@ from graflo.architecture.contract.ingestion.resource import (
     step_produces_vertices,
 )
 from graflo.architecture.contract.ingestion.routing import (
-    fields_written_before_routing,
+    routed_field_source,
 )
 from graflo.architecture.contract.ingestion.steps import (
     ActorConfig,
@@ -70,8 +70,10 @@ from .inverse_edges import (
     plan_inverse_emission,
 )
 from .merge_core import (
+    is_positional_secondary_name,
     merge_vertex_models,
     redirect_and_merge_edges,
+    refuse_disagreeing_keys,
     remap_relation_and_merge_edges,
 )
 from .ops import (
@@ -129,7 +131,9 @@ from .ops import (
 from .pipeline_dicts import pipeline_from_dicts, pipeline_to_dicts
 from .project import compute_projection
 from .rewrite import (
+    collect_endpoint_selectors,
     pipeline_mentions_any_vertex,
+    rename_secondary_selectors_in_pipeline,
     rewrite_edge_properties_in_pipeline,
     rewrite_entity_names_in_pipeline,
     rewrite_extra_weights_vertex_field_names,
@@ -207,26 +211,23 @@ def _record_reach(
 ) -> set[str]:
     """Classes *pipeline* can produce from a record carrying *constants*.
 
-    A top-level ``vertex_router`` whose ``type_field`` the constants fix routes
-    that value the way the runtime does, unless a transform of the level may
-    write the field (transforms run before routers, wherever they are listed).
-    Every other producing step, at any level, counts with all it can produce.
+    A top-level ``vertex_router`` routes the value the constants fix for the
+    source field its ``type_field`` reads (:func:`routed_field_source`), the
+    way the runtime does. Every other producing step, at any level, counts
+    with all it can produce.
     """
     reach: set[str] = set()
-    written = fields_written_before_routing(pipeline, transforms)
     for step in pipeline:
         if isinstance(step, TransformActorConfig):
             continue
-        if (
-            isinstance(step, VertexRouterActorConfig)
-            and isinstance(constants.get(step.type_field), str | int | float | bool)
-            and written is not None
-            and step.type_field not in written
-        ):
-            vertex = step.route(constants[step.type_field], declared)
-            if vertex is not None:
-                reach.add(vertex)
-            continue
+        if isinstance(step, VertexRouterActorConfig):
+            source = routed_field_source(pipeline, step.type_field, transforms).name
+            fixed = constants.get(source) if source is not None else None
+            if isinstance(fixed, str | int | float | bool):
+                vertex = step.route(fixed, declared)
+                if vertex is not None:
+                    reach.add(vertex)
+                continue
         for inner in iter_steps([step]):
             reach.update(step_produces_vertices(inner, known_vertices=declared))
     return reach
@@ -742,6 +743,69 @@ def _describe_merge_impact(
     return self_relations, fused_levels, advisories
 
 
+def name_referenced_positional_secondaries(
+    manifest: GraphManifest, vertices: Collection[str]
+) -> None:
+    """Name each positional secondary identity of *vertices* a step refers to.
+
+    An unnamed secondary identity answers to ``secondary_<n>``, its position,
+    and a merge re-numbers the merged type's secondaries: a step's
+    ``find: secondary_0`` would come to mean another field set. Before a merge,
+    each such name a step uses becomes ``<type>_secondary_<n>``, named by the
+    type it came from, and every step is pointed at it.
+    """
+    schema = manifest.graph_schema
+    if schema is None or manifest.ingestion_model is None:
+        return
+    vertex_config = schema.core_schema.vertex_config
+    referenced: dict[str, set[str]] = {}
+    for resource in manifest.ingestion_model.resources:
+        for vertex, selector in collect_endpoint_selectors(resource.pipeline):
+            if (
+                vertex in vertices
+                and isinstance(selector, str)
+                and is_positional_secondary_name(selector)
+            ):
+                referenced.setdefault(vertex, set()).add(selector)
+    if not referenced:
+        return
+    renames: dict[str, dict[str, str]] = {}
+    rebuilt: list[Vertex] = []
+    for vertex in vertex_config.vertices:
+        names = referenced.get(vertex.name)
+        if not names:
+            rebuilt.append(vertex)
+            continue
+        taken = {entry.name for entry in vertex.secondary_identities}
+        mapping: dict[str, str] = {}
+        for name in sorted(names):
+            new = f"{vertex.name}_{name}"
+            if new in taken:
+                raise ValueError(
+                    f"merge: {vertex.name!r} has a secondary identity named "
+                    f"{new!r}, the name its unnamed {name!r} would take before "
+                    f"the merge; name {name!r} explicitly"
+                )
+            mapping[name] = new
+        payload = vertex.to_dict(skip_defaults=False)
+        payload["secondary_identities"] = [
+            {**entry, "name": mapping.get(entry["name"], entry["name"])}
+            for entry in payload["secondary_identities"]
+        ]
+        rebuilt.append(Vertex.model_validate(payload))
+        renames[vertex.name] = mapping
+    schema.core_schema = CoreSchema(
+        vertex_config=VertexConfig(
+            vertices=rebuilt, force_types=dict(vertex_config.force_types)
+        ),
+        edge_config=schema.core_schema.edge_config,
+    )
+    _rebuild_ingestion_with_pipeline_rewrite(
+        manifest,
+        lambda pipeline: rename_secondary_selectors_in_pipeline(pipeline, renames),
+    )
+
+
 def apply_merge_vertices(
     manifest: GraphManifest,
     op: MergeVerticesOp,
@@ -757,7 +821,13 @@ def apply_merge_vertices(
     if into in sset:
         raise ValueError("merge_vertices: `into` must not appear in `sources`")
 
+    name_referenced_positional_secondaries(manifest, {into, *sources})
     core = schema.core_schema
+    members = [*([into] if into in core.vertex_config.vertex_set else []), *sources]
+    refuse_disagreeing_keys(
+        [core.vertex_config[m] for m in members if m in core.vertex_config.vertex_set],
+        into,
+    )
     before_edges = list(core.edge_config.edges)
     new_vc = _build_merged_vertex_config(core.vertex_config, sources, into)
     m = {s: into for s in sources}

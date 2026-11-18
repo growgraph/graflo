@@ -30,7 +30,7 @@ REST = "rest"
 #: decides; ``all``: every merged attribute.
 AttributeScope = Literal["nontrivial", "all"]
 
-_IDENTITY_EDGES = frozenset({"derivation", "local_key"})
+_IDENTITY_EDGES = frozenset({"derivation"})
 _RELATION_EDGES = frozenset({"member", "map", "suggested"})
 
 

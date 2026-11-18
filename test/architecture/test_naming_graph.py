@@ -23,8 +23,6 @@ from graflo.architecture.evolution import (
     DerivationSpec,
     DerivedBranch,
     IdentityBranchDecl,
-    LocalKeyBranch,
-    LocalKeySource,
     MergeIdentityError,
     MergeManifestsOp,
     PropertyEquivalence,
@@ -37,6 +35,7 @@ from graflo.architecture.evolution.alignment import AlignmentConflictError
 from graflo.architecture.evolution.naming_graph import (
     MergeNamingError,
     NamingFinding,
+    apply_repair,
     build_naming,
     naming_table,
     suggest_merge_op,
@@ -145,7 +144,7 @@ _VOCABULARY = CanonicalMap(
 )
 
 #: Class-specific triage: each member derives its match key from its own
-#: column and keeps its own key under its own tag. Bench is named nowhere.
+#: column, and keeps its own key in its own key space. Bench is named nowhere.
 _TRIAGE: list[IdentityBranchDecl] = [
     DerivedBranch(
         name="match_key",
@@ -157,16 +156,16 @@ _TRIAGE: list[IdentityBranchDecl] = [
             "devices": DerivationSpec(input=["serial"]),
         },
     ),
-    LocalKeyBranch(
-        local_key={
-            "register": {
-                "Press": LocalKeySource(field="asset_id", tag="press"),
-                "Lathe": LocalKeySource(field="asset_id", tag="lathe"),
-            },
-            "devices": LocalKeySource(field="device_id", tag="device"),
-        }
-    ),
 ]
+
+#: A record that derives no match key keys on its member's own key.
+_OWN_KEYS: dict[str, object] = {
+    "fallback": "own_key",
+    "key_spaces": {
+        "left": {"Press": "press", "Lathe": "lathe"},
+        "right": {"Device": "device"},
+    },
+}
 
 _SERIALS = [
     PropertyEquivalence(
@@ -183,6 +182,7 @@ def _engineer_op(**equivalence: object) -> MergeManifestsOp:
         "right": "Device",
         "identity": _TRIAGE,
         "properties": _SERIALS,
+        **_OWN_KEYS,
     }
     fields.update(equivalence)
     return MergeManifestsOp(
@@ -251,14 +251,15 @@ class TestVocabularyGroupWithPartialEquivalence:
         register = _cast(union, "register", _REGISTER_ROWS, "Machine")
         devices = _cast(union, "devices", _DEVICE_ROWS, "Machine")
 
-        by_local = {doc["local_key"]: doc for doc in register}
+        press = next(doc for doc in register if doc.get("press__asset_id") == "P1")
+        lathe = next(doc for doc in register if doc.get("lathe__asset_id") == "L1")
         device_ids = {doc["device__device_id"]: doc["id"] for doc in devices}
-        assert by_local["press:P1"]["match_key"] == "hp-1"
-        assert by_local["press:P1"]["id"] == device_ids["D1"]
-        assert by_local["lathe:L1"]["match_key"] == "lt-7"
-        assert by_local["lathe:L1"]["id"] == device_ids["D2"]
+        assert press["match_key"] == "hp-1"
+        assert press["id"] == device_ids["D1"]
+        assert lathe["match_key"] == "lt-7"
+        assert lathe["id"] == device_ids["D2"]
 
-    def test_a_members_local_key_tag_names_its_demoted_key(self) -> None:
+    def test_a_members_key_space_names_its_demoted_key(self) -> None:
         """``press`` and ``lathe`` are two key spaces; Bench keeps the origin's."""
         union, report = merge_manifests_with_report(
             _register_manifest(), _devices_manifest(), _engineer_op()
@@ -338,56 +339,54 @@ class TestVocabularyGroupWithPartialEquivalence:
             merge_manifests(left, _devices_manifest(), _engineer_op())
         assert refused.value.check == "ambiguous-reference"
 
-    def test_a_member_tagged_twice_differently_is_refused(self) -> None:
+    def test_a_member_put_in_two_key_spaces_is_refused(self) -> None:
+        """``Device`` and its canonical spelling ``Sensor`` name one member."""
         op = _engineer_op(
-            identity=[
-                _TRIAGE[0],
-                LocalKeyBranch(
-                    local_key={
-                        "register": {
-                            "Press": LocalKeySource(field="asset_id", tag="press"),
-                            "Lathe": LocalKeySource(field="asset_id", tag="lathe"),
-                        },
-                        "devices": LocalKeySource(field="device_id", tag="device"),
-                        "presses_too": LocalKeySource(field="asset_id", tag="hp"),
-                    }
-                ),
-            ]
+            into="Machine",
+            key_spaces={
+                "left": {"Press": "press", "Lathe": "lathe"},
+                "right": {"Device": "device", "Sensor": "iot"},
+            },
         )
-        left = _register_manifest()
-        ingestion = left.require_ingestion_model()
-        left = GraphManifest.from_config(
-            {
-                **left.to_dict(skip_defaults=True),
-                "ingestion_model": {
-                    "resources": [
-                        *ingestion.to_dict(skip_defaults=True)["resources"],
-                        {"name": "presses_too", "pipeline": [{"vertex": "Press"}]},
-                    ]
-                },
+        op = op.model_copy(
+            update={
+                "canonical_maps": {
+                    "left": _VOCABULARY,
+                    "right": CanonicalMap(vertices={"Device": "Sensor"}),
+                }
             }
         )
-        left.finish_init()
 
-        with pytest.raises(MergeIdentityError, match="left:Press") as refused:
-            merge_manifests(left, _devices_manifest(), op)
+        with pytest.raises(MergeIdentityError, match="right:Device") as refused:
+            merge_manifests(_register_manifest(), _devices_manifest(), op)
         assert refused.value.check == "key-space"
-        assert "one tag" in str(refused.value)
+        assert "several key spaces" in str(refused.value)
 
-    def test_a_null_tag_names_the_key_by_the_origin(self) -> None:
+    def test_a_member_named_nowhere_falls_back_in_the_origins_key_space(
+        self,
+    ) -> None:
+        """Press and Bench both keep ``asset_id`` under ``maintenance``: one key."""
         op = _engineer_op(
-            identity=[
-                _TRIAGE[0],
-                LocalKeyBranch(
-                    local_key={
-                        "register": {
-                            "Press": LocalKeySource(field="asset_id", tag=None),
-                            "Lathe": LocalKeySource(field="asset_id", tag="lathe"),
-                        },
-                        "devices": LocalKeySource(field="device_id", tag="device"),
-                    }
-                ),
-            ]
+            key_spaces={"left": {"Lathe": "lathe"}, "right": {"Device": "device"}}
+        )
+
+        with pytest.raises(MergeNamingError) as refused:
+            merge_manifests(_register_manifest(), _devices_manifest(), op)
+        (finding,) = refused.value.findings
+        assert finding.check == "key-space"
+        assert {"left:Press", "left:Bench"} <= set(finding.subjects)
+        assert "['maintenance__asset_id']" in finding.message
+
+    def test_members_named_alike_share_one_fallback_branch(self) -> None:
+        op = _engineer_op(
+            key_spaces={
+                "left": {
+                    "Press": "maintenance",
+                    "Bench": "maintenance",
+                    "Lathe": "lathe",
+                },
+                "right": {"Device": "device"},
+            }
         )
         union = merge_manifests(_register_manifest(), _devices_manifest(), op)
 
@@ -396,23 +395,23 @@ class TestVocabularyGroupWithPartialEquivalence:
         assert secondaries["maintenance"] == ["maintenance__asset_id"]
         assert secondaries["lathe"] == ["lathe__asset_id"]
         assert "press" not in secondaries
+        funnel = machine.identity_funnel
+        assert funnel is not None
+        assert [b.id for b in funnel.branches] == [
+            "match_key",
+            "maintenance__asset_id",
+            "lathe__asset_id",
+            "device__device_id",
+        ]
 
-    def test_a_tag_that_cannot_name_a_key_space_is_refused(self) -> None:
+    def test_a_key_space_that_cannot_be_one_is_refused(self) -> None:
         op = _engineer_op(
-            identity=[
-                _TRIAGE[0],
-                LocalKeyBranch(
-                    local_key={
-                        "register": {
-                            "Press": LocalKeySource(field="asset_id", tag="p:1"),
-                            "Lathe": LocalKeySource(field="asset_id", tag="lathe"),
-                        },
-                        "devices": LocalKeySource(field="device_id", tag="device"),
-                    }
-                ),
-            ]
+            key_spaces={
+                "left": {"Press": "p:1", "Lathe": "lathe", "Bench": "bench"},
+                "right": {"Device": "device"},
+            }
         )
-        with pytest.raises(MergeIdentityError) as refused:
+        with pytest.raises(MergeIdentityError, match="left:Press") as refused:
             merge_manifests(_register_manifest(), _devices_manifest(), op)
         assert refused.value.check == "key-space"
 
@@ -429,20 +428,28 @@ class TestVocabularyGroupWithPartialEquivalence:
         bench = next(
             doc for doc in register if doc.get("maintenance__asset_id") == "B1"
         )
-        assert bench["local_key"] == "maintenance:Bench:B1"
         assert bench.get("match_key") is None
         assert bench["id"] not in {doc["id"] for doc in devices}
 
-    def test_the_automatic_key_is_reported(self) -> None:
-        resolution = resolve_clusters(
-            _engineer_op(), left=_register_manifest(), right=_devices_manifest()
+    def test_a_member_no_branch_keys_is_refused_without_fallback(self) -> None:
+        result = build_naming(
+            _engineer_op(fallback=None),
+            left=_register_manifest(),
+            right=_devices_manifest(),
         )
 
-        (note,) = _notes(resolution.findings, "auto_local_key")
-        assert "left:Bench" in note.subjects
-        assert "'maintenance:Bench:<value>'" in note.message
+        (finding,) = result.blocking
+        assert finding.kind == "identity-coverage"
+        assert "left:Bench" in finding.subjects
+        assert "fallback: own_key" in finding.message
+        (repair,) = finding.repairs
+        assert repair.kind == "set_fallback"
+        assert repair.replaces == 0
+        (payload,) = repair.vertex_equivalences
+        assert payload["fallback"] == "own_key"
+        assert VertexEquivalence.model_validate(payload).identity == _TRIAGE
 
-    def test_the_automatic_key_is_tagged_by_the_op_origin(self) -> None:
+    def test_the_fallback_key_space_is_the_op_origin(self) -> None:
         op = _engineer_op().model_copy(
             update={"origins": {"left": "plant", "right": "iot"}}
         )
@@ -450,21 +457,30 @@ class TestVocabularyGroupWithPartialEquivalence:
             op, left=_register_manifest(), right=_devices_manifest()
         )
 
-        (note,) = _notes(resolution.findings, "auto_local_key")
-        assert "'plant:Bench:<value>'" in note.message
+        assert resolution.fallback_branches["Machine"] == (
+            ("left", "Press", ("press__asset_id",)),
+            ("left", "Lathe", ("lathe__asset_id",)),
+            ("left", "Bench", ("plant__asset_id",)),
+            ("right", "Device", ("device__device_id",)),
+        )
 
     def test_a_derive_attribute_is_keyed_like_the_derived_branch(self) -> None:
-        derived, local = _TRIAGE
+        (derived,) = _TRIAGE
         assert isinstance(derived, DerivedBranch)
-        op = _engineer_op(
-            derive={"match_key": derived.sources}, identity=["match_key", local]
-        )
+        op = _engineer_op(derive={"match_key": derived.sources}, identity=["match_key"])
 
-        resolution = resolve_clusters(
-            op, left=_register_manifest(), right=_devices_manifest()
+        refused = build_naming(
+            _engineer_op(
+                derive={"match_key": derived.sources},
+                identity=["match_key"],
+                fallback=None,
+            ),
+            left=_register_manifest(),
+            right=_devices_manifest(),
         )
-        (note,) = _notes(resolution.findings, "auto_local_key")
-        assert "left:Bench" in note.subjects
+        (finding,) = refused.blocking
+        assert finding.kind == "identity-coverage"
+        assert "left:Bench" in finding.subjects
         union = merge_manifests(_register_manifest(), _devices_manifest(), op)
         reference = merge_manifests(
             _register_manifest(), _devices_manifest(), _engineer_op()
@@ -520,7 +536,6 @@ class TestVocabularyGroupWithPartialEquivalence:
                     "devices": DerivationSpec(input=["serial"]),
                 },
             ),
-            _TRIAGE[1],
         ]
         union = merge_manifests(
             _register_manifest(), _devices_manifest(), _engineer_op(identity=triage)
@@ -532,18 +547,33 @@ class TestVocabularyGroupWithPartialEquivalence:
         )
         assert bench["match_key"] == "hp-1"
 
-    def test_a_composite_key_cannot_be_keyed_automatically(self) -> None:
+    def test_a_composite_own_key_is_one_fallback_branch(self) -> None:
+        union = merge_manifests(
+            _register_manifest(bench_identity=["asset_id", "name"]),
+            _devices_manifest(),
+            _engineer_op(),
+        )
+
+        machine = union.require_schema().core_schema.vertex_config["Machine"]
+        funnel = machine.identity_funnel
+        assert funnel is not None
+        assert [b.fields for b in funnel.branches][3] == [
+            "maintenance__asset_id",
+            "maintenance__name",
+        ]
+
+    def test_a_composite_own_key_is_refused_without_fallback(self) -> None:
         with pytest.raises(MergeNamingError) as excinfo:
             merge_manifests(
                 _register_manifest(bench_identity=["asset_id", "name"]),
                 _devices_manifest(),
-                _engineer_op(),
+                _engineer_op(fallback=None),
             )
 
         (finding,) = excinfo.value.findings
         assert finding.kind == "identity-coverage"
         assert "left:Bench" in finding.subjects
-        assert finding.repairs and finding.repairs[0].kind == "add_key_source"
+        assert finding.repairs and finding.repairs[0].kind == "set_fallback"
 
     def test_two_vocabulary_names_need_into(self) -> None:
         op = _engineer_op()
@@ -569,8 +599,14 @@ class TestVocabularyGroupWithPartialEquivalence:
     def test_two_equivalences_in_one_group_share_one_identity(self) -> None:
         op = MergeManifestsOp(
             vertex_equivalences=[
-                VertexEquivalence(
-                    left="Press", right="Device", identity=_TRIAGE, properties=_SERIALS
+                VertexEquivalence.model_validate(
+                    {
+                        "left": "Press",
+                        "right": "Device",
+                        "identity": _TRIAGE,
+                        "properties": _SERIALS,
+                        **_OWN_KEYS,
+                    }
                 ),
                 VertexEquivalence(left="Lathe", right="Gauge"),
             ],
@@ -587,7 +623,14 @@ class TestVocabularyGroupWithPartialEquivalence:
     def test_two_identities_in_one_group_are_refused(self) -> None:
         op = MergeManifestsOp(
             vertex_equivalences=[
-                VertexEquivalence(left="Press", right="Device", identity=_TRIAGE),
+                VertexEquivalence.model_validate(
+                    {
+                        "left": "Press",
+                        "right": "Device",
+                        "identity": _TRIAGE,
+                        **_OWN_KEYS,
+                    }
+                ),
                 VertexEquivalence(left="Lathe", right="Gauge", identity=["serial"]),
             ],
             canonical_maps={"left": _VOCABULARY},
@@ -851,23 +894,22 @@ class TestSuggestions:
         assert suggested.renames.left.vertices == {"WorkOrder": "WorkOrder_left"}
         assert _vertex_set(union) == {"WorkOrder", "WorkOrder_left"}
 
-    def test_an_automatic_key_is_written_out(self) -> None:
+    def test_an_uncovered_member_is_settled_by_setting_the_fallback(self) -> None:
         suggested = suggest_merge_op(
-            _register_manifest(), _devices_manifest(), _engineer_op()
+            _register_manifest(), _devices_manifest(), _engineer_op(fallback=None)
         )
 
         (equivalence,) = suggested.vertex_equivalences
-        local = equivalence.local_key_branch()
-        assert local is not None
-        register = local.local_key["register"]
-        assert isinstance(register, dict)
-        assert register["Bench"] == LocalKeySource(
-            field="asset_id", tag="maintenance:Bench"
+        assert equivalence.fallback == "own_key"
+        assert equivalence.key_spaces == _OWN_KEYS["key_spaces"]
+        assert (
+            merge_manifests(
+                _register_manifest(), _devices_manifest(), suggested
+            ).to_dict()
+            == merge_manifests(
+                _register_manifest(), _devices_manifest(), _engineer_op()
+            ).to_dict()
         )
-        resolution = resolve_clusters(
-            suggested, left=_register_manifest(), right=_devices_manifest()
-        )
-        assert not _notes(resolution.findings, "auto_local_key")
 
 
 class TestThePreview:
@@ -904,7 +946,7 @@ class TestThePreview:
 
     def test_a_demoted_key_lists_only_the_branches_its_member_can_reach(self) -> None:
         """Bench joins by the vocabulary alone: no derivation keys it, so its
-        records complete only their own tagged local key."""
+        records complete only their own key's fallback branch."""
         preview = preview_merge(
             _register_manifest(), _devices_manifest(), _engineer_op()
         )
@@ -915,8 +957,8 @@ class TestThePreview:
             if f.kind == "lookup_demotion"
         }
         assert "records of left:Bench" not in notes
-        assert "['match_key', 'local_key']" in notes["records of left:Press"]
-        assert "['match_key', 'local_key']" in notes["records of right:Device"]
+        assert "['match_key', 'press__asset_id']" in notes["records of left:Press"]
+        assert "['match_key', 'device__device_id']" in notes["records of right:Device"]
 
 
 class TestAVocabularyAcknowledgesItsOwnMerges:
@@ -1158,33 +1200,36 @@ _LINKS_VOCABULARY = CanonicalMap(
 )
 
 
+#: Devices derive a match key from their serial; presses and benches have none.
+_LINKS_MATCH = DerivedBranch(
+    name="match_key", sources={"devices": DerivationSpec(input=["serial"])}
+)
+
+
 def _links_op(
     identity: list[object] | None = None,
-    **local_key: LocalKeySource | dict[str, LocalKeySource],
+    *,
+    left: tuple[str, ...] = ("Press",),
+    fallback: str | None = "own_key",
+    key_spaces: dict[str, dict[str, str]] | None = None,
 ) -> MergeManifestsOp:
-    """``Press, Bench -> Machine``; ``[Press] ~ Device`` keyed on own keys."""
-    if identity is None:
-        identity = [
-            LocalKeyBranch(
-                local_key={
-                    "presses": LocalKeySource(field="asset_id", tag="press"),
-                    "devices": LocalKeySource(field="device_id", tag="device"),
-                    **local_key,
-                }
-            )
-        ]
+    """``Press, Bench -> Machine``; ``[Press] ~ Device``, each in its own key space."""
+    fields: dict[str, object] = {
+        "left": list(left),
+        "right": "Device",
+        "into": "Machine",
+        "allow": ["self_relations"],
+        "identity": [_LINKS_MATCH] if identity is None else identity,
+        "key_spaces": (
+            {"left": {"Press": "press"}, "right": {"Device": "device"}}
+            if key_spaces is None
+            else key_spaces
+        ),
+    }
+    if fallback is not None:
+        fields["fallback"] = fallback
     return MergeManifestsOp(
-        vertex_equivalences=[
-            VertexEquivalence.model_validate(
-                {
-                    "left": ["Press"],
-                    "right": "Device",
-                    "into": "Machine",
-                    "allow": ["self_relations"],
-                    "identity": identity,
-                }
-            )
-        ],
+        vertex_equivalences=[VertexEquivalence.model_validate(fields)],
         canonical_maps={"left": _LINKS_VOCABULARY},
     )
 
@@ -1197,39 +1242,72 @@ def _links_steps(union: GraphManifest) -> list[dict]:
 
 
 class TestAnEdgeResourceReferencesAJoinedMember:
-    def test_the_edge_resource_gets_no_automatic_key(self) -> None:
+    def test_the_edge_resource_gets_no_key_of_its_own(self) -> None:
+        """Bench's records lack a key in ``benches``; ``links`` only references it."""
+        result = build_naming(
+            _links_op(fallback=None), left=_links_manifest(), right=_devices_manifest()
+        )
+
+        (finding,) = result.blocking
+        assert finding.kind == "identity-coverage"
+        assert "left:Bench" in finding.subjects
+        assert "'benches'" in finding.message and "links" not in finding.message
+        (note,) = _notes(result.findings, "reference_only")
+        assert "left:Bench" in note.subjects
+        assert "links" in note.message
+
+    def test_the_fallback_adds_one_branch_per_member_not_per_resource(self) -> None:
         resolution = resolve_clusters(
             _links_op(), left=_links_manifest(), right=_devices_manifest()
         )
 
-        (cluster,) = resolution.index.vertices
-        (branch,) = cluster.declaration.identity or []
-        assert isinstance(branch, LocalKeyBranch)
-        assert set(branch.local_key) == {"presses", "devices", "benches"}
-        (note,) = _notes(resolution.findings, "reference_only")
-        assert "left:Bench" in note.subjects
-        assert "links" in note.message
+        assert resolution.fallback_branches["Machine"] == (
+            ("left", "Press", ("press__asset_id",)),
+            ("left", "Bench", ("plant__asset_id",)),
+            ("right", "Device", ("device__device_id",)),
+        )
+        assert not _notes(resolution.findings, "reference_only")
 
     def test_members_in_different_key_spaces_cannot_be_attached_by_one_router(
         self,
     ) -> None:
-        """``Press`` ids are tagged ``press``, ``Bench`` ids are the origin's."""
+        """``Press`` ids are in ``press``, ``Bench`` ids in the origin's ``plant``."""
+        op = _links_op(left=("Press", "Bench"), fallback=None)
         with pytest.raises(MergeIdentityError, match="links") as refused:
-            merge_manifests(_links_manifest(), _devices_manifest(), _links_op())
+            merge_manifests(_links_manifest(), _devices_manifest(), op)
         assert refused.value.check == "ambiguous-reference"
-        alone = preview_merge(
-            _links_manifest(), _devices_manifest(), _links_op(), attempt=False
-        )
+        alone = preview_merge(_links_manifest(), _devices_manifest(), op, attempt=False)
         assert "ambiguous-reference" in {
             f.kind for f in alone.findings if f.severity == "possible"
         }
 
+    def test_under_fallback_each_router_keys_its_member_on_its_own_key(
+        self,
+    ) -> None:
+        """A link endpoint completes its member's fallback branch, as its node does."""
+        union = merge_manifests(_links_manifest(), _devices_manifest(), _links_op())
+
+        row = {
+            "source_type": "Press",
+            "source_id": "P1",
+            "target_type": "Bench",
+            "target_id": "B1",
+            "relation": "feeds",
+        }
+        ends = _cast(union, "links", [row], "Machine")
+        nodes = [
+            *_cast(union, "presses", [{"asset_id": "P1"}], "Machine"),
+            *_cast(union, "benches", [{"asset_id": "B1"}], "Machine"),
+        ]
+        assert sorted(d["id"] for d in ends) == sorted(d["id"] for d in nodes)
+        assert not any(step.get("find") for step in _links_steps(union))
+
     def test_the_union_attaches_the_merged_class_in_both_roles(self) -> None:
-        """``Press`` left untagged shares the origin's key space with ``Bench``."""
+        """``Press`` left in the origin shares the key space ``plant`` with ``Bench``."""
         union = merge_manifests(
             _links_manifest(),
             _devices_manifest(),
-            _links_op(presses=LocalKeySource(field="asset_id")),
+            _links_op(left=("Press", "Bench"), fallback=None, key_spaces={}),
         )
 
         source, target, edge = _links_steps(union)
@@ -1237,18 +1315,27 @@ class TestAnEdgeResourceReferencesAJoinedMember:
         assert target["find"] == {"Machine": "plant"}
         assert not source.get("lookup_only") and not target.get("lookup_only")
         assert not edge.get("source_match") and not edge.get("target_match")
-        presses = _cast(union, "presses", [{"asset_id": "P1"}], "Machine")
-        assert [p["local_key"] for p in presses] == ["plant:P1"]
 
     def test_keying_the_edge_resource_by_member_is_refused(self) -> None:
-        op = _links_op(links={"Bench": LocalKeySource(field="source_id", tag="link")})
+        op = _links_op(
+            [
+                _LINKS_MATCH.model_copy(
+                    update={
+                        "sources": {
+                            **_LINKS_MATCH.sources,
+                            "links": {"Bench": DerivationSpec(input=["source_id"])},
+                        }
+                    }
+                )
+            ]
+        )
 
         with pytest.raises(AlignmentConflictError, match="shared by every router"):
             merge_manifests(_links_manifest(), _devices_manifest(), op)
 
     def test_a_property_key_repair_does_not_name_the_edge_resource(self) -> None:
         result = build_naming(
-            _links_op(identity=["device_id"]),
+            _links_op(identity=["device_id"], fallback=None),
             left=_links_manifest(),
             right=_devices_manifest(),
         )
@@ -1259,11 +1346,19 @@ class TestAnEdgeResourceReferencesAJoinedMember:
             if f.kind == "identity-coverage" and "left:Bench" in f.subjects
         )
         (repair,) = finding.repairs
+        assert repair.kind == "set_fallback"
         assert repair.vertex_equivalences == (
             {
-                "local_key": {
-                    "benches": {"Bench": {"field": "asset_id", "tag": "plant:Bench"}}
-                }
+                "left": ["Press"],
+                "right": "Device",
+                "into": "Machine",
+                "identity": ["device_id"],
+                "key_spaces": {
+                    "left": {"Press": "press"},
+                    "right": {"Device": "device"},
+                },
+                "allow": ["self_relations"],
+                "fallback": "own_key",
             },
         )
 
@@ -1290,7 +1385,7 @@ class TestAPropertyKeyAndAVocabularyJoinedMember:
             canonical_maps={"left": _VOCABULARY},
         )
 
-    def test_a_member_that_cannot_fill_the_key_is_refused_with_its_own_key(
+    def test_a_member_that_cannot_fill_the_key_is_refused_with_the_fallback(
         self,
     ) -> None:
         result = build_naming(
@@ -1301,34 +1396,61 @@ class TestAPropertyKeyAndAVocabularyJoinedMember:
         assert finding.kind == "identity-coverage"
         assert "left:Bench" in finding.subjects
         (repair,) = finding.repairs
-        assert repair.kind == "add_key_source"
+        assert repair.kind == "set_fallback"
+        assert repair.replaces == 0
         assert repair.vertex_equivalences == (
             {
-                "local_key": {
-                    "register": {
-                        "Bench": {"field": "asset_id", "tag": "maintenance:Bench"}
+                "left": ["Press", "Lathe"],
+                "right": "Device",
+                "properties": [
+                    {
+                        "left": {"Press": "press_serial", "Lathe": "lathe_serial"},
+                        "right": "serial",
+                        "into": "serial",
                     }
-                }
+                ],
+                "identity": ["serial"],
+                "fallback": "own_key",
             },
         )
 
-    def test_appending_the_repair_makes_the_key_a_funnel_that_keeps_it(
+    def test_applying_the_repair_makes_the_key_a_funnel_that_keeps_it(
         self,
     ) -> None:
-        local_key = {
-            "local_key": {
-                "register": {"Bench": {"field": "asset_id", "tag": "maintenance:Bench"}}
+        (finding,) = build_naming(
+            self._op(["serial"]), left=_register_manifest(), right=_devices_manifest()
+        ).blocking
+        repaired = apply_repair(self._op(["serial"]), finding.repairs[0])
+        assert repaired is not None
+        # Press and Lathe keep `asset_id` too: one register, so one key space.
+        (equivalence,) = repaired.vertex_equivalences
+        repaired = repaired.model_copy(
+            update={
+                "vertex_equivalences": [
+                    equivalence.model_copy(
+                        update={
+                            "key_spaces": {"left": {"Press": "press", "Lathe": "lathe"}}
+                        }
+                    )
+                ]
             }
-        }
-
-        union = merge_manifests(
-            _register_manifest(), _devices_manifest(), self._op(["serial", local_key])
         )
 
+        union = merge_manifests(_register_manifest(), _devices_manifest(), repaired)
+
         benches = _cast(union, "register", _REGISTER_ROWS[2:], "Machine")
-        assert [b["local_key"] for b in benches] == ["maintenance:Bench:B1"]
-        # The automatic key's tag namespaces the values; it names no key space.
         assert [b["maintenance__asset_id"] for b in benches] == ["B1"]
+        machine = union.require_schema().core_schema.vertex_config["Machine"]
+        assert machine.identity == ["id"]
+        funnel = machine.identity_funnel
+        assert funnel is not None
+        assert [b.id for b in funnel.branches] == [
+            "serial",
+            "press__asset_id",
+            "lathe__asset_id",
+            "maintenance__asset_id",
+            "sensors__device_id",
+        ]
 
 
 # --------------------------------------------------------------------------- #

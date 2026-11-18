@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Literal
 
 import pytest
 
@@ -28,8 +29,6 @@ from graflo.architecture.evolution import (
     DerivedBranch,
     IdentityBranchDecl,
     IdentityReplacement,
-    LocalKeyBranch,
-    LocalKeySource,
     MergeIdentityError,
     MergeManifestsOp,
     NaturalIdentityTarget,
@@ -139,18 +138,9 @@ def _name_key(name: str = "name_key", **sources: DerivationSpec) -> DerivedBranc
     )
 
 
-def _local_key() -> LocalKeyBranch:
-    return LocalKeyBranch(
-        local_key={
-            "r_x": LocalKeySource(field="x_id", tag="a"),
-            "r_y": LocalKeySource(field="y_id", tag="b"),
-        }
-    )
-
-
 def _derived_identity(name: str = "name_key") -> list[IdentityBranchDecl]:
-    """``Z`` keyed on a normalized name, falling back to each side's tagged key."""
-    return [_name_key(name), _local_key()]
+    """``Z`` keyed on a normalized name; ``fallback: own_key`` adds the members' keys."""
+    return [_name_key(name)]
 
 
 def _merge(
@@ -298,7 +288,11 @@ class TestDerivedIdentityDemotesMemberKeys:
     def test_member_keys_become_secondaries_without_being_listed(self) -> None:
         merged = _merge(
             VertexEquivalence(
-                left="X", right="Y", into="Z", identity=_derived_identity()
+                left="X",
+                right="Y",
+                into="Z",
+                identity=_derived_identity(),
+                fallback="own_key",
             )
         )
         assert _z(merged).identity == ["id"]
@@ -325,6 +319,7 @@ class TestDerivedIdentityDemotesMemberKeys:
                     right="Y",
                     into="Z",
                     identity=_derived_identity(name="x_id"),
+                    fallback="own_key",
                 )
             )
 
@@ -353,6 +348,7 @@ class TestDerivedIdentityDemotesMemberKeys:
                 into="Z",
                 properties=[NAME_EQUIVALENCE],
                 identity=_derived_identity(),
+                fallback="own_key",
             )
         )
         assert _z(merged).identity == ["id"]
@@ -384,6 +380,7 @@ class TestDigestField:
                 right="Y",
                 into="Z",
                 identity=_derived_identity(name="new_id"),
+                fallback="own_key",
                 digest_field="cid",
             ),
             right=_side_b(properties=["y_id", "cname", "id"]),
@@ -529,6 +526,25 @@ class TestResourcesOutsideTheDerivedBranches:
         graph = _cast_graph(merged, "r_ap", [{"ap_id": "p1", "x_id": "x1"}])
         assert [doc["x_id"] for doc in graph.vertices["Z"]] == ["x1"]
 
+    def test_under_fallback_a_producer_carrying_the_kept_key_upserts(self) -> None:
+        """``r_ap``'s ``X`` records complete the ``a__x_id`` fallback branch."""
+        merged = _merge(
+            VertexEquivalence(
+                left="X",
+                right="Y",
+                into="Z",
+                identity=_derived_identity(),
+                fallback="own_key",
+            ),
+            left=_side_a(reference_step={"vertex": "X"}),
+        )
+        z_step = _vertex_step(_pipeline(merged, "r_ap"), "Z")
+        assert not z_step.lookup_only
+        assert not z_step.find
+        graph = _cast_graph(merged, "r_ap", [{"ap_id": "p1", "x_id": "x1"}])
+        assert [doc["a__x_id"] for doc in graph.vertices["Z"]] == ["x1"]
+        assert not graph.attached.get("Z")
+
     def test_an_attached_record_and_its_edge_use_the_prefixed_key(self) -> None:
         merged = _merge(
             VertexEquivalence(
@@ -598,13 +614,6 @@ class TestResourcesOutsideTheDerivedBranches:
                                     r_c=DerivationSpec(input=["name"]),
                                     r_y=DerivationSpec(input=["cname"]),
                                 ),
-                                LocalKeyBranch(
-                                    local_key={
-                                        "r_x": LocalKeySource(field="x_id"),
-                                        "r_c": LocalKeySource(field="c_id"),
-                                        "r_y": LocalKeySource(field="y_id"),
-                                    }
-                                ),
                             ],
                             allow=["self_relations"],
                         )
@@ -618,7 +627,11 @@ class TestResourcesOutsideTheDerivedBranches:
     def test_a_reference_is_pinned_to_the_demoted_member_key(self) -> None:
         merged = _merge(
             VertexEquivalence(
-                left="X", right="Y", into="Z", identity=_derived_identity()
+                left="X",
+                right="Y",
+                into="Z",
+                identity=_derived_identity(),
+                fallback="own_key",
             )
         )
         assert collect_endpoint_selectors(_pipeline(merged, "r_ap")) == [("Z", "a")]
@@ -626,7 +639,11 @@ class TestResourcesOutsideTheDerivedBranches:
     def test_a_pinned_reference_still_emits_its_edge(self) -> None:
         merged = _merge(
             VertexEquivalence(
-                left="X", right="Y", into="Z", identity=_derived_identity()
+                left="X",
+                right="Y",
+                into="Z",
+                identity=_derived_identity(),
+                fallback="own_key",
             )
         )
         graph = _cast_graph(merged, "r_ap", [{"ap_id": "p1", "x_id": "x1"}])
@@ -697,7 +714,7 @@ def _side_a_two_keyed_members() -> GraphManifest:
 # ── owners and attached resources: the shape merge attach is built for ──────
 
 
-def _left_members(*, local_key: dict | None = None) -> GraphManifest:
+def _left_members() -> GraphManifest:
     """``L1``, ``L2`` keyed ``lid``; only ``left_resource_A`` carries the match columns.
 
     ``left_resource_B`` is declared first and writes ``L1`` with a property.
@@ -795,10 +812,19 @@ def _right_member() -> GraphManifest:
     return manifest
 
 
+#: ``L1`` and ``L2`` both key on ``lid``: their ids are one registry.
+SHARED_LEFT_KEY_SPACE = {"left": {"L1": "left", "L2": "left"}}
+
+
 def _asset_op(
-    local_key: dict[str, LocalKeySource | dict[str, LocalKeySource]] | None = None,
+    key_spaces: dict[str, dict[str, str]] | None = None,
+    *,
+    fallback: Literal["own_key"] | None = None,
 ) -> MergeManifestsOp:
-    """``[L1, L2] ~ R`` keyed on two match columns only the ``_A`` resources carry."""
+    """``[L1, L2] ~ R`` keyed on two match columns only the ``_A`` resources carry.
+
+    *key_spaces* defaults to :data:`SHARED_LEFT_KEY_SPACE`.
+    """
     return MergeManifestsOp.model_validate(
         {
             "vertex_equivalences": [
@@ -829,16 +855,11 @@ def _asset_op(
                             "right_resource_A": {"input": ["r_attr_b"]},
                         },
                     },
-                    "identity": [
-                        ["phys_a", "phys_b"],
-                        {
-                            "local_key": local_key
-                            or {
-                                "left_resource_A": {"field": "lid", "tag": "left"},
-                                "right_resource_A": {"field": "rid", "tag": "right"},
-                            }
-                        },
-                    ],
+                    "identity": [["phys_a", "phys_b"]],
+                    "fallback": fallback,
+                    "key_spaces": SHARED_LEFT_KEY_SPACE
+                    if key_spaces is None
+                    else key_spaces,
                 }
             ]
         }
@@ -900,18 +921,31 @@ class TestOwnersAndAttachedResources:
             (s.vertex, s.side, s.members, s.key) for s in report.shared_key_spaces
         ] == [("Asset", "left", ("L1", "L2"), "left")]
 
-    def test_same_side_members_tagged_as_two_key_spaces_are_named_by_their_tags(
+    def test_same_side_members_sharing_a_key_field_unnamed_are_refused(
         self,
     ) -> None:
-        merged, report = _asset_union(
-            local_key={
-                "left_resource_A": {
-                    "L1": LocalKeySource(field="lid", tag="l1"),
-                    "L2": LocalKeySource(field="lid", tag="l2"),
-                },
-                "right_resource_A": LocalKeySource(field="rid", tag="right"),
-            }
-        )
+        """Without ``key_spaces``, ``L1`` and ``L2`` would fall back on one ``lid``."""
+        from graflo.architecture.evolution.naming_graph import MergeNamingError
+
+        with pytest.raises(MergeNamingError, match="left:L1 and left:L2") as refused:
+            _asset_union(key_spaces={}, fallback="own_key")
+        assert "key-space" in {f.check for f in refused.value.findings}
+        assert "`key_spaces`" in str(refused.value)
+
+    def test_members_in_one_key_space_fall_back_on_one_branch(self) -> None:
+        merged, _report = _asset_union(fallback="own_key")
+        asset = merged.require_schema().core_schema.vertex_config["Asset"]
+        assert asset.identity_funnel is not None
+        assert [b.id for b in asset.identity_funnel.branches] == [
+            "phys_a_phys_b",
+            "left__lid",
+            "right__rid",
+        ]
+
+    def test_same_side_members_in_two_key_spaces_are_named_by_them(
+        self,
+    ) -> None:
+        merged, report = _asset_union(key_spaces={"left": {"L1": "l1", "L2": "l2"}})
         asset = merged.require_schema().core_schema.vertex_config["Asset"]
         assert {s.name: list(s.fields) for s in asset.secondary_identities} == {
             "l1": ["l1__lid"],
@@ -923,14 +957,9 @@ class TestOwnersAndAttachedResources:
         assert _vertex_step(left_b, "Asset").find == "l1"
 
     def test_a_key_space_both_sides_name_is_refused(self) -> None:
-        """A left tag naming the right side's origin would join two id spaces."""
+        """A left key space named like the right side's origin joins two id spaces."""
         with pytest.raises(MergeIdentityError, match="different sides") as refused:
-            _asset_union(
-                local_key={
-                    "left_resource_A": LocalKeySource(field="lid", tag="right"),
-                    "right_resource_A": LocalKeySource(field="rid"),
-                }
-            )
+            _asset_union(key_spaces={"left": {"L1": "right", "L2": "right"}})
         assert refused.value.check == "key-space"
 
     def test_an_attached_record_is_cast_onto_its_origin_key(self) -> None:
@@ -1497,8 +1526,8 @@ class TestDerivedBranchDerivations:
                             r_x=DerivationSpec(input=["name", "x_id"]),
                             r_y=DerivationSpec(input=["cname"]),
                         ),
-                        _local_key(),
                     ],
+                    fallback="own_key",
                 )
             )
 
@@ -1513,8 +1542,8 @@ class TestDerivedBranchDerivations:
                         r_x=DerivationSpec(input=["name"]),
                         r_y=DerivationSpec(input=["cname"]),
                     ),
-                    _local_key(),
                 ],
+                fallback="own_key",
             )
         )
         assert _z(merged).identity_funnel is not None
@@ -1522,7 +1551,11 @@ class TestDerivedBranchDerivations:
     def test_derived_records_fuse_on_the_normalized_name(self) -> None:
         merged = _merge(
             VertexEquivalence(
-                left="X", right="Y", into="Z", identity=_derived_identity()
+                left="X",
+                right="Y",
+                into="Z",
+                identity=_derived_identity(),
+                fallback="own_key",
             )
         )
         caster = DocumentCaster(merged.require_ingestion_model())
@@ -1594,7 +1627,9 @@ def test_pin_to_retired_rewrites_flat_edge_steps() -> None:
     ]
 
 
-def _preview(identity: list[IdentityBranchDecl]):
+def _preview(
+    identity: list[IdentityBranchDecl], *, fallback: Literal["own_key"] | None = None
+):
     from graflo.architecture.evolution.preview import preview_merge
 
     return preview_merge(
@@ -1607,6 +1642,7 @@ def _preview(identity: list[IdentityBranchDecl]):
                     right="Y",
                     into="Z",
                     identity=identity,
+                    fallback=fallback,
                     allow=["self_relations"],
                 )
             ],
@@ -1618,11 +1654,11 @@ def _preview(identity: list[IdentityBranchDecl]):
 def test_preview_notes_a_demoted_key_is_now_a_lookup() -> None:
     """A member whose records complete two funnel branches loses its dedup key.
 
-    ``X`` records derive ``name_key`` and ``local_key`` alike, so one seen with
+    ``X`` records derive ``name_key`` and carry ``x_id`` alike, so one seen with
     and without a name keys twice; ``x_id`` is only a lookup now. One property
     branch per member leaves each member a single completable branch.
     """
-    preview = _preview(_derived_identity())
+    preview = _preview(_derived_identity(), fallback="own_key")
     assert preview.outcome.status == "merged"
     notes = [f for f in preview.findings if f.kind == "lookup_demotion"]
     assert len(notes) == 2
@@ -1648,6 +1684,7 @@ def test_a_merge_that_pins_a_left_reference_is_recordable() -> None:
                 right="Y",
                 into="Z",
                 identity=_derived_identity(),
+                fallback="own_key",
                 allow=["self_relations"],
             )
         ],
@@ -1904,7 +1941,11 @@ class TestOriginNaming:
     def test_a_derived_identity_names_demoted_keys_by_origin(self) -> None:
         merged = _merge(
             VertexEquivalence(
-                left="X", right="Y", into="Z", identity=_derived_identity()
+                left="X",
+                right="Y",
+                into="Z",
+                identity=_derived_identity(),
+                fallback="own_key",
             )
         )
         assert _secondaries(merged) == {"a": ["a__x_id"], "b": ["b__y_id"]}
@@ -1975,7 +2016,7 @@ class TestOriginNaming:
     def test_two_key_spaces_of_one_side_on_one_branch_key_are_refused(
         self,
     ) -> None:
-        """``X`` and ``W`` both key on ``lid``, a property branch, tagged apart.
+        """``X`` and ``W`` both key on ``lid``, a property branch, in two key spaces.
 
         The branch keeps ``lid``'s spelling, so both keys would be one lookup
         column: an id of one key space would find a node of the other.
@@ -1990,16 +2031,8 @@ class TestOriginNaming:
                             left=["X", "W"],
                             right="Y",
                             into="Z",
-                            identity=[
-                                "lid",
-                                LocalKeyBranch(
-                                    local_key={
-                                        "r_x": LocalKeySource(field="lid", tag="one"),
-                                        "r_w": LocalKeySource(field="lid", tag="two"),
-                                        "r_y": LocalKeySource(field="y_id"),
-                                    }
-                                ),
-                            ],
+                            identity=["lid", "y_id"],
+                            key_spaces={"left": {"X": "one", "W": "two"}},
                             properties=[NAME_EQUIVALENCE],
                             allow=["observation_fusion"],
                         )
@@ -2151,33 +2184,49 @@ class TestOriginNaming:
             merge_manifests(left, right, _two_clusters("a__x"))
         assert excinfo.value.subjects == ("merged:Z",)
 
-    def test_an_origin_also_tagging_untagged_local_keys_says_both(self) -> None:
+    def test_an_origin_naming_fallback_keys_is_checked(self) -> None:
         with pytest.raises(
             MergeIdentityError,
-            match="names the left side's demoted keys and tags its local keys "
-            "the op leaves untagged, but is not a letter",
-        ):
+            match="names the left side's demoted keys, but is not a letter",
+        ) as excinfo:
             merge_manifests(
                 _side_a(),
                 _side_b(),
                 MergeManifestsOp(
                     vertex_equivalences=[
                         _rekey(
-                            identity=[
-                                _name_key(),
-                                LocalKeyBranch(
-                                    local_key={
-                                        "r_x": LocalKeySource(field="x_id"),
-                                        "r_y": LocalKeySource(field="y_id", tag="b"),
-                                    }
-                                ),
-                            ],
+                            identity=[_name_key()],
+                            fallback="own_key",
                             allow=["self_relations"],
                         )
                     ],
                     origins={"left": "1abc", "right": "b"},
                 ),
             )
+        assert excinfo.value.check == "origin"
+
+    def test_an_origin_every_member_overrides_in_key_spaces_names_nothing(
+        self,
+    ) -> None:
+        """``X``'s key space is named, so the invalid left origin names no key."""
+        merged = merge_manifests(
+            _side_a(),
+            _side_b(),
+            MergeManifestsOp(
+                vertex_equivalences=[
+                    _rekey(
+                        identity=[_name_key()],
+                        fallback="own_key",
+                        key_spaces={"left": {"X": "a"}},
+                        allow=["self_relations"],
+                    )
+                ],
+                origins={"left": "1abc", "right": "b"},
+                canonical_maps={"left": CanonicalMap(vertices={"Ap": "Zp"})},
+            ),
+            bump_version=False,
+        )
+        assert _secondaries(merged) == {"a": ["a__x_id"], "b": ["b__y_id"]}
 
     def test_an_origin_clash_with_a_secondary_is_about_its_authors_classes(
         self,
@@ -2340,23 +2389,28 @@ class TestOriginNaming:
             _merge(_rekey(), right=_side_b(properties=["y_id", "cname", "b__y_id"]))
         assert "property-rename-collision" in {f.kind for f in excinfo.value.findings}
 
-    def test_an_omitted_local_key_tag_is_the_origin(self) -> None:
+    def test_a_key_space_is_the_origin_unless_key_spaces_names_it(self) -> None:
         merged = _merge(
             VertexEquivalence(
                 left="X",
                 right="Y",
                 into="Z",
-                identity=[
-                    _name_key(),
-                    LocalKeyBranch(
-                        local_key={
-                            "r_x": LocalKeySource(field="x_id"),
-                            "r_y": LocalKeySource(field="y_id", tag=None),
-                        }
-                    ),
-                ],
+                identity=[_name_key()],
+                fallback="own_key",
+                key_spaces={"right": {"Y": "legacy"}},
             )
         )
+        funnel = _z(merged).identity_funnel
+        assert funnel is not None
+        assert [b.id for b in funnel.branches] == [
+            "name_key",
+            "a__x_id",
+            "legacy__y_id",
+        ]
+        assert _secondaries(merged) == {
+            "a": ["a__x_id"],
+            "legacy": ["legacy__y_id"],
+        }
         caster = DocumentCaster(merged.require_ingestion_model())
         x = asyncio.run(
             caster.cast_batch(
@@ -2368,5 +2422,8 @@ class TestOriginNaming:
                 [{"y_id": "y1", "cname": "m"}], "r_y", params=IngestionParams()
             )
         )
-        assert x.graph.vertices["Z"][0]["local_key"] == "a:x1"
-        assert y.graph.vertices["Z"][0]["local_key"] == "y1"
+        (x_doc,) = x.graph.vertices["Z"]
+        (y_doc,) = y.graph.vertices["Z"]
+        assert x_doc["a__x_id"] == "x1"
+        assert y_doc["legacy__y_id"] == "y1"
+        assert "local_key" not in x_doc and "local_key" not in y_doc

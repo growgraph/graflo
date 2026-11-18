@@ -9,7 +9,7 @@ import pytest
 from graflo.architecture.contract.bindings import TableConnector
 from graflo.architecture.contract.ingestion.routing import (
     RoutedRecordFilter,
-    fields_written_before_routing,
+    routed_field_source,
     routed_record_filter,
     routers_keep_subset,
 )
@@ -252,11 +252,6 @@ class TestRoutedRecordFilter:
                 id="edge-to-a-non-router-role",
             ),
             pytest.param(
-                {"transform": {"rename": {"category": "kind"}}},
-                "it writes ['kind']",
-                id="rename-into-the-field",
-            ),
-            pytest.param(
                 {"transform": {"call": {"use": "relabel_kind"}}},
                 "step 1 (transform relabel_kind): it writes ['kind']",
                 id="named-transform-into-the-field",
@@ -294,11 +289,113 @@ class TestRoutedRecordFilter:
     def test_a_transform_listed_after_the_router_still_counts(self) -> None:
         # Transforms of a level run before its routers, whatever the order listed.
         pipeline = _steps(
-            _router(**CLOSED), {"transform": {"rename": {"category": "kind"}}}
+            _router(**CLOSED), {"transform": {"call": {"use": "relabel_kind"}}}
         )
 
-        assert fields_written_before_routing(pipeline, NAMED) == {"kind"}
         assert routed_record_filter(pipeline, DECLARED, NAMED).fields is None
+
+
+#: A call renaming keys; ``str`` stands for any key function.
+KEYS = {"module": "builtins", "foo": "str", "target": "keys"}
+
+
+class TestRoutedFieldSource:
+    """The condition is stated on the source field the router's value comes from."""
+
+    @pytest.mark.parametrize(
+        "transforms,source",
+        [
+            pytest.param([{"rename": {"category": "kind"}}], "category", id="rename"),
+            pytest.param([{"rename": {"kind": "kind"}}], "kind", id="identity"),
+            pytest.param(
+                [{"rename": {"raw": "category"}}, {"rename": {"category": "kind"}}],
+                "raw",
+                id="chained-renames",
+            ),
+            pytest.param([{"call": KEYS}], "kind", id="keys-all"),
+            pytest.param(
+                [{"call": {**KEYS, "keys": {"mode": "include", "names": ["name"]}}}],
+                "kind",
+                id="keys-include",
+            ),
+            pytest.param(
+                [{"call": {**KEYS, "keys": {"mode": "exclude", "names": ["kind"]}}}],
+                "kind",
+                id="keys-exclude",
+            ),
+            pytest.param(
+                [{"call": KEYS}, {"rename": {"category": "kind"}}],
+                "category",
+                id="keys-then-rename",
+            ),
+            pytest.param(
+                [{"rename": {"a": "kind"}}, {"rename": {"b": "kind"}}],
+                "b",
+                id="later-rename-wins",
+            ),
+        ],
+    )
+    def test_a_relabelled_field_is_traced_to_its_source(
+        self, transforms: list[dict[str, Any]], source: str
+    ) -> None:
+        verdict = _filter(*({"transform": t} for t in transforms), _router(**CLOSED))
+
+        assert verdict.fields == {source: {"mch"}}
+        assert verdict.blocked_by is None
+
+    @pytest.mark.parametrize(
+        "transforms,blocked_by",
+        [
+            pytest.param(
+                [{"rename": {"kind": "category"}}],
+                "step 0 (transform rename): it renames 'kind' away",
+                id="renamed-away",
+            ),
+            pytest.param(
+                [
+                    {
+                        "rename": {"category": "kind"},
+                        "when": {"field": "site", "in": ["north"]},
+                    }
+                ],
+                "it renames 'kind' under a guard",
+                id="guarded-rename",
+            ),
+            pytest.param(
+                [{"call": {"use": "relabel_kind"}}, {"rename": {"kind": "kind"}}],
+                "step 0 (transform relabel_kind): it writes ['kind']",
+                id="call-feeding-the-field",
+            ),
+            pytest.param(
+                [
+                    {
+                        "call": {
+                            "module": "builtins",
+                            "foo": "str",
+                            "input": ["raw"],
+                            "output": ["category"],
+                        }
+                    },
+                    {"rename": {"category": "kind"}},
+                ],
+                "it writes ['category']",
+                id="call-feeding-a-rename",
+            ),
+        ],
+    )
+    def test_a_value_that_is_no_source_field_names_the_step(
+        self, transforms: list[dict[str, Any]], blocked_by: str
+    ) -> None:
+        verdict = _filter(*({"transform": t} for t in transforms), _router(**CLOSED))
+
+        assert verdict.fields is None
+        assert verdict.blocked_by is not None and blocked_by in verdict.blocked_by
+
+    def test_the_source_is_read_per_router(self) -> None:
+        pipeline = _steps({"transform": {"rename": {"category": "kind"}}})
+
+        assert routed_field_source(pipeline, "kind", NAMED).name == "category"
+        assert routed_field_source(pipeline, "other", NAMED).name == "other"
 
 
 class TestRoutersKeepSubset:

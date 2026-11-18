@@ -51,7 +51,7 @@ TAGGER: dict[str, Any] = {
     "foo": "tagged_key",
     "params": {"tag": "crm", "sep": ":"},
     "input": ["id"],
-    "output": ["local_key"],
+    "output": ["own_ref"],
 }
 
 
@@ -174,7 +174,7 @@ class TestRegistryTransforms:
                     "foo": "tagged_key",
                     "params": {"tag": "crm", "sep": ":"},
                     "input": ["id"],
-                    "output": ["local_key"],
+                    "output": ["own_ref"],
                 }
             }
         }

@@ -263,3 +263,20 @@ class TestGroundingIsCarried:
         merged = merge_edge_pair(_edge(), _edge())
         assert merged.semantics is not None
         assert merged.semantics.iri == "https://schema.org/knows"
+
+
+class TestDescriptions:
+    def test_identical_descriptions_merge_to_one(self) -> None:
+        a = _vertex("a").model_copy(update={"description": "A person who buys"})
+        b = _vertex("b").model_copy(update={"description": "A person who buys"})
+        assert merge_vertex_models([a, b], "ab").description == "A person who buys"
+
+    def test_distinct_descriptions_join_in_order(self) -> None:
+        a = _vertex("a").model_copy(update={"description": "Buys"})
+        b = _vertex("b").model_copy(update={"description": "Pays"})
+        c = _vertex("c").model_copy(update={"description": "Buys"})
+        assert merge_vertex_models([a, b, c], "abc").description == "Buys / Pays"
+
+    def test_identical_edge_descriptions_merge_to_one(self) -> None:
+        a = Edge(source="x", target="y", relation="r", description="Owns")
+        assert merge_edge_pair(a, a.model_copy()).description == "Owns"

@@ -5,7 +5,7 @@ The merge goes through.
 ## Machine: Asset ~ Device
 
 - Declared by `vertex_equivalences[0]`.
-- Keyed by a funnel: a record tries 2 branches in order and the first it completes is digested into `id`. Each member's own key becomes a lookup.
+- Keyed by a funnel: a record tries 3 branches in order and the first it completes is digested into `id`. Each member's own key becomes a lookup.
 - `Asset.asset_id` is kept as `maintenance__asset_id`, a lookup in key space `maintenance`.
 - `Device.device_id` is kept as `sensors__device_id`, a lookup in key space `sensors`.
 
@@ -27,5 +27,5 @@ The merge goes through.
 
 Findings:
 
-1. **note** `lookup_demotion`: records of left:Asset key on the first of ['match_key', 'local_key'] they complete, so two with the same ['maintenance__asset_id'] that complete different ones become two 'Machine' vertices; ['maintenance__asset_id'] is now the lookup-only secondary 'maintenance' and no longer deduplicates them
-2. **note** `lookup_demotion`: records of right:Device key on the first of ['match_key', 'local_key'] they complete, so two with the same ['sensors__device_id'] that complete different ones become two 'Machine' vertices; ['sensors__device_id'] is now the lookup-only secondary 'sensors' and no longer deduplicates them
+1. **note** `lookup_demotion`: records of left:Asset key on the first of ['match_key', 'maintenance__asset_id'] they complete, so two with the same ['maintenance__asset_id'] that complete different ones become two 'Machine' vertices; ['maintenance__asset_id'] is now the lookup-only secondary 'maintenance' and no longer deduplicates them
+2. **note** `lookup_demotion`: records of right:Device key on the first of ['match_key', 'sensors__device_id'] they complete, so two with the same ['sensors__device_id'] that complete different ones become two 'Machine' vertices; ['sensors__device_id'] is now the lookup-only secondary 'sensors' and no longer deduplicates them
