@@ -177,7 +177,9 @@ def mirror_default_identity(ctx: WriteContext, vcol: str, data: list[dict]) -> N
     (:func:`graflo.db.arango.keys.vertex_key`) in every identity mode and
     replaces a value already there, because edges derive it the same way from
     their endpoints. Elsewhere, a generated identity's first value is copied
-    into ``id``, never over a value already there.
+    into ``id`` only when *vcol* declares a property ``id``, and never over a
+    value already there: the writer adds no field the schema does not declare,
+    which a backend with typed vertex types would reject.
     """
     vc = ctx.db_aware.vertex_config
     if ctx.flavor == DBType.ARANGO:
@@ -198,6 +200,8 @@ def mirror_default_identity(ctx: WriteContext, vcol: str, data: list[dict]) -> N
         return
     default_field, preferred = default_and_preferred(ctx, vcol)
     if default_field == preferred:
+        return
+    if default_field not in {f.name for f in vc.properties(vcol)}:
         return
     for doc in data:
         value = doc.get(preferred)

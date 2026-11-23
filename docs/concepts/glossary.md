@@ -408,3 +408,21 @@ Proposing one identity for a vertex type that several resources describe under d
 ### schema inference
 
 Producing a manifest, or its schema, from an existing source instead of writing it by hand: from a SQL database with `GraphEngine.infer_manifest()` (PostgreSQL) or SQLAlchemy reflection (other engines), from an OWL or RDFS ontology with `infer_schema_from_rdf()`, or from a graph database with `infer_schema_from_graph()`. The result is a draft to review and edit. See [Inferring a graph from a SQL database](../guides/sql_schema_inference.md).
+
+## Other formats
+
+### GSTL JSON Schema
+
+The JSON Schema of a manifest as GraFlo writes it, from `graflo json-schema` or `manifest_json_schema()`. It checks shape only; whether an identity field exists or an edge's endpoints are declared is checked when GraFlo loads the manifest. See [Exporting without GraFlo](../guides/exporting_without_graflo.md).
+
+### domain ontology
+
+A schema written as OWL 2 RL classes and properties (`graflo schema-to-owl`) and SHACL shapes (`graflo schema-to-shacl`): the domain the schema models, which an RDF tool reads without GraFlo. It is not the `gf:` meta-ontology, which describes the manifest itself. See [Exporting without GraFlo](../guides/exporting_without_graflo.md).
+
+### compact notation
+
+A short YAML form of a schema, read as the full schema it stands for (`graflo schema-from-compact`). Writing a schema back to it (`graflo schema-to-compact`) is refused when the schema uses more than the notation says. See [Writing a short schema](../guides/short_schema.md).
+
+### loss report
+
+The list of what a conversion to or from another format leaves out. Apache Ossie writes it as `losses.md`, which says `nothing` when the mapping is complete; the neo4j-graphrag `GraphSchema` conversions print it on stderr, and write it with `--losses`. See [Exporting without GraFlo](../guides/exporting_without_graflo.md) and [Writing a short schema](../guides/short_schema.md).

@@ -295,7 +295,7 @@ def test_api_data_source_envelope_next_offset(mock_envelope_api_server) -> None:
 
     with patch.object(api_source, "_create_session") as create_session:
         create_session.return_value = session
-        session.request = track_request  # ty: ignore[invalid-assignment]
+        session.request = track_request
         for batch in api_source.iter_batches(batch_size=10, limit=None):
             all_items.extend(batch)
 
@@ -398,7 +398,7 @@ def test_api_data_source_explicit_carry_params(
 
     with patch.object(api_source, "_create_session") as create_session:
         create_session.return_value = session
-        session.request = track_request  # ty: ignore[invalid-assignment]
+        session.request = track_request
         rows = [row for batch in api_source.iter_batches() for row in batch]
 
     assert [row["id"] for row in rows] == [1, 2, 3]
@@ -423,7 +423,7 @@ def test_api_data_source_auto_detect_carry_params(
 
     with patch.object(api_source, "_create_session") as create_session:
         create_session.return_value = session
-        session.request = track_request  # ty: ignore[invalid-assignment]
+        session.request = track_request
         rows = [row for batch in api_source.iter_batches() for row in batch]
 
     assert len(rows) == 3
@@ -447,7 +447,7 @@ def test_api_data_source_result_id_batch_metadata_not_carried(
 
     with patch.object(api_source, "_create_session") as create_session:
         create_session.return_value = session
-        session.request = track_request  # ty: ignore[invalid-assignment]
+        session.request = track_request
         rows = [row for batch in api_source.iter_batches() for row in batch]
 
     assert len(rows) == 3

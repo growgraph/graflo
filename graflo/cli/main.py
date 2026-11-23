@@ -17,6 +17,18 @@ import click
 from graflo.cli.canonical import canonical_check as canonical_check_cmd
 from graflo.cli.check import check as check_cmd
 from graflo.cli.commit import commit_group
+from graflo.cli.export import (
+    json_schema as json_schema_cmd,
+)
+from graflo.cli.export import (
+    schema_from_compact_cmd,
+    schema_from_neo4j_graphrag_cmd,
+    schema_to_compact_cmd,
+    schema_to_neo4j_graphrag_cmd,
+    schema_to_ossie_cmd,
+    schema_to_owl_cmd,
+    schema_to_shacl_cmd,
+)
 from graflo.cli.inverses import inverses as inverses_cmd
 from graflo.cli.lift import lift as lift_cmd
 from graflo.cli.merge import merge as merge_cmd
@@ -57,6 +69,18 @@ graflo.add_command(lift_cmd, name="lift")
 # switch. Planners over the same op vocabulary, like `lift`; a group because the
 # verbs share one subject and one vocabulary of findings.
 graflo.add_command(inverses_cmd, name="inverses")
+
+# Formats a reader without graflo can use: the GSTL JSON Schema, the schema as
+# OWL and SHACL, the manifest as Apache Ossie; and the two simple schema forms,
+# the compact notation and neo4j-graphrag's GraphSchema, both ways.
+graflo.add_command(json_schema_cmd, name="json-schema")
+graflo.add_command(schema_to_owl_cmd, name="schema-to-owl")
+graflo.add_command(schema_to_shacl_cmd, name="schema-to-shacl")
+graflo.add_command(schema_to_ossie_cmd, name="schema-to-ossie")
+graflo.add_command(schema_to_compact_cmd, name="schema-to-compact")
+graflo.add_command(schema_from_compact_cmd, name="schema-from-compact")
+graflo.add_command(schema_to_neo4j_graphrag_cmd, name="schema-to-neo4j-graphrag")
+graflo.add_command(schema_from_neo4j_graphrag_cmd, name="schema-from-neo4j-graphrag")
 
 
 def _mount_existing() -> None:

@@ -56,6 +56,8 @@ from graflo.db.conn import (
     consume_insert_edges_kwargs,
 )
 from graflo.db.cypher import (
+    cypher_key_equals,
+    cypher_keyed_node,
     cypher_name,
     cypher_rel_pattern,
     partition_by_absent_merge_props,
@@ -1199,6 +1201,8 @@ class FalkordbConnection(Connection):
         unset_keys: list | None = None,
         direction: EdgeDirection = EdgeDirection.OUT,
         *,
+        from_key: str = "id",
+        to_key: str = "id",
         timeout_s: float | None = None,
         **kwargs,
     ):
@@ -1209,15 +1213,17 @@ class FalkordbConnection(Connection):
 
         Args:
             from_type: Anchor node label
-            from_id: Anchor node ID (property name depends on match_keys used)
+            from_id: Value of the anchor's *from_key* property
             edge_type: Optional relationship type to filter by
             to_type: Optional label of the other endpoint
-            to_id: Optional ID of the other endpoint
+            to_id: Optional value of the other endpoint's *to_key* property
             filters: Additional query filters
             limit: Maximum number of edges to return
             return_keys: Keys to return (projection)
             unset_keys: Keys to exclude (projection) - not supported in FalkorDB
             direction: Orientations to follow from the anchor
+            from_key: Property the anchor is matched on, its identity field
+            to_key: Property the other endpoint is matched on
             timeout_s: Query timeout the server enforces; ``None`` for none.
             **kwargs: Additional parameters
 
@@ -1227,7 +1233,7 @@ class FalkordbConnection(Connection):
         # Build anchor node match
         # Ids come from callers and travel as parameters, never as query text.
         params: dict[str, Any] = {"from_id": from_id}
-        source_match = f"(source:{cypher_name(from_type)} {{id: $from_id}})"
+        source_match = cypher_keyed_node("source", from_type, from_key, "from_id")
         rel_pattern = cypher_rel_pattern(edge_type, direction)
 
         # Build target node match
@@ -1239,7 +1245,7 @@ class FalkordbConnection(Connection):
         # Build WHERE clauses
         where_clauses: list[str] = []
         if to_id:
-            where_clauses.append("target.id = $to_id")
+            where_clauses.append(cypher_key_equals("target", to_key, "to_id"))
             params["to_id"] = to_id
 
         # Add additional filters if provided

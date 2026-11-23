@@ -476,7 +476,9 @@ values, so they would be lost (`identity collision`). To keep a member's own
 ```
 
 `digest_field` must not be a field of any branch, since the digest would
-replace the value that branch is computed from.
+replace the value that branch is computed from. Any other name works on every
+backend; see
+[The key field on each backend](backend_indexes.md#the-key-field-on-each-backend).
 
 The check reads the manifests, not the data. A record whose key field is empty
 still has no identity: it is not written, and the cast logs a warning such as
@@ -587,12 +589,18 @@ That branch is refused now; an op that declares it is rewritten as follows:
 | `LocalKeyBranch`, `LocalKeySource` in Python | `VertexEquivalence(fallback="own_key", key_spaces=...)` |
 | reading `local_key` from a merged record | read the kept key, `<space>__f` |
 
-A merged manifest written with a `local_key` branch stays valid: its
-`local_key` is an ordinary property and its funnel an ordinary funnel, and
-merging it again carries both. Rewriting its op changes the vertex id of every
-record that was keyed through the old fallback; records keyed on an earlier
-branch keep theirs. The library does not re-key stored vertices: reload the
-type, or keep the manifest written earlier.
+The op is refused; a manifest an earlier merge produced is not. Such a
+manifest has no `local_key` branch left in it: `local_key` is an ordinary
+property filled by a `tagged_key` step, and its funnel is an ordinary funnel,
+so it still loads, ingests and merges. Treat that as a stopgap. The property
+repeats each member's kept key under a name that does not say which source it
+came from, and every later merge carries it along.
+
+Rerun the merge with the rewritten op instead. Records keyed on a declared
+branch keep their vertex id; records keyed through the old fallback get a new
+one, `<space>__f` in place of `local_key` in the digest. The library does not
+re-key stored vertices, so reload the merged type once. Keep the earlier
+manifest only while its data cannot be reloaded.
 
 ### The old key no longer deduplicates
 

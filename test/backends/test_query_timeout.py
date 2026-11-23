@@ -557,7 +557,7 @@ def test_a_read_timing_out_inside_the_walk_is_not_an_empty_hop(
     def fetch_edges(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
         raise QueryTimeoutError(kwargs["timeout_s"])
 
-    conn.fetch_edges = fetch_edges  # ty: ignore[invalid-assignment]
+    conn.fetch_edges = fetch_edges
     with pytest.raises(QueryTimeoutError) as raised:
         bfs_neighbors(
             cast(Any, conn),
@@ -612,7 +612,8 @@ class _Lookup:
     supports_read_guard = False
     query_deadline = Connection.query_deadline
     require_read_guard = Connection.require_read_guard
-    resolve_vertices = Connection.resolve_vertices
+    # Typed `Any`: called on this stand-in, not on a `Connection`.
+    resolve_vertices: Any = Connection.resolve_vertices
 
     def __init__(self, clock: _Clock) -> None:
         self.clock = clock

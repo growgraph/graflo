@@ -26,7 +26,7 @@ from graflo.architecture.contract.bindings.connectors import (
 )
 
 GF_ONTOLOGY_IRI = "https://ontology.growgraph.dev/graflo"
-GF_VERSION = "1.12.0"
+GF_VERSION = "1.13.0"
 GF_VERSION_IRI = f"{GF_ONTOLOGY_IRI}/{GF_VERSION}"
 GF_BASE = "https://ontology.growgraph.dev/graflo/"
 GF = Namespace(GF_BASE)
@@ -226,6 +226,8 @@ specRelationName = GF.specRelationName
 specIndexesMode = GF.specIndexesMode
 inverseRelation = GF.inverseRelation
 symmetricRelation = GF.symmetricRelation
+elementName = GF.elementName
+edgeExtension = GF.edgeExtension
 nativeInverseRelation = GF.nativeInverseRelation
 
 # Actor step type mapping

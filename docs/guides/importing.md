@@ -47,7 +47,7 @@ loaded, only from its own layer and the layers below it.
 | L3 | `graflo.connections` (except `provider`), `graflo.architecture.contract`, `graflo.architecture.profile` | Connection configs; the manifest, its bindings and its ingestion model; conformance profiles |
 | L4 | `graflo.architecture.pipeline`, `graflo.architecture.backend`, `graflo.architecture.evolution`, `graflo.data_source`, `graflo.connections.provider` | Running resources; the file backend; manifest operations; reading sources; resolving connection labels |
 | L5 | `graflo.db`, `graflo.object_storage` | Live database connections, one subpackage per backend; S3 uploads |
-| L6 | `graflo.hq`, `graflo.migrate`, `graflo.rdf`, `graflo.plot`, `graflo.cli` | `GraphEngine` and ingestion; schema migration; RDF; plotting; the command line |
+| L6 | `graflo.hq`, `graflo.migrate`, `graflo.rdf`, `graflo.interop`, `graflo.plot`, `graflo.cli` | `GraphEngine` and ingestion; schema migration; RDF; other schema formats; plotting; the command line |
 
 A module of `graflo.architecture` not named above counts as L4.
 

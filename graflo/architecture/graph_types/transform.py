@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import ConfigDict, Field
+from pydantic import Field
 
 from graflo.architecture.base import ConfigBaseModel
 
@@ -15,8 +15,6 @@ class VertexRep(ConfigBaseModel):
     Attributes:
         vertex: doc representing a vertex
     """
-
-    model_config = ConfigDict(kw_only=True)  # ty: ignore[invalid-key]
 
     vertex: dict[str, Any]
     lookup_only: bool = False

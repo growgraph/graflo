@@ -1,6 +1,11 @@
 """Shared Cypher query fragments (no drivers; safe string builders only)."""
 
 from graflo.db.cypher.direction import cypher_rel_pattern
+from graflo.db.cypher.endpoints import (
+    cypher_key_equals,
+    cypher_key_value,
+    cypher_keyed_node,
+)
 from graflo.db.cypher.escape import (
     cypher_map_key,
     cypher_name,
@@ -18,6 +23,9 @@ from graflo.db.cypher.rel_merge import (
 from graflo.db.cypher.traversal import cypher_neighbors_query
 
 __all__ = [
+    "cypher_key_equals",
+    "cypher_key_value",
+    "cypher_keyed_node",
     "cypher_map_key",
     "cypher_name",
     "cypher_names",

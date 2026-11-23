@@ -63,6 +63,16 @@ Manifest serialization and domain ontology inference:
 
 - **[Manifest ↔ RDF (`graflo.rdf`)](rdf/index.md)**: `ManifestRdfSerializer`, `ManifestRdfDeserializer`, GraFlo meta-ontology
 - **[RDF inference (`RdfInferenceManager`)](hq/rdf_inferencer.md)**: User OWL/RDFS TBox → GraFlo `Schema` + ingestion
+- **[Domain ontology (`graflo.rdf.tbox`)](rdf/tbox.md)**: a schema as an OWL 2 RL ontology and as SHACL shapes
+
+## Other formats
+
+Schemas and manifests in formats a reader without GraFlo can use:
+
+- **[GSTL JSON Schema](architecture/contract/json_schema.md)**: `manifest_json_schema()`, a manifest's shape as GraFlo writes it
+- **[Compact notation](interop/compact.md)**: `from_compact`, `to_compact`
+- **[neo4j-graphrag `GraphSchema`](interop/neo4j_graphrag.md)**: a schema as a `GraphSchema` document and back
+- **[Apache Ossie](interop/ossie.md)**: a manifest as an Ossie ontology, semantic model and mapping (experimental)
 
 ## Core Components
 
@@ -104,6 +114,7 @@ console script, so `graflo ingest ...` and `ingest ...` are the same code.
 - **[Ingest](cli/ingest.md)**: Data ingestion commands
 - **[Schema migration](cli/migrate_schema.md)**: plan and execute changes against a database
 - **Manifest ↔ RDF**: `manifest-to-rdf`, `rdf-to-manifest` (see [GraFlo ontology](../concepts/schema/ontology.md#cli))
+- **[Other formats](cli/export.md)**: `json-schema`, `schema-to-owl`, `schema-to-shacl`, `schema-to-ossie` (see [Exporting without GraFlo](../guides/exporting_without_graflo.md)); `schema-to-compact`, `schema-from-compact`, `schema-to-neo4j-graphrag`, `schema-from-neo4j-graphrag` (see [Writing a short schema](../guides/short_schema.md))
 - **[Database Management](cli/manage_dbs.md)**: Database administration commands
 - **[Schema Visualization](cli/plot_manifest.md)**: Schema visualization commands
 - **[XML to JSON](cli/xml2json.md)**: XML data conversion utilities

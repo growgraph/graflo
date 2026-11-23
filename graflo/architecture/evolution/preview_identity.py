@@ -12,7 +12,7 @@ the same one merge lowers, so nothing here restates a rule.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Literal, TypeVar
+from typing import Any, Literal
 
 from pydantic import Field as PydanticField
 
@@ -41,8 +41,6 @@ BranchKind = Literal["raw", "derived", "own_key"]
 IdentityMode = Literal["natural", "funnel", "carried"]
 
 _DEFAULT_MODULE = DerivationSpec.model_fields["module"].default
-
-_T = TypeVar("_T")
 
 
 class BranchSource(ConfigBaseModel):
@@ -333,7 +331,9 @@ def _guard(spec: DerivationSpec) -> dict[str, Any] | None:
     return spec.when.to_dict() if spec.when is not None else None
 
 
-def _entries(entry: _T | dict[str, _T]) -> list[tuple[str | None, _T]]:
+def _entries(
+    entry: DerivationSpec | dict[str, DerivationSpec],
+) -> list[tuple[str | None, DerivationSpec]]:
     """A source entry as ``(member, spec)`` pairs; ``None`` for an unkeyed one."""
     if isinstance(entry, dict):
         return list(entry.items())

@@ -758,6 +758,9 @@ class Connection(abc.ABC):
                 undirected). A backend whose reverse reachability is decided at
                 schema time answers ``IN`` / ``ANY`` from them; rows come back in
                 the orientation of the edge as declared, whichever type answered.
+                A backend with no native vertex id (Neo4j, Memgraph, FalkorDB)
+                finds each end by a property: ``from_key`` / ``to_key`` name it,
+                the vertex's identity field, ``id`` when omitted.
 
         Returns:
             list: List of fetched edges

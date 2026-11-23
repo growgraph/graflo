@@ -20,7 +20,7 @@ class GraFloBackendConfig(DBConfig):
         case_sensitive=False,
     )
 
-    db_type: Literal[DBType.GRAFLO_BACKEND] = DBType.GRAFLO_BACKEND  # ty: ignore[invalid-mutable-override]
+    db_type: Literal[DBType.GRAFLO_BACKEND] = DBType.GRAFLO_BACKEND  # ty: ignore[incompatible-mutable-override]
 
     output_dir: Path = Field(
         ...,

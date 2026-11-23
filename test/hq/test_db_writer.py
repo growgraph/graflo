@@ -107,12 +107,12 @@ def test_a_blank_vertex_mirrors_an_identity_it_already_carries(monkeypatch):
     assert gc.vertices["blank_v"][0] == {"id": "b-1", "_key": "b-1"}
 
 
-def _assigned_writer(identity: list[str]) -> DBWriter:
+def _assigned_writer(identity: list[str], extra: tuple[str, ...] = ()) -> DBWriter:
     vertex_config = VertexConfig(
         vertices=[
             Vertex(
                 name="event",
-                properties=[Field(name=name) for name in identity],
+                properties=[Field(name=name) for name in [*identity, *extra]],
                 identity=identity,
                 assigned=True,
             )
@@ -146,8 +146,12 @@ def _assigned_writer(identity: list[str]) -> DBWriter:
 def test_an_assigned_vertex_mirrors_its_uuid_into_the_default_key(
     identity, conn_conf, default_field, own_kept
 ):
-    """ArangoDB's ``_key`` is always derived from the identity; ``id`` is never overwritten."""
-    writer = _assigned_writer(identity)
+    """ArangoDB's ``_key`` is always derived from the identity; ``id`` is never overwritten.
+
+    Off ArangoDB the copy goes into ``id`` only because the vertex declares it.
+    """
+    extra = ("id",) if default_field == "id" else ()
+    writer = _assigned_writer(identity, extra)
     (preferred,) = writer.schema.core_schema.vertex_config.identity_fields("event")
     kept = "00000000-0000-4000-8000-000000000001"
     docs: list[dict] = [{}, {preferred: kept, default_field: "own"}]
@@ -156,6 +160,68 @@ def test_an_assigned_vertex_mirrors_its_uuid_into_the_default_key(
 
     assert docs[0][default_field] == docs[0][preferred]
     assert docs[1] == {preferred: kept, default_field: "own" if own_kept else kept}
+
+
+def test_an_assigned_vertex_without_a_declared_id_gets_none():
+    writer = _assigned_writer(["uid"])
+    conn_conf = Neo4jConfig(uri="bolt://localhost:7687", username="u", password="p")
+    docs: list[dict] = [{}]
+
+    mint_identities(writer.context(conn_conf), "event", docs)
+
+    assert docs[0]["uid"]
+    assert "id" not in docs[0]
+
+
+def _digest_writer(properties: list[str]) -> DBWriter:
+    """A hash-keyed vertex whose digest is stored in ``twin_id``, not ``id``."""
+    vertex_config = VertexConfig(
+        vertices=[
+            Vertex(
+                name="software",
+                properties=properties,
+                identity=["twin_id"],
+                hash_identity_properties=["serial"],
+            )
+        ],
+    )
+    schema = Schema(
+        metadata=GraphMetadata(name="test"),
+        core_schema=CoreSchema(vertex_config=vertex_config, edge_config=EdgeConfig()),
+        db_profile=DatabaseProfile(db_flavor=DBType.NEO4J),
+    )
+    return DBWriter(schema=schema, ingestion_model=_build_ingestion_model(schema))
+
+
+@pytest.mark.parametrize(
+    "conn_conf",
+    [
+        TigergraphConfig(uri="http://localhost:9000", username="u", password="p"),
+        Neo4jConfig(uri="bolt://localhost:7687", username="u", password="p"),
+    ],
+)
+def test_a_renamed_digest_field_adds_no_undeclared_id(conn_conf):
+    """A strict-schema backend rejects an attribute its vertex type lacks."""
+    writer = _digest_writer(["serial"])
+    docs: list[dict] = [{"serial": "S-1"}]
+
+    mint_identities(writer.context(conn_conf), "software", docs)
+
+    assert docs[0]["twin_id"]
+    assert "id" not in docs[0]
+
+
+def test_a_declared_id_receives_the_renamed_digest():
+    writer = _digest_writer(["serial", "id"])
+    conn_conf = TigergraphConfig(
+        uri="http://localhost:9000", username="u", password="p"
+    )
+    docs: list[dict] = [{"serial": "S-1"}, {"serial": "S-2", "id": "own"}]
+
+    mint_identities(writer.context(conn_conf), "software", docs)
+
+    assert docs[0]["id"] == docs[0]["twin_id"]
+    assert docs[1]["id"] == "own"
 
 
 def test_resolve_blank_edges_prefers_identity_join_over_zip():
