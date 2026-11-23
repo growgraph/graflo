@@ -1,0 +1,95 @@
+# A support desk: customers raise tickets about products; agents handle them.
+metadata:
+    name: support
+    version: 1.0.0
+core_schema:
+    vertex_config:
+        vertices:
+        -   name: Customer
+            description: A customer account.
+            semantics:
+                synonyms: [client]
+            properties:
+            -   name: account
+                type: STRING
+            -   name: email
+                type: STRING
+            -   name: name
+                type: STRING
+            identity: [account]
+            # A customer named only by email can still be pointed at.
+            secondary_identities:
+            -   name: by_email
+                fields: [email]
+        -   name: Agent
+            description: A support agent.
+            properties:
+            -   name: handle
+                type: STRING
+            -   name: name
+                type: STRING
+            identity: [handle]
+        -   name: Ticket
+            description: A support ticket.
+            semantics:
+                synonyms: [case, issue]
+            properties:
+            -   name: number
+                type: STRING
+            -   name: title
+                type: STRING
+                description: A one-line summary of the problem.
+            -   name: severity
+                type: INT
+            -   name: opened
+                type: DATETIME
+            -   name: wait
+                type: FLOAT
+                description: Hours the customer waited for a fix.
+                semantics:
+                    synonyms: [waited, waiting time]
+                    unit: h
+            identity: [number]
+        -   name: Product
+            description: A product the company sells.
+            properties:
+            -   name: sku
+                type: STRING
+            -   name: name
+                type: STRING
+            identity: [sku]
+        -   name: Tag
+            description: A label put on tickets.
+            properties:
+            -   name: label
+                type: STRING
+            hash_identity_properties: [label]
+        -   name: Comment
+            description: A remark written on a ticket.
+            properties:
+            -   name: body
+                type: STRING
+            blank: true
+    edge_config:
+        edges:
+        -   source: Customer
+            target: Ticket
+            relation: RAISED
+        -   source: Agent
+            target: Ticket
+            relation: HANDLES
+            properties:
+            -   name: since
+                type: DATETIME
+        -   source: Ticket
+            target: Product
+            relation: ABOUT
+        -   source: Ticket
+            target: Ticket
+            relation: DUPLICATE_OF
+        -   source: Ticket
+            target: Tag
+            relation: TAGGED
+        -   source: Comment
+            target: Ticket
+            relation: "ON"

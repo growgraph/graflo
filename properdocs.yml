@@ -131,6 +131,8 @@ nav:
     -   Finding a key for your data: guides/identity_inference.md
     -   Evolving a manifest: guides/evolving_a_manifest.md
     -   Drawing a manifest: guides/drawing_a_manifest.md
+    -   Exporting without GraFlo: guides/exporting_without_graflo.md
+    -   Writing a short schema: guides/short_schema.md
     -   Inferring a graph from SQL: guides/sql_schema_inference.md
     -   Adding a database backend: guides/adding_a_backend.md
 -   Examples:

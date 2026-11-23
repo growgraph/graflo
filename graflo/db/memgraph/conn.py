@@ -100,6 +100,9 @@ from graflo.db.conn import (
     consume_insert_edges_kwargs,
 )
 from graflo.db.cypher import (
+    cypher_key_equals,
+    cypher_key_value,
+    cypher_keyed_node,
     cypher_name,
     cypher_rel_pattern,
     partition_by_absent_merge_props,
@@ -132,7 +135,7 @@ logger = logging.getLogger(__name__)
 
 
 #: mgclient's query error; a C extension member the type checker cannot see.
-_DATABASE_ERROR: type[Exception] = mgclient.DatabaseError  # ty: ignore[unresolved-attribute]
+_DATABASE_ERROR: type[Exception] = mgclient.DatabaseError  # ty: ignore[missing-attribute]
 
 
 def _cursor_column_names(description: Any) -> list[str]:
@@ -1322,6 +1325,8 @@ class MemgraphConnection(Connection):
         unset_keys: list[str] | None = None,
         direction: EdgeDirection = EdgeDirection.OUT,
         *,
+        from_key: str = "id",
+        to_key: str = "id",
         timeout_s: float | None = None,
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
@@ -1334,15 +1339,19 @@ class MemgraphConnection(Connection):
 
         Args:
             from_type: Anchor node label (e.g., "Person")
-            from_id: Anchor node ID (property value, typically "id" or "_key")
+            from_id: Value of the anchor's *from_key* property
             edge_type: Optional relationship type to filter by (e.g., "WORKS_AT")
             to_type: Optional label of the other endpoint
-            to_id: Optional ID of the other endpoint
+            to_id: Optional value of the other endpoint's *to_key* property
             filters: Additional query filters applied to relationship properties
             limit: Maximum number of edges to return
             return_keys: Keys to return (projection) - not fully supported
             unset_keys: Keys to exclude (projection) - not fully supported
             direction: Orientations to follow from the anchor
+            from_key: Property the anchor is matched on, its identity field;
+                also the one reported as ``from_id``
+            to_key: Property the other endpoint is matched on and reported as
+                ``to_id``
             **kwargs: Additional options
 
         Returns:
@@ -1351,9 +1360,7 @@ class MemgraphConnection(Connection):
         if self.conn is None:
             raise RuntimeError("Connection is closed")
 
-        # Build Cypher query starting from the anchor node
-        # Use id property (common in Memgraph) or _key if needed
-        q = f"MATCH (s:{cypher_name(from_type)} {{id: $from_id}})"
+        q = f"MATCH {cypher_keyed_node('s', from_type, from_key, 'from_id')}"
         rel_pattern = cypher_rel_pattern(edge_type, direction)
 
         # Build target node match
@@ -1367,7 +1374,7 @@ class MemgraphConnection(Connection):
         # Build WHERE clauses
         where_clauses: list[str] = []
         if to_id:
-            where_clauses.append("t.id = $to_id")
+            where_clauses.append(cypher_key_equals("t", to_key, "to_id"))
 
         # Add relationship property filters
         bound = BoundParams(self.expression_flavor())
@@ -1398,7 +1405,11 @@ class MemgraphConnection(Connection):
             q += f" RETURN {', '.join(return_fields)}"
         else:
             # Default: return relationship properties and node IDs
-            q += " RETURN properties(r) AS props, s.id AS from_id, t.id AS to_id"
+            q += (
+                f" RETURN properties(r) AS props,"
+                f" {cypher_key_value('s', from_key)} AS from_id,"
+                f" {cypher_key_value('t', to_key)} AS to_id"
+            )
 
         if limit is not None and limit > 0:
             q += f" LIMIT {limit}"

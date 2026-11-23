@@ -538,7 +538,7 @@ class ArangoConfig(DBConfig):
         case_sensitive=False,
     )
 
-    db_type: Literal[DBType.ARANGO] = DBType.ARANGO  # ty: ignore[invalid-mutable-override]
+    db_type: Literal[DBType.ARANGO] = DBType.ARANGO  # ty: ignore[incompatible-mutable-override]
 
     def _get_default_port(self) -> int:
         """Get default ArangoDB port."""
@@ -611,7 +611,7 @@ class Neo4jConfig(DBConfig):
         case_sensitive=False,
     )
 
-    db_type: Literal[DBType.NEO4J] = DBType.NEO4J  # ty: ignore[invalid-mutable-override]
+    db_type: Literal[DBType.NEO4J] = DBType.NEO4J  # ty: ignore[incompatible-mutable-override]
 
     bolt_port: int | None = Field(default=None, description="Neo4j bolt protocol port")
 
@@ -714,7 +714,7 @@ class TigergraphConfig(DBConfig):
         case_sensitive=False,
     )
 
-    db_type: Literal[DBType.TIGERGRAPH] = DBType.TIGERGRAPH  # ty: ignore[invalid-mutable-override]
+    db_type: Literal[DBType.TIGERGRAPH] = DBType.TIGERGRAPH  # ty: ignore[incompatible-mutable-override]
 
     gs_port: int | None = Field(
         default=None, description="TigerGraph GSQL port (standard: 14240 for TG 4+)"
@@ -859,7 +859,7 @@ class FalkordbConfig(DBConfig):
         case_sensitive=False,
     )
 
-    db_type: Literal[DBType.FALKORDB] = DBType.FALKORDB  # ty: ignore[invalid-mutable-override]
+    db_type: Literal[DBType.FALKORDB] = DBType.FALKORDB  # ty: ignore[incompatible-mutable-override]
 
     def _get_default_port(self) -> int:
         """Get default FalkorDB/Redis port."""
@@ -926,7 +926,7 @@ class MemgraphConfig(DBConfig):
         case_sensitive=False,
     )
 
-    db_type: Literal[DBType.MEMGRAPH] = DBType.MEMGRAPH  # ty: ignore[invalid-mutable-override]
+    db_type: Literal[DBType.MEMGRAPH] = DBType.MEMGRAPH  # ty: ignore[incompatible-mutable-override]
 
     def _get_default_port(self) -> int:
         """Get default Memgraph Bolt port."""
@@ -1008,7 +1008,7 @@ class NebulaConfig(DBConfig):
         case_sensitive=False,
     )
 
-    db_type: Literal[DBType.NEBULA] = DBType.NEBULA  # ty: ignore[invalid-mutable-override]
+    db_type: Literal[DBType.NEBULA] = DBType.NEBULA  # ty: ignore[incompatible-mutable-override]
 
     version: str = Field(
         default="3",
@@ -1150,7 +1150,7 @@ class PostgresConfig(DBConfig):
         case_sensitive=False,
     )
 
-    db_type: Literal[DBType.POSTGRES] = DBType.POSTGRES  # ty: ignore[invalid-mutable-override]
+    db_type: Literal[DBType.POSTGRES] = DBType.POSTGRES  # ty: ignore[incompatible-mutable-override]
 
     def _get_default_port(self) -> int:
         """Get default PostgreSQL port."""
@@ -1306,7 +1306,7 @@ class SparqlEndpointConfig(DBConfig):
         case_sensitive=False,
     )
 
-    db_type: Literal[DBType.SPARQL] = DBType.SPARQL  # ty: ignore[invalid-mutable-override]
+    db_type: Literal[DBType.SPARQL] = DBType.SPARQL  # ty: ignore[incompatible-mutable-override]
 
     dataset: str | None = Field(
         default=None,
@@ -1428,7 +1428,7 @@ class GraphDBConfig(SparqlEndpointConfig):
         case_sensitive=False,
     )
 
-    db_type: Literal[DBType.GRAPHDB] = DBType.GRAPHDB  # ty: ignore[invalid-attribute-override]
+    db_type: Literal[DBType.GRAPHDB] = DBType.GRAPHDB  # ty: ignore[incompatible-attribute-override]
 
     def _get_default_port(self) -> int:
         """Default GraphDB HTTP port."""

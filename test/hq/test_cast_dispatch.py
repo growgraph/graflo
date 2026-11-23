@@ -327,7 +327,7 @@ class TestDynamicEdgesNeverMultiThread:
             captured["n_cores"] = n_cores
             return await original(runtime, docs, n_cores=n_cores)
 
-        caster._cast_documents = _spy  # ty: ignore[invalid-assignment]
+        caster._cast_documents = _spy
         params = IngestionParams(n_cores=8, cast_executor="thread", dynamic_edges=True)
         asyncio.run(caster.cast_batch(_docs(), "r", params=params))
         assert captured["n_cores"] == 1

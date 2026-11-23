@@ -9,7 +9,7 @@ The package is layered (low to high):
     L4  architecture.pipeline, architecture.backend, architecture.evolution,
         data_source, connections.provider
     L5  db, object_storage
-    L6  hq, migrate, rdf, plot, cli
+    L6  hq, migrate, rdf, interop, plot, cli
     L7  link
 
 Rules enforced here (import-time = top-level, non-``TYPE_CHECKING`` imports):
@@ -76,6 +76,8 @@ LAYERS: dict[str, int] = {
     "graflo.hq": 6,
     "graflo.migrate": 6,
     "graflo.rdf": 6,
+    # Writers of interchange formats (Ossie); peers of `rdf`, which they reuse.
+    "graflo.interop": 6,
     "graflo.plot": 6,
     "graflo.cli": 6,
     # The linking workflow over the key contract; nothing else depends on it.

@@ -22,6 +22,13 @@ Bidirectional conversion between **`GraphManifest`** and RDF using the [GraFlo m
 
 ::: graflo.rdf.utils
 
+## Domain ontology
+
+The serializer describes the manifest in the `gf:` vocabulary. To describe the
+domain a schema models instead, as OWL 2 RL classes and properties and as SHACL
+shapes, use [`graflo.rdf.tbox`](tbox.md) (`schema_to_owl`, `schema_to_shacl`;
+`graflo schema-to-owl`, `graflo schema-to-shacl`).
+
 ## CLI
 
 Console entry points (see `pyproject.toml` → `[project.scripts]`):

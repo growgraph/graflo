@@ -127,7 +127,7 @@ class TestSourceFanOutRespectsTheGate:
 
     def _fan_out(self, caster: Caster, n_sources: int = 3) -> _SourceSpy:
         spy = self._SourceSpy()
-        caster.process_data_source = spy  # ty: ignore[invalid-assignment]
+        caster.process_data_source = spy
         asyncio.run(
             caster._process_source_group(
                 [_NBatchSource(1) for _ in range(n_sources)],
@@ -158,7 +158,7 @@ class TestErrors:
     def test_first_error_propagates_bare_and_stops_the_source(self) -> None:
         spy = _BatchSpy(fail_on_call=2)
         caster = _caster()
-        caster.process_batch = spy  # ty: ignore[invalid-assignment]
+        caster.process_batch = spy
         with pytest.raises(ConnectionError, match="db write failed"):
             asyncio.run(caster.process_data_source(data_source=_NBatchSource(20)))
         # The pipeline must not keep draining the source after the failure.
@@ -173,7 +173,7 @@ class TestErrors:
             )
 
         caster = _caster()
-        caster.process_batch = _fail  # ty: ignore[invalid-assignment]
+        caster.process_batch = _fail
         with pytest.raises(DocErrorBudgetExceeded):
             asyncio.run(caster.process_data_source(data_source=_NBatchSource(4)))
 
@@ -192,7 +192,7 @@ class TestErrors:
 
         spy = _BatchSpy()
         caster = _caster()
-        caster.process_batch = spy  # ty: ignore[invalid-assignment]
+        caster.process_batch = spy
         with pytest.raises(RuntimeError, match="fetch exploded"):
             asyncio.run(caster.process_data_source(data_source=_ExplodingSource()))
 
@@ -294,7 +294,7 @@ class TestWriteResolutionLog:
             if fail:
                 raise ConnectionError("write failed")
 
-        caster.process_batch = _write  # ty: ignore[invalid-assignment]
+        caster.process_batch = _write
         caster.ingestion_model._resources = {"fake_resource": MagicMock()}
         registry = SimpleNamespace(
             get_data_sources=lambda name: [_AcknowledgedSource(1)]
@@ -340,7 +340,7 @@ class TestWriterLifetime:
             if fail:
                 raise RuntimeError("write failed")
 
-        caster.process_batch = _write  # ty: ignore[invalid-assignment]
+        caster.process_batch = _write
         caster.ingestion_model._resources = {"fake_resource": MagicMock()}
         registry = SimpleNamespace(
             get_data_sources=lambda name: [_AcknowledgedSource(1)]

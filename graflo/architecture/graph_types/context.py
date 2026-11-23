@@ -111,8 +111,6 @@ class ExtractionContext(ConfigBaseModel):
         edge_intents: Explicit edge intents for assembly phase
     """
 
-    model_config = ConfigDict(kw_only=True)  # ty: ignore[invalid-key]
-
     # Pydantic cannot schema nested defaultdict with custom key types (e.g. LocationIndex),
     # so we use Any; runtime type is as documented in Attributes
     acc_vertex: Any = Field(default_factory=outer_factory)
@@ -196,8 +194,6 @@ class ExtractionContext(ConfigBaseModel):
 
 class AssemblyContext(ConfigBaseModel):
     """Assembly-phase context built from extraction outputs."""
-
-    model_config = ConfigDict(kw_only=True)  # ty: ignore[invalid-key]
 
     extraction: ExtractionContext
     acc_global: Any = Field(default_factory=dd_factory)

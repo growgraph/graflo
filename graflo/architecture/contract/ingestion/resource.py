@@ -183,11 +183,13 @@ def role_reach(pipeline: Sequence[ActorConfig]) -> dict[str, frozenset[str] | No
     roles: dict[str, frozenset[str] | None] = {}
 
     def hold(role: str, classes: frozenset[str] | None) -> None:
-        if role in roles and roles[role] is None:
+        if role not in roles:
+            roles[role] = classes
             return
-        roles[role] = (
-            None if classes is None else roles.get(role, frozenset()) | classes
-        )
+        held = roles[role]
+        if held is None:
+            return
+        roles[role] = None if classes is None else held | classes
 
     for step in iter_steps(pipeline):
         if isinstance(step, VertexActorConfig) and step.role is not None:

@@ -214,8 +214,9 @@ def test_extra_weights_project_fields_and_map_like_the_pipeline():
 class _RecordingReader:
     """Borrows ``Connection``'s read wrapper; records what the backend hook sees."""
 
-    graph_neighbors = Connection.graph_neighbors
-    traverse = Connection.traverse
+    # Typed `Any`: called on this stand-in, not on a `Connection`.
+    graph_neighbors: Any = Connection.graph_neighbors
+    traverse: Any = Connection.traverse
     _stored_view = Connection._stored_view
     _guard_kwargs = Connection._guard_kwargs
     _anchor_identity = Connection._anchor_identity

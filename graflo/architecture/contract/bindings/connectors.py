@@ -1306,7 +1306,7 @@ class PushConnector(ResourceConnector):
 
     kind: Literal["push"]
     # Narrowed from the base's optional name; validate_assignment refuses None.
-    name: str = Field(..., min_length=1)  # ty: ignore[invalid-mutable-override]
+    name: str = Field(..., min_length=1)  # ty: ignore[incompatible-mutable-override]
     records_path: str | None = None
 
     def _hash_payload(self) -> dict[str, Any]:

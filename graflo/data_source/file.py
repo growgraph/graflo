@@ -86,7 +86,7 @@ class JsonFileDataSource(FileDataSource):
         encoding: File encoding (default: UTF_8)
     """
 
-    file_type: str = ChunkerType.JSON.value  # ty: ignore[invalid-mutable-override]
+    file_type: str = ChunkerType.JSON.value  # ty: ignore[incompatible-mutable-override]
 
 
 class JsonlFileDataSource(FileDataSource):
@@ -100,7 +100,7 @@ class JsonlFileDataSource(FileDataSource):
         encoding: File encoding (default: UTF_8)
     """
 
-    file_type: str = ChunkerType.JSONL.value  # ty: ignore[invalid-mutable-override]
+    file_type: str = ChunkerType.JSONL.value  # ty: ignore[incompatible-mutable-override]
 
 
 class TableFileDataSource(FileDataSource):
@@ -116,7 +116,7 @@ class TableFileDataSource(FileDataSource):
     """
 
     sep: str = ","
-    file_type: str = ChunkerType.TABLE.value  # ty: ignore[invalid-mutable-override]
+    file_type: str = ChunkerType.TABLE.value  # ty: ignore[incompatible-mutable-override]
 
 
 class ParquetFileDataSource(FileDataSource):
@@ -129,4 +129,4 @@ class ParquetFileDataSource(FileDataSource):
         path: Path to the Parquet file
     """
 
-    file_type: str = ChunkerType.PARQUET.value  # ty: ignore[invalid-mutable-override]
+    file_type: str = ChunkerType.PARQUET.value  # ty: ignore[incompatible-mutable-override]

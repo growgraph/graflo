@@ -20,6 +20,8 @@ assume you have a manifest or a graph to work with.
 | Save a graph to files and load it back | [Graph export and replay](graph_export_and_replay.md) | [A graph on disk, without a database (14)](../examples/file-backend-export/index.md) |
 | Load a large graph into an empty database | [Bulk load](bulk_load.md) | [Load a large graph in bulk (13)](../examples/bulk-load/index.md) |
 | Draw my manifest and read its colours and shapes | [Drawing a manifest](drawing_a_manifest.md) | — |
+| Hand my model to a tool that does not use GraFlo: a JSON Schema, OWL and SHACL, or Apache Ossie | [Exporting without GraFlo](exporting_without_graflo.md) | — |
+| Write a schema in a few lines of YAML, or bring one from neo4j-graphrag | [Writing a short schema](short_schema.md) | — |
 | Import only the parts of GraFlo I use, and know which layer my code belongs to | [Importing and layering](importing.md) | — |
 | Add support for a new database | [Adding a database backend](adding_a_backend.md) | — |
 

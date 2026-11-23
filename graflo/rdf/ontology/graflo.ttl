@@ -7,8 +7,8 @@
 @prefix prov: <http://www.w3.org/ns/prov#> .
 
 <https://ontology.growgraph.dev/graflo> a owl:Ontology ;
-    owl:versionIRI <https://ontology.growgraph.dev/graflo/1.12.0> ;
-    owl:versionInfo "1.12.0" ;
+    owl:versionIRI <https://ontology.growgraph.dev/graflo/1.13.0> ;
+    owl:versionInfo "1.13.0" ;
     rdfs:label "GraFlo Ontology"@en ;
     skos:prefLabel "GraFlo Ontology"@en ;
     rdfs:comment "OWL vocabulary describing GraFlo GraphManifest contracts: schema, ingestion, bindings, transforms, and pipeline actors."@en .
@@ -903,6 +903,18 @@ gf:edgeSpecs a owl:DatatypeProperty ;
     rdfs:domain gf:DatabaseProfile ;
     rdfs:range xsd:string ;
     rdfs:comment "Legacy JSON-encoded database profile edge specs (superseded by gf:hasEdgeSpec)." .
+
+#################################################################
+# Annotation properties on exported domain terms
+#################################################################
+
+gf:elementName a owl:AnnotationProperty ;
+    rdfs:label "element name"@en ;
+    rdfs:comment "The manifest name of the vertex, field or edge relation a domain class or property was exported from."@en .
+
+gf:edgeExtension a owl:AnnotationProperty ;
+    rdfs:label "edge extension"@en ;
+    rdfs:comment "JSON-encoded edge attributes OWL has no construct for: properties, identities, directed, type, by."@en .
 
 #################################################################
 # FieldType individuals

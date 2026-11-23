@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.27.5]
+
+### Added
+
+- `graflo json-schema` and `manifest_json_schema()`: the GSTL JSON Schema of a manifest as
+  graflo writes it.
+- `graflo schema-to-owl` / `schema-to-shacl` (`graflo.rdf.tbox`): a schema as an OWL 2 RL
+  ontology and as SHACL shapes for instance data.
+- `graflo schema-to-ossie` (`graflo.interop.ossie`, experimental): a manifest as an Apache Ossie
+  `0.3.0.dev0` ontology, semantic model and mapping, with a list of what Ossie cannot express.
+- Ontology 1.13.0 adds the annotation properties `gf:elementName` and `gf:edgeExtension`.
+- `graflo schema-to-compact` / `schema-from-compact` (`graflo.interop.compact`): the compact
+  schema notation, a short YAML form read as the schema it stands for.
+- `graflo schema-to-neo4j-graphrag` / `schema-from-neo4j-graphrag`
+  (`graflo.interop.neo4j_graphrag`): a schema as a neo4j-graphrag `GraphSchema` document and
+  back, with a list of what each direction leaves out.
+- `fetch_edges` on Neo4j, Memgraph and FalkorDB takes `from_key` / `to_key`, the property each
+  end is matched on (default `id`), so it reads the edges of a vertex keyed on another field.
+
+### Fixed
+
+- A generated key (hash or funnel digest, assigned UUID, blank id) stored under a name other
+  than `id` is copied into `id` only when the vertex declares `id`. It used to be copied
+  always, so TigerGraph rejected every such vertex and other backends stored an undeclared `id`.
+
 ## [1.27.4]
 
 ### Changed

@@ -35,8 +35,8 @@ flowchart TB
 | Role | IRI |
 |------|-----|
 | Ontology document | `https://ontology.growgraph.dev/graflo` |
-| Version IRI | `https://ontology.growgraph.dev/graflo/1.12.0` |
-| Version info | `1.12.0` |
+| Version IRI | `https://ontology.growgraph.dev/graflo/1.13.0` |
+| Version info | `1.13.0` |
 | Vocabulary prefix `gf:` | `https://ontology.growgraph.dev/graflo/` |
 
 The Turtle source lives in the package at `graflo/rdf/ontology/graflo.ttl`. Constants are also exposed in Python as `graflo.rdf.namespace` (`GF_ONTOLOGY_IRI`, `GF_VERSION`, `GF_VERSION_IRI`, `GF_BASE`).
@@ -188,6 +188,15 @@ This maps to `gf:hasNamingConvention` and a `gf:NamingConvention` node carrying 
 
 Two things the block is careful about. `property_case` defaults to `preserve` because a property name binds to a key in the source document — restyling one without the matching `transform.rename` leaves a property that never receives a value, and nothing reports it. And like `semantics:`, the block is **descriptive**: it records the convention the names follow so a later author extending the schema need not infer it, but nothing consults it at runtime and declaring it does not rewrite anything.
 
+**Annotations on exported domain terms**
+
+Two annotation properties are not about a manifest: they mark the OWL terms
+`graflo schema-to-owl` writes for the domain a schema models. `gf:elementName`
+gives the manifest name of the vertex, field or relation a class or property
+came from. `gf:edgeExtension` carries, as JSON, the edge attributes OWL has no
+construct for: properties, identities, `directed`, `type` and `by`. See
+[Exporting without GraFlo](../../guides/exporting_without_graflo.md).
+
 **Enumerations** (named individuals): `gf:DBType` (ArangoDB, Neo4j, …), transform target/strategy, key-selection mode, edge duplicate policy, bound source kind.
 
 **PROV-O hooks**: `gf:GraphManifest` ⊑ `prov:Entity`, `gf:ProtoTransform` ⊑ `prov:Activity` (subclasses such as `gf:Transform` inherit this; for lineage tooling).
@@ -254,6 +263,10 @@ graflo rdf-to-manifest academic.ttl \
 the result is printed. `--no-include-ontology` leaves the ontology's own
 triples out. `rdf-to-manifest` reads the same formats and `n3`, chosen with
 `--input-format`.
+
+These commands describe the manifest. To write the domain the schema models as
+OWL and SHACL, use `graflo schema-to-owl` and `graflo schema-to-shacl`; see
+[Exporting without GraFlo](../../guides/exporting_without_graflo.md).
 
 ## Round-trip fidelity
 

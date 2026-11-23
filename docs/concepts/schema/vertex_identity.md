@@ -85,6 +85,10 @@ therefore may not declare a property `id`, whose values would be lost; loading
 one is refused, as is `replace_identity` onto a hash or a funnel for a vertex
 that declares one.
 
+To store the hash under another name, put that name in `identity`
+(`identity: [reading_key]`). Which field each database keys on is listed in
+[The key field on each backend](backend_indexes.md#the-key-field-on-each-backend).
+
 Only the listed fields enter the hash, and an empty string counts as no value:
 `{sensor_id: "S1", taken_at: ""}` hashes like `{sensor_id: "S1"}`. A record whose
 listed fields are all empty gets no `id`, rather than the hash of

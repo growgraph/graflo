@@ -142,6 +142,46 @@ def test_memgraph_binds_filter_values() -> None:
     fake.assert_bound()
 
 
+_CYPHER_EDGE_READERS = [
+    pytest.param(Neo4jConnection, _Neo4j, id="neo4j"),
+    pytest.param(FalkordbConnection, _Neo4j, id="falkordb"),
+    pytest.param(MemgraphConnection, _Memgraph, id="memgraph"),
+]
+
+
+@pytest.mark.parametrize(("connection", "recorder"), _CYPHER_EDGE_READERS)
+def test_cypher_fetch_edges_matches_each_end_on_its_key(connection, recorder) -> None:
+    fake = recorder()
+
+    connection.fetch_edges(
+        cast(Any, fake),
+        "Software",
+        "d1",
+        edge_type="RUNS_ON",
+        to_type="Host",
+        to_id="h1",
+        from_key="twin_id",
+        to_key="host_key",
+    )
+
+    ((query, params),) = fake.sent
+    assert "{twin_id: $from_id}" in query
+    assert ".host_key = $to_id" in query
+    assert ".id" not in query and "{id:" not in query
+    assert (params["from_id"], params["to_id"]) == ("d1", "h1")
+
+
+@pytest.mark.parametrize(("connection", "recorder"), _CYPHER_EDGE_READERS)
+def test_cypher_fetch_edges_matches_on_id_by_default(connection, recorder) -> None:
+    fake = recorder()
+
+    connection.fetch_edges(cast(Any, fake), "Person", "p1", to_id="p2")
+
+    ((query, _params),) = fake.sent
+    assert "{id: $from_id}" in query
+    assert ".id = $to_id" in query
+
+
 # -- PostgreSQL -----------------------------------------------------------------
 
 

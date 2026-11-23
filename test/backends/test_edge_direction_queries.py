@@ -11,7 +11,7 @@ import pytest
 from graflo.architecture.graph_types import EdgeDirection
 from graflo.architecture.schema.edge import Edge
 from graflo.db.arango.conn import _arango_edge_anchor_clause
-from graflo.db.cypher import cypher_rel_pattern
+from graflo.db.cypher import cypher_key_equals, cypher_keyed_node, cypher_rel_pattern
 from graflo.db.edge_direction_support import (
     UnsupportedEdgeDirectionError,
     assert_direction_supported,
@@ -60,6 +60,28 @@ def test_cypher_rel_pattern_honours_variable_name() -> None:
     assert (
         cypher_rel_pattern("KNOWS", EdgeDirection.OUT, variable="e") == "-[e:KNOWS]->"
     )
+
+
+def test_cypher_keyed_node_matches_on_the_given_key() -> None:
+    assert (
+        cypher_keyed_node("source", "Software", "twin_id", "from_id")
+        == "(source:Software {twin_id: $from_id})"
+    )
+
+
+def test_cypher_keyed_node_without_a_label() -> None:
+    assert cypher_keyed_node("t", None, "id", "to_id") == "(t {id: $to_id})"
+
+
+def test_cypher_key_equals_names_the_key() -> None:
+    assert cypher_key_equals("target", "sku", "to_id") == "target.sku = $to_id"
+
+
+def test_cypher_endpoint_keys_are_escaped() -> None:
+    assert cypher_keyed_node("s", "Item", "a`b", "from_id") == (
+        "(s:Item {`a``b`: $from_id})"
+    )
+    assert cypher_key_equals("t", "match", "to_id") == "t.`match` = $to_id"
 
 
 # --------------------------------------------------------------------------

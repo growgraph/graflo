@@ -88,6 +88,28 @@ NebulaGraph stores as strings. When NebulaGraph rejects an index anyway, GraFlo
 logs a warning, because every filtered read on that tag then fails with
 `IndexNotFound`.
 
+## The key field on each backend
+
+A generated key (a hash or funnel digest, an assigned UUID, a blank id) is
+stored in the vertex's first identity field. That field is `id` unless you name
+it: `identity: [reading_key]` on the vertex, or `digest_field` on a merge. Any
+name works on every backend, and the identity index follows the identity
+fields whatever they are called.
+
+| Backend | The database keys a vertex on |
+|---|---|
+| ArangoDB | `_key`, which GraFlo derives from the identity fields; `_id` is `<collection>/<_key>` |
+| Neo4j, Memgraph, FalkorDB | nothing native: GraFlo finds a vertex by its identity field |
+| TigerGraph | the primary key, named after the identity fields |
+| PostgreSQL | the table's primary key, over the identity fields |
+| NebulaGraph | the vertex ID, built from the identity values; it has no name |
+
+Off ArangoDB, a generated key stored under another name is copied into `id`
+only when the vertex declares a property `id`: GraFlo writes no property the
+schema does not declare. On Neo4j,
+Memgraph and FalkorDB, a direct `fetch_edges` call names the property each end
+is matched on with `from_key` and `to_key`, which default to `id`.
+
 ## Per backend
 
 For the same limits at a glance, beside the other features of each backend, see
