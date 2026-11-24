@@ -84,6 +84,7 @@ class GraphManifest(ConfigBaseModel):
         Raises:
             ValueError: The first check that fails.
         """
+        self._validate_bound_resources()
         if self.graph_schema is None:
             return
         self.graph_schema.validate()
@@ -106,6 +107,7 @@ class GraphManifest(ConfigBaseModel):
         registers into the schema's edge config; it is the one step here that
         changes the schema after :meth:`normalize`.
         """
+        self._validate_bound_resources()
         if self.graph_schema is None:
             return
         self.graph_schema.normalize()
@@ -117,6 +119,23 @@ class GraphManifest(ConfigBaseModel):
                 strict_references=strict_references,
                 dynamic_edge_feedback=dynamic_edge_feedback,
                 target_db_flavor=self.graph_schema.db_profile.db_flavor,
+            )
+
+    def dangling_bound_resources(self) -> list[str]:
+        """Resources the bindings name that the ingestion model does not declare.
+
+        Empty without an ingestion block: bindings alone may name any resource.
+        """
+        if self.bindings is None or self.ingestion_model is None:
+            return []
+        declared = {resource.name for resource in self.ingestion_model.resources}
+        return sorted(self.bindings.bound_resource_names() - declared)
+
+    def _validate_bound_resources(self) -> None:
+        if dangling := self.dangling_bound_resources():
+            raise ValueError(
+                f"bindings name resources the ingestion model does not declare: "
+                f"{dangling}"
             )
 
     def require_schema(self) -> Schema:

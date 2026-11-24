@@ -237,7 +237,10 @@ Three rules make the slot the right unit:
   other side adds a property to `machine` is a real collision, visible only if
   the rename counts as touching the old slot too.
 - **An op touching several slots is atomic.** If any of them is contested, the
-  whole op is held back. Applying half an op is not a merge.
+  whole op is held back. Applying half an op is not a merge. Each side's ops
+  are first split one per slot where the op allows it: per type, per relation,
+  per resource. `set_edge_directed` splits per relation, since every edge of a
+  relation agrees on its direction.
 
 Slots nest, so `vertex/machine` contains `vertex/machine/field/serial_number`,
 and they are keyed on the canonical name: `work_order` and `WorkOrder` occupy
@@ -264,7 +267,19 @@ named in it occupies the whole manifest (`manifest`), the slot that contains
 every other: `project_manifest`, and `add_inverse_edges` with no relations
 named, which realizes whatever is paired when it runs. Such an op conflicts
 with any change on the other side. With relations named, `add_inverse_edges`
-also depends on the inverse relation's edges, which it adds to.
+also writes the inverse relation, which it adds edges to.
+
+What an op writes is taken against the base it applies to (`op_slots(op,
+base)`). An op whose cascade rewrites ingestion also writes what it rewrites
+there: removing, renaming or merging a type or relation, retargeting an edge,
+`canonicalize` and `rename_vertex_properties` write each resource whose pipeline
+names what they touch, and the bindings when those wire such a resource;
+`remove_resources` and `rename_resources` write the bindings that wire them. So
+two removals that each trim one pipeline conflict there, even when the merged
+result would load. A secondary identity writes the vertex's indexes, which hold
+its derived index; registering a transform the base lacks writes the transform
+registry (`ingestion`); `set_db_profile` writes the indexes, edge specs
+(`relation/feeds/edge/machine/line/spec`) and native inverses it sets or drops.
 
 #### What an op reads
 
@@ -283,11 +298,19 @@ apply. So an op also has a read set (`op_reads`):
 | `replace_identity`, `add_secondary_identities` | the fields they key on, and those fields' types |
 | `add_vertex_indexes`; edge index and identity ops | the fields they index or key on |
 | `add_resources`, `replace_resources` | the types the pipeline names, the relations its edge steps write, and the properties it maps from a named column (a vertex step's `from`, a router's `vertex_from_map`); not a property a step fills under its own name |
+| `set_edge_directed`, `declare_edge_inverses` | also the edge set of each relation they name |
+| `set_field_semantics` on an edge property | the property it grounds |
+| `set_db_profile` | every type, property, edge and relation its profile names |
+| the index ops, `set_native_inverses`, the identity ops | also the database profile (`db_profile`), which `set_db_profile` and `sanitize` replace or rewrite whole |
+| `set_bindings` | the resources it wires |
+| `add_resources`, `replace_resources` | also the properties of each type the pipeline produces, which a property rename rewrites it for; an `add_resources` creating the ingestion block also reads the bindings |
+| `sanitize` | every name in the schema (`vertex`, `relation`, `edge`): any type, relation or property added, renamed or removed can change the stored names it records |
 
 A read is disturbed by a write at or above it, never below: an edge onto `line`
 conflicts with removing or renaming `line`, and merges with a new property on
-it. A relation's edge set is the one exception: any edge written directly under
-the relation disturbs it. So adding a property to every `feeds` edge conflicts
+it. There are two exceptions: any edge written directly under a relation
+disturbs the relation's edge set, and any write in a name space disturbs a read
+of the whole name space. So adding a property to every `feeds` edge conflicts
 with the other side adding a `feeds` edge, which the property would reach in
 one order and not in the other; two sides adding different `feeds` edges still
 merge. Two ops reading the same thing are independent, like two edges onto one
@@ -298,8 +321,11 @@ other. `ops_independent(a, b, base)` is the test the merge and its tests share.
 Each op's apply function, writes, reads and inverse are joined in one record,
 `op_laws()` in `graflo.architecture.evolution.op_laws`, and the laws are tested
 against every record. One of them is write soundness: applied to a manifest, an op
-changes no slot its writes do not cover, except slots whose content names one it
-writes, such as an edge naming a type the op removes (`slot_projection.changes_outside`).
+changes no slot its writes against that manifest do not cover, except slots
+whose content names one it writes (`slot_projection.changes_outside`): an edge
+names its types, a resource what its pipeline names, the bindings the resources
+they wire, an index its fields, a declared pair its relations' edges, and each
+part of the database profile the profile.
 
 A change that no op expresses, such as one of a relation's edges gaining a
 property its siblings lack, cannot be merged at all: the
@@ -314,6 +340,17 @@ order, and the same content hash. A resolution takes the place of the ops it
 replaces rather than being appended, because op order is a precondition:
 `diff_manifests` emits an identity change before the secondary-identity
 addition that depends on it.
+
+A side's op can reach several contested slots, and then sits in each of their
+conflicts. It is applied only when every one of those decisions takes it, so a
+decision on one conflict cannot carry it past another that left it out. A
+resolution op that is not one of the sides' ops is applied as given.
+
+An op can sit in a conflict only through its cascade: removing `city` trims the
+pipeline of `feed`, so the removal is held by a conflict on `feed` though it
+never names it. `MergeConflict.cascaded` lists those ops, and when one side
+reaches the slot only that way, `reason` says so. Deciding such a conflict
+against the removal keeps the removed type.
 
 ### Union and three-way merge
 

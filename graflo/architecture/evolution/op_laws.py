@@ -33,7 +33,8 @@ class OpLaws:
         kind: The op's ``op`` literal.
         apply: Applies the op to a manifest in place; refuses with
             :class:`~graflo.architecture.refusal.OpRefusal`.
-        writes: The slots the op changes (:func:`.footprint.op_slots`).
+        writes: The slots the op changes, given the base it applies to, or
+            ``None`` for what the op names alone (:func:`.footprint.op_slots`).
         reads: The slots the op needs and does not change, given the base it
             applies to (:func:`.footprint.op_reads`).
         invert: Builds the op undoing it from the pre-state, or ``None`` when
@@ -44,7 +45,7 @@ class OpLaws:
 
     kind: str
     apply: Callable[[GraphManifest, Any], None]
-    writes: Callable[[Any], set[Slot]]
+    writes: Callable[[Any, GraphManifest | None], set[Slot]]
     reads: Callable[[Any, GraphManifest | None, RelationAliases | None], set[Slot]]
     invert: Callable[[Any, GraphManifest], Any] | None
     irreversible: str | None

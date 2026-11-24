@@ -102,6 +102,57 @@ class TestRenameIsNotAMerge:
             RenameHints(vertex_properties={"a": {"x": "z", "y": "z"}})
 
 
+class TestARenameMovesAName:
+    """An entry renaming a name onto itself does nothing, so no op carries one."""
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {"op": "rename_vertices", "renames": {"a": "c", "b": "b"}},
+            {"op": "rename_relations", "renames": {"ab": "ab"}},
+            {"op": "rename_resources", "renames": {"r": "r"}},
+            {"op": "rename_vertex_properties", "renames": {"a": {"a_id": "a_id"}}},
+            {"op": "rename_edge_properties", "renames": {"ab": {"w": "w"}}},
+            {
+                "op": "rename_edge_properties",
+                "per_edge": [
+                    {
+                        "source": "a",
+                        "target": "b",
+                        "relation": "ab",
+                        "renames": {"w": "w"},
+                    }
+                ],
+            },
+        ],
+        ids=[
+            "vertices",
+            "relations",
+            "resources",
+            "vertex-properties",
+            "edge-properties",
+            "edge-properties-per-edge",
+        ],
+    )
+    def test_an_identity_entry_is_rejected(self, payload: dict) -> None:
+        from graflo.architecture.evolution.codec import op_from_dict
+
+        with pytest.raises(ValidationError, match="onto itself"):
+            op_from_dict(payload)
+
+    def test_the_target_of_a_fold_may_name_itself(self) -> None:
+        from graflo.architecture.evolution.ops import RenameVertexPropertiesOp
+
+        op = RenameVertexPropertiesOp(renames={"a": {"x": "y", "y": "y"}})
+        assert op.renames == {"a": {"x": "y", "y": "y"}}
+
+    def test_hints_reject_it_too(self) -> None:
+        with pytest.raises(ValidationError, match="onto itself"):
+            RenameHints(vertex_properties={"a": {"a_id": "a_id"}})
+        with pytest.raises(ValidationError, match="onto itself"):
+            RenameHints(relations={"ab": "ab"})
+
+
 class TestRenameTargetsMustExist:
     def test_an_unknown_source_vertex_is_rejected(self) -> None:
         with pytest.raises(ValueError, match="unknown vertices"):

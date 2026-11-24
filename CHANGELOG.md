@@ -28,9 +28,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An `extra_weights` edge declares its identity tokens as properties when the manifest is loaded,
   not when ingestion runtimes are built, so a loaded manifest is already in normal form and
   `finish_init` no longer moves its hash.
+- **Breaking:** with an ingestion block, `GraphManifest.validate()` and `finish_init()` refuse
+  bindings (a `resource_connector` row or a connector's `resource_name`) that name a resource the
+  ingestion model does not declare; `set_bindings`, and `add_resources` creating the ingestion
+  block, refuse them as `unknown-resource`.
+- Removing resources or vertex types prunes only the bindings of the resources removed.
+- The rename ops and `RenameHints` refuse an entry that renames a name onto itself, unless
+  another entry folds into it.
+- `op_slots(op, base)` takes the manifest the op applies to: a type, relation or property
+  removal, rename or merge also writes the resources its cascade rewrites and their bindings.
+- A three-way merge now reports as conflicts what it used to merge into a result that did not
+  apply or depended on the side order: two cascades trimming one pipeline, a database profile or
+  `sanitize` beside a change to what they name or an index added, `set_bindings` beside the
+  removal of a resource it wires, a new pipeline beside a property rename of what it produces,
+  `set_edge_directed` or `declare_edge_inverses` beside an edge added to their relation, an edge
+  property grounded beside its creation.
+- The merge splits the resource ops per resource and `set_edge_directed` per relation.
+- A side's op held by several merge conflicts is applied only when every one of their decisions
+  takes it.
+- `MergeConflict.cascaded` lists the ops a conflict holds only through their cascade (a removal
+  or rename that rewrites the slot without naming it); such a conflict says so in `reason`.
+- `add_edge_indexes` creates an edge's physical spec when it has none, and `remove_edge_indexes`
+  drops a spec it leaves empty.
+- `diff_manifests` emits its ops in phases, each derived from the manifest the earlier phases
+  produce: removals before additions, indexes and the profile last.
 
 ### Fixed
 
+- `remove_edges` by relation clears `emit_inverse` on steps that mirrored into a removed relation.
+- `diff_manifests` output replays where it was refused partway: a property a lookup key names, an
+  index the property removal pruned, a relation changing direction or endpoints, an edge parent
+  dropped beside a direction change, an `emit_inverse` flag on a resource the target drops or
+  edits beside a retracted inverse pair.
 - `remove_edges` refuses a relation the manifest does not declare instead of ignoring it.
 - `ops_independent` no longer calls `project_manifest`, or `add_inverse_edges` with no relations
   named, independent of other ops; `add_inverse_edges` with relations named depends on the

@@ -325,3 +325,232 @@ class TestMergeCommitRelabel:
         kinds = [o.op for o in entry.ops]
         assert "canonicalize" not in kinds
         assert {"add_vertices", "remove_vertices"} <= set(kinds)
+
+
+def _schema(
+    vertices: list[dict[str, Any]],
+    *,
+    edges: list[dict[str, Any]] | None = None,
+    symmetric: list[str] | None = None,
+    inverses: list[dict[str, str]] | None = None,
+    profile: dict[str, Any] | None = None,
+    resources: list[dict[str, Any]] | None = None,
+) -> GraphManifest:
+    schema: dict[str, Any] = {
+        "metadata": {"name": "replay", "version": "1.0.0"},
+        "graph": {
+            "vertex_config": {"vertices": vertices},
+            "edge_config": {
+                "edges": edges or [],
+                "symmetric": symmetric or [],
+                "inverses": inverses or [],
+            },
+        },
+    }
+    if profile is not None:
+        schema["db_profile"] = profile
+    payload: dict[str, Any] = {"schema": schema}
+    if resources is not None:
+        payload["ingestion_model"] = {"resources": resources}
+    return GraphManifest.model_validate(payload)
+
+
+def _type(name: str, *fields: str, **extra: Any) -> dict[str, Any]:
+    return {"name": name, "properties": ["id", *fields], "identity": ["id"], **extra}
+
+
+EMAIL_KEYED = _type(
+    "person", "email", secondary_identities=[{"name": "email_key", "fields": ["email"]}]
+)
+SELF_EMPLOYS = {"source": "person", "target": "person", "relation": "employs"}
+WEIGHTED = {**SELF_EMPLOYS, "properties": ["weight"]}
+KNOWS_PAIR = [
+    {"source": "person", "target": "person", "relation": "knows"},
+    {"source": "person", "target": "person", "relation": "known_by"},
+]
+MIRRORED = {
+    "name": "feed",
+    "pipeline": [
+        {"vertex": "person"},
+        {
+            "edge": {
+                "from": "person",
+                "to": "person",
+                "relation": "knows",
+                "emit_inverse": True,
+            }
+        },
+    ],
+}
+ROWS = {"name": "rows", "pipeline": [{"vertex": "person"}]}
+INDEXED = {"edge_specs": [{**SELF_EMPLOYS, "indexes": [{"fields": ["weight"]}]}]}
+
+
+class TestPhaseOrder:
+    """Each op meets the manifest the ops before it produce."""
+
+    @pytest.mark.parametrize(
+        ("base", "target"),
+        [
+            pytest.param(
+                _schema([EMAIL_KEYED]),
+                _schema([_type("person")]),
+                id="lookup-key-before-its-property",
+            ),
+            pytest.param(
+                _schema(
+                    [_type("person", "name")],
+                    profile={"vertex_indexes": {"person": [{"fields": ["name"]}]}},
+                ),
+                _schema([_type("person")]),
+                id="index-pruned-by-its-property",
+            ),
+            pytest.param(
+                _schema(
+                    [EMAIL_KEYED],
+                    profile={"vertex_indexes": {"person": [{"fields": ["email"]}]}},
+                ),
+                _schema(
+                    [_type("person", "email")],
+                    profile={"vertex_indexes": {"person": [{"fields": ["email"]}]}},
+                ),
+                id="authored-index-shared-with-a-lookup-key",
+            ),
+            pytest.param(
+                _schema(
+                    [_type("person")],
+                    edges=[{**SELF_EMPLOYS, "directed": False}],
+                    symmetric=["employs"],
+                ),
+                _schema(
+                    [_type("person"), _type("company")],
+                    edges=[
+                        {"source": "person", "target": "company", "relation": "employs"}
+                    ],
+                ),
+                id="edge-removed-before-one-is-added",
+            ),
+            pytest.param(
+                _schema(
+                    [_type("person")],
+                    edges=[
+                        SELF_EMPLOYS,
+                        {
+                            "source": "person",
+                            "target": "person",
+                            "relation": "knows",
+                            "subproperty_of": [{"edge": SELF_EMPLOYS}],
+                        },
+                    ],
+                ),
+                _schema(
+                    [_type("person")],
+                    edges=[
+                        {
+                            "source": "person",
+                            "target": "person",
+                            "relation": "knows",
+                            "directed": False,
+                        }
+                    ],
+                    symmetric=["knows"],
+                ),
+                id="parent-cleared-before-a-direction-change",
+            ),
+            pytest.param(
+                _schema(
+                    [_type("person"), _type("company")],
+                    edges=[
+                        {
+                            "source": "person",
+                            "target": "person",
+                            "relation": "knows",
+                            "properties": ["weight"],
+                        },
+                        {
+                            "source": "company",
+                            "target": "company",
+                            "relation": "knows",
+                            "properties": ["weight"],
+                            "identities": [["source", "target", "weight"]],
+                        },
+                    ],
+                ),
+                _schema(
+                    [_type("person")],
+                    edges=[
+                        {"source": "person", "target": "person", "relation": "knows"}
+                    ],
+                ),
+                id="edge-removed-before-a-relation-wide-property-removal",
+            ),
+            pytest.param(
+                _schema([_type("person")], edges=[WEIGHTED]),
+                _schema([_type("person")], edges=[WEIGHTED], profile=INDEXED),
+                id="first-edge-index-creates-its-spec",
+            ),
+            pytest.param(
+                _schema([_type("person")], edges=[WEIGHTED], profile=INDEXED),
+                _schema([_type("person")], edges=[WEIGHTED]),
+                id="last-edge-index-drops-its-spec",
+            ),
+            pytest.param(
+                _schema(
+                    [_type("person"), _type("order")],
+                    edges=[
+                        {"source": "person", "target": "order", "relation": "ships"}
+                    ],
+                ),
+                _schema(
+                    [_type("person"), _type("order")],
+                    edges=[
+                        {
+                            "source": "person",
+                            "target": "order",
+                            "relation": "ships",
+                            "directed": False,
+                        },
+                        {
+                            "source": "order",
+                            "target": "person",
+                            "relation": "ships",
+                            "directed": False,
+                        },
+                    ],
+                    symmetric=["ships"],
+                ),
+                id="direction-changed-before-an-edge-joins-the-relation",
+            ),
+            pytest.param(
+                _schema(
+                    [_type("person")],
+                    edges=KNOWS_PAIR,
+                    inverses=[{"relation": "knows", "inverse": "known_by"}],
+                    resources=[ROWS, MIRRORED],
+                ),
+                _schema([_type("person")], resources=[ROWS]),
+                id="dropped-resource-before-a-retraction-its-flag-holds-up",
+            ),
+            pytest.param(
+                _schema(
+                    [_type("person")],
+                    edges=KNOWS_PAIR,
+                    inverses=[{"relation": "knows", "inverse": "known_by"}],
+                    resources=[MIRRORED],
+                ),
+                _schema(
+                    [_type("person")],
+                    edges=KNOWS_PAIR,
+                    resources=[
+                        {
+                            "name": "feed",
+                            "pipeline": [{"vertex": "person"}, {"vertex": "person"}],
+                        }
+                    ],
+                ),
+                id="edited-resource-flag-cleared-before-a-retraction",
+            ),
+        ],
+    )
+    def test_the_diff_replays(self, base: GraphManifest, target: GraphManifest) -> None:
+        _replays(base, target)

@@ -8,8 +8,9 @@ database profile) under ``vertex/<v>/index``, an edge's properties under its
 relation's ``field`` slot, as the footprints address them.
 
 Content also *names* other slots: an edge names its endpoint types, an
-identity its key fields, a subproperty its parent edge, the profile the types
-it has physical names for. Renaming or removing a named thing changes the
+identity or an index its key fields, a subproperty its parent edge, a declared
+pair its relations' edges, a resource what its pipeline names, the bindings
+the resources they wire, and every part of the database profile the profile. Renaming or removing a named thing changes the
 content that names it, though that content lies under another slot. A write
 therefore accounts for a change to the slots it covers and to every slot whose
 content names one of them (:func:`changes_outside`). That is the same rule the
@@ -29,7 +30,11 @@ from typing import Any, NamedTuple
 from graflo.architecture.contract.manifest import GraphManifest
 
 from .footprint import (
+    INGESTION,
+    PROFILE,
+    SPEC,
     Slot,
+    _pipeline_reads,
     covers,
     edge_field_slot,
     edge_slot,
@@ -37,7 +42,10 @@ from .footprint import (
     relation_slot,
     resource_slot,
     vertex_slot,
+    wired_resources,
 )
+
+_ENDPOINT_TOKENS = frozenset({"source", "target", "relation"})
 
 
 class SlotContent(NamedTuple):
@@ -91,6 +99,8 @@ def _project_vertices(out: _Projection, manifest: GraphManifest) -> None:
                 "identity",
                 "hash_identity_properties",
                 "identity_funnel",
+                "assigned",
+                "blank",
                 "secondary_identities",
                 "semantics",
                 "description",
@@ -107,6 +117,8 @@ def _project_vertices(out: _Projection, manifest: GraphManifest) -> None:
                 "identity": list(vertex.identity),
                 "hash": list(vertex.hash_identity_properties),
                 "funnel": _dump(vertex.identity_funnel),
+                "assigned": vertex.assigned,
+                "blank": vertex.blank,
             },
             {field_slot(vertex.name, name) for name in vertex.identity},
         )
@@ -151,6 +163,13 @@ def _project_edges(out: _Projection, manifest: GraphManifest) -> None:
     for edge in edge_config.edges:
         slot = edge_slot(edge.source, edge.target, edge.relation)
         ends = {vertex_slot(edge.source), vertex_slot(edge.target)}
+        fields = edge_field_slot(edge.source, edge.target, edge.relation)
+        keyed = {
+            (*fields, token)
+            for key in edge.identities
+            for token in key
+            if token not in _ENDPOINT_TOKENS
+        }
         out.put(
             slot,
             _without(
@@ -161,7 +180,7 @@ def _project_edges(out: _Projection, manifest: GraphManifest) -> None:
                 "description",
                 "subproperty_of",
             ),
-            ends | ({vertex_slot(edge.by)} if edge.by is not None else set()),
+            ends | keyed | ({vertex_slot(edge.by)} if edge.by is not None else set()),
         )
         out.put((*slot, "directed"), edge.directed, ends)
         if edge.semantics is not None:
@@ -181,7 +200,6 @@ def _project_edges(out: _Projection, manifest: GraphManifest) -> None:
             )
         # A property of an edge lives under its relation's property slot, keyed
         # by the edge, and names the edge it belongs to.
-        fields = edge_field_slot(edge.source, edge.target, edge.relation)
         key = json.dumps([edge.source, edge.target, edge.relation])
         for prop in edge.properties:
             payload = _dump(prop)
@@ -195,32 +213,62 @@ def _project_edges(out: _Projection, manifest: GraphManifest) -> None:
                 out.put((*fields, prop.name, "type"), {key: typed}, ends | {slot})
             if "semantics" in payload:
                 out.put((*slot, "field", prop.name, "semantics"), payload["semantics"])
+
+    # A declaration lasts while its relations have edges, so it names their
+    # edges and endpoints; a pair also names its partner's side of itself.
+    def declared(relations: list[str]) -> set[Slot]:
+        wanted = {relation_slot(name) for name in relations}
+        names = set(wanted)
+        for edge in edge_config.edges:
+            if edge.relation is not None and relation_slot(edge.relation) in wanted:
+                names |= {
+                    edge_slot(edge.source, edge.target, edge.relation),
+                    vertex_slot(edge.source),
+                    vertex_slot(edge.target),
+                }
+        return names
+
     for pair in edge_config.inverses:
         payload = _dump(pair)
         relations = [value for value in payload.values() if isinstance(value, str)]
+        names = declared(relations) | {
+            (*relation_slot(other), "inverse") for other in relations
+        }
         for relation in relations:
-            out.put(
-                (*relation_slot(relation), "inverse"),
-                payload,
-                {relation_slot(other) for other in relations},
-            )
+            out.put((*relation_slot(relation), "inverse"), payload, names)
     for relation in edge_config.symmetric:
-        out.put((*relation_slot(relation), "inverse"), {"symmetric": relation})
+        out.put(
+            (*relation_slot(relation), "inverse"),
+            {"symmetric": relation},
+            declared([relation]),
+        )
 
 
 def _project_profile(out: _Projection, manifest: GraphManifest) -> None:
     assert manifest.graph_schema is not None
     profile = manifest.graph_schema.db_profile
+    whole = {PROFILE}
     for relation in profile.native_inverses:
-        out.put((*relation_slot(relation), "native_inverse"), True)
+        out.put((*relation_slot(relation), "native_inverse"), True, whole)
     for vertex, indexes in profile.vertex_indexes.items():
-        out.put((*vertex_slot(vertex), "index"), [_dump(index) for index in indexes])
-    for spec in profile.edge_specs:
         out.put(
-            edge_slot(spec.source, spec.target, spec.relation), {"spec": _dump(spec)}
+            (*vertex_slot(vertex), "index"),
+            [_dump(index) for index in indexes],
+            whole | {field_slot(vertex, f) for index in indexes for f in index.fields},
+        )
+    for spec in profile.edge_specs:
+        edge = edge_slot(spec.source, spec.target, spec.relation)
+        fields = edge_field_slot(spec.source, spec.target, spec.relation)
+        out.put(
+            (*edge, SPEC),
+            _dump(spec),
+            whole
+            | {edge, vertex_slot(spec.source), vertex_slot(spec.target)}
+            | {(*fields, f) for index in spec.indexes for f in index.fields}
+            | {(*fields, f) for f in spec.property_names},
         )
     out.put(
-        ("db_profile",),
+        PROFILE,
         _without(_dump(profile), "native_inverses", "vertex_indexes", "edge_specs"),
         {
             vertex_slot(vertex)
@@ -243,12 +291,18 @@ def slot_contents(manifest: GraphManifest) -> dict[Slot, SlotContent]:
         _project_edges(out, manifest)
         _project_profile(out, manifest)
     if manifest.bindings is not None:
-        out.put(("bindings",), _dump(manifest.bindings))
+        out.put(
+            ("bindings",),
+            _dump(manifest.bindings),
+            {resource_slot(name) for name in wired_resources(manifest.bindings)},
+        )
     if manifest.ingestion_model is not None:
         for resource in manifest.ingestion_model.resources:
-            out.put(resource_slot(resource.name), _dump(resource))
+            out.put(
+                resource_slot(resource.name), _dump(resource), _pipeline_reads(resource)
+            )
         out.put(
-            ("ingestion",),
+            INGESTION,
             _without(_dump(manifest.ingestion_model), "resources"),
         )
     return out.result()

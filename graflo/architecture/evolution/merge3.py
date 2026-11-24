@@ -28,7 +28,9 @@ Three things make the slot the right unit:
   the differ emits one op per kind for the whole manifest, and a decision on
   one slot must not carry another slot's edits. An op that cannot be split
   (a swap, a pipeline) is **atomic**: if any one of its slots is contested,
-  the whole op is held back. Applying half an op is not a merge.
+  the whole op is held back. Applying half an op is not a merge. An op held
+  by several conflicts is applied only when every one of their decisions
+  takes it.
 * An op **reads** as well as writes. An edge added onto ``company`` writes the
   edge and depends on ``company``; the other side removing ``company`` writes a
   different slot and still cannot be merged with it (:func:`op_reads`). A read
@@ -104,8 +106,9 @@ class MergeError(RuntimeError):
 
 #: How an op divides into one op per slot: each payload field to split, and how.
 #: ``items`` splits a list per element, ``keys`` a mapping per key, ``entries`` a
-#: mapping per key *and* per element (or inner key) under it. An op kind absent
-#: here is never split: a resource pipeline, an inverse table, a whole block.
+#: mapping per key *and* per element (or inner key) under it, ``relation`` a
+#: list of edges per relation. An op kind absent here is never split: an inverse
+#: table, a whole block. A resource is one piece, its pipeline never split.
 _SPLITS: dict[type, tuple[tuple[str, str], ...]] = {
     ops.AddVerticesOp: (("vertices", "items"),),
     ops.RemoveVerticesOp: (("names", "items"),),
@@ -132,7 +135,8 @@ _SPLITS: dict[type, tuple[tuple[str, str], ...]] = {
     ops.ReplaceEdgeIdentitiesOp: (("edges", "items"),),
     ops.AddEdgeIndexesOp: (("edges", "items"),),
     ops.RemoveEdgeIndexesOp: (("edges", "items"),),
-    ops.SetEdgeDirectedOp: (("edges", "items"),),
+    # Every edge of a relation agrees on `directed`: one piece per relation.
+    ops.SetEdgeDirectedOp: (("edges", "relation"),),
     ops.SetEdgeSemanticsOp: (("edges", "items"),),
     ops.SetEdgeDescriptionsOp: (("edges", "items"),),
     ops.SetEdgeSubpropertyOfOp: (("edges", "items"),),
@@ -140,6 +144,13 @@ _SPLITS: dict[type, tuple[tuple[str, str], ...]] = {
     ops.AddEdgePropertiesOp: (("additions", "keys"), ("per_edge", "items")),
     ops.RemoveEdgePropertiesOp: (("removals", "keys"), ("per_edge", "items")),
     ops.RenameEdgePropertiesOp: (("renames", "keys"), ("per_edge", "items")),
+    ops.AddResourcesOp: (("resources", "items"),),
+    ops.ReplaceResourcesOp: (("resources", "items"),),
+    ops.RemoveResourcesOp: (("names", "items"),),
+    ops.RenameResourcesOp: (("renames", "keys"),),
+    ops.AddResourceTransformsOp: (("additions", "keys"),),
+    ops.EnsureExtractedFieldsOp: (("additions", "keys"),),
+    ops.SetInverseEmissionOp: (("steps", "keys"),),
 }
 
 
@@ -151,6 +162,9 @@ def _rename_chains(op: ManifestOp) -> bool:
     """
     if isinstance(op, (ops.RenameVerticesOp, ops.RenameRelationsOp)):
         maps = [op.renames]
+    elif isinstance(op, ops.RenameResourcesOp):
+        # Resource names are compared as written, not canonically.
+        return bool(set(op.renames.values()) & set(op.renames))
     elif isinstance(op, ops.RenameVertexPropertiesOp):
         maps = list(op.renames.values())
     elif isinstance(op, ops.RenameEdgePropertiesOp):
@@ -190,6 +204,13 @@ def split_by_slot(op: ManifestOp) -> list[ManifestOp]:
             pieces += [{name: [item]} for item in value]
         elif how == "keys":
             pieces += [{name: {key: inner}} for key, inner in value.items()]
+        elif how == "relation":
+            groups: dict[Slot | None, list[Any]] = {}
+            for item in value:
+                relation = item.get("relation")
+                key = relation_slot(relation) if relation is not None else None
+                groups.setdefault(key, []).append(item)
+            pieces += [{name: items} for items in groups.values()]
         else:
             for key, inner in value.items():
                 if isinstance(inner, dict):
@@ -288,6 +309,13 @@ class MergeConflict(ConfigBaseModel):
         default="both sides changed this slot",
         description="Why this could not be merged automatically.",
     )
+    cascaded: list[RevisionOp] = PydanticField(
+        default_factory=list,
+        description=(
+            "The ops of either side held here only through their cascade: a "
+            "removal or rename that rewrites this slot without naming it."
+        ),
+    )
 
     @property
     def slot_key(self) -> Slot:
@@ -368,9 +396,11 @@ def _contact_points(left: set[Slot], right: set[Slot]) -> set[Slot]:
     return points
 
 
-def _ops_touching(ops: list[ManifestOp], slot: Slot) -> list[ManifestOp]:
+def _ops_touching(
+    ops: list[ManifestOp], slot: Slot, base: GraphManifest
+) -> list[ManifestOp]:
     """The ops that reach *slot*, in their original order."""
-    return [op for op in ops if _touches(op_slots(op), slot)]
+    return [op for op in ops if _touches(op_slots(op, base), slot)]
 
 
 def _dependencies(
@@ -395,7 +425,7 @@ def _dependencies(
         for writer in writers:
             if _canonical_ops([writer]) in shared:
                 continue
-            for written in op_slots(writer):
+            for written in op_slots(writer, base):
                 if any(depends_on(read, written) for read in reads):
                     found.setdefault(key, set()).add(written)
     return found
@@ -493,14 +523,14 @@ def merge_three_way(
     left_ops = [piece for op in left_ops for piece in split_by_slot(op)]
     right_ops = [piece for op in right_ops for piece in split_by_slot(op)]
 
-    left_slots = {slot for op in left_ops for slot in op_slots(op)}
-    right_slots = {slot for op in right_ops for slot in op_slots(op)}
+    left_slots = {slot for op in left_ops for slot in op_slots(op, base)}
+    right_slots = {slot for op in right_ops for slot in op_slots(op, base)}
 
     # A slot is contested when both sides reach it and disagree about how.
     contested: set[Slot] = set()
     for slot in sorted(_contact_points(left_slots, right_slots)):
-        if _canonical_ops(_ops_touching(left_ops, slot)) != _canonical_ops(
-            _ops_touching(right_ops, slot)
+        if _canonical_ops(_ops_touching(left_ops, slot, base)) != _canonical_ops(
+            _ops_touching(right_ops, slot, base)
         ):
             contested.add(slot)
 
@@ -516,13 +546,28 @@ def merge_three_way(
 
     def reaches(op: ManifestOp, slot: Slot) -> bool:
         """Whether *op* writes at *slot* or depends on what is written there."""
-        return _touches(op_slots(op), slot) or slot in depends.get(
+        return _touches(op_slots(op, base), slot) or slot in depends.get(
             _canonical_ops([op]), ()
+        )
+
+    def cascaded(op: ManifestOp, slot: Slot) -> bool:
+        """Whether *op* reaches *slot* only through what its cascade rewrites."""
+        return (
+            _touches(op_slots(op, base), slot)
+            and not _touches(op_slots(op), slot)
+            and slot not in depends.get(_canonical_ops([op]), ())
         )
 
     def reason_for(slot: Slot) -> str:
         if slot == WHOLE_MANIFEST:
             return "a whole-manifest op cannot be merged with another change"
+        for side in (left_ops, right_ops):
+            held = [op for op in side if reaches(op, slot)]
+            if held and all(cascaded(op, slot) for op in held):
+                return (
+                    "one side's change reaches this slot only through what it "
+                    "removes or renames"
+                )
         if slot in written_by_both:
             return "both sides changed this slot differently"
         return "one side changed this slot and the other side's change depends on it"
@@ -539,6 +584,11 @@ def merge_three_way(
             ),
             base_excerpt=_base_excerpt(base, slot),
             reason=reason_for(slot),
+            cascaded=ops_from_dicts(
+                ops_to_dicts(
+                    [op for op in [*left_ops, *right_ops] if cascaded(op, slot)]
+                )
+            ),
         )
         for slot in unresolved
     ]
@@ -561,6 +611,38 @@ def merge_three_way(
     applied_canonical: set[str] = set()
     placed_slots: set[Slot] = set()
 
+    # A side's op held by several conflicts follows all their decisions, not
+    # any one of them: it is applied only when every one of them takes it.
+    held: dict[str, set[Slot]] = {}
+    for op in [*left_ops, *right_ops]:
+        reached = {slot for slot in contested if reaches(op, slot)}
+        if reached:
+            held.setdefault(_canonical_ops([op]), set()).update(reached)
+    taken: dict[Slot, set[str]] = {
+        slot: {
+            _canonical_ops([piece])
+            for resolution_op in resolution.ops
+            for piece in split_by_slot(resolution_op)
+        }
+        for slot, resolution in resolved.items()
+    }
+
+    def decided(resolution_op: ManifestOp) -> list[ManifestOp]:
+        """What of *resolution_op* the decisions agree to apply.
+
+        A hand-written op applies as given; a side's op, or a piece of one,
+        only when every conflict holding it takes it.
+        """
+        pieces = split_by_slot(resolution_op)
+        keys = [_canonical_ops([piece]) for piece in pieces]
+        if not all(key in held for key in keys):
+            return [resolution_op]
+        return [
+            piece
+            for piece, key in zip(pieces, keys)
+            if all(key in taken.get(slot, ()) for slot in held[key])
+        ]
+
     def emit(op: ManifestOp) -> None:
         # Both sides making the identical change is agreement, not duplication.
         canonical = _canonical_ops([op])
@@ -580,7 +662,8 @@ def merge_three_way(
             resolution = resolved.get(contested_slot)
             if resolution is not None:
                 for resolution_op in resolution.ops:
-                    emit(resolution_op)
+                    for piece in decided(resolution_op):
+                        emit(piece)
 
     for op in [*left_ops, *right_ops]:
         if blocked(op):
@@ -594,7 +677,8 @@ def merge_three_way(
         resolution = resolved.get(slot)
         if resolution is not None:
             for resolution_op in resolution.ops:
-                emit(resolution_op)
+                for piece in decided(resolution_op):
+                    emit(piece)
     if conflicts:
         return None, MergeResult(ops=[], conflicts=conflicts, warnings=warnings)
 

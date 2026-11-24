@@ -146,6 +146,9 @@ resource that reads its records.
   `{resource: <resource name>, connector: <connector name>}` rows. One
   resource may appear on several rows when its records come from several
   places. A connector that a row refers to needs a `name`.
+- When the manifest has an `ingestion_model`, every resource that
+  `resource_name` or a `resource_connector` row names must be one of its
+  resources; validation refuses one that is not.
 - `connector_connection`: for sources that need credentials, a list of
   `{connector: <connector name>, conn_proxy: <label>}` rows. The manifest
   holds only the label; at run time you supply the connection settings for

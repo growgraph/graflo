@@ -488,8 +488,20 @@ def _invert_remove_vertex_indexes(
 
 
 def _invert_add_edge_indexes(
-    op: AddEdgeIndexesOp, _manifest: GraphManifest
-) -> ManifestOp:
+    op: AddEdgeIndexesOp, manifest: GraphManifest
+) -> ManifestOp | None:
+    """Remove what the op added; absent when that would drop a spec it found.
+
+    The removal drops a spec it leaves bare, so a bare spec in the pre-state
+    would not come back.
+    """
+    from .physical import is_bare_edge_spec
+
+    profile = _profile(manifest)
+    for entry in op.edges:
+        spec = None if profile is None else _edge_spec(profile, entry)
+        if spec is not None and is_bare_edge_spec(spec):
+            return None
     return RemoveEdgeIndexesOp(
         edges=[
             EdgeIndexEntry(

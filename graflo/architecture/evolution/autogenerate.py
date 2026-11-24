@@ -102,6 +102,7 @@ from .ops import (
     SetVertexSemanticsOp,
     SetVertexSubclassOfOp,
     validate_rename_map_is_injective,
+    validate_rename_map_moves,
 )
 
 logger = logging.getLogger(__name__)
@@ -135,12 +136,26 @@ class RenameHints(ConfigBaseModel):
 
     @model_validator(mode="after")
     def _reject_collapsing_maps(self) -> RenameHints:
-        """Reject hints that would collapse two names onto one.
+        """Reject hints that would collapse two names onto one, or keep one.
 
         The hints are handed to the rename ops verbatim, and the differ itself keys
         by the renamed name (``hints.vertices.get(name, name)``), so a collapsing
         hint corrupts the *diff* before any op is applied.
         """
+        for kind, renames in (
+            ("vertices", self.vertices),
+            ("relations", self.relations),
+            ("resources", self.resources),
+            *(
+                (f"vertex_properties[{owner!r}]", fields)
+                for owner, fields in self.vertex_properties.items()
+            ),
+            *(
+                (f"edge_properties[{owner!r}]", fields)
+                for owner, fields in self.edge_properties.items()
+            ),
+        ):
+            validate_rename_map_moves(renames, kind=f"rename hint: {kind}")
         validate_rename_map_is_injective(
             self.vertices,
             kind="rename hint: vertices",
@@ -314,57 +329,79 @@ def diff_manifests(
 ) -> tuple[list[ManifestOp], list[str]]:
     """Ops turning *base* into *target*, plus warnings for what was not expressed.
 
-    Ops are ordered so each one's preconditions hold when it runs: renames
-    first (so later ops address the new names), then additions, then property
-    and identity changes, then removals last. Edge property changes precede edge
-    additions: they address a whole relation, and must not reach a sibling edge
-    the diff adds with properties of its own.
+    The ops come in phases, and each phase is computed against the manifest the
+    earlier ones produce -- applied, not predicted -- so every op meets the
+    state it will run on, cascades included:
+
+    1. renames, so later ops address the new names;
+    2. withdrawals and removals: resources, mirroring flags, native inverses
+       and inverse declarations, edge parents and lookup keys the target
+       drops, then edges;
+    3. edits and additions: vertices, edge properties (before edge additions,
+       so a relation-wide change cannot reach an edge the diff adds), edge
+       directions then added edges, vertex properties and identities,
+       property removals once no key names them, groundings, then inverse
+       declarations;
+    4. ingestion: appended transforms, added and replaced resources, flags;
+    5. vertex removals, once the resources no longer need the vertices;
+    6. indexes, or the whole profile, and the bindings, against what the
+       cascades above left.
     """
     hints = hints or RenameHints()
     warnings: list[str] = []
     ops: list[ManifestOp] = []
-    original = base
+    current = base
 
     rename_ops = _rename_ops(hints)
     renamed = _apply_renames(base, rename_ops)
     if renamed is not None:
-        # Every later stage compares against the manifest the renames actually
-        # produce, rather than re-deriving each rename's reach by hand: a rename
-        # rewrites resource pipelines, secondary identities and index keys, and
-        # a stage that compared against the pre-rename base would report each
-        # of those as an edit -- or re-add what the rename already moved.
-        base, hints = renamed, RenameHints()
-
-    profile_replaced = _profile_needs_replacing(base, target)
+        # A rename rewrites resource pipelines, secondary identities and index
+        # keys; every later phase reads the renamed manifest rather than
+        # re-deriving each rename's reach.
+        current, hints = renamed, RenameHints()
     ops += rename_ops
-    ops += _inverse_withdrawal_ops(base, target, hints)
-    ops += _vertex_structure_ops(base, target, hints, warnings)
-    ops += _edge_property_ops(base, target, hints)
-    ops += _edge_structure_ops(base, target, hints, warnings)
-    ops += _vertex_property_ops(base, target, hints)
-    ops += _identity_ops(base, target, hints, warnings)
-    ops += _semantics_ops(base, target, hints)
-    ops += _inverse_declaration_ops(
-        base, target, hints, profile_replaced=profile_replaced
+    # Decided up front: native inverses are enabled in phase 3 only when the
+    # profile is not replaced later, since a profile change (the flavor) may
+    # be what admits them.
+    profile_replaced = _profile_needs_replacing(current, target)
+
+    def _phase(phase_ops: list[ManifestOp]) -> None:
+        nonlocal current
+        ops.extend(phase_ops)
+        if phase_ops:
+            # A failing phase is left for verification to report; the later
+            # phases then read the last manifest that applied.
+            current = _apply_quietly(current, phase_ops) or current
+
+    _phase(
+        [
+            # Resources first: a step of a resource the target drops must not
+            # hold up a withdrawal the target makes.
+            *_resource_removal_ops(current, target, hints),
+            *_inverse_withdrawal_ops(current, target, hints),
+            *_parent_withdrawal_ops(current, target, hints),
+            *_secondary_identity_withdrawal_ops(current, target, hints, warnings),
+            *_edge_removal_ops(current, target, hints),
+        ]
     )
-    if not profile_replaced:
-        # A profile replacement carries the indexes too, so emitting both would
-        # be redundant and order-sensitive.
-        ops += _index_ops(base, target, hints)
-    edited: list[str] = []
-    resource_ops, pending_transforms = _resource_ops(
-        base, target, hints, warnings, edited
+    _phase(
+        [
+            *_vertex_structure_ops(current, target, hints, warnings),
+            *_edge_property_ops(current, target, hints),
+            *_edge_structure_ops(current, target, hints, warnings),
+            *_vertex_property_ops(current, target, hints),
+            *_identity_ops(current, target, hints),
+            *_vertex_property_removal_ops(current, target, hints),
+            *_semantics_ops(current, target, hints),
+            *_inverse_declaration_ops(
+                current, target, hints, profile_replaced=profile_replaced
+            ),
+        ]
     )
-    ops += resource_ops
-    removals = _removal_ops(base, target, hints)
-    ops += _replacement_ops(
-        original, ops, removals, target, edited, pending_transforms, warnings
-    )
-    ops += removals
-    # The removal cascades prune bindings, so whether the target's block still
-    # has to be set is read off the manifest the ops so far produce.
-    replayed = _apply_quietly(original, ops) if ops else original
-    ops += _block_ops(replayed or base, target, profile_replaced=profile_replaced)
+    vertex_removals = _vertex_removal_ops(current, target, hints)
+    _phase(_ingestion_ops(current, target, hints, warnings, vertex_removals))
+    _phase(vertex_removals)
+    ops += _block_ops(current, target, hints, profile_replaced=profile_replaced)
 
     _warn_unexpressed(base, target, warnings, hints)
     return ops, warnings
@@ -463,13 +500,14 @@ def _edge_structure_ops(
     hints: RenameHints,
     warnings: list[str],
 ) -> list[ManifestOp]:
+    """Direction changes, then added edges.
+
+    Every edge of a relation agrees on ``directed``, so the kept edges take
+    their new direction before an edge in that direction joins them.
+    """
     ops: list[ManifestOp] = []
     base_edges = _edges_after_renames(base, hints)
     target_edges = _edges(target)
-
-    added = [edge for key, edge in target_edges.items() if key not in base_edges]
-    if added:
-        ops.append(AddEdgesOp(edges=added))
 
     flipped: dict[bool, list[EdgeSelector]] = {True: [], False: []}
     for key, edge in target_edges.items():
@@ -481,6 +519,10 @@ def _edge_structure_ops(
     for directed, selectors in flipped.items():
         if selectors:
             ops.append(SetEdgeDirectedOp(edges=selectors, directed=directed))
+
+    added = [edge for key, edge in target_edges.items() if key not in base_edges]
+    if added:
+        ops.append(AddEdgesOp(edges=added))
     return ops
 
 
@@ -541,6 +583,47 @@ def _inverse_withdrawal_ops(
     return ops
 
 
+def _parent_withdrawal_ops(
+    base: GraphManifest, target: GraphManifest, hints: RenameHints
+) -> list[ManifestOp]:
+    """Drop the edge parents the target does not keep, before direction changes.
+
+    A parent and its subproperty agree on ``directed``, so a parent that goes
+    must go before either edge flips; parents the target adds come with the
+    groundings, once the direction is final.
+    """
+    base_edges = _edges_after_renames(base, hints)
+    narrowed: list[EdgeSubpropertyTarget] = []
+    for key, new_edge in sorted(
+        _edges(target).items(), key=lambda item: _edge_sort_key(item[0])
+    ):
+        old_edge = base_edges.get(key)
+        if old_edge is None:
+            continue
+        old_refs = _renamed_parents(old_edge, hints)
+        kept = [ref for ref in old_refs if ref in new_edge.subproperty_of]
+        if kept != old_refs:
+            narrowed.append(
+                EdgeSubpropertyTarget(
+                    source=key[0],
+                    target=key[1],
+                    relation=key[2],
+                    subproperty_of=kept,
+                )
+            )
+    return [SetEdgeSubpropertyOfOp(edges=narrowed)] if narrowed else []
+
+
+def _renamed_parents(edge: Edge, hints: RenameHints) -> list[SuperProperty]:
+    """*edge*'s parents, a local parent under the id the hints rename it to."""
+    return [
+        SuperProperty(edge=EdgeRef.of(_renamed_edge_id(p.edge.edge_id(), hints)))
+        if p.edge is not None
+        else p
+        for p in edge.subproperty_of
+    ]
+
+
 def _inverse_declaration_ops(
     base: GraphManifest,
     target: GraphManifest,
@@ -577,7 +660,6 @@ def _vertex_property_ops(
     target_vertices = _vertices(target)
 
     additions: dict[str, list[str | Field]] = {}
-    removals: dict[str, list[str]] = {}
     type_changes: dict[str, dict[str, dict[str, Any]]] = {}
 
     for name, new_vertex in target_vertices.items():
@@ -603,11 +685,8 @@ def _vertex_property_ops(
             for f in new_fields
             if f not in old_fields and f not in synthetic
         ]
-        lost = [f for f in old_fields if f not in new_fields]
         if gained:
             additions[name] = gained
-        if lost:
-            removals[name] = lost
 
         changed = _field_type_changes(old_fields, new_fields)
         if changed:
@@ -617,9 +696,27 @@ def _vertex_property_ops(
         ops.append(AddVertexPropertiesOp(additions=additions))
     if type_changes:
         ops.append(ChangeFieldTypesOp(vertices=type_changes))
-    if removals:
-        ops.append(RemoveVertexPropertiesOp(removals=removals))
     return ops
+
+
+def _vertex_property_removal_ops(
+    base: GraphManifest, target: GraphManifest, hints: RenameHints
+) -> list[ManifestOp]:
+    """Properties the target drops, once the identity ops have freed them."""
+    base_vertices = _vertices_after_renames(base, hints)
+    removals = {
+        name: lost
+        for name, new_vertex in _vertices(target).items()
+        if (old_vertex := base_vertices.get(name)) is not None
+        and (
+            lost := [
+                f.name
+                for f in old_vertex.properties
+                if f.name not in new_vertex.property_names
+            ]
+        )
+    }
+    return [RemoveVertexPropertiesOp(removals=removals)] if removals else []
 
 
 def _edge_property_ops(
@@ -859,14 +956,7 @@ def _semantics_ops(
         old_edge = base_edges.get(key)
         if old_edge is None:
             continue
-        # A local parent the hints rename is the same parent under its new id.
-        old_refs = [
-            SuperProperty(edge=EdgeRef.of(_renamed_edge_id(p.edge.edge_id(), hints)))
-            if p.edge is not None
-            else p
-            for p in old_edge.subproperty_of
-        ]
-        if old_refs != new_edge.subproperty_of:
+        if _renamed_parents(old_edge, hints) != new_edge.subproperty_of:
             edge_parents.append(
                 EdgeSubpropertyTarget(
                     source=key[0],
@@ -927,6 +1017,24 @@ def _canonical_registry(transforms: Any) -> list[Any]:
         (canonical_payload(t) for t in transforms),
         key=lambda item: json.dumps(item, sort_keys=True, default=str),
     )
+
+
+def _ingestion_ops(
+    base: GraphManifest,
+    target: GraphManifest,
+    hints: RenameHints,
+    warnings: list[str],
+    vertex_removals: list[ManifestOp],
+) -> list[ManifestOp]:
+    """Appended transforms, added resources and flags, then replaced resources."""
+    edited: list[str] = []
+    ops, pending_transforms = _resource_ops(base, target, hints, warnings, edited)
+    return [
+        *ops,
+        *_replacement_ops(
+            base, vertex_removals, target, edited, pending_transforms, warnings
+        ),
+    ]
 
 
 def _resource_ops(
@@ -1013,8 +1121,7 @@ def _resource_ops(
 
 
 def _replacement_ops(
-    original: GraphManifest,
-    earlier: list[ManifestOp],
+    base: GraphManifest,
     removals: list[ManifestOp],
     target: GraphManifest,
     edited: list[str],
@@ -1023,9 +1130,9 @@ def _replacement_ops(
 ) -> list[ManifestOp]:
     """``replace_resources`` for the edited resources the removals do not produce.
 
-    A removal trims every pipeline naming what it removes, so a resource the
-    target holds in exactly that trimmed form needs no op of its own. The rest
-    are replaced whole, ahead of the removals: a target definition names
+    A vertex removal trims every pipeline naming what it removes, so a resource
+    the target holds in exactly that trimmed form needs no op of its own. The
+    rest are replaced whole, ahead of the removals: a target definition names
     nothing that is removed, so no cascade touches it afterwards.
     """
     target_ingestion = target.ingestion_model
@@ -1036,10 +1143,12 @@ def _replacement_ops(
                 "beyond add_resource_transforms"
             )
         return []
-    probe = _apply_quietly(original, [*earlier, *removals])
+    # A removal that would empty the ingestion block refuses; the resources are
+    # then read as they stand, and every edited one is replaced.
+    probe = (_apply_quietly(base, removals) if removals else None) or base
     produced = (
         {r.name: r for r in probe.ingestion_model.resources}
-        if probe is not None and probe.ingestion_model is not None
+        if probe.ingestion_model is not None
         else {}
     )
     wanted = set(edited)
@@ -1083,8 +1192,8 @@ def _emission_flag_changes(
     Steps are addressed by position, so a change is reported only where the
     positions of the two pipelines correspond: the pipelines are the same with
     the flags set aside, or the target only appends transform steps at the root.
-    Any other pipeline edit is already reported as inexpressible, and guessing
-    at positions across it would flag the wrong step.
+    A resource edited any other way is replaced whole, flags included, so every
+    flag it holds now is cleared: one could hold up a withdrawal before then.
     """
     base_ingestion, target_ingestion = base.ingestion_model, target.ingestion_model
     if base_ingestion is None or target_ingestion is None:
@@ -1102,10 +1211,8 @@ def _emission_flag_changes(
         after = {
             str(view.ref): view for view in iter_edge_steps(list(resource.pipeline))
         }
-        if all(
-            before[key].emit_inverse == after[key].emit_inverse
-            for key in before.keys() & after.keys()
-        ):
+        held = [view.ref for view in before.values() if view.emit_inverse]
+        if not held and not any(view.emit_inverse for view in after.values()):
             continue
         old_plain, new_plain = _without_emission(old), _without_emission(resource)
         comparable = (
@@ -1113,6 +1220,8 @@ def _emission_flag_changes(
             or _appended_root_transforms(old_plain, new_plain) is not None
         )
         if not comparable:
+            if held:
+                to_clear[resource.name] = sorted(held, key=str)
             continue
         for key in sorted(before.keys() & after.keys()):
             was, now = before[key].emit_inverse, after[key].emit_inverse
@@ -1151,11 +1260,39 @@ def _appended_root_transforms(
     return [dict(step) for step in new.pipeline[len(old_steps) :]]
 
 
-def _identity_ops(
+def _secondary_identity_withdrawal_ops(
     base: GraphManifest,
     target: GraphManifest,
     hints: RenameHints,
     warnings: list[str],
+) -> list[ManifestOp]:
+    """Lookup keys the target drops, before any property they name is removed."""
+    base_vertices = _vertices_after_renames(base, hints)
+    secondary_remove: dict[str, list[str]] = {}
+    for name, new_vertex in _vertices(target).items():
+        old_vertex = base_vertices.get(name)
+        if old_vertex is None:
+            continue
+        new_keys = {_secondary_key(s) for s in new_vertex.secondary_identities}
+        lost = [
+            s.name or ""
+            for s in old_vertex.secondary_identities
+            if _secondary_key(s) not in new_keys
+        ]
+        if lost and all(lost):
+            secondary_remove[name] = lost
+        elif lost:
+            warnings.append(
+                f"vertex '{name}': an unnamed secondary identity was removed and "
+                "cannot be addressed by name"
+            )
+    if not secondary_remove:
+        return []
+    return [RemoveSecondaryIdentitiesOp(removals=secondary_remove)]
+
+
+def _identity_ops(
+    base: GraphManifest, target: GraphManifest, hints: RenameHints
 ) -> list[ManifestOp]:
     ops: list[ManifestOp] = []
     base_vertices = _vertices_after_renames(base, hints)
@@ -1163,7 +1300,6 @@ def _identity_ops(
 
     replacements: dict[str, dict[str, Any]] = {}
     secondary_add: dict[str, list[Any]] = {}
-    secondary_remove: dict[str, list[str]] = {}
 
     for name, new_vertex in target_vertices.items():
         old_vertex = base_vertices.get(name)
@@ -1178,30 +1314,19 @@ def _identity_ops(
                 "retire": "keep",
             }
 
-        old_secondary = {_secondary_key(s): s for s in old_vertex.secondary_identities}
-        new_secondary = {_secondary_key(s): s for s in new_vertex.secondary_identities}
-        gained = [s for key, s in new_secondary.items() if key not in old_secondary]
-        lost = [
-            old_secondary[key].name or ""
-            for key in old_secondary
-            if key not in new_secondary
+        old_keys = {_secondary_key(s) for s in old_vertex.secondary_identities}
+        gained = [
+            s
+            for s in new_vertex.secondary_identities
+            if _secondary_key(s) not in old_keys
         ]
         if gained:
             secondary_add[name] = gained
-        if lost and all(lost):
-            secondary_remove[name] = lost
-        elif lost:
-            warnings.append(
-                f"vertex '{name}': an unnamed secondary identity was removed and "
-                "cannot be addressed by name"
-            )
 
     if replacements:
         ops.append(ReplaceIdentityOp(replacements=replacements))
     if secondary_add:
         ops.append(AddSecondaryIdentitiesOp(additions=secondary_add))
-    if secondary_remove:
-        ops.append(RemoveSecondaryIdentitiesOp(removals=secondary_remove))
     return ops
 
 
@@ -1306,32 +1431,32 @@ def _edge_index_ops(
     return ops
 
 
-def _removal_ops(
+def _resource_removal_ops(
     base: GraphManifest, target: GraphManifest, hints: RenameHints
 ) -> list[ManifestOp]:
-    """Removals run last so earlier ops still address the elements they need.
-
-    Resources go first: removing a vertex drops a resource its pipeline no
-    longer names, so a resource removed after it would be removed twice.
-    """
-    ops: list[ManifestOp] = []
-
+    """Resources the target drops; first, so no cascade has dropped one already."""
     base_ingestion, target_ingestion = base.ingestion_model, target.ingestion_model
-    if base_ingestion is not None and target_ingestion is not None:
-        target_names = {r.name for r in target_ingestion.resources}
-        gone_resources = sorted(
-            {hints.resources.get(r.name, r.name) for r in base_ingestion.resources}
-            - target_names
-        )
-        if gone_resources:
-            ops.append(RemoveResourcesOp(names=gone_resources))
+    if base_ingestion is None or target_ingestion is None:
+        return []
+    target_names = {r.name for r in target_ingestion.resources}
+    gone = sorted(
+        {hints.resources.get(r.name, r.name) for r in base_ingestion.resources}
+        - target_names
+    )
+    return [RemoveResourcesOp(names=gone)] if gone else []
 
+
+def _edge_removal_ops(
+    base: GraphManifest, target: GraphManifest, hints: RenameHints
+) -> list[ManifestOp]:
+    """Edges the target drops, before any is added or edited.
+
+    A relation is removed by name only when the target keeps no edge on it:
+    removal by name takes every edge of the relation.
+    """
     base_edges = _edges_after_renames(base, hints)
     target_edges = _edges(target)
     gone = [key for key in base_edges if key not in target_edges]
-    # A relation is removed by name only when the target keeps no edge on it:
-    # removal by name takes every edge of the relation, so it would also take
-    # the ones the target still declares -- or the one an earlier op just added.
     surviving = {key[2] for key in target_edges}
     gone_relations = sorted(
         {key[2] for key in gone if key[2] is not None and key[2] not in surviving}
@@ -1339,22 +1464,25 @@ def _removal_ops(
     gone_edges = sorted(
         (key for key in gone if key[2] is None or key[2] in surviving), key=str
     )
-    if gone_relations or gone_edges:
-        ops.append(
-            RemoveEdgesOp(
-                relations=gone_relations,
-                edges=[
-                    EdgeSelector(source=source, target=target_name, relation=relation)
-                    for source, target_name, relation in gone_edges
-                ],
-            )
+    if not gone_relations and not gone_edges:
+        return []
+    return [
+        RemoveEdgesOp(
+            relations=gone_relations,
+            edges=[
+                EdgeSelector(source=source, target=target_name, relation=relation)
+                for source, target_name, relation in gone_edges
+            ],
         )
+    ]
 
-    base_vertices = _vertices_after_renames(base, hints)
-    gone_vertices = sorted(set(base_vertices) - set(_vertices(target)))
-    if gone_vertices:
-        ops.append(RemoveVerticesOp(names=gone_vertices))
-    return ops
+
+def _vertex_removal_ops(
+    base: GraphManifest, target: GraphManifest, hints: RenameHints
+) -> list[ManifestOp]:
+    """Vertices the target drops; after ingestion, so no resource still needs one."""
+    gone = sorted(set(_vertices_after_renames(base, hints)) - set(_vertices(target)))
+    return [RemoveVerticesOp(names=gone)] if gone else []
 
 
 def _profile_needs_replacing(base: GraphManifest, target: GraphManifest) -> bool:
@@ -1368,21 +1496,31 @@ def _profile_needs_replacing(base: GraphManifest, target: GraphManifest) -> bool
 
 
 def _block_ops(
-    base: GraphManifest, target: GraphManifest, *, profile_replaced: bool
+    base: GraphManifest,
+    target: GraphManifest,
+    hints: RenameHints,
+    *,
+    profile_replaced: bool,
 ) -> list[ManifestOp]:
-    """Set the whole ``db_profile`` / ``bindings`` block to the target's.
+    """Indexes, or the whole ``db_profile``, then the ``bindings`` block.
 
-    Emitted **last**, after the removal cascades. Those cascades prune profile
-    and bindings entries that referenced a removed vertex, so a block set
-    earlier would be partly undone by them; set afterwards it lands on exactly
-    the target's block whatever the cascade did.
+    Read off the manifest the earlier phases produce, since their cascades
+    prune profile and bindings entries: a property removal narrows an index, a
+    lookup key's removal drops the index it derived, a vertex removal prunes
+    both blocks.
     """
     ops: list[ManifestOp] = []
 
-    if profile_replaced:
-        target_profile = _profile(target)
-        if target_profile is not None:
-            ops.append(SetDbProfileOp(profile=target_profile.model_copy(deep=True)))
+    target_profile = _profile(target)
+    if target_profile is not None and (
+        profile_replaced
+        or _profile_needs_replacing(base, target)
+        or _spec_presence_differs(base, target)
+    ):
+        # A replacement carries the indexes too, so it stands in for them.
+        ops.append(SetDbProfileOp(profile=target_profile.model_copy(deep=True)))
+    else:
+        ops += _index_ops(base, target, hints)
 
     if _bindings_differ(base, target):
         ops.append(
@@ -1396,6 +1534,35 @@ def _block_ops(
         )
 
     return ops
+
+
+def _spec_presence_differs(base: GraphManifest, target: GraphManifest) -> bool:
+    """Whether the index ops would leave an edge spec where the target has none, or the reverse.
+
+    They create a spec with its first index and drop one their removal leaves
+    bare, so a bare spec on either side is out of their reach.
+    """
+    base_profile, target_profile = _profile(base), _profile(target)
+    if base_profile is None or target_profile is None:
+        return False
+    base_specs, target_specs = _edge_specs(base_profile), _edge_specs(target_profile)
+    for key in base_specs.keys() | target_specs.keys():
+        old, new = base_specs.get(key), target_specs.get(key)
+        wanted = {tuple(ix.fields) for ix in new.indexes} if new is not None else set()
+        if old is None:
+            kept = bool(wanted)
+        else:
+            emptied = bool(old.indexes) and not wanted
+            kept = not (emptied and _is_bare_but_indexes(old))
+        if kept != (new is not None):
+            return True
+    return False
+
+
+def _is_bare_but_indexes(spec: EdgePhysicalSpec) -> bool:
+    from .physical import is_bare_edge_spec
+
+    return is_bare_edge_spec(spec.model_copy(update={"indexes": []}))
 
 
 def _bindings_differ(base: GraphManifest, target: GraphManifest) -> bool:

@@ -55,7 +55,8 @@ def apply_add_resources(manifest: GraphManifest, op: AddResourcesOp) -> None:
 
     A name already present raises: two definitions under one name would
     shadow each other in the name-keyed lookup, and ``rename_resources`` or
-    ``remove_resources`` exist to make room explicitly.
+    ``remove_resources`` exist to make room explicitly. Creating the block
+    refuses bindings that would then name a resource it does not declare.
     """
     im = manifest.ingestion_model
     existing = {resource.name for resource in im.resources} if im is not None else set()
@@ -76,7 +77,15 @@ def apply_add_resources(manifest: GraphManifest, op: AddResourcesOp) -> None:
             list(im.transforms) if im is not None else [], list(op.transforms)
         )
         payload["transforms"] = [t.to_dict(skip_defaults=False) for t in registry]
-    manifest.ingestion_model = IngestionModel.model_validate(payload)
+    ingestion = IngestionModel.model_validate(payload)
+    candidate = manifest.model_copy(update={"ingestion_model": ingestion})
+    if dangling := candidate.dangling_bound_resources():
+        raise OpRefusal(
+            f"add_resources: bindings name unknown resources: {dangling}",
+            check="unknown-resource",
+            subjects=names(dangling),
+        )
+    manifest.ingestion_model = ingestion
 
 
 def apply_remove_resources(manifest: GraphManifest, op: RemoveResourcesOp) -> None:
@@ -106,7 +115,7 @@ def apply_remove_resources(manifest: GraphManifest, op: RemoveResourcesOp) -> No
         if resource.get("name") not in removed
     ]
     manifest.ingestion_model = IngestionModel.model_validate(payload)
-    prune_bindings_for_resources(manifest, existing - removed)
+    prune_bindings_for_resources(manifest, removed)
 
 
 def apply_replace_resources(manifest: GraphManifest, op: ReplaceResourcesOp) -> None:

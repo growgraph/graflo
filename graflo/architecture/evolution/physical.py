@@ -10,8 +10,9 @@ from __future__ import annotations
 import logging
 
 from graflo.architecture.contract.manifest import GraphManifest
-from graflo.architecture.graph_types import Index
+from graflo.architecture.graph_types import EdgePhysicalKey, Index
 from graflo.architecture.refusal import OpRefusal
+from graflo.architecture.schema.database_features import EdgePhysicalSpec
 from graflo.architecture.schema.vertex import Field, FieldType
 
 from .ops import (
@@ -301,7 +302,7 @@ def apply_remove_vertex_indexes(
 
 def _edge_spec_for(
     manifest: GraphManifest, key: tuple[str, str, str | None, str | None]
-):
+) -> EdgePhysicalSpec | None:
     schema = manifest.graph_schema
     if schema is None:
         return None
@@ -309,6 +310,19 @@ def _edge_spec_for(
         if spec.physical_key == key:
             return spec
     return None
+
+
+def bare_edge_spec(key: EdgePhysicalKey) -> EdgePhysicalSpec:
+    """The spec the edge index ops create for *key*: nothing but its indexes."""
+    source, target, relation, purpose = key
+    return EdgePhysicalSpec(
+        source=source, target=target, relation=relation, purpose=purpose
+    )
+
+
+def is_bare_edge_spec(spec: EdgePhysicalSpec) -> bool:
+    """Whether *spec* carries nothing beyond its key: no index, no override."""
+    return spec == bare_edge_spec(spec.physical_key)
 
 
 def apply_add_edge_indexes(manifest: GraphManifest, op: AddEdgeIndexesOp) -> None:
@@ -339,13 +353,10 @@ def apply_add_edge_indexes(manifest: GraphManifest, op: AddEdgeIndexesOp) -> Non
 
         spec = _edge_spec_for(manifest, entry.physical_key())
         if spec is None:
-            # The edge is declared (checked above); its profile has no spec
-            # for this purpose.
-            raise OpRefusal(
-                f"add_edge_indexes: no physical spec for {entry.physical_key()}",
-                check="not-applicable",
-                subjects=(edge_subject(*edge_id),),
-            )
+            # The edge is declared (checked above); its first index for this
+            # purpose brings the spec, which the last one's removal drops.
+            spec = bare_edge_spec(entry.physical_key())
+            schema.db_profile.edge_specs.append(spec)
         existing = {frozenset(index.fields) for index in spec.indexes}
         additions: list[Index] = []
         for index in entry.indexes:
@@ -409,6 +420,12 @@ def apply_remove_edge_indexes(manifest: GraphManifest, op: RemoveEdgeIndexesOp) 
         spec.indexes = [
             index for index in spec.indexes if frozenset(index.fields) not in doomed
         ]
+        if is_bare_edge_spec(spec):
+            # An empty spec and an absent one mean the same thing but hash
+            # differently, so the one this emptied goes.
+            schema.db_profile.edge_specs = [
+                other for other in schema.db_profile.edge_specs if other is not spec
+            ]
 
     schema.finish_init()
 
@@ -488,7 +505,18 @@ def apply_set_native_inverses(manifest: GraphManifest, op: SetNativeInversesOp) 
 
 
 def apply_set_bindings(manifest: GraphManifest, op: SetBindingsOp) -> None:
-    """Replace the manifest's bindings block."""
+    """Replace the manifest's bindings block.
+
+    With an ingestion block, every resource the new bindings name must be one
+    of its resources.
+    """
+    candidate = manifest.model_copy(update={"bindings": op.bindings})
+    if dangling := candidate.dangling_bound_resources():
+        raise OpRefusal(
+            f"set_bindings: bindings name unknown resources: {dangling}",
+            check="unknown-resource",
+            subjects=names(dangling),
+        )
     manifest.bindings = (
         op.bindings.model_copy(deep=True) if op.bindings is not None else None
     )

@@ -102,13 +102,17 @@ class TestReplayInvariant:
         assert [e.edge_id() for e in removal.edges] == [("order", "party", "places")]
 
     def test_moving_an_edge_within_its_relation_replays(self) -> None:
-        """The removal runs last, so by name it would take the edge just added."""
+        """The relation survives, so the old edge goes by triple, before the new one."""
         moved = {"source": "order", "target": "party", "relation": "places"}
         ops = _assert_replays(
             _manifest([PARTY, ORDER], edges=[PLACES]),
             _manifest([PARTY, ORDER], edges=[moved]),
         )
-        assert [op.op for op in ops] == ["add_edges", "remove_edges"]
+        assert [op.op for op in ops] == ["remove_edges", "add_edges"]
+        assert (ops[0].relations, [s.edge_id() for s in ops[0].edges]) == (
+            [],
+            [("party", "order", "places")],
+        )
 
     def test_a_relation_that_disappears_is_removed_by_name(self) -> None:
         ops = _assert_replays(
@@ -176,9 +180,18 @@ class TestReplayInvariant:
         assert [op.op for op in ops] == ["add_edge_indexes"]
         ops = _assert_replays(
             _manifest([PARTY, ORDER], edges=[PLACES], edge_specs=[spec]),
-            _manifest([PARTY, ORDER], edges=[PLACES], edge_specs=[PLACES]),
+            _manifest([PARTY, ORDER], edges=[PLACES], edge_specs=[]),
         )
         assert [op.op for op in ops] == ["remove_edge_indexes"]
+
+    def test_a_spec_kept_bare_is_out_of_the_index_ops_reach(self) -> None:
+        """Removing the last index drops the spec, so keeping it takes the profile."""
+        spec = {**PLACES, "indexes": [{"fields": ["when"]}]}
+        ops = _assert_replays(
+            _manifest([PARTY, ORDER], edges=[PLACES], edge_specs=[spec]),
+            _manifest([PARTY, ORDER], edges=[PLACES], edge_specs=[PLACES]),
+        )
+        assert [op.op for op in ops] == ["set_db_profile"]
 
     def test_an_edge_index_diff_addresses_the_purpose_variant(self) -> None:
         """A `purpose` variant is its own spec; the diff must not fold it onto the base."""

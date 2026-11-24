@@ -14,7 +14,11 @@ from graflo.architecture.schema.vertex import (
     Field,
 )
 
-from .validation import validate_merge_sources, validate_rename_map_is_injective
+from .validation import (
+    validate_merge_sources,
+    validate_rename_map_is_injective,
+    validate_rename_map_moves,
+)
 
 
 class RenameRelationsOp(ConfigBaseModel):
@@ -38,6 +42,7 @@ class RenameRelationsOp(ConfigBaseModel):
             kind="rename_relations",
             merge_hint="MergeEdgesOp(sources=[...], into=...)",
         )
+        validate_rename_map_moves(self.renames, kind="rename_relations")
         return self
 
 
@@ -196,6 +201,14 @@ class RenameEdgePropertiesOp(ConfigBaseModel):
             lambda entry: entry.renames,
             kind="rename_edge_properties",
         )
+        for relation, renames in self.renames.items():
+            validate_rename_map_moves(
+                renames, kind=f"rename_edge_properties[{relation!r}]"
+            )
+        for entry in self.per_edge:
+            validate_rename_map_moves(
+                entry.renames, kind=f"rename_edge_properties{entry.edge_id()}"
+            )
         return self
 
     def renames_for(self, edge_id: tuple[str, str, str | None]) -> dict[str, str]:

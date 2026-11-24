@@ -21,7 +21,7 @@ from graflo.architecture.contract.ingestion.steps import (
 )
 from graflo.architecture.contract.ingestion.transform import ProtoTransform
 
-from .validation import validate_rename_map_is_injective
+from .validation import validate_rename_map_is_injective, validate_rename_map_moves
 
 
 class RenameResourcesOp(ConfigBaseModel):
@@ -48,6 +48,7 @@ class RenameResourcesOp(ConfigBaseModel):
             kind="rename_resources",
             merge_hint="MergeManifestsOp renames.<side>.resources",
         )
+        validate_rename_map_moves(self.renames, kind="rename_resources")
         return self
 
 

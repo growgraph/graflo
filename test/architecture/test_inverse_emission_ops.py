@@ -190,6 +190,17 @@ class TestTheFlagsFollowTheSchema:
         assert _flags(out) == {"2": False}
         out.finish_init()
 
+    def test_removing_the_inverse_relation_clears_the_flags_that_fed_it(
+        self,
+    ) -> None:
+        flagged = {"edge": {**STEP["edge"], "emit_inverse": True}}
+        out = _apply(
+            _manifest([*VERTICES, flagged]),
+            {"op": "remove_edges", "relations": ["employs"]},
+        )
+        assert _flags(out) == {"2": False}
+        out.finish_init()
+
     def test_a_flag_that_still_has_something_to_write_into_is_kept(self) -> None:
         """A routed step mirrors several pairs; removing one inverse leaves the rest."""
         funds = {"source": "person", "target": "institution", "relation": "funds"}

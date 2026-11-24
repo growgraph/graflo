@@ -1477,3 +1477,334 @@ def test_a_swap_is_not_split() -> None:
     """``{a: b, b: a}`` only means a swap as one op; split, it collides with itself."""
     swap = RenameVerticesOp(renames={"a": "b", "b": "a"})
     assert merge3.split_by_slot(swap) == [swap]
+
+
+# ── cascades, splits and decisions ──────────────────────────────────────────
+
+
+def _fed(
+    resources: dict[str, list[str]], bindings: list[str] | None = None
+) -> GraphManifest:
+    """``person`` and ``company``, with one resource per entry producing its types."""
+    payload: dict = {
+        "schema": {
+            "metadata": {"name": "t"},
+            "graph": {
+                "vertex_config": {
+                    "vertices": [
+                        _vertex("person", ["id"], ["id"]),
+                        _vertex("company", ["id"], ["id"]),
+                    ]
+                },
+                "edge_config": {"edges": []},
+            },
+        },
+        "ingestion_model": {
+            "resources": [
+                {"name": name, "pipeline": [{"vertex": v} for v in types]}
+                for name, types in resources.items()
+            ]
+        },
+    }
+    if bindings:
+        payload["bindings"] = {
+            "connectors": [
+                {"name": f"{name}_files", "regex": f"{name}.*", "resource_name": name}
+                for name in bindings
+            ],
+            "resource_connector": [
+                {"resource": name, "connector": f"{name}_files"} for name in bindings
+            ],
+        }
+    return GraphManifest.from_dict(payload)
+
+
+def test_a_removal_writes_the_resources_its_cascade_trims_given_the_base() -> None:
+    base = _fed({"rows": ["person"], "feed": ["person", "company"]}, ["feed"])
+    remove = ops_module.RemoveVerticesOp(names=["company"])
+
+    assert op_slots(remove) == {("vertex", "company")}
+    assert op_slots(remove, base) == {
+        ("vertex", "company"),
+        ("resource", "feed"),
+        ("bindings",),
+    }
+
+
+def test_two_removals_trimming_one_pipeline_conflict() -> None:
+    """Together they would leave ``feed`` empty: a conflict, not a MergeError."""
+    base = _fed({"rows": ["person"], "feed": ["person", "company"]})
+    left = _applied(base, ops_module.RemoveVerticesOp(names=["company"]))
+    right = _applied(base, ops_module.RemoveVerticesOp(names=["person"]))
+
+    merged, result = merge_three_way(base, left, right)
+    assert merged is None
+    feed = next(c for c in result.conflicts if c.slot_key == ("resource", "feed"))
+    assert sorted(
+        op.names[0]
+        for op in feed.cascaded
+        if isinstance(op, ops_module.RemoveVerticesOp)
+    ) == ["company", "person"]
+    assert len(feed.cascaded) == 2
+    assert feed.reason == _CASCADE_REASON
+
+
+_CASCADE_REASON = (
+    "one side's change reaches this slot only through what it removes or renames"
+)
+
+
+def test_a_removal_held_by_an_edited_pipeline_is_marked_cascaded() -> None:
+    """The conflict on ``feed`` shows the removal as held through its cascade."""
+    base = _fed({"rows": ["person"], "feed": ["person", "company"]})
+    left = _applied(base, ops_module.RemoveVerticesOp(names=["company"]))
+    right = _applied(
+        base,
+        ops_module.ReplaceResourcesOp(
+            resources=[
+                {
+                    "name": "feed",
+                    "pipeline": [{"vertex": "company"}, {"vertex": "person"}],
+                }
+            ]
+        ),
+    )
+
+    _merged, result = merge_three_way(base, left, right)
+    feed = next(c for c in result.conflicts if c.slot_key == ("resource", "feed"))
+    assert [op.op for op in feed.cascaded] == ["remove_vertices"]
+    assert [op.op for op in feed.right_ops] == ["replace_resources"]
+    assert feed.reason == _CASCADE_REASON
+
+
+def test_a_conflict_on_a_named_slot_marks_nothing_cascaded() -> None:
+    base = _person(["id", "name"])
+    left = _applied(
+        base, ops_module.RemoveVertexPropertiesOp(removals={"person": ["name"]})
+    )
+    right = _applied(
+        base,
+        ops_module.ChangeFieldTypesOp(vertices={"person": {"name": {"type": "INT"}}}),
+    )
+
+    _merged, result = merge_three_way(base, left, right)
+    assert result.conflicts
+    assert all(conflict.cascaded == [] for conflict in result.conflicts)
+    assert all(conflict.reason != _CASCADE_REASON for conflict in result.conflicts)
+
+
+def _applied(base: GraphManifest, *ops: ManifestOp) -> GraphManifest:
+    from graflo.architecture.evolution.apply import apply_evolution
+
+    return apply_evolution(base, list(ops), bump_version=False, finish_init=False)
+
+
+def test_set_edge_directed_splits_by_relation() -> None:
+    """Every edge of a relation agrees on ``directed``, so a piece holds them all."""
+    op = ops_module.SetEdgeDirectedOp(
+        edges=[
+            {"source": "person", "target": "person", "relation": "knows"},
+            {"source": "person", "target": "company", "relation": "employs"},
+            {"source": "person", "target": "company", "relation": "knows"},
+        ],
+        directed=False,
+    )
+
+    pieces = merge3.split_by_slot(op)
+    assert all(isinstance(piece, ops_module.SetEdgeDirectedOp) for piece in pieces)
+    assert [
+        [
+            edge.edge_id()
+            for edge in typing.cast(ops_module.SetEdgeDirectedOp, piece).edges
+        ]
+        for piece in pieces
+    ] == [
+        [("person", "person", "knows"), ("person", "company", "knows")],
+        [("person", "company", "employs")],
+    ]
+
+
+def test_set_edge_directed_depends_on_the_edges_of_its_relation() -> None:
+    """An edge added to the relation would be left out in one order only."""
+    self_knows = {"source": "person", "target": "person", "relation": "knows"}
+    base = _people_and_companies([self_knows])
+    undirect = ops_module.SetEdgeDirectedOp(edges=[self_knows], directed=False)
+
+    assert not ops_independent(undirect, ops_module.AddEdgesOp(edges=[KNOWS]), base)
+
+
+def test_resource_ops_split_per_resource() -> None:
+    op = ops_module.ReplaceResourcesOp(
+        resources=[
+            {"name": "rows", "pipeline": [{"vertex": "person"}]},
+            {"name": "feed", "pipeline": [{"vertex": "company"}]},
+        ]
+    )
+
+    pieces = merge3.split_by_slot(op)
+    assert [op_slots(piece) for piece in pieces] == [
+        {("resource", "rows")},
+        {("resource", "feed")},
+    ]
+    swap = ops_module.RenameResourcesOp(renames={"rows": "feed", "feed": "rows"})
+    assert merge3.split_by_slot(swap) == [swap]
+
+
+def test_an_op_held_by_two_conflicts_follows_both_decisions() -> None:
+    """Taking a side's op in one of two conflicts holding it does not apply it."""
+    base = _manifest(
+        [
+            _vertex("order", ["id", "name"], ["id"]),
+            _vertex("city", ["id", "name"], ["id"]),
+            {**_vertex("company", ["id"], ["id"]), "subclass_of": [{"vertex": "city"}]},
+        ]
+    )
+    left = _applied(
+        base,
+        ops_module.ChangeFieldTypesOp(vertices={"order": {"name": {"type": "STRING"}}}),
+        ops_module.RemoveVerticesOp(names=["city"]),
+    )
+    right = _applied(
+        base,
+        ops_module.ChangeFieldTypesOp(
+            vertices={
+                "order": {"name": {"type": "INT"}},
+                "city": {"name": {"type": "INT"}},
+            }
+        ),
+        ops_module.SetVertexSubclassOfOp(
+            subclass_of={"order": [{"vertex": "company"}]}
+        ),
+    )
+    _none, result = merge_three_way(base, left, right)
+    holding = [
+        conflict
+        for conflict in result.conflicts
+        if any(op.op == "set_vertex_subclass_of" for op in conflict.right_ops)
+    ]
+    assert len(holding) >= 2
+
+    for flipped in holding:
+        decisions = [
+            take_right(c) if c is flipped else take_left(c) for c in result.conflicts
+        ]
+        merged, _resolved = merge_three_way(base, left, right, resolutions=decisions)
+        assert merged is not None
+        (order,) = [
+            v for v in _core(merged).vertex_config.vertices if v.name == "order"
+        ]
+        assert order.subclass_of == []
+
+
+def test_sanitize_depends_on_every_name() -> None:
+    """The names it records depend on every type present, a new one included."""
+    base = _people_and_companies([])
+    sanitize = ops_module.SanitizeOp(db_flavor="tigergraph")
+    order = ops_module.AddVerticesOp(vertices=[_vertex("order", ["id"], ["id"])])
+
+    assert not ops_independent(sanitize, order, base)
+
+
+def test_a_whole_profile_conflicts_with_an_index_added_beside_it() -> None:
+    """A whole profile drops an index added beside it in one order only."""
+    base = _person(["id", "name"])
+    reset = ops_module.SetDbProfileOp(profile={"db_flavor": "arango"})
+    index = ops_module.AddVertexIndexesOp(indexes={"person": [{"fields": ["id"]}]})
+
+    assert not ops_independent(reset, index, base)
+
+
+def test_bindings_depend_on_the_resources_they_wire() -> None:
+    """A binding of a resource removed on the other side applies in one order only."""
+    base = _fed({"rows": ["person"], "feed": ["company"]})
+    remove = ops_module.RemoveResourcesOp(names=["feed"])
+    wire = ops_module.SetBindingsOp(
+        bindings={
+            "connectors": [
+                {"name": "feed_files", "regex": "feed.*", "resource_name": "feed"}
+            ],
+            "resource_connector": [{"resource": "feed", "connector": "feed_files"}],
+        }
+    )
+
+    assert not ops_independent(remove, wire, base)
+
+
+def test_a_new_pipeline_depends_on_the_properties_of_what_it_produces() -> None:
+    """A property rename rewrites every pipeline producing the vertex, a new one too."""
+    base = _fed({"rows": ["person"]})
+    rename = ops_module.CanonicalizeOp(properties={"person": {"id": "name"}})
+    add = ops_module.AddResourcesOp(
+        resources=[{"name": "feed", "pipeline": [{"vertex": "person"}]}]
+    )
+
+    assert not ops_independent(rename, add, base)
+
+
+def test_creating_the_ingestion_block_depends_on_the_bindings() -> None:
+    """The block is refused while bindings wire a resource it lacks."""
+    base = _person(["id"])
+    create = ops_module.AddResourcesOp(
+        resources=[{"name": "rows", "pipeline": [{"vertex": "person"}]}]
+    )
+    wire = ops_module.SetBindingsOp(
+        bindings={
+            "connectors": [
+                {"name": "feed_files", "regex": "feed.*", "resource_name": "feed"}
+            ]
+        }
+    )
+
+    assert ("bindings",) in op_reads(create, base)
+    assert not ops_independent(create, wire, base)
+
+
+def _profiled(vertices: list[dict], profile: dict) -> GraphManifest:
+    return GraphManifest.from_dict(
+        {
+            "schema": {
+                "metadata": {"name": "t"},
+                "graph": {
+                    "vertex_config": {"vertices": vertices},
+                    "edge_config": {"edges": []},
+                },
+                "db_profile": profile,
+            }
+        }
+    )
+
+
+_PERSON = _vertex("person", ["id", "name"], ["id"])
+_ORDER = _vertex("order", ["id", "total"], ["id"])
+_ORDER_INDEXED = {
+    "db_flavor": "neo4j",
+    "vertex_indexes": {"order": [{"fields": ["total"]}]},
+}
+
+
+def test_a_profile_replaced_beside_a_new_indexed_type_conflicts_either_way() -> None:
+    """An index op reads the profile, so a whole-profile change on the other side meets it."""
+    base = _profiled([_PERSON], {"db_flavor": "neo4j"})
+    indexed = _profiled([_PERSON, _ORDER], _ORDER_INDEXED)
+    replaced = _profiled([_PERSON], {"db_flavor": "arango"})
+
+    for left, right in ((indexed, replaced), (replaced, indexed)):
+        merged, result = merge_three_way(base, left, right)
+        assert merged is None
+        assert [c.slot for c in result.conflicts] == [["db_profile"]]
+
+
+def test_index_additions_on_both_sides_merge_the_same_in_either_order() -> None:
+    from graflo.architecture.evolution.hashing import manifest_hash
+
+    base = _profiled([_PERSON], {"db_flavor": "neo4j"})
+    indexed = _profiled([_PERSON, _ORDER], _ORDER_INDEXED)
+    person_indexed = _profiled(
+        [_PERSON],
+        {"db_flavor": "neo4j", "vertex_indexes": {"person": [{"fields": ["name"]}]}},
+    )
+
+    first, _ = merge_three_way(base, indexed, person_indexed)
+    second, _ = merge_three_way(base, person_indexed, indexed)
+    assert first is not None and second is not None
+    assert manifest_hash(first) == manifest_hash(second)

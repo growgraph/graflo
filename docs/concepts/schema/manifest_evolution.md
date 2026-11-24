@@ -63,6 +63,11 @@ does, and whether it can be [undone](#undoing-ops).
 | `rename_edge_properties` | Renames properties of a relation or of one edge (`per_edge`), in the schema, profile and edge steps. | yes |
 | `change_field_types` | Sets the type of vertex or edge properties. An `edges` entry retypes every edge of the relation that declares the property; a `per_edge` entry retypes one edge. Checked against the target database, and refuses to make a key property a `LIST`. | no |
 
+A rename map refuses an entry that renames a name onto itself, in these ops and
+in `rename_vertices`, `rename_relations` and `rename_resources`: it would
+change nothing, yet still rewrite what refers to the name. The one exception is
+the target of a fold, as `c` in `{a: c, c: c}`.
+
 The four edge property ops take a `per_edge` list beside their relation-keyed
 map. Each entry names one edge by `source`, `target` and `relation` (`null` for
 an edge with no relation) and leaves its sibling edges alone:
@@ -117,7 +122,7 @@ A declared inverse is a second name for reading a relation backwards, such as
 | Op | What it does | Undo |
 |---|---|---|
 | `add_vertex_indexes`, `remove_vertex_indexes` | Adds or removes secondary indexes on vertex types. Indexes that come from secondary identities are removed with `remove_secondary_identities`. | yes |
-| `add_edge_indexes`, `remove_edge_indexes` | Adds or removes indexes on edges. | yes |
+| `add_edge_indexes`, `remove_edge_indexes` | Adds or removes indexes on edges. The first index creates the edge's physical spec, and removing the last drops a spec that holds nothing else. | yes, unless the spec existed and held nothing |
 | `set_db_profile` | Replaces the whole database profile: target database, namespace, storage names, defaults and indexes. | yes |
 | `sanitize` | Records storage names that a target database accepts, for names it reserves or cannot store. The logical names are unchanged. | no |
 
@@ -125,13 +130,13 @@ A declared inverse is a second name for reading a relation backwards, such as
 
 | Op | What it does | Undo |
 |---|---|---|
-| `add_resources` | Adds resources, with any named transforms their steps use. | yes, unless it registered a transform the manifest did not hold |
-| `remove_resources` | Removes resources and the bindings that served only them: their `resource_connector` entries, and each connector left serving no resource, with its `connector_connection` entry. | yes, unless bindings wired them |
+| `add_resources` | Adds resources, with any named transforms their steps use. Creating the ingestion block refuses bindings that would name a resource it does not declare. | yes, unless it registered a transform the manifest did not hold |
+| `remove_resources` | Removes resources and the bindings that served only them: their `resource_connector` entries, and each connector that served only removed resources, with its `connector_connection` entry. | yes, unless bindings wired them |
 | `replace_resources` | Replaces the definitions of existing resources, keeping their positions and bindings. Any edit to a pipeline is written this way. | yes, unless it registered a transform the manifest did not hold |
 | `rename_resources` | Renames resources and every bindings reference to them. | yes |
 | `add_resource_transforms` | Appends transform steps to resources, at the root or at a nested level (`at`). | no |
 | `ensure_extracted_fields` | Makes a vertex router keep named fields that its `keep_fields` or `extraction_scope` would drop. | no |
-| `set_bindings` | Replaces the whole bindings block; `null` removes it. | yes |
+| `set_bindings` | Replaces the whole bindings block; `null` removes it. Refuses bindings that name a resource the ingestion model does not declare. | yes |
 
 ### Grounding and descriptions
 
@@ -309,9 +314,22 @@ pipeline is written as `replace_resources`, unless the only edit is transform
 steps appended at the end (`add_resource_transforms`) or the trimming that a
 removal already does.
 
-The ops come in an order in which each one's preconditions hold: renames first,
-then additions, then changes, then removals. Edge property changes come before
-new edges, so a change made for a relation does not reach an edge the diff adds.
+The ops come in phases, and each phase is derived from the manifest that the
+phases before it produce, so every op meets the state it runs on:
+
+1. renames;
+2. withdrawals and removals: resources, inverse declarations and flags, edge
+   parents and lookup keys the target drops, then edges;
+3. changes and additions: vertex types, edge properties, edges, vertex
+   properties and keys, property removals, groundings, inverse declarations;
+4. resources: appended transforms, added and replaced resources;
+5. vertex type removals;
+6. indexes (or the whole database profile) and the bindings, as the cascades
+   above left them.
+
+Edges are removed before edges are added, and edge property changes come before
+new edges, so a change made for a relation does not reach an edge the diff
+adds.
 
 ## Comparing two versions side by side
 

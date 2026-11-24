@@ -357,19 +357,20 @@ def prune_connectors_for_removed_vertices(
     manifest.bindings = Bindings.model_validate(data)
 
 
-def prune_bindings_for_resources(manifest: GraphManifest, surviving: set[str]) -> None:
-    """Drop the bindings that served only resources outside *surviving*, in place.
+def prune_bindings_for_resources(manifest: GraphManifest, removed: set[str]) -> None:
+    """Drop the bindings that served only resources in *removed*, in place.
 
-    ``resource_connector`` rows keep only surviving resources. A connector bound
-    to resources (by ``resource_name`` or by a row) and to none that survives is
-    dropped with its ``connector_connection`` rows; a connector shared with a
-    surviving resource, or bound to no resource at all, stays.
+    *removed* is what the op took out, so a binding the op did not touch is
+    never pruned. ``resource_connector`` rows lose the removed resources. A
+    connector bound to resources (by ``resource_name`` or by a row), all of them
+    removed, is dropped with its ``connector_connection`` rows; a connector
+    shared with a kept resource, or bound to no resource at all, stays.
     """
     from graflo.architecture.contract.bindings import Bindings
     from graflo.architecture.contract.bindings.core import ResourceConnectorBinding
 
     bindings = manifest.bindings
-    if bindings is None:
+    if bindings is None or not removed:
         return
     rows = [
         ResourceConnectorBinding.model_validate(row) if isinstance(row, dict) else row
@@ -387,12 +388,12 @@ def prune_bindings_for_resources(manifest: GraphManifest, surviving: set[str]) -
     dropped = {
         connector_hash
         for connector_hash, resources in bound.items()
-        if not resources & surviving
+        if resources <= removed
     }
 
     data = bindings.to_dict(skip_defaults=False)
     data["resource_connector"] = [
-        row.to_dict() for row in rows if row.resource in surviving
+        row.to_dict() for row in rows if row.resource not in removed
     ]
     data["connectors"] = [
         connector.to_dict(skip_defaults=False)
@@ -446,7 +447,7 @@ def _apply_keep_resources(manifest: GraphManifest, allowed: set[str]) -> None:
     manifest.ingestion_model = IngestionModel.model_validate(
         manifest.ingestion_model.to_dict(skip_defaults=False)
     )
-    prune_bindings_for_resources(manifest, allowed)
+    prune_bindings_for_resources(manifest, present - allowed)
     if not manifest.ingestion_model.resources:
         raise OpRefusal(
             "project_manifest would leave ingestion_model.resources empty; aborting.",
@@ -522,6 +523,7 @@ def apply_remove_vertices(manifest: GraphManifest, op: RemoveVerticesOp) -> None
     schema.db_profile = _revalidate_db_profile(schema.db_profile)
 
     if manifest.ingestion_model is not None:
+        resources_before = {r.name for r in manifest.ingestion_model.resources}
         surviving_vertices = set(core.vertex_config.vertex_set)
         prune_connectors_for_removed_vertices(
             manifest, removed, declared=surviving_vertices | removed
@@ -535,7 +537,7 @@ def apply_remove_vertices(manifest: GraphManifest, op: RemoveVerticesOp) -> None
             manifest.ingestion_model.to_dict(skip_defaults=False)
         )
         surviving = {r.name for r in manifest.ingestion_model.resources}
-        prune_bindings_for_resources(manifest, surviving)
+        prune_bindings_for_resources(manifest, resources_before - surviving)
 
 
 def _build_merged_vertex_config(
@@ -2079,6 +2081,7 @@ def apply_remove_edges(manifest: GraphManifest, op: RemoveEdgesOp) -> None:
             if edge.relation in removed
         },
     )
+    edge_config_before = schema.core_schema.edge_config
     apply_relation_removal_to_db_profile(schema.db_profile, removed)
     schema.db_profile = _revalidate_db_profile(schema.db_profile)
     schema.core_schema = CoreSchema(
@@ -2096,6 +2099,9 @@ def apply_remove_edges(manifest: GraphManifest, op: RemoveEdgesOp) -> None:
     if manifest.ingestion_model is not None:
         from graflo.architecture.contract.ingestion.resource import Resource
 
+        _clear_stranded_flags(
+            manifest, edge_config_before, schema.core_schema.edge_config
+        )
         resources: list[Resource] = []
         for resource in manifest.ingestion_model.resources:
             payload = resource.to_dict(skip_defaults=False)
@@ -2128,6 +2134,21 @@ def apply_remove_edges(manifest: GraphManifest, op: RemoveEdgesOp) -> None:
         manifest.ingestion_model = IngestionModel.model_validate(
             manifest.ingestion_model.to_dict(skip_defaults=False)
         )
+
+
+def _clear_stranded_flags(
+    manifest: GraphManifest, before: EdgeConfig, after: EdgeConfig
+) -> None:
+    """Clear ``emit_inverse`` on steps whose inverse edge the removal took.
+
+    A step that mirrored into a removed inverse edge has nothing left to write
+    into. Run before steps are dropped, while step positions still hold.
+    """
+    from .ingestion import set_emit_inverse_flags, stranded_emission_flags
+
+    stranded = stranded_emission_flags(manifest, before, after)
+    if stranded:
+        set_emit_inverse_flags(manifest, stranded, False)
 
 
 def _splice_superproperties(core: CoreSchema, removed: set[EdgeId]) -> None:
@@ -2173,15 +2194,7 @@ def apply_remove_edge_ids(
 
     from graflo.architecture.contract.ingestion.resource import Resource
 
-    from .ingestion import set_emit_inverse_flags, stranded_emission_flags
-
-    # A step that mirrored into a removed inverse edge has nothing left to write
-    # into. Cleared before steps are dropped, while step positions still hold.
-    stranded = stranded_emission_flags(
-        manifest, edge_config_before, schema.core_schema.edge_config
-    )
-    if stranded:
-        set_emit_inverse_flags(manifest, stranded, False)
+    _clear_stranded_flags(manifest, edge_config_before, schema.core_schema.edge_config)
 
     resources: list[Resource] = []
     for resource in manifest.ingestion_model.resources:
