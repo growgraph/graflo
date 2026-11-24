@@ -1932,7 +1932,7 @@ def build_merge3_preview(
         A :class:`Merge3Preview`. Never raises: a merge that could not complete
         is exactly the case worth drawing.
     """
-    from .merge3 import describe_slot, op_slots
+    from .footprint import describe_slot, op_slots
 
     del base  # excerpts travel on the conflicts themselves
 

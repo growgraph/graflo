@@ -19,8 +19,8 @@ from graflo.architecture.contract import GraphManifest
 from graflo.architecture.evolution import apply_evolution
 from graflo.architecture.evolution.autogenerate import diff_manifests_verified
 from graflo.architecture.evolution.codec import op_from_dict
+from graflo.architecture.evolution.footprint import op_slots
 from graflo.architecture.evolution.hashing import manifest_hash
-from graflo.architecture.evolution.merge3 import op_slots
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.inverse_realization import (
     edge_inverse_findings,

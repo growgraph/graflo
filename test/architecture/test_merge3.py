@@ -14,22 +14,24 @@ import typing
 import pytest
 
 from graflo.architecture.contract.manifest import GraphManifest
-from graflo.architecture.evolution import merge3
+from graflo.architecture.evolution import footprint, merge3
 from graflo.architecture.evolution import ops as ops_module
 from graflo.architecture.evolution.commit import build_commit
+from graflo.architecture.evolution.footprint import (
+    describe_slot,
+    op_reads,
+    op_slots,
+    ops_independent,
+)
 from graflo.architecture.evolution.history import History
 from graflo.architecture.evolution.merge3 import (
     ConflictResolution,
     MergeError,
     MergeRecipe,
     build_recipe,
-    describe_slot,
     find_merge_base,
     keep_both,
     merge_three_way,
-    op_reads,
-    op_slots,
-    ops_independent,
     re_merge,
     take_left,
     take_right,
@@ -77,33 +79,65 @@ def _core(manifest):
 # ── the slot map ────────────────────────────────────────────────────────────
 
 
-def test_every_op_in_the_vocabulary_has_an_explicit_slot_mapping() -> None:
-    """No op may reach the catch-all by accident.
+def test_every_op_in_the_vocabulary_has_an_explicit_footprint() -> None:
+    """Both footprint tables cover the op union, exactly.
 
-    An unmapped op is treated as touching the whole manifest, so it conflicts
-    with everything: it does not corrupt a schema, it makes that op unmergeable
-    -- quietly, and only for whoever happens to use it. Checking the dispatch
-    source for every member of the union is what makes adding op 32 without a
-    slot a failing test rather than a latent one.
+    An op with no entry is refused rather than given a footprint by guess, so
+    a missing entry makes that op unmergeable -- quietly, and only for whoever
+    happens to use it. Comparing each table with the union is what makes adding
+    an op without a footprint a failing test rather than a latent one; an entry
+    for a model outside the union is one the dispatch never reaches.
     """
-    source = inspect.getsource(merge3.op_slots)
-    union = typing.get_args(typing.get_args(ManifestOp)[0])
-    missing = sorted(
-        model.__name__ for model in union if f"ops.{model.__name__}" not in source
-    )
-    assert not missing, (
-        f"these ops have no slot mapping in op_slots: {missing}. Map each to "
-        "the location it touches, or add it to the whole-manifest branch if it "
+    union = set(typing.get_args(typing.get_args(ManifestOp)[0]))
+    write_advice = (
+        "Map each to the location it writes, or to the whole manifest if it "
         "genuinely rewrites everything."
     )
+    read_advice = (
+        "Map each to what it reads, or register it with `_reads_nothing` if "
+        "it reads nothing beyond what it writes."
+    )
+    for table, advice in (
+        (footprint.WRITES, write_advice),
+        (footprint.READS, read_advice),
+    ):
+        missing = sorted(model.__name__ for model in union - set(table))
+        extra = sorted(model.__name__ for model in set(table) - union)
+        assert not missing, f"these ops have no footprint: {missing}. {advice}"
+        assert not extra, f"these footprints are for no op in the union: {extra}"
+
+
+def test_an_op_with_no_footprint_is_refused() -> None:
+    """There is no catch-all: an unmapped op raises rather than merging."""
+    stranger = typing.cast(ManifestOp, object())
+
+    with pytest.raises(TypeError, match="no footprint for op object"):
+        op_slots(stranger)
+    with pytest.raises(TypeError, match="no footprint for op object"):
+        op_reads(stranger)
 
 
 def test_the_whole_manifest_ops_are_the_only_ones_that_conflict_with_everything() -> (
     None
 ):
-    """`("manifest",)` is a deliberate answer for two ops, not a default."""
+    """`("manifest",)` is a deliberate answer for a few ops, not a default.
+
+    Two ops rewrite everything, and realizing every declared inverse reaches
+    whatever is paired when it runs. No other write footprint names it.
+    """
     assert op_slots(ops_module.ProjectManifestOp(keep_vertices=["person"])) == {
         ("manifest",)
+    }
+    assert op_slots(ops_module.MergeManifestsOp()) == {("manifest",)}
+    whole = {
+        model
+        for model, write in footprint.WRITES.items()
+        if "WHOLE_MANIFEST" in inspect.getsource(write)
+    }
+    assert whole == {
+        ops_module.ProjectManifestOp,
+        ops_module.MergeManifestsOp,
+        ops_module.AddInverseEdgesOp,
     }
 
 
@@ -144,7 +178,7 @@ def test_realizing_an_inverse_depends_on_the_inverse_relation_s_edges() -> None:
     known_by = {"source": "company", "target": "person", "relation": "known_by"}
     base = _with_inverse([KNOWS])
 
-    assert (*merge3._relation_slot("known_by"), "edges") in op_reads(realize, base)
+    assert (*footprint.relation_slot("known_by"), "edges") in op_reads(realize, base)
     assert not ops_independent(realize, ops_module.AddEdgesOp(edges=[known_by]), base)
 
 
@@ -254,7 +288,7 @@ def _people_and_companies(edges: list[dict]) -> GraphManifest:
 
 def test_an_edge_slot_nests_under_its_relation() -> None:
     """Relation-addressed and triple-addressed ops must see each other."""
-    relation = merge3._relation_slot("knows")
+    relation = footprint.relation_slot("knows")
     edge = op_slots(ops_module.SetEdgeDirectedOp(edges=[KNOWS], directed=False))
     assert edge == {(*relation, "edge", "person", "company", "directed")}
     assert op_slots(ops_module.RemoveEdgesOp(relations=["knows"])) == {relation}
@@ -289,7 +323,9 @@ def test_removing_a_relation_conflicts_with_flipping_an_edge_on_it() -> None:
     merged, result = merge_three_way(base, removed, flipped)
 
     assert merged is None
-    assert [tuple(c.slot) for c in result.conflicts] == [merge3._relation_slot("knows")]
+    assert [tuple(c.slot) for c in result.conflicts] == [
+        footprint.relation_slot("knows")
+    ]
     assert result.conflicts[0].base_excerpt["edges"][0]["relation"] == "knows"
 
 
@@ -329,7 +365,7 @@ def test_a_relation_wide_property_add_conflicts_with_an_edge_added_to_the_relati
 
     assert merged is None
     (conflict,) = result.conflicts
-    assert tuple(conflict.slot) == merge3._edge_slot("company", "company", "knows")
+    assert tuple(conflict.slot) == footprint.edge_slot("company", "company", "knows")
     ops_by_side = {
         "left": [op.op for op in conflict.left_ops],
         "right": [op.op for op in conflict.right_ops],
@@ -344,7 +380,7 @@ def test_a_relation_wide_edge_op_depends_on_the_relation_s_edge_set() -> None:
     grow = ops_module.AddEdgesOp(edges=[SELF_KNOWS])
     base = _people_and_companies([KNOWS])
 
-    assert (*merge3._relation_slot("knows"), "edges") in op_reads(widen, base)
+    assert (*footprint.relation_slot("knows"), "edges") in op_reads(widen, base)
     assert not ops_independent(widen, grow, base)
 
 
@@ -389,7 +425,9 @@ def test_removing_a_vertex_conflicts_with_adding_an_edge_onto_it(remover: str) -
     merged, result = merge_three_way(base, left, right)
 
     assert merged is None
-    assert [tuple(c.slot) for c in result.conflicts] == [merge3._vertex_slot("company")]
+    assert [tuple(c.slot) for c in result.conflicts] == [
+        footprint.vertex_slot("company")
+    ]
 
 
 def test_the_dependent_op_is_reported_with_the_conflict() -> None:
@@ -434,7 +472,7 @@ def test_flipping_an_edge_conflicts_with_removing_its_endpoint() -> None:
     merged, result = merge_three_way(base, flipped, removed)
 
     assert merged is None
-    assert merge3._vertex_slot("company") in {tuple(c.slot) for c in result.conflicts}
+    assert footprint.vertex_slot("company") in {tuple(c.slot) for c in result.conflicts}
 
 
 def test_a_relation_wide_edit_conflicts_with_removing_a_vertex_it_connects() -> None:
@@ -446,7 +484,7 @@ def test_a_relation_wide_edit_conflicts_with_removing_a_vertex_it_connects() -> 
     merged, result = merge_three_way(base, widened, removed)
 
     assert merged is None
-    assert merge3._vertex_slot("company") in {tuple(c.slot) for c in result.conflicts}
+    assert footprint.vertex_slot("company") in {tuple(c.slot) for c in result.conflicts}
 
 
 def test_re_keying_onto_a_field_conflicts_with_removing_it() -> None:
@@ -457,7 +495,7 @@ def test_re_keying_onto_a_field_conflicts_with_removing_it() -> None:
     merged, result = merge_three_way(base, rekeyed, trimmed)
 
     assert merged is None
-    assert merge3._field_slot("person", "email") in {
+    assert footprint.field_slot("person", "email") in {
         tuple(c.slot) for c in result.conflicts
     }
 
@@ -579,14 +617,26 @@ def test_a_grounding_only_change_survives_a_merge() -> None:
     assert [f.name for f in person.properties] == ["id", "age"]
 
 
+def test_retargeting_onto_an_edge_the_other_side_adds_is_not_independent() -> None:
+    """The retarget creates the edge it moves to; adding that edge too collides."""
+    person_knows = {"source": "person", "target": "person", "relation": "knows"}
+    retarget = ops_module.RetargetEdgesOp(edges=[{**KNOWS, "new_target": "person"}])
+
+    assert not ops_independent(
+        retarget,
+        ops_module.AddEdgesOp(edges=[person_knows]),
+        _people_and_companies([KNOWS]),
+    )
+
+
 def test_slot_values_for_the_edge_addressed_ops() -> None:
     """29 of 35 ops had only the source-text meta-check; pin the edge family."""
-    relation = merge3._relation_slot("knows")
+    relation = footprint.relation_slot("knows")
     edge = (*relation, "edge", "person", "company")
     assert op_slots(ops_module.AddEdgesOp(edges=[KNOWS])) == {edge}
     assert op_slots(
         ops_module.RetargetEdgesOp(edges=[{**KNOWS, "new_target": "person"}])
-    ) == {edge}
+    ) == {edge, (*relation, "edge", "person", "person")}
     assert op_slots(
         ops_module.ReplaceEdgeIdentitiesOp(edges=[{**KNOWS, "identities": [["x"]]}])
     ) == {edge}
@@ -1038,13 +1088,13 @@ def test_a_resource_reads_the_vertices_and_relations_its_pipeline_names() -> Non
     replace = ops_module.ReplaceResourcesOp(resources=op.resources)
 
     expected = {
-        merge3._vertex_slot("person"),
-        merge3._vertex_slot("company"),
-        merge3._relation_slot("knows"),
+        footprint.vertex_slot("person"),
+        footprint.vertex_slot("company"),
+        footprint.relation_slot("knows"),
     }
     assert op_reads(op) == expected
     assert op_reads(replace) == expected
-    assert op_slots(replace) == {merge3._resource_slot("links")}
+    assert op_slots(replace) == {footprint.resource_slot("links")}
 
 
 def test_adding_a_resource_conflicts_with_removing_a_vertex_it_casts() -> None:
@@ -1063,7 +1113,7 @@ def test_adding_a_resource_conflicts_with_removing_a_vertex_it_casts() -> None:
     merged, result = merge_three_way(base, added, removed)
 
     assert merged is None
-    assert merge3._vertex_slot("company") in {tuple(c.slot) for c in result.conflicts}
+    assert footprint.vertex_slot("company") in {tuple(c.slot) for c in result.conflicts}
 
 
 def test_editing_a_pipeline_conflicts_with_removing_a_vertex_it_now_casts() -> None:
@@ -1086,7 +1136,7 @@ def test_editing_a_pipeline_conflicts_with_removing_a_vertex_it_now_casts() -> N
     merged, result = merge_three_way(base, edited, removed)
 
     assert merged is None
-    assert merge3._vertex_slot("company") in {tuple(c.slot) for c in result.conflicts}
+    assert footprint.vertex_slot("company") in {tuple(c.slot) for c in result.conflicts}
 
 
 def test_an_edit_to_a_relation_this_side_renamed_reads_its_endpoints() -> None:
@@ -1115,7 +1165,7 @@ def test_a_resource_reads_the_fields_it_maps() -> None:
         ]
     )
 
-    assert merge3._field_slot("person", "email") in op_reads(op)
+    assert footprint.field_slot("person", "email") in op_reads(op)
 
 
 def test_adding_a_resource_conflicts_with_removing_a_field_it_maps() -> None:
@@ -1132,7 +1182,7 @@ def test_adding_a_resource_conflicts_with_removing_a_field_it_maps() -> None:
     merged, result = merge_three_way(base, added, trimmed)
 
     assert merged is None
-    assert merge3._field_slot("person", "email") in {
+    assert footprint.field_slot("person", "email") in {
         tuple(c.slot) for c in result.conflicts
     }
 

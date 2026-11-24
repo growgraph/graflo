@@ -22,8 +22,8 @@ from graflo.architecture.contract.ingestion.steps.ref import (
 )
 from graflo.architecture.evolution import apply_evolution, invert_ops
 from graflo.architecture.evolution.codec import op_from_dict
+from graflo.architecture.evolution.footprint import op_slots
 from graflo.architecture.evolution.hashing import manifest_hash
-from graflo.architecture.evolution.merge3 import op_slots
 from graflo.architecture.evolution.ops import (
     INGESTION_REWRITING_OPS,
     SetInverseEmissionOp,

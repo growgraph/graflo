@@ -144,7 +144,7 @@ def invert_op(op: ManifestOp, *, manifest: GraphManifest) -> ManifestOp | None:
     if not is_reversible(op):
         return None
 
-    handler = _HANDLERS.get(op.op)
+    handler = INVERTERS.get(op.op)
     if handler is None:
         logger.debug("no inverse handler for op %r", op.op)
         return None
@@ -1042,7 +1042,9 @@ def _invert_canonicalize(op: CanonicalizeOp, _manifest: GraphManifest) -> Manife
     )
 
 
-_HANDLERS: dict[str, Any] = {
+#: Each reversible op kind's inverse builder: ``(op, pre-state) -> inverse | None``.
+#: With :data:`IRREVERSIBLE`, it partitions the op vocabulary.
+INVERTERS: dict[str, Any] = {
     "add_vertices": _invert_add_vertices,
     "remove_vertices": _invert_remove_vertices,
     "add_edges": _invert_add_edges,
@@ -1130,6 +1132,7 @@ def _edge_spec(profile: Any, entry: EdgeIndexEntry) -> Any:
 
 
 __all__ = [
+    "INVERTERS",
     "IRREVERSIBLE",
     "invert_op",
     "invert_ops",

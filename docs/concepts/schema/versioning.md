@@ -295,6 +295,12 @@ type. An op both sides made is agreement, not a dependency. The conflict is
 reported at the written slot with both ops attached, and is resolved like any
 other. `ops_independent(a, b, base)` is the test the merge and its tests share.
 
+Each op's apply function, writes, reads and inverse are joined in one record,
+`op_laws()` in `graflo.architecture.evolution.op_laws`, and the laws are tested
+against every record. One of them is write soundness: applied to a manifest, an op
+changes no slot its writes do not cover, except slots whose content names one it
+writes, such as an edge naming a type the op removes (`slot_projection.changes_outside`).
+
 A change that no op expresses, such as one of a relation's edges gaining a
 property its siblings lack, cannot be merged at all: the
 merge is built from each side's ops, so the result would lack it.

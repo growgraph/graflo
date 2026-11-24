@@ -7,11 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `graflo.architecture.evolution.op_laws`: one `OpLaws` record per op (apply, writes, reads,
+  inverse or irreversible reason); `inverse._HANDLERS` is public as `INVERTERS`.
+- `graflo.architecture.evolution.slot_projection`: `slot_contents` (a manifest as slots) and
+  `changes_outside` (the changes an op's declared writes do not account for).
+
 ### Changed
 
 - A refused evolution op raises `OpRefusal` (still a `ValueError`) with a stable `check` kind
   and the `subjects` it is about; a manifest that fails validation while an op is applied is
   refused as `invalid-result`. New kind: `unknown-step`.
+- Op footprints live in `graflo.architecture.evolution.footprint`: `op_slots`, `op_reads`,
+  `ops_independent`, `describe_slot` and `Slot` move there from `merge3`. An op with no
+  footprint raises `TypeError` instead of being treated as touching the whole manifest.
 
 ### Fixed
 
@@ -19,7 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ops_independent` no longer calls `project_manifest`, or `add_inverse_edges` with no relations
   named, independent of other ops; `add_inverse_edges` with relations named depends on the
   inverse relation's edges.
-
+- `retarget_edges` declares the edge it creates as well as the one it moves, so `ops_independent`
+  sees it collide with the same edge added elsewhere.
 - Three-way merge reports a conflict when one side edits a property on every edge of a
   relation and the other side adds an edge to it; the result no longer depends on which side
   is left.

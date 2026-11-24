@@ -15,7 +15,8 @@ from graflo.architecture.contract import GraphManifest
 from graflo.architecture.contract.ingestion.steps import EdgeActorConfig
 from graflo.architecture.evolution import RemoveEdgePropertiesOp, apply_evolution
 from graflo.architecture.evolution.codec import op_from_dict, op_to_dict
-from graflo.architecture.evolution.merge3 import op_reads, op_slots, split_by_slot
+from graflo.architecture.evolution.footprint import op_reads, op_slots
+from graflo.architecture.evolution.merge3 import split_by_slot
 
 TO_COMPANY = ("person", "company", "works_at")
 TO_CITY = ("person", "city", "works_at")

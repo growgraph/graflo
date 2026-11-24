@@ -28,20 +28,19 @@ from hypothesis import HealthCheck, assume, event, example, given, settings
 from hypothesis import strategies as st
 
 from graflo.architecture.contract.manifest import GraphManifest
-from graflo.architecture.evolution import merge3
+from graflo.architecture.evolution import footprint
 from graflo.architecture.evolution.apply import apply_evolution
 from graflo.architecture.evolution.autogenerate import (
     diff_manifests,
     diff_manifests_verified,
 )
 from graflo.architecture.evolution.codec import op_from_dict, ops_to_dicts
+from graflo.architecture.evolution.footprint import op_slots, ops_independent
 from graflo.architecture.evolution.hashing import manifest_hash
 from graflo.architecture.evolution.inverse import invert_op, invert_ops
 from graflo.architecture.evolution.merge3 import (
     MergeError,
     merge_three_way,
-    op_slots,
-    ops_independent,
     split_by_slot,
     take_left,
     take_right,
@@ -845,31 +844,31 @@ def test_a_decision_changes_nothing_outside_its_conflict(case) -> None:
         # Removing a vertex or an edge splices it out of the hierarchy, so it
         # also reaches what was directly under it.
         reach |= {
-            merge3._vertex_slot(vertex.name)
+            footprint.vertex_slot(vertex.name)
             for manifest in manifests
             for vertex in _core(manifest).vertex_config.vertices
             if any(
-                p.vertex is not None and merge3._vertex_slot(p.vertex) in reach
+                p.vertex is not None and footprint.vertex_slot(p.vertex) in reach
                 for p in vertex.subclass_of
             )
         }
         reach |= {
-            merge3._relation_slot(edge.relation)
+            footprint.relation_slot(edge.relation)
             for manifest in manifests
             for edge in _core(manifest).edge_config.edges
             if edge.relation is not None
-            and {merge3._vertex_slot(edge.source), merge3._vertex_slot(edge.target)}
+            and {footprint.vertex_slot(edge.source), footprint.vertex_slot(edge.target)}
             & reach
         }
         reach |= {
-            merge3._relation_slot(edge.relation)
+            footprint.relation_slot(edge.relation)
             for manifest in manifests
             for edge in _core(manifest).edge_config.edges
             if edge.relation is not None
             and any(
                 p.edge is not None
                 and p.edge.relation is not None
-                and merge3._relation_slot(p.edge.relation) in reach
+                and footprint.relation_slot(p.edge.relation) in reach
                 for p in edge.subproperty_of
             )
         }

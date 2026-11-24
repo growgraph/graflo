@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
+from functools import cache
 from typing import Any, Literal
 
 from graflo.architecture.contract.ingestion import IngestionModel
@@ -2788,170 +2789,116 @@ def apply_sanitize(manifest: GraphManifest, op: SanitizeOp) -> None:
     schema.finish_init()
 
 
+def _refuse_merge_manifests(manifest: GraphManifest, op: MergeManifestsOp) -> None:
+    raise OpRefusal(
+        "merge_manifests is binary; use "
+        "graflo.architecture.evolution.merge_manifests(left, right, op)",
+        check="invalid-op",
+    )
+
+
+@cache
+def appliers() -> dict[type, Callable[[GraphManifest, Any], None]]:
+    """Each op type's in-place apply function. Total over the op vocabulary.
+
+    Built on first use: the handlers in ``identity``, ``structure``,
+    ``physical``, ``semantics`` and ``ingestion`` import from this module.
+    """
+    from .identity import (
+        apply_add_secondary_identities,
+        apply_remove_secondary_identities,
+        apply_replace_edge_identities,
+        apply_replace_identity,
+    )
+    from .ingestion import (
+        apply_add_resource_transforms,
+        apply_add_resources,
+        apply_ensure_extracted_fields,
+        apply_remove_resources,
+        apply_replace_resources,
+        apply_set_inverse_emission,
+    )
+    from .physical import (
+        apply_add_edge_indexes,
+        apply_add_vertex_indexes,
+        apply_change_field_types,
+        apply_remove_edge_indexes,
+        apply_remove_vertex_indexes,
+        apply_set_bindings,
+        apply_set_db_profile,
+        apply_set_edge_directed,
+        apply_set_native_inverses,
+    )
+    from .semantics import (
+        apply_set_edge_descriptions,
+        apply_set_edge_semantics,
+        apply_set_edge_subproperty_of,
+        apply_set_field_semantics,
+        apply_set_vertex_descriptions,
+        apply_set_vertex_semantics,
+        apply_set_vertex_subclass_of,
+    )
+    from .structure import apply_add_edges, apply_add_vertices, apply_retarget_edges
+
+    return {
+        MergeManifestsOp: _refuse_merge_manifests,
+        RemoveVerticesOp: apply_remove_vertices,
+        MergeVerticesOp: apply_merge_vertices,
+        CanonicalizeOp: apply_canonicalize,
+        RenameVertexPropertiesOp: apply_rename_vertex_properties,
+        RemoveVertexPropertiesOp: apply_remove_vertex_properties,
+        AddVertexPropertiesOp: apply_add_vertex_properties,
+        RenameVerticesOp: apply_rename_vertices,
+        RenameRelationsOp: apply_rename_relations,
+        RenameResourcesOp: apply_rename_resources,
+        RemoveEdgesOp: apply_remove_edges,
+        MergeEdgesOp: apply_merge_edges,
+        RenameEdgePropertiesOp: apply_rename_edge_properties,
+        RemoveEdgePropertiesOp: apply_remove_edge_properties,
+        AddEdgePropertiesOp: apply_add_edge_properties,
+        DeclareEdgeInversesOp: apply_declare_edge_inverses,
+        RetractEdgeInversesOp: apply_retract_edge_inverses,
+        AddInverseEdgesOp: apply_add_inverse_edges,
+        SetInverseEmissionOp: apply_set_inverse_emission,
+        SetNativeInversesOp: apply_set_native_inverses,
+        ProjectManifestOp: apply_project_manifest,
+        ReplaceIdentityOp: apply_replace_identity,
+        AddSecondaryIdentitiesOp: apply_add_secondary_identities,
+        RemoveSecondaryIdentitiesOp: apply_remove_secondary_identities,
+        ReplaceEdgeIdentitiesOp: apply_replace_edge_identities,
+        AddVerticesOp: apply_add_vertices,
+        AddEdgesOp: apply_add_edges,
+        RetargetEdgesOp: apply_retarget_edges,
+        ChangeFieldTypesOp: apply_change_field_types,
+        AddVertexIndexesOp: apply_add_vertex_indexes,
+        RemoveVertexIndexesOp: apply_remove_vertex_indexes,
+        AddEdgeIndexesOp: apply_add_edge_indexes,
+        RemoveEdgeIndexesOp: apply_remove_edge_indexes,
+        SetEdgeDirectedOp: apply_set_edge_directed,
+        SetBindingsOp: apply_set_bindings,
+        SetDbProfileOp: apply_set_db_profile,
+        SetVertexSemanticsOp: apply_set_vertex_semantics,
+        SetVertexDescriptionsOp: apply_set_vertex_descriptions,
+        SetVertexSubclassOfOp: apply_set_vertex_subclass_of,
+        SetEdgeDescriptionsOp: apply_set_edge_descriptions,
+        SetEdgeSubpropertyOfOp: apply_set_edge_subproperty_of,
+        SetEdgeSemanticsOp: apply_set_edge_semantics,
+        SetFieldSemanticsOp: apply_set_field_semantics,
+        SanitizeOp: apply_sanitize,
+        AddResourceTransformsOp: apply_add_resource_transforms,
+        EnsureExtractedFieldsOp: apply_ensure_extracted_fields,
+        AddResourcesOp: apply_add_resources,
+        RemoveResourcesOp: apply_remove_resources,
+        ReplaceResourcesOp: apply_replace_resources,
+    }
+
+
 def _dispatch_op(manifest: GraphManifest, op: Any) -> None:
     """Dispatch a single evolution op to its in-place apply function."""
-    if isinstance(op, MergeManifestsOp):
-        raise OpRefusal(
-            "merge_manifests is binary; use "
-            "graflo.architecture.evolution.merge_manifests(left, right, op)",
-            check="invalid-op",
-        )
-    if isinstance(op, RemoveVerticesOp):
-        apply_remove_vertices(manifest, op)
-    elif isinstance(op, MergeVerticesOp):
-        apply_merge_vertices(manifest, op)
-    elif isinstance(op, CanonicalizeOp):
-        apply_canonicalize(manifest, op)
-    elif isinstance(op, RenameVertexPropertiesOp):
-        apply_rename_vertex_properties(manifest, op)
-    elif isinstance(op, RemoveVertexPropertiesOp):
-        apply_remove_vertex_properties(manifest, op)
-    elif isinstance(op, AddVertexPropertiesOp):
-        apply_add_vertex_properties(manifest, op)
-    elif isinstance(op, RenameVerticesOp):
-        apply_rename_vertices(manifest, op)
-    elif isinstance(op, RenameRelationsOp):
-        apply_rename_relations(manifest, op)
-    elif isinstance(op, RenameResourcesOp):
-        apply_rename_resources(manifest, op)
-    elif isinstance(op, RemoveEdgesOp):
-        apply_remove_edges(manifest, op)
-    elif isinstance(op, MergeEdgesOp):
-        apply_merge_edges(manifest, op)
-    elif isinstance(op, RenameEdgePropertiesOp):
-        apply_rename_edge_properties(manifest, op)
-    elif isinstance(op, RemoveEdgePropertiesOp):
-        apply_remove_edge_properties(manifest, op)
-    elif isinstance(op, AddEdgePropertiesOp):
-        apply_add_edge_properties(manifest, op)
-    elif isinstance(op, DeclareEdgeInversesOp):
-        apply_declare_edge_inverses(manifest, op)
-    elif isinstance(op, RetractEdgeInversesOp):
-        apply_retract_edge_inverses(manifest, op)
-    elif isinstance(op, AddInverseEdgesOp):
-        apply_add_inverse_edges(manifest, op)
-    elif isinstance(op, SetInverseEmissionOp):
-        from .ingestion import apply_set_inverse_emission
-
-        apply_set_inverse_emission(manifest, op)
-    elif isinstance(op, SetNativeInversesOp):
-        from .physical import apply_set_native_inverses
-
-        apply_set_native_inverses(manifest, op)
-    elif isinstance(op, ProjectManifestOp):
-        apply_project_manifest(manifest, op)
-    elif isinstance(op, ReplaceIdentityOp):
-        from .identity import apply_replace_identity
-
-        apply_replace_identity(manifest, op)
-    elif isinstance(op, AddSecondaryIdentitiesOp):
-        from .identity import apply_add_secondary_identities
-
-        apply_add_secondary_identities(manifest, op)
-    elif isinstance(op, RemoveSecondaryIdentitiesOp):
-        from .identity import apply_remove_secondary_identities
-
-        apply_remove_secondary_identities(manifest, op)
-    elif isinstance(op, ReplaceEdgeIdentitiesOp):
-        from .identity import apply_replace_edge_identities
-
-        apply_replace_edge_identities(manifest, op)
-    elif isinstance(op, AddVerticesOp):
-        from .structure import apply_add_vertices
-
-        apply_add_vertices(manifest, op)
-    elif isinstance(op, AddEdgesOp):
-        from .structure import apply_add_edges
-
-        apply_add_edges(manifest, op)
-    elif isinstance(op, RetargetEdgesOp):
-        from .structure import apply_retarget_edges
-
-        apply_retarget_edges(manifest, op)
-    elif isinstance(op, ChangeFieldTypesOp):
-        from .physical import apply_change_field_types
-
-        apply_change_field_types(manifest, op)
-    elif isinstance(op, AddVertexIndexesOp):
-        from .physical import apply_add_vertex_indexes
-
-        apply_add_vertex_indexes(manifest, op)
-    elif isinstance(op, RemoveVertexIndexesOp):
-        from .physical import apply_remove_vertex_indexes
-
-        apply_remove_vertex_indexes(manifest, op)
-    elif isinstance(op, AddEdgeIndexesOp):
-        from .physical import apply_add_edge_indexes
-
-        apply_add_edge_indexes(manifest, op)
-    elif isinstance(op, RemoveEdgeIndexesOp):
-        from .physical import apply_remove_edge_indexes
-
-        apply_remove_edge_indexes(manifest, op)
-    elif isinstance(op, SetEdgeDirectedOp):
-        from .physical import apply_set_edge_directed
-
-        apply_set_edge_directed(manifest, op)
-    elif isinstance(op, SetBindingsOp):
-        from .physical import apply_set_bindings
-
-        apply_set_bindings(manifest, op)
-    elif isinstance(op, SetDbProfileOp):
-        from .physical import apply_set_db_profile
-
-        apply_set_db_profile(manifest, op)
-    elif isinstance(op, SetVertexSemanticsOp):
-        from .semantics import apply_set_vertex_semantics
-
-        apply_set_vertex_semantics(manifest, op)
-    elif isinstance(op, SetVertexDescriptionsOp):
-        from .semantics import apply_set_vertex_descriptions
-
-        apply_set_vertex_descriptions(manifest, op)
-    elif isinstance(op, SetVertexSubclassOfOp):
-        from .semantics import apply_set_vertex_subclass_of
-
-        apply_set_vertex_subclass_of(manifest, op)
-    elif isinstance(op, SetEdgeDescriptionsOp):
-        from .semantics import apply_set_edge_descriptions
-
-        apply_set_edge_descriptions(manifest, op)
-    elif isinstance(op, SetEdgeSubpropertyOfOp):
-        from .semantics import apply_set_edge_subproperty_of
-
-        apply_set_edge_subproperty_of(manifest, op)
-    elif isinstance(op, SetEdgeSemanticsOp):
-        from .semantics import apply_set_edge_semantics
-
-        apply_set_edge_semantics(manifest, op)
-    elif isinstance(op, SetFieldSemanticsOp):
-        from .semantics import apply_set_field_semantics
-
-        apply_set_field_semantics(manifest, op)
-    elif isinstance(op, SanitizeOp):
-        apply_sanitize(manifest, op)
-    elif isinstance(op, AddResourceTransformsOp):
-        from .ingestion import apply_add_resource_transforms
-
-        apply_add_resource_transforms(manifest, op)
-    elif isinstance(op, EnsureExtractedFieldsOp):
-        from .ingestion import apply_ensure_extracted_fields
-
-        apply_ensure_extracted_fields(manifest, op)
-    elif isinstance(op, AddResourcesOp):
-        from .ingestion import apply_add_resources
-
-        apply_add_resources(manifest, op)
-    elif isinstance(op, RemoveResourcesOp):
-        from .ingestion import apply_remove_resources
-
-        apply_remove_resources(manifest, op)
-    elif isinstance(op, ReplaceResourcesOp):
-        from .ingestion import apply_replace_resources
-
-        apply_replace_resources(manifest, op)
-    else:
+    handler = appliers().get(type(op))
+    if handler is None:
         raise TypeError(f"Unsupported evolution op: {type(op)!r}")
+    handler(manifest, op)
 
 
 def _inverse_advisories(manifest: GraphManifest) -> set[str]:

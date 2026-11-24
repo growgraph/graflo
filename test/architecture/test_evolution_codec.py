@@ -519,15 +519,15 @@ class TestUnionCoverage:
 
     def test_every_op_is_reversible_or_says_why_not(self) -> None:
         """The split quoted wherever the vocabulary is described; update both."""
-        from graflo.architecture.evolution.inverse import _HANDLERS, IRREVERSIBLE
+        from graflo.architecture.evolution.inverse import INVERTERS, IRREVERSIBLE
 
         names = {
             model.model_fields["op"].default
             for model in typing.get_args(typing.get_args(ManifestOp)[0])
         }
-        assert set(_HANDLERS) | set(IRREVERSIBLE) == names
-        assert not set(_HANDLERS) & set(IRREVERSIBLE)
-        assert (len(_HANDLERS), len(IRREVERSIBLE)) == (41, 8)
+        assert set(INVERTERS) | set(IRREVERSIBLE) == names
+        assert not set(INVERTERS) & set(IRREVERSIBLE)
+        assert (len(INVERTERS), len(IRREVERSIBLE)) == (41, 8)
 
 
 class TestRoundTrip:

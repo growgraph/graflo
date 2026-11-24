@@ -12,7 +12,9 @@ Reconciliation happens per **slot** -- the addressable location an op touches,
 such as ``("vertex", "person", "field", "age")``. Two sides that touch disjoint
 slots, and do not change what the other depends on, merge automatically. Two sides that make the *same* change to one slot
 merge to that change, once. Two sides that make different changes to one slot
-are a :class:`MergeConflict`, reported rather than guessed at.
+are a :class:`MergeConflict`, reported rather than guessed at. What each op
+writes and reads -- its footprint -- is defined in :mod:`.footprint`; this
+module merges on it.
 
 Three things make the slot the right unit:
 
@@ -64,324 +66,38 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Iterable, Sequence
 from typing import Any
 
 import suthing
 from pydantic import Field as PydanticField
 
 from graflo.architecture.base import ConfigBaseModel
-from graflo.architecture.contract.ingestion.steps import ActorConfig
 from graflo.architecture.contract.manifest import GraphManifest
-from graflo.architecture.graph_types import EdgeId
-from graflo.architecture.schema.edge import SuperProperty
-from graflo.architecture.schema.hierarchy import Hierarchy
 from graflo.architecture.schema.naming import canonical_key
-from graflo.architecture.schema.vertex import SuperClass
 
 from . import ops
 from .autogenerate import RenameHints, diff_manifests_verified
 from .codec import RevisionOp, op_to_dict, ops_from_dicts, ops_to_dicts
+from .footprint import (
+    WHOLE_MANIFEST,
+    Slot,
+    covers,
+    depends_on,
+    describe_slot,
+    edge_slot,
+    op_reads,
+    op_slots,
+    relation_aliases,
+    relation_slot,
+)
 from .hashing import manifest_hash
 from .ops import ManifestOp
 
 logger = logging.getLogger(__name__)
 
-#: An addressable location in a manifest. Tuples so they sort and hash.
-Slot = tuple[str, ...]
-
-#: The last element of a relation's edge-set slot, ``("relation", r, "edges")``.
-#: Only read, never written: see :func:`_relation_members`.
-_MEMBERS = "edges"
-
-#: The slot of an op that may change anything: it contains every other slot.
-_WHOLE_MANIFEST: Slot = ("manifest",)
-
 
 class MergeError(RuntimeError):
     """A merge cannot proceed: unmergeable inputs, or an invalid resolution."""
-
-
-# ── slots ───────────────────────────────────────────────────────────────────
-
-
-def _vertex_slot(name: str) -> Slot:
-    """A vertex's slot, keyed on its *canonical* name.
-
-    Keying on ``canonical_key`` rather than the raw string matters because
-    without it, one side's ``order_line`` and the
-    other's ``OrderLine`` occupy different slots, merge cleanly, and produce a
-    schema holding both as unrelated types with the data split between them and
-    nothing raising. Detecting that is exactly what a conflict is for.
-    """
-    return ("vertex", "/".join(canonical_key(name)) or name.lower())
-
-
-def _edge_slot(source: str, target: str, relation: str | None) -> Slot:
-    """An edge's slot, nested under its relation's.
-
-    Ops address edges two ways -- by relation name (``remove_edges``,
-    ``rename_relations``, ``merge_edges``) and by triple (``set_edge_directed``,
-    ``retarget_edges``, ...). Containment is what makes the two families see
-    each other: removing a relation covers every edge on it, so flipping one of
-    those edges on the other side is a conflict rather than a clean merge that
-    applies the flip to an edge the removal already deleted. An edge with no
-    relation is unreachable by any relation-addressed op and keeps its own root.
-    """
-    endpoints = (
-        "/".join(canonical_key(source)) or source.lower(),
-        "/".join(canonical_key(target)) or target.lower(),
-    )
-    if relation is None:
-        return ("edge", *endpoints)
-    return (*_relation_slot(relation), "edge", *endpoints)
-
-
-def _edge_field_slot(source: str, target: str, relation: str | None) -> Slot:
-    """Where a per-edge property change lands: its relation's property slot.
-
-    The same slot as the relation-wide form, so a change to one edge of a
-    relation and a change to the whole relation see each other. An edge with
-    no relation has properties under its own root.
-    """
-    if relation is None:
-        return (*_edge_slot(source, target, None), "field")
-    return (*_relation_slot(relation), "field")
-
-
-def _field_slot(vertex: str, field: str) -> Slot:
-    return (*_vertex_slot(vertex), "field", "/".join(canonical_key(field)) or field)
-
-
-def _relation_slot(relation: str) -> Slot:
-    """A relation's slot, canonicalized like every other name."""
-    return ("relation", "/".join(canonical_key(relation)) or relation.lower())
-
-
-def _resource_slot(name: str) -> Slot:
-    # A resource's pipeline is an ordered program: one slot for the whole
-    # resource, never one per step.
-    return ("resource", name)
-
-
-def op_slots(op: ManifestOp) -> set[Slot]:
-    """Every addressable location *op* touches.
-
-    Dispatch is on the op *class*, not on its ``op`` string literal. Two
-    reasons: a type checker can narrow it, so a field read against the wrong op
-    model is caught at check time rather than at merge time; and a literal
-    renamed in the ``ops`` package cannot silently fall through to the
-    catch-all here.
-
-    Total over the op vocabulary. An op reaching the fallback is treated as
-    touching the whole manifest, which conflicts with everything -- the safe
-    direction, since an unrecognised op silently merging with anything is how a
-    merge quietly corrupts a schema. ``test_merge3.py`` asserts every member of
-    the union resolves to a real slot, so the fallback is a backstop rather
-    than a policy.
-    """
-    slots: set[Slot] = set()
-
-    # ── vertices ────────────────────────────────────────────────────────────
-    if isinstance(op, ops.AddVerticesOp):
-        slots |= {_vertex_slot(v.name) for v in op.vertices}
-    elif isinstance(op, ops.RemoveVerticesOp):
-        slots |= {_vertex_slot(name) for name in op.names}
-    elif isinstance(op, ops.RenameVerticesOp):
-        # Both names: a rename collides with any edit to either side of it.
-        for old, new in op.renames.items():
-            slots |= {_vertex_slot(old), _vertex_slot(new)}
-    elif isinstance(op, ops.MergeVerticesOp):
-        slots |= {_vertex_slot(name) for name in op.sources}
-        slots.add(_vertex_slot(op.into))
-    elif isinstance(op, ops.CanonicalizeOp):
-        # Every name on either side of the map is occupied, as for a rename.
-        for old, new in op.vertices.items():
-            slots |= {_vertex_slot(old), _vertex_slot(new)}
-        for vertex, renames in op.properties.items():
-            for old, new in renames.items():
-                slots |= {_field_slot(vertex, old), _field_slot(vertex, new)}
-        for old, new in op.relations.items():
-            slots |= {_relation_slot(old), _relation_slot(new)}
-
-    # ── vertex properties ───────────────────────────────────────────────────
-    elif isinstance(op, ops.AddVertexPropertiesOp):
-        for vertex in op.additions:
-            slots |= {_field_slot(vertex, name) for name in op.field_names(vertex)}
-    elif isinstance(op, ops.RemoveVertexPropertiesOp):
-        for vertex, fields in op.removals.items():
-            slots |= {_field_slot(vertex, field) for field in fields}
-    elif isinstance(op, ops.RenameVertexPropertiesOp):
-        for vertex, renames in op.renames.items():
-            for old, new in renames.items():
-                slots |= {_field_slot(vertex, old), _field_slot(vertex, new)}
-
-    # ── identity ────────────────────────────────────────────────────────────
-    elif isinstance(op, ops.ReplaceIdentityOp):
-        # Identity is a property of the vertex as a whole, not of one field, so
-        # two sides re-keying the same vertex must collide even when they name
-        # entirely different fields.
-        slots |= {(*_vertex_slot(vertex), "identity") for vertex in op.replacements}
-    elif isinstance(op, ops.AddSecondaryIdentitiesOp):
-        slots |= {(*_vertex_slot(vertex), "secondary") for vertex in op.additions}
-    elif isinstance(op, ops.RemoveSecondaryIdentitiesOp):
-        slots |= {(*_vertex_slot(vertex), "secondary") for vertex in op.removals}
-
-    # ── edges, addressed by endpoints ───────────────────────────────────────
-    elif isinstance(
-        op,
-        (
-            ops.AddEdgesOp,
-            ops.RetargetEdgesOp,
-            ops.ReplaceEdgeIdentitiesOp,
-            ops.AddEdgeIndexesOp,
-            ops.RemoveEdgeIndexesOp,
-        ),
-    ):
-        # `Edge.edge_id` is a property and the entry models' is a method, so
-        # read the triple itself, which every edge-ish model carries.
-        slots |= {
-            _edge_slot(entry.source, entry.target, entry.relation) for entry in op.edges
-        }
-    elif isinstance(op, ops.SetEdgeDirectedOp):
-        slots |= {(*_edge_slot(*entry.edge_id()), "directed") for entry in op.edges}
-
-    # Block-level setters. One slot for the whole block, because that is what
-    # the op replaces -- two independent bindings edits therefore conflict,
-    # which is the price of the block having any op at all.
-    elif isinstance(op, ops.SetBindingsOp):
-        slots |= {("bindings",)}
-    elif isinstance(op, ops.SetDbProfileOp):
-        slots |= {("db_profile",)}
-    elif isinstance(op, ops.SanitizeOp):
-        # Writes physical names into the profile and nothing else. It needs no
-        # read footprint: a concurrent rename carries the recorded name along,
-        # and a name the merge leaves unrecorded is filled in at write time.
-        slots |= {("db_profile",)}
-    elif isinstance(op, ops.SetEdgeSemanticsOp):
-        slots |= {(*_edge_slot(*entry.edge_id()), "semantics") for entry in op.edges}
-    elif isinstance(op, ops.SetEdgeDescriptionsOp):
-        slots |= {(*_edge_slot(*entry.edge_id()), "description") for entry in op.edges}
-    elif isinstance(op, ops.SetEdgeSubpropertyOfOp):
-        slots |= {
-            (*_edge_slot(*entry.edge_id()), "subproperty_of") for entry in op.edges
-        }
-
-    # ── grounding ───────────────────────────────────────────────────────────
-    #
-    # A narrower slot than the element itself: grounding a type and renaming a
-    # property of it are independent edits, and merging them is the ordinary
-    # case rather than a conflict.
-    elif isinstance(op, ops.SetVertexSemanticsOp):
-        slots |= {(*_vertex_slot(name), "semantics") for name in op.semantics}
-    elif isinstance(op, ops.SetVertexDescriptionsOp):
-        slots |= {(*_vertex_slot(name), "description") for name in op.descriptions}
-    elif isinstance(op, ops.SetVertexSubclassOfOp):
-        slots |= {(*_vertex_slot(name), "subclass_of") for name in op.subclass_of}
-    elif isinstance(op, ops.SetFieldSemanticsOp):
-        for target in op.targets:
-            if isinstance(target, ops.FieldSemanticsTarget):
-                slots.add((*_field_slot(target.vertex, target.field), "semantics"))
-            else:
-                slots.add(
-                    (*_edge_slot(*target.edge_id()), "field", target.field, "semantics")
-                )
-
-    # ── edges, addressed by relation name ───────────────────────────────────
-    elif isinstance(op, ops.RemoveEdgesOp):
-        slots |= {_relation_slot(relation) for relation in op.relations}
-        slots |= {_edge_slot(*selector.edge_id()) for selector in op.edges}
-    elif isinstance(op, ops.RenameRelationsOp):
-        # `{old: new}` -- both names are occupied.
-        for old, new in op.renames.items():
-            slots |= {_relation_slot(old), _relation_slot(new)}
-    elif isinstance(op, ops.AddInverseEdgesOp):
-        if op.relations is None:
-            # Realizes whatever is paired when it runs: its reach is the inverse
-            # table, every paired relation's edges and their directions, none of
-            # which the op names. Conservatively, the whole manifest.
-            slots.add(_WHOLE_MANIFEST)
-        else:
-            slots |= {_relation_slot(relation) for relation in op.relations}
-    elif isinstance(op, ops.DeclareEdgeInversesOp):
-        for relation, inverse in op.inverses.items():
-            slots |= {
-                (*_relation_slot(relation), "inverse"),
-                (*_relation_slot(inverse), "inverse"),
-            }
-        slots |= {(*_relation_slot(name), "inverse") for name in op.symmetric}
-    elif isinstance(op, ops.RetractEdgeInversesOp):
-        slots |= {(*_relation_slot(relation), "inverse") for relation in op.relations}
-    elif isinstance(op, ops.SetNativeInversesOp):
-        slots |= {
-            (*_relation_slot(relation), "native_inverse") for relation in op.relations
-        }
-    elif isinstance(op, ops.MergeEdgesOp):
-        slots |= {_relation_slot(relation) for relation in op.sources}
-        slots.add(_relation_slot(op.into))
-
-    # ── edge properties ─────────────────────────────────────────────────────
-    elif isinstance(op, ops.AddEdgePropertiesOp):
-        slots |= {(*_relation_slot(rel), "field") for rel in op.additions}
-        slots |= {_edge_field_slot(*entry.edge_id()) for entry in op.per_edge}
-    elif isinstance(op, ops.RemoveEdgePropertiesOp):
-        slots |= {(*_relation_slot(rel), "field") for rel in op.removals}
-        slots |= {_edge_field_slot(*entry.edge_id()) for entry in op.per_edge}
-    elif isinstance(op, ops.RenameEdgePropertiesOp):
-        slots |= {(*_relation_slot(rel), "field") for rel in op.renames}
-        slots |= {_edge_field_slot(*entry.edge_id()) for entry in op.per_edge}
-
-    # ── vertex indexes ──────────────────────────────────────────────────────
-    elif isinstance(op, (ops.AddVertexIndexesOp, ops.RemoveVertexIndexesOp)):
-        slots |= {(*_vertex_slot(vertex), "index") for vertex in op.indexes}
-
-    # ── types ───────────────────────────────────────────────────────────────
-    elif isinstance(op, ops.ChangeFieldTypesOp):
-        for vertex, fields in op.vertices.items():
-            slots |= {(*_field_slot(vertex, field), "type") for field in fields}
-        for relation, fields in op.edges.items():
-            slots |= {
-                (*_relation_slot(relation), "field", str(field), "type")
-                for field in fields
-            }
-        for entry in op.per_edge:
-            slots |= {
-                (*_edge_field_slot(*entry.edge_id()), str(field), "type")
-                for field in entry.fields
-            }
-
-    # ── ingestion ───────────────────────────────────────────────────────────
-    elif isinstance(op, ops.SetInverseEmissionOp):
-        # Steps are addressed by position, and a position is only meaningful
-        # against the pipeline it was read from: one slot per resource.
-        slots |= {_resource_slot(name) for name in op.steps}
-    elif isinstance(op, (ops.AddResourceTransformsOp, ops.EnsureExtractedFieldsOp)):
-        # A pipeline is one slot per resource: an ordered program cannot be
-        # half-merged, so it conflicts as a unit or merges as a unit.
-        slots |= {_resource_slot(name) for name in op.additions}
-    elif isinstance(op, ops.RenameResourcesOp):
-        for old, new in op.renames.items():
-            slots |= {_resource_slot(old), _resource_slot(new)}
-    elif isinstance(op, (ops.AddResourcesOp, ops.ReplaceResourcesOp)):
-        slots |= {_resource_slot(resource.name) for resource in op.resources}
-    elif isinstance(op, ops.RemoveResourcesOp):
-        slots |= {_resource_slot(name) for name in op.names}
-
-    # ── whole-manifest ops ──────────────────────────────────────────────────
-    elif isinstance(op, (ops.ProjectManifestOp, ops.MergeManifestsOp)):
-        # These rewrite everything, so they conflict with any other change.
-        # There is no way to merge "keep only these vertices" with an
-        # unrelated edit and be sure of the result.
-        slots.add(_WHOLE_MANIFEST)
-
-    if not slots:
-        logger.warning(
-            "op '%s' has no slot mapping; treating it as touching the whole "
-            "manifest, so it will conflict with any other change",
-            op.op,
-        )
-        slots.add(_WHOLE_MANIFEST)
-    return slots
 
 
 # ── one op per slot ─────────────────────────────────────────────────────────
@@ -483,401 +199,6 @@ def split_by_slot(op: ManifestOp) -> list[ManifestOp]:
     if len(pieces) <= 1:
         return [op]
     return [op_from_dict({**common, **piece}) for piece in pieces]
-
-
-# ── what an op depends on ───────────────────────────────────────────────────
-
-_ENDPOINT_TOKENS = frozenset({"source", "target", "relation"})
-
-
-#: ``{relation name: the base relations it stands for}``, from one side's renames.
-RelationAliases = dict[str, set[str]]
-
-
-def relation_aliases(side_ops: list[ManifestOp]) -> RelationAliases:
-    """The base relations each name a side's renames and merges introduce stands for.
-
-    An op after a rename addresses the new name, which the base does not know;
-    its endpoints are those of the relation it was renamed from.
-    """
-    aliases: RelationAliases = {}
-
-    def carry(old: str, new: str) -> None:
-        aliases.setdefault(new, set()).update(aliases.get(old, {old}))
-
-    for op in side_ops:
-        if isinstance(op, ops.RenameRelationsOp):
-            for old, new in op.renames.items():
-                carry(old, new)
-        elif isinstance(op, ops.CanonicalizeOp):
-            for old, new in op.relations.items():
-                carry(old, new)
-        elif isinstance(op, ops.MergeEdgesOp):
-            for source in op.sources:
-                carry(source, op.into)
-    return aliases
-
-
-def _per_edge_reads(entries: Iterable[ops.EdgeSelector]) -> set[Slot]:
-    """The edge triples *entries* name, and the vertices they connect."""
-    return {
-        _vertex_slot(name) for entry in entries for name in (entry.source, entry.target)
-    } | {_edge_slot(*entry.edge_id()) for entry in entries}
-
-
-def _relation_endpoints(
-    base: GraphManifest | None,
-    relation: str,
-    aliases: RelationAliases | None = None,
-) -> set[Slot]:
-    """The edges of *relation*, or the relations it stands for, in *base*, and their vertices.
-
-    The edges themselves are read too: removing the relation's last edge by
-    triple leaves no relation for the op to address.
-    """
-    if base is None or base.graph_schema is None:
-        return set()
-    wanted = {
-        _relation_slot(name) for name in {relation, *(aliases or {}).get(relation, ())}
-    }
-    edges = [
-        edge
-        for edge in base.graph_schema.core_schema.edge_config.edges
-        if edge.relation is not None and _relation_slot(edge.relation) in wanted
-    ]
-    return {
-        _vertex_slot(name) for edge in edges for name in (edge.source, edge.target)
-    } | {_edge_slot(edge.source, edge.target, edge.relation) for edge in edges}
-
-
-def _relation_members(
-    relation: str, aliases: RelationAliases | None = None
-) -> set[Slot]:
-    """The edge set of *relation*, or the relations it stands for.
-
-    An op addressed to every edge of a relation reaches whatever edges the
-    relation has when it runs, so it depends on that set: an edge the other
-    side adds to the relation would be reached in one order and not the other.
-    :func:`_depends_on` lets any write of an edge directly under the relation
-    disturb this read.
-    """
-    return {
-        (*_relation_slot(name), _MEMBERS)
-        for name in {relation, *(aliases or {}).get(relation, ())}
-    }
-
-
-def _declared_inverse(base: GraphManifest | None, relation: str) -> str | None:
-    """The inverse *relation* is paired with in *base*, if any."""
-    if base is None or base.graph_schema is None:
-        return None
-    return base.graph_schema.core_schema.edge_config.inverse_of(relation)
-
-
-def _key_field_reads(vertex: str, fields: list[str]) -> set[Slot]:
-    """A keying field, and its type: an identity field may not become a list."""
-    reads: set[Slot] = set()
-    for field in fields:
-        reads |= {_field_slot(vertex, field), (*_field_slot(vertex, field), "type")}
-    return reads
-
-
-def _identity_target_fields(target: Any) -> list[str]:
-    if isinstance(target, ops.NaturalIdentityTarget):
-        return list(target.identity)
-    if isinstance(target, ops.HashIdentityTarget):
-        return list(target.hash_from)
-    if isinstance(target, ops.FunnelIdentityTarget):
-        return [
-            field
-            for branch in target.funnel.branches
-            for field in [*branch.fields, *(branch.when_all_present or [])]
-        ]
-    return []
-
-
-# A hierarchy edit is valid or not by what the hierarchy entails, which runs
-# through every link of a chain, not just the one named. So it reads the
-# ``subclass_of`` (and ``subproperty_of``) slot of each element on the chain
-# in *base*: a write there on the other side -- a link cut, a cycle closed --
-# is a conflict, not a merged result that no longer validates.
-
-
-def _hierarchy(base: GraphManifest | None) -> Hierarchy | None:
-    schema = base.graph_schema if base is not None else None
-    return Hierarchy.of(schema.core_schema) if schema is not None else None
-
-
-def _class_chain_reads(names: Iterable[str], hierarchy: Hierarchy | None) -> set[Slot]:
-    chain = set(names)
-    if hierarchy is not None:
-        chain |= {p for name in list(chain) for p in hierarchy.superclasses(name)}
-    return {(*_vertex_slot(name), "subclass_of") for name in chain}
-
-
-def _superclass_reads(
-    parents: Iterable[SuperClass], base: GraphManifest | None
-) -> set[Slot]:
-    local = [p.vertex for p in parents if p.vertex is not None]
-    return {_vertex_slot(name) for name in local} | _class_chain_reads(
-        local, _hierarchy(base)
-    )
-
-
-def _superproperty_reads(
-    child: EdgeId, parents: Iterable[SuperProperty], base: GraphManifest | None
-) -> set[Slot]:
-    local = [p.edge.edge_id() for p in parents if p.edge is not None]
-    if not local:
-        return set()
-    hierarchy = _hierarchy(base)
-    chain = set(local)
-    if hierarchy is not None:
-        chain |= {p for edge_id in local for p in hierarchy.superproperties(edge_id)}
-    reads: set[Slot] = {(*_edge_slot(*child), "directed")}
-    for edge_id in local:
-        reads |= {
-            _edge_slot(*edge_id),
-            (*_edge_slot(*edge_id), "directed"),
-            _vertex_slot(edge_id[0]),
-            _vertex_slot(edge_id[1]),
-        }
-    reads |= {(*_edge_slot(*edge_id), "subproperty_of") for edge_id in chain}
-    # Endpoint subsumption runs up the child's endpoints' class chains.
-    return reads | _class_chain_reads(child[:2], hierarchy)
-
-
-def op_reads(
-    op: ManifestOp,
-    base: GraphManifest | None = None,
-    aliases: RelationAliases | None = None,
-) -> set[Slot]:
-    """What *op* needs to be there and does not itself change.
-
-    :func:`op_slots` is what an op writes. That is not enough to tell whether
-    two ops are independent: ``add_edges`` writes an edge and *reads* its
-    endpoint vertices, so a ``remove_vertices`` on the other side -- which
-    cascades over that vertex's edges -- shares no written slot with it and
-    still cannot be merged with it. One order drops the new edge without a
-    word; the other does not apply.
-
-    A read conflicts with a write **at or above** it, never below: an edge onto
-    ``company`` depends on ``company`` existing under that name, not on which
-    fields it carries.
-
-    Ops addressed by relation depend on whatever that relation connects, which
-    the op does not say; that is read from *base*. A relation one side renamed
-    is looked up under the name *base* knows, so its endpoints are not seen --
-    the rename itself occupies both names and conflicts with the other side's
-    edits to the relation. *aliases* (:func:`relation_aliases` of the op's own
-    side) lets an op after a rename read the endpoints of the renamed relation.
-
-    The relation-wide forms of the edge property ops and of
-    ``change_field_types`` also read the relation's edge set
-    (``relation/<r>/edges``): they reach every edge the relation has when they
-    run, so an edge the other side adds to the relation is a conflict. Their
-    per-edge entries name their edges and do not read it.
-
-    An op not listed reads nothing beyond what it writes: a property op lives
-    under its vertex's slot, so the containment of written slots already ties
-    it to that vertex.
-    """
-    reads: set[Slot] = set()
-
-    # ── edges, addressed by endpoints ───────────────────────────────────────
-    # A local superclass or superproperty is a reference, as an edge's endpoint is.
-    if isinstance(op, ops.SetVertexSubclassOfOp):
-        reads |= _superclass_reads(
-            (parent for parents in op.subclass_of.values() for parent in parents),
-            base,
-        )
-    elif isinstance(op, ops.AddVerticesOp):
-        reads |= _superclass_reads(
-            (parent for vertex in op.vertices for parent in vertex.subclass_of), base
-        )
-    elif isinstance(op, ops.SetEdgeSubpropertyOfOp):
-        for entry in op.edges:
-            reads |= {_vertex_slot(entry.source), _vertex_slot(entry.target)}
-            reads |= _superproperty_reads(entry.edge_id(), entry.subproperty_of, base)
-    elif isinstance(op, ops.AddEdgesOp):
-        for edge in op.edges:
-            reads |= {_vertex_slot(edge.source), _vertex_slot(edge.target)}
-            if edge.by is not None:
-                reads.add(_vertex_slot(edge.by))
-            reads |= _superproperty_reads(edge.edge_id, edge.subproperty_of, base)
-    elif isinstance(op, ops.RetargetEdgesOp):
-        for entry in op.edges:
-            reads |= {_vertex_slot(entry.source), _vertex_slot(entry.target)}
-            reads |= {
-                _vertex_slot(name)
-                for name in (entry.new_source, entry.new_target)
-                if name is not None
-            }
-    elif isinstance(
-        op,
-        (ops.SetEdgeDirectedOp, ops.SetEdgeSemanticsOp, ops.SetEdgeDescriptionsOp),
-    ):
-        for selector in op.edges:
-            reads |= {_vertex_slot(selector.source), _vertex_slot(selector.target)}
-    elif isinstance(op, ops.ReplaceEdgeIdentitiesOp):
-        for entry in op.edges:
-            reads |= {_vertex_slot(entry.source), _vertex_slot(entry.target)}
-            tokens = {token for key in entry.identities for token in key}
-            if entry.relation is not None and tokens - _ENDPOINT_TOKENS:
-                reads.add((*_relation_slot(entry.relation), "field"))
-    elif isinstance(op, (ops.AddEdgeIndexesOp, ops.RemoveEdgeIndexesOp)):
-        for entry in op.edges:
-            reads |= {_vertex_slot(entry.source), _vertex_slot(entry.target)}
-            if entry.relation is not None:
-                reads.add((*_relation_slot(entry.relation), "field"))
-    elif isinstance(op, ops.SetFieldSemanticsOp):
-        for target in op.targets:
-            if isinstance(target, ops.EdgeFieldSemanticsTarget):
-                reads |= {_vertex_slot(target.source), _vertex_slot(target.target)}
-
-    # ── edges, addressed by relation name ───────────────────────────────────
-    elif isinstance(op, ops.RemoveEdgesOp):
-        for selector in op.edges:
-            reads |= {_vertex_slot(selector.source), _vertex_slot(selector.target)}
-        for relation in op.relations:
-            reads |= _relation_endpoints(base, relation, aliases)
-    elif isinstance(op, ops.AddEdgePropertiesOp):
-        for relation in op.additions:
-            reads |= _relation_endpoints(base, relation, aliases)
-            reads |= _relation_members(relation, aliases)
-        reads |= _per_edge_reads(op.per_edge)
-    elif isinstance(op, ops.RemoveEdgePropertiesOp):
-        for relation in op.removals:
-            reads |= _relation_endpoints(base, relation, aliases)
-            reads |= _relation_members(relation, aliases)
-        reads |= _per_edge_reads(op.per_edge)
-    elif isinstance(op, ops.RenameEdgePropertiesOp):
-        for relation in op.renames:
-            reads |= _relation_endpoints(base, relation, aliases)
-            reads |= _relation_members(relation, aliases)
-        reads |= _per_edge_reads(op.per_edge)
-    elif isinstance(op, ops.RenameRelationsOp):
-        for relation in op.renames:
-            reads |= _relation_endpoints(base, relation, aliases)
-    elif isinstance(op, ops.MergeEdgesOp):
-        for relation in [*op.sources, op.into]:
-            reads |= _relation_endpoints(base, relation, aliases)
-    elif isinstance(op, ops.AddInverseEdgesOp):
-        for relation in op.relations or []:
-            reads |= _relation_endpoints(base, relation, aliases)
-            # It adds edges to the inverse relation, unless one is there already.
-            inverse = _declared_inverse(base, relation)
-            if inverse is not None:
-                reads |= _relation_endpoints(base, inverse, aliases)
-                reads |= _relation_members(inverse, aliases)
-    elif isinstance(op, ops.SetNativeInversesOp):
-        for relation in op.relations or []:
-            reads |= _relation_endpoints(base, relation, aliases)
-    elif isinstance(op, ops.RetractEdgeInversesOp):
-        for relation in op.relations:
-            reads |= _relation_endpoints(base, relation, aliases)
-    elif isinstance(op, ops.DeclareEdgeInversesOp):
-        for relation in [*op.inverses, *op.inverses.values(), *op.symmetric]:
-            reads |= _relation_endpoints(base, relation, aliases)
-    elif isinstance(op, ops.ChangeFieldTypesOp):
-        for relation in op.edges:
-            reads |= _relation_endpoints(base, relation, aliases)
-            reads |= _relation_members(relation, aliases)
-        reads |= _per_edge_reads(op.per_edge)
-
-    # ── keys ────────────────────────────────────────────────────────────────
-    elif isinstance(op, ops.ReplaceIdentityOp):
-        for vertex, replacement in op.replacements.items():
-            reads |= _key_field_reads(vertex, _identity_target_fields(replacement.to))
-    elif isinstance(op, ops.AddSecondaryIdentitiesOp):
-        for vertex, entries in op.additions.items():
-            for entry in entries:
-                reads |= _key_field_reads(vertex, list(entry.fields))
-    elif isinstance(op, ops.AddVertexIndexesOp):
-        for vertex, indexes in op.indexes.items():
-            for index in indexes:
-                reads |= {_field_slot(vertex, field) for field in index.fields}
-
-    # ── ingestion ───────────────────────────────────────────────────────────
-    elif isinstance(op, (ops.AddResourcesOp, ops.ReplaceResourcesOp)):
-        for resource in op.resources:
-            reads |= _pipeline_reads(resource)
-
-    return reads
-
-
-def _pipeline_reads(resource: Any) -> set[Slot]:
-    """What a resource's pipeline names: vertices, fixed relations, mapped fields.
-
-    A mapped field is a vertex property a step fills from a named column
-    (a vertex step's ``from``, a router's ``vertex_from_map``). A property a
-    step fills by its own name is not listed.
-    """
-    from graflo.architecture.contract.ingestion.steps.ref import iter_edge_steps
-
-    reads = {_vertex_slot(name) for name in resource.collect_vertex_names()}
-    for view in iter_edge_steps(list(resource.pipeline)):
-        for relation in view.relations_written() or set():
-            reads.add(_relation_slot(relation))
-    for vertex, field in _mapped_fields(list(resource.pipeline)):
-        reads.add(_field_slot(vertex, field))
-    return reads
-
-
-def _mapped_fields(pipeline: Sequence[ActorConfig]) -> set[tuple[str, str]]:
-    """``(vertex, property)`` for every property a step maps from a named column."""
-    from graflo.architecture.contract.ingestion.resource import iter_steps
-    from graflo.architecture.contract.ingestion.steps import (
-        VertexActorConfig,
-        VertexRouterActorConfig,
-    )
-
-    found: set[tuple[str, str]] = set()
-    for step in iter_steps(pipeline):
-        if isinstance(step, VertexActorConfig) and step.from_doc is not None:
-            found |= {(step.vertex, field) for field in step.from_doc}
-        elif isinstance(step, VertexRouterActorConfig) and step.vertex_from_map:
-            for vertex, mapping in step.vertex_from_map.items():
-                found |= {(vertex, field) for field in mapping}
-    return found
-
-
-def _depends_on(read: Slot, written: Slot) -> bool:
-    """A read is disturbed by a write at or above it, not by one beneath it.
-
-    One exception: a relation's edge set (:func:`_relation_members`) is also
-    disturbed by a write of an edge directly under the relation -- an edge
-    added, retargeted or re-keyed there -- but not by a write beneath an edge.
-    """
-    if _covers(written, read):
-        return True
-    return (
-        len(read) == 3
-        and read[2] == _MEMBERS
-        and len(written) == 5
-        and written[:2] == read[:2]
-        and written[2] == "edge"
-    )
-
-
-def ops_independent(
-    one: ManifestOp, other: ManifestOp, base: GraphManifest | None = None
-) -> bool:
-    """Whether *one* and *other* can be applied in either order to one effect.
-
-    Neither writes where the other writes, and neither writes what the other
-    reads. Two ops reading the same thing are independent: two edges onto one
-    vertex do not get in each other's way.
-    """
-    one_writes, other_writes = op_slots(one), op_slots(other)
-    if any(_covers(a, b) or _covers(b, a) for a in one_writes for b in other_writes):
-        return False
-    return not any(
-        _depends_on(read, written)
-        for reader, writes in ((one, other_writes), (other, one_writes))
-        for read in op_reads(reader, base)
-        for written in writes
-    )
 
 
 # ── merge base ──────────────────────────────────────────────────────────────
@@ -1023,28 +344,10 @@ def _canonical_ops(ops: list[Any]) -> str:
     return json.dumps(ops_to_dicts(list(ops)), sort_keys=True, separators=(",", ":"))
 
 
-def _covers(outer: Slot, inner: Slot) -> bool:
-    """Whether *outer* is *inner* or an ancestor of it.
-
-    Slots form a tree -- ``("vertex", "person")`` contains
-    ``("vertex", "person", "field", "age")`` and
-    ``("vertex", "person", "identity")`` -- and containment is what makes a
-    rename collide with an edit to the renamed thing. Comparing slots for
-    *equality* alone would let one side rename ``person`` while the other adds
-    a field to ``person``, merge both cleanly, and produce a change set whose
-    second half addresses a vertex the first half removed.
-
-    The whole-manifest slot is the root of the tree: it contains every slot.
-    """
-    if outer == _WHOLE_MANIFEST:
-        return True
-    return len(outer) <= len(inner) and inner[: len(outer)] == outer
-
-
 def _touches(slots: set[Slot], slot: Slot) -> bool:
     """Whether any of *slots* contains, or is contained by, *slot*."""
     return any(
-        _covers(candidate, slot) or _covers(slot, candidate) for candidate in slots
+        covers(candidate, slot) or covers(slot, candidate) for candidate in slots
     )
 
 
@@ -1058,9 +361,9 @@ def _contact_points(left: set[Slot], right: set[Slot]) -> set[Slot]:
     points: set[Slot] = set()
     for one in left:
         for other in right:
-            if _covers(one, other):
+            if covers(one, other):
                 points.add(one)
-            elif _covers(other, one):
+            elif covers(other, one):
                 points.add(other)
     return points
 
@@ -1093,7 +396,7 @@ def _dependencies(
             if _canonical_ops([writer]) in shared:
                 continue
             for written in op_slots(writer):
-                if any(_depends_on(read, written) for read in reads):
+                if any(depends_on(read, written) for read in reads):
                     found.setdefault(key, set()).add(written)
     return found
 
@@ -1112,11 +415,11 @@ def _base_excerpt(base: GraphManifest, slot: Slot) -> dict[str, Any]:
             edge
             for edge in base.graph_schema.core_schema.edge_config.edges
             if edge.relation is not None
-            and _relation_slot(edge.relation) == slot[:2]
+            and relation_slot(edge.relation) == slot[:2]
             and (
                 len(slot) < 5
                 or slot[2] != "edge"
-                or _edge_slot(edge.source, edge.target, edge.relation) == slot[:5]
+                or edge_slot(edge.source, edge.target, edge.relation) == slot[:5]
             )
         ]
         if edges:
@@ -1218,7 +521,7 @@ def merge_three_way(
         )
 
     def reason_for(slot: Slot) -> str:
-        if slot == _WHOLE_MANIFEST:
+        if slot == WHOLE_MANIFEST:
             return "a whole-manifest op cannot be merged with another change"
         if slot in written_by_both:
             return "both sides changed this slot differently"
@@ -1591,25 +894,17 @@ def keep_both(
     return resolution
 
 
-def describe_slot(slot: Slot) -> str:
-    """A slot as a human reads it: ``vertex/person/field/age``."""
-    return "/".join(slot)
-
-
 __all__ = [
     "ConflictResolution",
     "MergeConflict",
     "MergeError",
     "MergeRecipe",
     "MergeResult",
-    "Slot",
     "build_merge_recipe",
     "build_recipe",
-    "describe_slot",
     "find_merge_base",
     "keep_both",
     "merge_three_way",
-    "op_slots",
     "re_merge",
     "take_left",
     "take_right",
