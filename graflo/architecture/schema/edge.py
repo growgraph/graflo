@@ -195,7 +195,7 @@ class Edge(ConfigBaseModel):
             "(``source`` / ``target`` tokens stand for endpoints; other tokens are edge "
             "attributes). Multiple keys define multiple uniqueness constraints. "
             "Non-endpoint tokens are merged into ``properties`` during "
-            ":meth:`finish_init` if not already declared (same idea as vertex identity)."
+            ":meth:`normalize` if not already declared (same idea as vertex identity)."
         ),
     )
     merge: FieldMerge = PydanticField(
@@ -326,14 +326,14 @@ class Edge(ConfigBaseModel):
             raise ValueError(f"{owner}: exclusive needs merge 'replace'")
         return self
 
-    def finish_init(self, vertex_config: VertexConfig):
-        """Complete logical edge initialization with vertex configuration."""
+    def finish_init(self, vertex_config: VertexConfig) -> None:
+        """Normalize, then validate; *vertex_config* is not consulted."""
         _ = vertex_config
-        self._merge_identity_fields_into_properties()
-        self._validate_identity_tokens()
+        self.normalize()
+        self.validate()
 
-    def _merge_identity_fields_into_properties(self) -> None:
-        """Append :class:`Field` entries for identity tokens not already declared.
+    def normalize(self) -> None:
+        """Declare each identity token as a property. Idempotent.
 
         Endpoint tokens ``source`` and ``target`` are not edge properties; every
         other token (including ``relation``) is materialized like vertex identity.
@@ -348,10 +348,14 @@ class Edge(ConfigBaseModel):
                 if token not in seen_names:
                     augmented.append(Field(name=token, type=None))
                     seen_names.add(token)
-        object.__setattr__(self, "properties", augmented)
+        if len(augmented) != len(self.properties):
+            object.__setattr__(self, "properties", augmented)
 
-    def _validate_identity_tokens(self) -> None:
-        """Validate edge identity keys against reserved tokens and declared edge fields."""
+    def validate(self) -> None:  # ty: ignore[incompatible-method-override]
+        """Refuse an identity token that is neither reserved nor a declared field.
+
+        Pure: reads a normalized edge and never changes it.
+        """
         reserved = {"source", "target", "relation"}
         direct_weight_fields = set(self.property_names)
         # Identity token "relation" maps to the default TigerGraph attribute name
@@ -798,10 +802,24 @@ class EdgeConfig(ConfigBaseModel):
                 return edge.directed
         return relation not in self.symmetric
 
-    def finish_init(self, vc: VertexConfig):
-        """Complete initialization of all logical edges."""
-        for e in self.edges:
-            e.finish_init(vertex_config=vc)
+    def finish_init(self, vc: VertexConfig) -> None:
+        """Normalize, then validate; *vc* is not consulted."""
+        _ = vc
+        self.normalize()
+        self.validate()
+
+    def normalize(self) -> None:
+        """Normalize every edge (see :meth:`Edge.normalize`). Idempotent."""
+        for edge in self.edges:
+            edge.normalize()
+
+    def validate(self) -> None:  # ty: ignore[incompatible-method-override]
+        """Check every edge, then directedness and the declared inverses.
+
+        Pure: reads a normalized config and never changes it.
+        """
+        for edge in self.edges:
+            edge.validate()
         self.validate_directedness()
         self.validate_inverses()
 

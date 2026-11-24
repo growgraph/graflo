@@ -110,6 +110,9 @@ SCALAR_FIELD_TYPE_VALUES: frozenset[str] = frozenset(
     ft.value for ft in SCALAR_FIELD_TYPES
 )
 
+#: The key field of a vertex whose identity is generated (blank, assigned, digest).
+SYNTHETIC_ID_FIELD = "id"
+
 
 def field_type_value(ft: FieldType | str | None) -> str | None:
     """Normalize a FieldType / string / None to an uppercase type string."""
@@ -1099,19 +1102,37 @@ class Vertex(ConfigBaseModel):
         augmented = list(merged_properties)
         for name in identity_names + hash_identity_names + funnel_field_names:
             if name not in seen_names:
-                synth_type = FieldType.UUID if self.assigned and name == "id" else None
+                synth_type = (
+                    FieldType.UUID
+                    if self.assigned and name == SYNTHETIC_ID_FIELD
+                    else None
+                )
                 augmented.append(Field(name=name, type=synth_type))
                 seen_names.add(name)
 
+        generated = bool(
+            self.blank
+            or self.assigned
+            or hash_identity_names
+            or self.identity_funnel is not None
+        )
+        # An empty identity is implicit: the synthetic key of a generated one,
+        # else the declared properties, which VertexConfig fills in.
+        implied = identity_names or (
+            [SYNTHETIC_ID_FIELD] if generated else [f.name for f in merged_properties]
+        )
         secondary = self._validated_secondary_identities(
-            identity_names=identity_names,
+            primary=implied,
             list_prop_names=list_prop_names,
         )
-        for entry in secondary:
-            for name in entry.fields:
-                if name not in seen_names:
-                    augmented.append(Field(name=name, type=None))
-                    seen_names.add(name)
+        if identity_names or generated:
+            # Deferred while the identity is still to be drawn from the declared
+            # properties: a secondary field materialized now would join it.
+            for entry in secondary:
+                for name in entry.fields:
+                    if name not in seen_names:
+                        augmented.append(Field(name=name, type=None))
+                        seen_names.add(name)
         self._check_derived_fields(merged_properties, funnel=set(funnel_field_names))
 
         object.__setattr__(self, "identity", identity_names)
@@ -1156,13 +1177,14 @@ class Vertex(ConfigBaseModel):
                 raise ValueError(f"{at}: an identity_funnel branch cannot read it")
 
     def _validated_secondary_identities(
-        self, *, identity_names: list[str], list_prop_names: set[str]
+        self, *, primary: list[str], list_prop_names: set[str]
     ) -> list[SecondaryIdentity]:
         """Validate secondary identities and assign default names.
 
         A secondary identity must be usable as a lookup key: LIST-typed fields
         cannot be matched, a blank vertex has no source-visible key to match on,
-        and repeating the primary identity would be a no-op.
+        and repeating the primary identity (*primary*, explicit or implied)
+        would be a no-op.
         """
         if not self.secondary_identities:
             return []
@@ -1172,7 +1194,12 @@ class Vertex(ConfigBaseModel):
                 "secondary_identities — their identity is generated, not sourced"
             )
 
-        primary = frozenset(identity_names)
+        if not primary:
+            raise ValueError(
+                f"Vertex '{self.name}': secondary_identities need a primary "
+                "identity; declare identity or properties"
+            )
+        primary_set = frozenset(primary)
         seen_names: set[str] = set()
         seen_field_sets: set[frozenset[str]] = set()
         validated: list[SecondaryIdentity] = []
@@ -1184,7 +1211,7 @@ class Vertex(ConfigBaseModel):
                         f"Vertex '{self.name}': LIST-typed property '{field_name}' "
                         "cannot be used in a secondary identity"
                     )
-            if entry.field_set == primary:
+            if entry.field_set == primary_set:
                 raise ValueError(
                     f"Vertex '{self.name}': secondary identity {entry.fields} "
                     "duplicates the primary identity"
@@ -1332,7 +1359,8 @@ class VertexConfig(ConfigBaseModel):
             {item.name: item for item in self.vertices},
         )
         object.__setattr__(self, "_vertex_numeric_fields_map", {})
-        self._normalize_vertex_identities()
+        self.normalize()
+        self.validate()
         return self
 
     @property
@@ -1384,34 +1412,37 @@ class VertexConfig(ConfigBaseModel):
         """Vertex names whose resolved identity mode matches *mode*."""
         return [v.name for v in self.vertices if v.identity_mode == mode]
 
-    def _normalize_vertex_identities(
-        self,
-    ) -> None:
-        blank_id_field = "id"
+    def _implicit_identity(self, vertex: Vertex) -> list[str] | None:
+        """The identity an identity-less *vertex* takes, or ``None`` if it has none.
+
+        A generated identity (blank, assigned, digest) keys on the synthetic
+        field; a natural one on every declared property, when
+        ``identity_from_all_properties`` allows it.
+        """
+        digest = bool(vertex.hash_identity_properties or vertex.identity_funnel)
+        if digest and SYNTHETIC_ID_FIELD in vertex.property_names:
+            # Before normalization assigns it, `id` here is the author's, and
+            # the cast discards a record's own `id` for the digest.
+            return None
+        if digest or vertex.blank or vertex.assigned:
+            return [SYNTHETIC_ID_FIELD]
+        if self.identity_from_all_properties:
+            return list(vertex.property_names)
+        return None
+
+    def normalize(self) -> None:
+        """Fill implicit identities and declare every key field as a property.
+
+        Idempotent. A vertex whose identity cannot be filled is left as it is,
+        for :meth:`validate` to refuse.
+        """
         for vertex in self.vertices:
-            if not vertex.identity:
-                digest = bool(vertex.hash_identity_properties or vertex.identity_funnel)
-                if digest and blank_id_field in vertex.property_names:
-                    # Before normalization assigns it, `id` here is the author's,
-                    # and the cast discards a record's own `id` for the digest.
-                    raise ValueError(
-                        f"Vertex '{vertex.name}' declares a property "
-                        f"`{blank_id_field}`, which its digest identity uses for "
-                        "its synthetic key: a record's own "
-                        f"`{blank_id_field}` is replaced by the digest, never "
-                        f"stored. Leave `{blank_id_field}` out of `properties` "
-                        "(the key is added for you), or rename it if records "
-                        "carry one you want to keep"
-                    )
-                if digest or vertex.blank or vertex.assigned:
-                    vertex.identity = [blank_id_field]
-                elif self.identity_from_all_properties:
-                    vertex.identity = list(vertex.property_names)
-                else:
-                    raise ValueError(
-                        f"Vertex '{vertex.name}' must define identity fields"
-                    )
-            vertex.identity = _dedupe_ordered(list(vertex.identity))
+            identity = vertex.identity or self._implicit_identity(vertex)
+            if identity is None:
+                continue
+            # Assigned even when unchanged: the vertex's own validators re-run
+            # and declare the identity and secondary-identity fields.
+            vertex.identity = _dedupe_ordered(list(identity))
             vertex.hash_identity_properties = _dedupe_ordered(
                 list(vertex.hash_identity_properties)
             )
@@ -1427,10 +1458,35 @@ class VertexConfig(ConfigBaseModel):
             for field_name in missing:
                 synth_type = (
                     FieldType.UUID
-                    if vertex.assigned and field_name == blank_id_field
+                    if vertex.assigned and field_name == SYNTHETIC_ID_FIELD
                     else None
                 )
                 vertex.properties.append(Field(name=field_name, type=synth_type))
+
+    def validate(self) -> None:  # ty: ignore[incompatible-method-override]
+        """Refuse a vertex left without an identity by :meth:`normalize`.
+
+        Pure: reads a normalized config and never changes it.
+
+        Raises:
+            ValueError: A digest vertex that declares its synthetic key field
+                itself, or an identity-less vertex where
+                ``identity_from_all_properties`` is off.
+        """
+        for vertex in self.vertices:
+            if vertex.identity or self._implicit_identity(vertex) is not None:
+                continue
+            if vertex.hash_identity_properties or vertex.identity_funnel:
+                raise ValueError(
+                    f"Vertex '{vertex.name}' declares a property "
+                    f"`{SYNTHETIC_ID_FIELD}`, which its digest identity uses for "
+                    "its synthetic key: a record's own "
+                    f"`{SYNTHETIC_ID_FIELD}` is replaced by the digest, never "
+                    f"stored. Leave `{SYNTHETIC_ID_FIELD}` out of `properties` "
+                    "(the key is added for you), or rename it if records "
+                    "carry one you want to keep"
+                )
+            raise ValueError(f"Vertex '{vertex.name}' must define identity fields")
 
     def _get_vertices_map(self) -> dict[VertexName, Vertex]:
         """Return the vertices map (set by model validator)."""
@@ -1613,8 +1669,7 @@ class VertexConfig(ConfigBaseModel):
         """
         self._get_vertices_map()[key] = value
 
-    def finish_init(self):
-        """Complete logical initialization of vertices."""
-        self._normalize_vertex_identities()
-        for v in self.vertices:
-            v.finish_init()
+    def finish_init(self) -> None:
+        """Normalize, then validate."""
+        self.normalize()
+        self.validate()

@@ -128,7 +128,7 @@ def project_db_profile(
 ) -> DatabaseProfile:
     """Return a copy of *profile* pruned to *selection*.
 
-    Mandatory before assembling a slice: :meth:`Schema.finish_init` calls
+    Mandatory before assembling a slice: :meth:`Schema.validate` calls
     :meth:`DatabaseProfile.validate_against_schema`, which raises when an
     ``EdgePhysicalSpec`` outlives the edge it references. Every physical entry
     keyed by a logical vertex or edge is pruned here.

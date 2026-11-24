@@ -179,7 +179,9 @@ print(manifest_hash(manifest)[:12], "->", manifest_hash(changed)[:12])
 
 `apply_evolution` validates the result as loading a manifest does, and bumps the
 minor part of `schema.metadata.version`. Pass `bump_version=False` to keep the
-version, or `finish_init=False` to skip the validation.
+version, or `finish_init=False` to skip the closing `finish_init` (the ingestion
+checks and runtime build); the result is in normal form either way, so both
+hash alike.
 
 Ops are also Python classes, which is convenient when a program builds them:
 

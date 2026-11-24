@@ -14,6 +14,11 @@ class ConfigBaseModel(BaseModel):
 
     Provides YAML serialization/deserialization and standard configuration
     for all Pydantic models in the system.
+
+    Contract models define ``normalize()`` (the only mutator, idempotent) and
+    ``validate()`` (a pure check of normal form). That ``validate`` shadows
+    pydantic's deprecated ``BaseModel.validate`` classmethod; parse with
+    :meth:`from_dict` or ``model_validate``.
     """
 
     model_config = ConfigDict(

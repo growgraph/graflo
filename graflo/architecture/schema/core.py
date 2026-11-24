@@ -25,13 +25,28 @@ class CoreSchema(ConfigBaseModel):
 
     @model_validator(mode="after")
     def _init_graph(self) -> CoreSchema:
-        self.finish_init()
+        self.normalize()
+        self.validate()
         return self
 
     def finish_init(self) -> None:
-        self.vertex_config.finish_init()
+        """Normalize, then validate."""
+        self.normalize()
+        self.validate()
+
+    def normalize(self) -> None:
+        """Bring vertices, then edges, to normal form. Idempotent."""
+        self.vertex_config.normalize()
+        self.edge_config.normalize()
+
+    def validate(self) -> None:  # ty: ignore[incompatible-method-override]
+        """Check vertices, edge endpoints, edges and the hierarchy.
+
+        Pure: reads a normalized schema and never changes it.
+        """
+        self.vertex_config.validate()
         self._validate_edge_vertices_defined()
-        self.edge_config.finish_init(self.vertex_config)
+        self.edge_config.validate()
         check_hierarchy(self.vertex_config, self.edge_config)
 
     def _validate_edge_vertices_defined(self) -> None:

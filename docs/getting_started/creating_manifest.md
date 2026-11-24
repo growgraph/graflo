@@ -201,6 +201,11 @@ schema declares:
 A step that breaks one of these is refused when the manifest loads. An edge
 found in the data that no edge declares is skipped, with a warning.
 
+`finish_init` is `normalize()`, then `validate()`, then the runtime build. To
+check a manifest without building anything, call
+`manifest.validate(strict_references=True)`: it refuses what `finish_init`
+refuses and leaves the manifest as it was.
+
 ```python
 from graflo import GraphEngine, GraphManifest
 from graflo.connections import ArangoConfig

@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inverse or irreversible reason); `inverse._HANDLERS` is public as `INVERTERS`.
 - `graflo.architecture.evolution.slot_projection`: `slot_contents` (a manifest as slots) and
   `changes_outside` (the changes an op's declared writes do not account for).
+- `normalize()` and `validate()` on `GraphManifest`, `Schema`, `CoreSchema`, `VertexConfig`,
+  `EdgeConfig`, `Edge`, `DatabaseProfile` and `IngestionModel`: `normalize` is the only mutator
+  and is idempotent, `validate` is a pure check; `finish_init` runs both, then builds runtimes.
 
 ### Changed
 
@@ -22,6 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Op footprints live in `graflo.architecture.evolution.footprint`: `op_slots`, `op_reads`,
   `ops_independent`, `describe_slot` and `Slot` move there from `merge3`. An op with no
   footprint raises `TypeError` instead of being treated as touching the whole manifest.
+- An `extra_weights` edge declares its identity tokens as properties when the manifest is loaded,
+  not when ingestion runtimes are built, so a loaded manifest is already in normal form and
+  `finish_init` no longer moves its hash.
 
 ### Fixed
 
@@ -34,6 +40,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Three-way merge reports a conflict when one side edits a property on every edge of a
   relation and the other side adds an edge to it; the result no longer depends on which side
   is left.
+- A vertex without an explicit identity takes its declared properties as identity; secondary
+  identity fields no longer join it. A secondary identity equal to the implied primary, or with no
+  primary at all, is refused on a standalone `Vertex` and in a `VertexConfig` alike.
 
 ## [1.27.5]
 

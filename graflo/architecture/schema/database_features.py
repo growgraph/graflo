@@ -286,6 +286,35 @@ class DatabaseProfile(ConfigBaseModel):
         object.__setattr__(self, "edge_specs", list(merged.values()))
         return self
 
+    def normalize(self, vertex_config: VertexConfig, edge_config: EdgeConfig) -> None:
+        """Bring the profile to normal form against the logical schema. Idempotent.
+
+        Registers a lookup index per secondary identity, drops empty index
+        entries, then drops property-map entries the schema does not need
+        (:meth:`reconcile_property_names`).
+        """
+        # Deferred: db_aware builds on this module.
+        from .db_aware import compile_secondary_identity_indexes
+
+        compile_secondary_identity_indexes(vertex_config, self)
+        self.prune_empty_vertex_indexes()
+        self.reconcile_property_names(vertex_config, edge_config)
+
+    def validate(  # ty: ignore[incompatible-method-override]
+        self, vertex_config: VertexConfig, edge_config: EdgeConfig
+    ) -> None:
+        """Check the profile against the logical schema.
+
+        Pure: reads a normalized profile and never changes it.
+
+        Raises:
+            ValueError: An edge spec naming an undeclared edge, colliding
+                physical property names, or an invalid native inverse.
+        """
+        self.validate_against_schema(edge_config)
+        self.validate_property_names(vertex_config, edge_config)
+        self.validate_native_inverses(edge_config, vertex_config.vertex_set)
+
     def validate_against_schema(self, edge_config: EdgeConfig) -> None:
         """Assert all edge specs reference declared logical edges."""
         for spec in self.edge_specs:
@@ -310,13 +339,8 @@ class DatabaseProfile(ConfigBaseModel):
         are dropped, and so are entries mapping a name to itself: both describe
         the same physical layout as no entry, but serialize (and hash)
         differently. That also keeps the maps correct after an evolution op
-        removes or renames an element without knowing about them.
-
-        Raises:
-            ValueError: when two properties of one vertex or edge map to the
-                same physical name, or a physical name lands on another
-                property's unmapped logical name. Either would store two
-                properties in one attribute.
+        removes or renames an element without knowing about them. Collisions
+        are left for :meth:`validate_property_names`.
         """
         declared_vertices = {v.name: v.property_names for v in vertex_config.vertices}
         kept_vertices: dict[str, dict[str, str]] = {}
@@ -329,7 +353,6 @@ class DatabaseProfile(ConfigBaseModel):
                 for logical, physical in names.items()
                 if logical in declared and logical != physical
             }
-            _refuse_physical_collisions(f"vertex {vertex_name!r}", declared, kept)
             if kept:
                 kept_vertices[vertex_name] = kept
         if kept_vertices != self.vertex_property_names:
@@ -344,9 +367,33 @@ class DatabaseProfile(ConfigBaseModel):
                 for logical, physical in spec.property_names.items()
                 if logical in declared and logical != physical
             }
-            _refuse_physical_collisions(f"edge {spec.edge_id!r}", declared, kept)
             if kept != spec.property_names:
                 spec.property_names = kept
+
+    def validate_property_names(
+        self, vertex_config: VertexConfig, edge_config: EdgeConfig
+    ) -> None:
+        """Refuse a property map that stores two properties in one attribute.
+
+        Pure; reads maps already reconciled by :meth:`reconcile_property_names`.
+
+        Raises:
+            ValueError: when two properties of one vertex or edge map to the
+                same physical name, or a physical name lands on another
+                property's unmapped logical name.
+        """
+        declared_vertices = {v.name: v.property_names for v in vertex_config.vertices}
+        for vertex_name, names in self.vertex_property_names.items():
+            declared = declared_vertices.get(vertex_name)
+            if declared is not None:
+                _refuse_physical_collisions(f"vertex {vertex_name!r}", declared, names)
+        for spec in self.edge_specs:
+            if not spec.property_names or spec.edge_id not in edge_config:
+                continue
+            declared = edge_config.edge_for(spec.edge_id).property_names
+            _refuse_physical_collisions(
+                f"edge {spec.edge_id!r}", declared, spec.property_names
+            )
 
     def has_property_names(self) -> bool:
         """Whether any logical property is stored under a different physical name."""
