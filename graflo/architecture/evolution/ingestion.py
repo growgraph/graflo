@@ -26,6 +26,7 @@ from graflo.architecture.contract.ingestion.steps.ref import (
 from graflo.architecture.contract.ingestion.transform import ProtoTransform
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.graph_types import EdgeId
+from graflo.architecture.refusal import OpRefusal
 from graflo.architecture.schema.edge import EdgeConfig, inverse_map
 from graflo.architecture.schema.inverse_realization import (
     inverse_emission_refusal,
@@ -46,6 +47,7 @@ from .pipeline_dicts import (
     router_of,
     step_to_dict,
 )
+from .refusal_subjects import edge_subject, names
 
 
 def apply_add_resources(manifest: GraphManifest, op: AddResourcesOp) -> None:
@@ -59,7 +61,11 @@ def apply_add_resources(manifest: GraphManifest, op: AddResourcesOp) -> None:
     existing = {resource.name for resource in im.resources} if im is not None else set()
     collisions = sorted(existing & {resource.name for resource in op.resources})
     if collisions:
-        raise ValueError(f"add_resources: resources already exist: {collisions}")
+        raise OpRefusal(
+            f"add_resources: resources already exist: {collisions}",
+            check="already-exists",
+            subjects=names(collisions),
+        )
     payload = im.to_dict(skip_defaults=False) if im is not None else {"resources": []}
     payload["resources"] = [
         *payload.get("resources", []),
@@ -79,11 +85,19 @@ def apply_remove_resources(manifest: GraphManifest, op: RemoveResourcesOp) -> No
 
     im = manifest.ingestion_model
     if im is None:
-        raise ValueError("remove_resources requires ingestion_model")
+        raise OpRefusal(
+            "remove_resources requires ingestion_model",
+            check="missing-block",
+            subjects=("ingestion_model",),
+        )
     existing = {resource.name for resource in im.resources}
     unknown = sorted(set(op.names) - existing)
     if unknown:
-        raise ValueError(f"remove_resources: unknown resources: {unknown}")
+        raise OpRefusal(
+            f"remove_resources: unknown resources: {unknown}",
+            check="unknown-resource",
+            subjects=names(unknown),
+        )
     removed = set(op.names)
     payload = im.to_dict(skip_defaults=False)
     payload["resources"] = [
@@ -103,11 +117,19 @@ def apply_replace_resources(manifest: GraphManifest, op: ReplaceResourcesOp) -> 
     """
     im = manifest.ingestion_model
     if im is None:
-        raise ValueError("replace_resources requires ingestion_model")
+        raise OpRefusal(
+            "replace_resources requires ingestion_model",
+            check="missing-block",
+            subjects=("ingestion_model",),
+        )
     existing = {resource.name for resource in im.resources}
     unknown = sorted({resource.name for resource in op.resources} - existing)
     if unknown:
-        raise ValueError(f"replace_resources: unknown resources: {unknown}")
+        raise OpRefusal(
+            f"replace_resources: unknown resources: {unknown}",
+            check="unknown-resource",
+            subjects=names(unknown),
+        )
     by_name = {
         resource.name: resource.to_dict(skip_defaults=False)
         for resource in op.resources
@@ -143,9 +165,11 @@ def _union_transforms(
             if existing_t.to_dict(skip_defaults=False) != t.to_dict(
                 skip_defaults=False
             ):
-                raise ValueError(
+                raise OpRefusal(
                     f"add_resource_transforms: incompatible transform "
-                    f"definitions for {name!r}"
+                    f"definitions for {name!r}",
+                    check="definition-conflict",
+                    subjects=(name,),
                 )
             continue
         by_name[name] = t
@@ -173,17 +197,21 @@ def apply_add_resource_transforms(
     """
     im = manifest.ingestion_model
     if im is None:
-        raise ValueError(
+        raise OpRefusal(
             "add_resource_transforms requires ingestion_model — the op's "
-            "entire effect is the pipeline"
+            "entire effect is the pipeline",
+            check="missing-block",
+            subjects=("ingestion_model",),
         )
 
     known = {resource.name for resource in im.resources}
     missing = sorted(set(op.additions) - known)
     if missing:
-        raise ValueError(
+        raise OpRefusal(
             f"add_resource_transforms: unknown resources {missing}; "
-            f"manifest defines {sorted(known)}"
+            f"manifest defines {sorted(known)}",
+            check="unknown-resource",
+            subjects=names(missing),
         )
 
     registry = _union_transforms(list(im.transforms), list(op.transforms))
@@ -192,10 +220,12 @@ def apply_add_resource_transforms(
         for step in steps:
             use = _step_use_name(step)
             if use is not None and use not in registry_names:
-                raise ValueError(
+                raise OpRefusal(
                     f"add_resource_transforms: step for resource "
                     f"{resource_name!r} references unknown transform {use!r}; "
-                    f"registered: {sorted(registry_names)}"
+                    f"registered: {sorted(registry_names)}",
+                    check="unknown-transform",
+                    subjects=(use,),
                 )
 
     from graflo.architecture.contract.ingestion.resource import Resource
@@ -210,8 +240,10 @@ def apply_add_resource_transforms(
             try:
                 level = resolve_pipeline_level(pipeline, path)
             except ValueError as exc:
-                raise ValueError(
-                    f"add_resource_transforms: resource {resource.name!r}: {exc}"
+                raise OpRefusal(
+                    f"add_resource_transforms: resource {resource.name!r}: {exc}",
+                    check="unknown-step",
+                    subjects=(f"{resource.name}:{'/'.join(map(str, path))}",),
                 ) from exc
             level.extend(step_to_dict(step) for step in added)
             payload["pipeline"] = pipeline
@@ -281,17 +313,21 @@ def apply_ensure_extracted_fields(
     """
     im = manifest.ingestion_model
     if im is None:
-        raise ValueError(
+        raise OpRefusal(
             "ensure_extracted_fields requires ingestion_model — the op's "
-            "entire effect is the pipeline"
+            "entire effect is the pipeline",
+            check="missing-block",
+            subjects=("ingestion_model",),
         )
 
     known = {resource.name for resource in im.resources}
     missing = sorted(set(op.additions) - known)
     if missing:
-        raise ValueError(
+        raise OpRefusal(
             f"ensure_extracted_fields: unknown resources {missing}; "
-            f"manifest defines {sorted(known)}"
+            f"manifest defines {sorted(known)}",
+            check="unknown-resource",
+            subjects=names(missing),
         )
 
     from graflo.architecture.contract.ingestion.resource import Resource
@@ -306,8 +342,10 @@ def apply_ensure_extracted_fields(
                 try:
                     level = resolve_pipeline_level(pipeline, entry.at)
                 except ValueError as exc:
-                    raise ValueError(
-                        f"ensure_extracted_fields: resource {resource.name!r}: {exc}"
+                    raise OpRefusal(
+                        f"ensure_extracted_fields: resource {resource.name!r}: {exc}",
+                        check="unknown-step",
+                        subjects=(f"{resource.name}:{'/'.join(map(str, entry.at))}",),
                     ) from exc
                 for index, step in enumerate(level):
                     if not isinstance(step, dict):
@@ -335,15 +373,23 @@ def set_emit_inverse_flags(
     ops that move flags as a consequence of a schema change.
 
     Raises:
-        ValueError: naming an unknown resource, or a ref that is not an edge step.
+        OpRefusal: naming an unknown resource, or a ref that is not an edge step.
     """
     ingestion = manifest.ingestion_model
     if ingestion is None:
-        raise ValueError("set_inverse_emission requires ingestion_model")
+        raise OpRefusal(
+            "set_inverse_emission requires ingestion_model",
+            check="missing-block",
+            subjects=("ingestion_model",),
+        )
     by_name = {resource.name: resource for resource in ingestion.resources}
     unknown = sorted(set(steps) - set(by_name))
     if unknown:
-        raise ValueError(f"set_inverse_emission: unknown resources: {unknown}")
+        raise OpRefusal(
+            f"set_inverse_emission: unknown resources: {unknown}",
+            check="unknown-resource",
+            subjects=names(unknown),
+        )
     payload = ingestion.to_dict(skip_defaults=False)
     for resource_payload in payload.get("resources", []):
         refs = steps.get(resource_payload.get("name"))
@@ -354,8 +400,10 @@ def set_emit_inverse_flags(
             try:
                 pipeline = with_emit_inverse(pipeline, ref, enabled)
             except ValueError as exc:
-                raise ValueError(
-                    f"set_inverse_emission: resource {resource_payload['name']!r}: {exc}"
+                raise OpRefusal(
+                    f"set_inverse_emission: resource {resource_payload['name']!r}: {exc}",
+                    check="unknown-step",
+                    subjects=(f"{resource_payload['name']}:{ref}",),
                 ) from exc
         resource_payload["pipeline"] = pipeline
     manifest.ingestion_model = IngestionModel.model_validate(payload)
@@ -373,7 +421,11 @@ def apply_set_inverse_emission(
     """
     ingestion = manifest.ingestion_model
     if ingestion is None:
-        raise ValueError("set_inverse_emission requires ingestion_model")
+        raise OpRefusal(
+            "set_inverse_emission requires ingestion_model",
+            check="missing-block",
+            subjects=("ingestion_model",),
+        )
     schema = manifest.graph_schema
     if op.enabled and schema is not None:
         edge_config = schema.core_schema.edge_config
@@ -389,9 +441,12 @@ def apply_set_inverse_emission(
                     continue
                 refusal = inverse_emission_refusal(edge_config, static)
                 if refusal is not None:
-                    raise ValueError(
+                    kind, reason = refusal
+                    raise OpRefusal(
                         f"set_inverse_emission: resource {name!r} step {ref} "
-                        f"writes {static}: {refusal}"
+                        f"writes {static}: {reason}",
+                        check=kind,
+                        subjects=(f"{name}:{ref}", edge_subject(*static)),
                     )
     set_emit_inverse_flags(manifest, op.steps, op.enabled)
 

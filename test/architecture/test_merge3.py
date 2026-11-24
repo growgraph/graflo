@@ -107,6 +107,47 @@ def test_the_whole_manifest_ops_are_the_only_ones_that_conflict_with_everything(
     }
 
 
+def test_a_whole_manifest_op_is_independent_of_nothing() -> None:
+    """Keeping only ``person`` and adding a field to ``company``: one order refuses."""
+    base = _people_and_companies([KNOWS])
+    project = ops_module.ProjectManifestOp(keep_vertices=["person"])
+
+    assert not ops_independent(
+        project, AddVertexPropertiesOp(additions={"company": ["name"]}), base
+    )
+    assert not ops_independent(project, ops_module.AddEdgesOp(edges=[SELF_KNOWS]), base)
+
+
+def _with_inverse(edges: list[dict]) -> GraphManifest:
+    manifest = _people_and_companies(edges)
+    _core(manifest).edge_config.inverses = [
+        {"relation": "knows", "inverse": "known_by"}  # type: ignore[list-item]
+    ]
+    return GraphManifest.from_dict(manifest.to_dict())
+
+
+def test_realizing_every_declared_inverse_depends_on_the_whole_manifest() -> None:
+    """With no relations named, its reach is whatever is paired when it runs."""
+    realize_all = ops_module.AddInverseEdgesOp()
+
+    assert op_slots(realize_all) == {("manifest",)}
+    assert not ops_independent(
+        realize_all,
+        ops_module.AddEdgesOp(edges=[SELF_KNOWS]),
+        _with_inverse([KNOWS]),
+    )
+
+
+def test_realizing_an_inverse_depends_on_the_inverse_relation_s_edges() -> None:
+    """The op adds ``known_by`` edges; one added by the other side collides."""
+    realize = ops_module.AddInverseEdgesOp(relations=["knows"])
+    known_by = {"source": "company", "target": "person", "relation": "known_by"}
+    base = _with_inverse([KNOWS])
+
+    assert (*merge3._relation_slot("known_by"), "edges") in op_reads(realize, base)
+    assert not ops_independent(realize, ops_module.AddEdgesOp(edges=[known_by]), base)
+
+
 def test_sanitize_touches_only_the_profile() -> None:
     """Sanitizing records physical names; it no longer rewrites the logical model."""
     assert op_slots(ops_module.SanitizeOp(db_flavor="arango")) == {("db_profile",)}
@@ -264,6 +305,72 @@ def test_a_relation_wide_property_add_merges_with_an_edge_flip() -> None:
     edge = _core(merged).edge_config.edges[0]
     assert [f.name for f in edge.properties] == ["since"]
     assert edge.directed is False
+
+
+SELF_KNOWS = {"source": "company", "target": "company", "relation": "knows"}
+
+
+@pytest.mark.parametrize("adder", ["left", "right"])
+def test_a_relation_wide_property_add_conflicts_with_an_edge_added_to_the_relation(
+    adder: str,
+) -> None:
+    """A relation-wide op reaches whatever edges the relation has when it runs.
+
+    Applied after the new edge, the property lands on it too; applied before,
+    it does not. Neither order is the merge, so the two sides conflict, on the
+    edge the other side added.
+    """
+    base = _people_and_companies([KNOWS])
+    widened = _people_and_companies([{**KNOWS, "properties": ["weight"]}])
+    grown = _people_and_companies([KNOWS, SELF_KNOWS])
+    left, right = (grown, widened) if adder == "left" else (widened, grown)
+
+    merged, result = merge_three_way(base, left, right)
+
+    assert merged is None
+    (conflict,) = result.conflicts
+    assert tuple(conflict.slot) == merge3._edge_slot("company", "company", "knows")
+    ops_by_side = {
+        "left": [op.op for op in conflict.left_ops],
+        "right": [op.op for op in conflict.right_ops],
+    }
+    other = "right" if adder == "left" else "left"
+    assert ops_by_side[adder] == ["add_edges"]
+    assert ops_by_side[other] == ["add_edge_properties"]
+
+
+def test_a_relation_wide_edge_op_depends_on_the_relation_s_edge_set() -> None:
+    widen = ops_module.AddEdgePropertiesOp(additions={"knows": ["weight"]})
+    grow = ops_module.AddEdgesOp(edges=[SELF_KNOWS])
+    base = _people_and_companies([KNOWS])
+
+    assert (*merge3._relation_slot("knows"), "edges") in op_reads(widen, base)
+    assert not ops_independent(widen, grow, base)
+
+
+def test_a_per_edge_property_add_merges_with_an_edge_added_to_the_relation() -> None:
+    """A per-edge op names its edges, so a new sibling is out of its reach."""
+    per_edge = ops_module.AddEdgePropertiesOp(
+        per_edge=[{**KNOWS, "properties": ["weight"]}]
+    )
+    grow = ops_module.AddEdgesOp(edges=[SELF_KNOWS])
+
+    assert ops_independent(per_edge, grow, _people_and_companies([KNOWS]))
+
+
+def test_two_sides_adding_different_edges_to_one_relation_merge() -> None:
+    """Growing a relation on both sides is not a conflict; only reach is."""
+    base = _people_and_companies([KNOWS])
+    person_knows = {"source": "person", "target": "person", "relation": "knows"}
+
+    merged, result = merge_three_way(
+        base,
+        _people_and_companies([KNOWS, person_knows]),
+        _people_and_companies([KNOWS, SELF_KNOWS]),
+    )
+
+    assert merged is not None and not result.conflicts
+    assert len(_core(merged).edge_config.edges) == 3
 
 
 @pytest.mark.parametrize("remover", ["left", "right"])

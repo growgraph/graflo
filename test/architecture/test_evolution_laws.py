@@ -24,7 +24,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from hypothesis import HealthCheck, assume, event, given, settings
+from hypothesis import HealthCheck, assume, event, example, given, settings
 from hypothesis import strategies as st
 
 from graflo.architecture.contract.manifest import GraphManifest
@@ -47,6 +47,7 @@ from graflo.architecture.evolution.merge3 import (
     take_right,
 )
 from graflo.architecture.evolution.ops import ManifestOp
+from graflo.architecture.refusal import OpRefusal
 from test.hypothesis_budget import examples
 
 # Derandomized and database-free: a law suite that passes or fails depending on
@@ -428,10 +429,13 @@ def manifest_and_sequence(draw: st.DrawFn) -> tuple[GraphManifest, list[Manifest
 
 
 def _apply(manifest: GraphManifest, ops: list[ManifestOp]) -> GraphManifest | None:
-    """The manifest *ops* produce, or ``None`` when one of them is refused."""
+    """The manifest *ops* produce, or ``None`` when one of them is refused.
+
+    Only a refusal counts: any other exception is a crash, and fails the law.
+    """
     try:
         return apply_evolution(manifest, ops, bump_version=False, finish_init=False)
-    except ValueError:
+    except OpRefusal:
         return None
 
 
@@ -546,8 +550,65 @@ def test_a_manifest_differs_from_itself_by_nothing(manifest) -> None:
 # ── commutation and merge ───────────────────────────────────────────────────
 
 
+def _pinned(edges: list[dict[str, Any]], inverses: list[dict[str, str]] | None = None):
+    """A two-type manifest for a pinned case the generator rarely reaches."""
+    return GraphManifest.from_dict(
+        {
+            "schema": {
+                "metadata": {"name": "laws"},
+                "graph": {
+                    "vertex_config": {
+                        "vertices": [
+                            {
+                                "name": n,
+                                "properties": [{"name": "id"}],
+                                "identity": ["id"],
+                            }
+                            for n in ("person", "company")
+                        ]
+                    },
+                    "edge_config": {"edges": edges, "inverses": inverses or []},
+                },
+            }
+        }
+    )
+
+
+SELF_KNOWS = {"source": "company", "target": "company", "relation": "knows"}
+PERSON_KNOWS = {"source": "person", "target": "person", "relation": "knows"}
+
+#: A relation-wide edge property op and an edge added to that relation: the op
+#: reaches the new edge in one order only.
+GROWN_RELATION = (
+    _pinned([PERSON_KNOWS]),
+    op_from_dict({"op": "add_edge_properties", "additions": {"knows": ["weight"]}}),
+    op_from_dict({"op": "add_edges", "edges": [SELF_KNOWS]}),
+)
+
+#: A whole-manifest op and a change to a type it drops: one order refuses.
+PROJECTED_AWAY = (
+    _pinned([PERSON_KNOWS]),
+    op_from_dict({"op": "project_manifest", "keep_vertices": ["person"]}),
+    op_from_dict({"op": "add_vertex_properties", "additions": {"company": ["name"]}}),
+)
+
+#: Realizing every declared inverse and an edge added to a paired relation:
+#: the new edge gets its inverse in one order only.
+REALIZED_ALL = (
+    _pinned(
+        [{"source": "person", "target": "company", "relation": "knows"}],
+        [{"relation": "knows", "inverse": "known_by"}],
+    ),
+    op_from_dict({"op": "add_inverse_edges"}),
+    op_from_dict({"op": "add_edges", "edges": [SELF_KNOWS]}),
+)
+
+
 @LAWS
 @given(manifest_and_two_ops())
+@example(GROWN_RELATION)
+@example(PROJECTED_AWAY)
+@example(REALIZED_ALL)
 def test_independent_ops_commute(case) -> None:
     """Neither writes where the other writes or reads: one outcome, either order."""
     manifest, a, b = case
@@ -558,6 +619,7 @@ def test_independent_ops_commute(case) -> None:
 
 @LAWS
 @given(manifest_and_two_ops())
+@example(GROWN_RELATION)
 def test_merge_does_not_depend_on_which_side_is_left(case) -> None:
     base, left, right = _two_branches(case)
 
@@ -566,6 +628,7 @@ def test_merge_does_not_depend_on_which_side_is_left(case) -> None:
 
 @LAWS
 @given(manifest_and_two_ops())
+@example(GROWN_RELATION)
 def test_a_clean_merge_loses_neither_side(case) -> None:
     """A clean merge is each side's change applied on top of the other.
 

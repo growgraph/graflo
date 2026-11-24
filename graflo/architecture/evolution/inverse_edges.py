@@ -27,8 +27,11 @@ from graflo.architecture.contract.ingestion.steps.ref import (
 )
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.graph_types import EdgeId
+from graflo.architecture.refusal import OpRefusal
 from graflo.architecture.schema.document import Schema
 from graflo.architecture.schema.edge import Edge, EdgeConfig, inverse_map
+
+from .refusal_subjects import names
 
 EdgeTriple = tuple[str, str, str]
 
@@ -73,22 +76,27 @@ def declared_relation_map(
     declared = inverse_map(edge_config.inverses)
     if relations is None:
         if not declared:
-            raise ValueError(
+            raise OpRefusal(
                 "add_inverse_edges: no inverse pairs declared in "
-                "edge_config.inverses; declare pairs first (declare_edge_inverses)"
+                "edge_config.inverses; declare pairs first (declare_edge_inverses)",
+                check="unknown-inverse",
             )
         return declared
     symmetric = sorted(r for r in relations if edge_config.is_symmetric(r))
     if symmetric:
-        raise ValueError(
+        raise OpRefusal(
             f"add_inverse_edges: {symmetric} are symmetric; a symmetric relation "
-            "has no inverse edge, its edges are undirected"
+            "has no inverse edge, its edges are undirected",
+            check="not-applicable",
+            subjects=names(symmetric),
         )
     undeclared = sorted(set(relations) - set(declared))
     if undeclared:
-        raise ValueError(
+        raise OpRefusal(
             f"add_inverse_edges: no declared inverse for relations {undeclared}; "
-            "declare the pairs first (declare_edge_inverses)"
+            "declare the pairs first (declare_edge_inverses)",
+            check="unknown-inverse",
+            subjects=names(undeclared),
         )
     return {relation: declared[relation] for relation in relations}
 
@@ -155,11 +163,13 @@ def plan_inverse_edges(
     }
     native = sorted(set(relation_map) & natively_paired)
     if native and relations is not None:
-        raise ValueError(
+        raise OpRefusal(
             "add_inverse_edges: the inverse of these relations is already "
             f"maintained natively by the database: {native}. An explicit inverse "
             "edge would store the same fact twice; withdraw it with "
-            "set_native_inverses (enabled=false) first, or keep the native inverse"
+            "set_native_inverses (enabled=false) first, or keep the native inverse",
+            check="not-applicable",
+            subjects=names(native),
         )
     existing = {edge.edge_id for edge in edge_config.edges}
     candidates = [

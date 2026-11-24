@@ -17,6 +17,7 @@ from graflo.architecture.contract.ingestion.steps import as_actor_step
 from graflo.architecture.contract.ingestion.steps.normalize import (
     normalize_actor_step,
 )
+from graflo.architecture.refusal import OpRefusal
 
 from .pipeline_dicts import (
     pipeline_from_dicts,
@@ -24,6 +25,7 @@ from .pipeline_dicts import (
     rewrites_pipeline,
     router_of,
 )
+from .refusal_subjects import edge_subject, names, prop_subject
 
 logger = logging.getLogger(__name__)
 
@@ -154,10 +156,12 @@ def _renamed_selector(selector: Any, vertex_name: Callable[[str], str]) -> Any:
     for vertex, plain in selector.items():
         new = vertex_name(vertex) if isinstance(vertex, str) else vertex
         if new in out and out[new] != plain:
-            raise ValueError(
+            raise OpRefusal(
                 f"merging {vertex!r} into {new!r} leaves an edge endpoint with two "
                 f"selectors for it ({out[new]!r} and {plain!r}); give the step one "
-                "selector for the merged class first"
+                "selector for the merged class first",
+                check="pipeline-conflict",
+                subjects=names({vertex, new}),
             )
         out[new] = plain
     return out
@@ -387,26 +391,32 @@ def _refuse_mixed_lookup(
         routed = {m for m in members if reach is None or m in reach}
         looked_up = routed & set(lookup) if isinstance(lookup, list) else set()
         if looked_up and routed - looked_up:
-            raise ValueError(
+            raise OpRefusal(
                 f"vertex_router on {router.get('type_field')!r}: merging "
                 f"{sorted(routed)} into {target!r} joins classes it only looks up "
                 f"({sorted(looked_up)}) with classes it writes "
-                f"({sorted(routed - looked_up)}); split the router first"
+                f"({sorted(routed - looked_up)}); split the router first",
+                check="pipeline-conflict",
+                subjects=names(routed | {target}),
             )
         by = {m: found[m] for m in routed if m in found} if found else {}
         if by and routed - set(by):
-            raise ValueError(
+            raise OpRefusal(
                 f"vertex_router on {router.get('type_field')!r}: merging "
                 f"{sorted(routed)} into {target!r} joins classes it finds by a "
                 f"secondary identity ({sorted(by)}) with classes it writes by "
                 f"their primary ({sorted(routed - set(by))}); split the router "
-                "first"
+                "first",
+                check="pipeline-conflict",
+                subjects=names(routed | {target}),
             )
         if len(set(by.values())) > 1:
-            raise ValueError(
+            raise OpRefusal(
                 f"vertex_router on {router.get('type_field')!r}: merging "
                 f"{sorted(routed)} into {target!r} joins classes it finds by "
-                f"different secondary identities ({by}); give them one first"
+                f"different secondary identities ({by}); give them one first",
+                check="pipeline-conflict",
+                subjects=names(routed | {target}),
             )
 
 
@@ -643,10 +653,12 @@ def rewrite_entity_names_in_pipeline(
     if payload is not None and vertices:
         evolved = evolve_router(payload, vertices, declared=declared)
         if len(evolved) > 1:
-            raise ValueError(
+            raise OpRefusal(
                 f"vertex_router on {payload.get('type_field')!r}: renaming "
                 f"{sorted(vertices)} folds classes it projects differently; "
-                "merge them with merge_vertices or canonicalize instead"
+                "merge them with merge_vertices or canonicalize instead",
+                check="pipeline-conflict",
+                subjects=names(vertices),
             )
         if evolved:
             payload.clear()
@@ -1368,17 +1380,21 @@ def _merge_vertex_from_map(
             continue
         existing = out[new_name]
         if not isinstance(existing, dict) or not isinstance(columns, dict):
-            raise ValueError(
+            raise OpRefusal(
                 f"cannot merge vertex_from_map entries for {new_name!r}: "
-                "expected per-vertex field maps"
+                "expected per-vertex field maps",
+                check="pipeline-conflict",
+                subjects=(new_name,),
             )
         merged = dict(existing)
         for field, column in columns.items():
             if field in merged and merged[field] != column:
-                raise ValueError(
+                raise OpRefusal(
                     f"cannot merge vertex_from_map for {new_name!r}: field {field!r} "
                     f"reads {merged[field]!r} for {origin[new_name][field]!r} but "
-                    f"{column!r} for {name!r}"
+                    f"{column!r} for {name!r}",
+                    check="pipeline-conflict",
+                    subjects=(prop_subject(new_name, field),),
                 )
             merged[field] = column
             origin[new_name][field] = name
@@ -2129,16 +2145,20 @@ def _per_edge_reach(
     """
     reached: list[tuple[str, str, str | None]] = []
     declared = _declared_edge_property_names(payload)
-    for edge_id, names in by_edge.items():
+    for edge_id, props in by_edge.items():
         writes = _payload_writes(payload, edge_id)
         if writes:
             reached.append(edge_id)
-        elif writes is None and (named := sorted(declared & set(names))):
-            raise ValueError(
+        elif writes is None and (named := sorted(declared & set(props))):
+            raise OpRefusal(
                 f"edge step {_payload_edge_id(payload) or payload.get('relation')!r} "
                 f"may write edge {edge_id} and others, and declares {named}: a "
                 "per-edge change cannot edit it; give the step static endpoints "
-                "and relation, or make the change for the whole relation"
+                "and relation, or make the change for the whole relation",
+                check="pipeline-conflict",
+                subjects=tuple(
+                    prop_subject(edge_subject(*edge_id), prop) for prop in named
+                ),
             )
     return reached
 

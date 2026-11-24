@@ -249,15 +249,22 @@ Edges nest under their relation: `relation/feeds` contains
 name (`remove_edges`, `rename_relations`, `merge_edges`) and by triple
 (`set_edge_directed`, `retarget_edges`, the index and identity ops), and
 nesting is what lets the two see each other: removing a relation on one side
-conflicts with flipping one of its edges on the other. A relation-wide property
-edit (`relation/feeds/field`) and a per-edge edit do not collide, and merge. An
+conflicts with flipping one of its edges on the other. Property edits on a
+relation's edges, relation-wide or per edge, share one slot
+(`relation/feeds/field`), so two different ones conflict. A property edit and a
+flip of an edge's direction write different slots, and merge. An
 edge with no relation has its own root (`edge/machine/line`), since no op
 addressed by relation can reach it. A declared inverse sits under both of its
 relations (`relation/feeds/inverse`), so renaming or removing a relation
 conflicts with declaring or retracting its inverse on the other side; a
 symmetric declaration sits under its one relation. A native inverse is a slot
 of its relation (`relation/feeds/native_inverse`), as on TigerGraph, where the
-reverse type belongs to the relation's edge type.
+reverse type belongs to the relation's edge type. An op whose reach is not
+named in it occupies the whole manifest (`manifest`), the slot that contains
+every other: `project_manifest`, and `add_inverse_edges` with no relations
+named, which realizes whatever is paired when it runs. Such an op conflicts
+with any change on the other side. With relations named, `add_inverse_edges`
+also depends on the inverse relation's edges, which it adds to.
 
 #### What an op reads
 
@@ -272,13 +279,18 @@ apply. So an op also has a read set (`op_reads`):
 |---|---|
 | `add_edges`, `retarget_edges`, and every op addressed by edge triple | the endpoint types (old and new, for a retarget) |
 | ops addressed by relation: edge properties, `remove_edges`, `rename_relations`, `merge_edges`, the inverse ops | the types that relation connects in the base, or, after a rename on the op's own side, the types the renamed relation connects; the op names only the relation |
+| the relation-wide forms of the edge property ops and of `change_field_types` | also the relation's edge set (`relation/feeds/edges`): they reach every edge the relation has when they run |
 | `replace_identity`, `add_secondary_identities` | the fields they key on, and those fields' types |
 | `add_vertex_indexes`; edge index and identity ops | the fields they index or key on |
 | `add_resources`, `replace_resources` | the types the pipeline names, the relations its edge steps write, and the properties it maps from a named column (a vertex step's `from`, a router's `vertex_from_map`); not a property a step fills under its own name |
 
 A read is disturbed by a write at or above it, never below: an edge onto `line`
 conflicts with removing or renaming `line`, and merges with a new property on
-it. Two ops reading the same thing are independent, like two edges onto one
+it. A relation's edge set is the one exception: any edge written directly under
+the relation disturbs it. So adding a property to every `feeds` edge conflicts
+with the other side adding a `feeds` edge, which the property would reach in
+one order and not in the other; two sides adding different `feeds` edges still
+merge. Two ops reading the same thing are independent, like two edges onto one
 type. An op both sides made is agreement, not a dependency. The conflict is
 reported at the written slot with both ops attached, and is resolved like any
 other. `ops_independent(a, b, base)` is the test the merge and its tests share.

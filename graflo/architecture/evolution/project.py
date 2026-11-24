@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.graph_types import EdgeId
+from graflo.architecture.refusal import OpRefusal
 from graflo.architecture.schema.context.graph import (
     SchemaGraph,
     neighborhood_distances,
@@ -23,6 +24,7 @@ from graflo.architecture.schema.inverse_realization import (
 from graflo.architecture.schema.projection import SubschemaSelection, select_induced
 
 from .ops import EdgeSelector, ProjectManifestOp
+from .refusal_subjects import edges, names
 
 
 def _selector_edge_ids(
@@ -40,16 +42,22 @@ def _validate_strict(manifest: GraphManifest, op: ProjectManifestOp) -> None:
     if op.keep_vertices:
         missing_vertices = sorted(set(op.keep_vertices) - all_vertices)
         if missing_vertices:
-            raise ValueError(f"Unknown vertices in keep_vertices: {missing_vertices}")
+            raise OpRefusal(
+                f"Unknown vertices in keep_vertices: {missing_vertices}",
+                check="unknown-vertex",
+                subjects=names(missing_vertices),
+            )
     if op.keep_edges:
         missing_edges = sorted(_selector_edge_ids(op.keep_edges) - all_edge_ids)
         if missing_edges:
-            raise ValueError(
+            raise OpRefusal(
                 "Unknown edges in keep_edges: "
                 + ", ".join(
                     f"({source!r}, {target!r}, {relation!r})"
                     for source, target, relation in missing_edges
-                )
+                ),
+                check="unknown-edge",
+                subjects=edges(missing_edges),
             )
 
 
@@ -90,7 +98,11 @@ def compute_projection(
     """Compute survivor/removal sets without mutating *manifest*."""
     schema = manifest.graph_schema
     if schema is None:
-        raise ValueError("project_manifest requires graph_schema")
+        raise OpRefusal(
+            "project_manifest requires graph_schema",
+            check="missing-block",
+            subjects=("schema",),
+        )
 
     if op.strict:
         _validate_strict(manifest, op)

@@ -197,6 +197,31 @@ ops = [
 `ops_to_yaml_str(ops)` writes a change set as YAML, and `ops_from_yaml` reads a
 file path or a YAML string back.
 
+### What does a refused op raise?
+
+An op that cannot apply raises `OpRefusal`, a `ValueError`, and leaves the
+input manifest as it was. Besides its message it carries two fields a program
+can act on without reading the prose:
+
+- `check`: a stable kind id, such as `unknown-vertex`, `name-collision` or
+  `identity-field`. Ids are never renamed or reused. A result that fails
+  validation after the op ran is `invalid-result`.
+- `subjects`: the names the refusal is about. A vertex type, relation or
+  resource is its name (`Machine`), a property is `Machine.serial_number`, and
+  an edge is its key as a JSON array, `["Machine","Line","feeds"]`.
+
+```python
+from graflo.architecture.refusal import OpRefusal
+
+try:
+    changed = apply_evolution(manifest, ops)
+except OpRefusal as refusal:
+    print(refusal.check, refusal.subjects)
+```
+
+Every kind and its meaning is listed in
+[`graflo.architecture.refusal`](../../reference/architecture/refusal.md).
+
 `manifest_hash` is the manifest's content hash. It covers the schema, the
 ingestion model and the bindings but not the name or version, so two manifests
 that describe the same graph hash equal.

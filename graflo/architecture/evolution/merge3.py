@@ -32,6 +32,10 @@ Three things make the slot the right unit:
   different slot and still cannot be merged with it (:func:`op_reads`). A read
   is disturbed by a write at or above it, never by one beneath: the edge does
   not care which fields ``company`` carries.
+* An op addressed to **every edge of a relation** reads the relation's edge
+  set, which any edge written directly under the relation disturbs: adding a
+  property to every ``knows`` edge conflicts with the other side adding a
+  ``knows`` edge, since the op would reach that edge in one order only.
 
 A side whose change no operation expresses cannot be merged at all, because the
 merge is assembled from each side's ops: :func:`merge_three_way` raises rather
@@ -85,6 +89,13 @@ logger = logging.getLogger(__name__)
 
 #: An addressable location in a manifest. Tuples so they sort and hash.
 Slot = tuple[str, ...]
+
+#: The last element of a relation's edge-set slot, ``("relation", r, "edges")``.
+#: Only read, never written: see :func:`_relation_members`.
+_MEMBERS = "edges"
+
+#: The slot of an op that may change anything: it contains every other slot.
+_WHOLE_MANIFEST: Slot = ("manifest",)
 
 
 class MergeError(RuntimeError):
@@ -286,9 +297,10 @@ def op_slots(op: ManifestOp) -> set[Slot]:
             slots |= {_relation_slot(old), _relation_slot(new)}
     elif isinstance(op, ops.AddInverseEdgesOp):
         if op.relations is None:
-            # Realizes whatever is declared at replay time, so it depends on the
-            # whole table.
-            slots.add(("edge_inverses",))
+            # Realizes whatever is paired when it runs: its reach is the inverse
+            # table, every paired relation's edges and their directions, none of
+            # which the op names. Conservatively, the whole manifest.
+            slots.add(_WHOLE_MANIFEST)
         else:
             slots |= {_relation_slot(relation) for relation in op.relations}
     elif isinstance(op, ops.DeclareEdgeInversesOp):
@@ -360,7 +372,7 @@ def op_slots(op: ManifestOp) -> set[Slot]:
         # These rewrite everything, so they conflict with any other change.
         # There is no way to merge "keep only these vertices" with an
         # unrelated edit and be sure of the result.
-        slots.add(("manifest",))
+        slots.add(_WHOLE_MANIFEST)
 
     if not slots:
         logger.warning(
@@ -368,7 +380,7 @@ def op_slots(op: ManifestOp) -> set[Slot]:
             "manifest, so it will conflict with any other change",
             op.op,
         )
-        slots.add(("manifest",))
+        slots.add(_WHOLE_MANIFEST)
     return slots
 
 
@@ -538,6 +550,30 @@ def _relation_endpoints(
     } | {_edge_slot(edge.source, edge.target, edge.relation) for edge in edges}
 
 
+def _relation_members(
+    relation: str, aliases: RelationAliases | None = None
+) -> set[Slot]:
+    """The edge set of *relation*, or the relations it stands for.
+
+    An op addressed to every edge of a relation reaches whatever edges the
+    relation has when it runs, so it depends on that set: an edge the other
+    side adds to the relation would be reached in one order and not the other.
+    :func:`_depends_on` lets any write of an edge directly under the relation
+    disturb this read.
+    """
+    return {
+        (*_relation_slot(name), _MEMBERS)
+        for name in {relation, *(aliases or {}).get(relation, ())}
+    }
+
+
+def _declared_inverse(base: GraphManifest | None, relation: str) -> str | None:
+    """The inverse *relation* is paired with in *base*, if any."""
+    if base is None or base.graph_schema is None:
+        return None
+    return base.graph_schema.core_schema.edge_config.inverse_of(relation)
+
+
 def _key_field_reads(vertex: str, fields: list[str]) -> set[Slot]:
     """A keying field, and its type: an identity field may not become a list."""
     reads: set[Slot] = set()
@@ -636,6 +672,12 @@ def op_reads(
     edits to the relation. *aliases* (:func:`relation_aliases` of the op's own
     side) lets an op after a rename read the endpoints of the renamed relation.
 
+    The relation-wide forms of the edge property ops and of
+    ``change_field_types`` also read the relation's edge set
+    (``relation/<r>/edges``): they reach every edge the relation has when they
+    run, so an edge the other side adds to the relation is a conflict. Their
+    per-edge entries name their edges and do not read it.
+
     An op not listed reads nothing beyond what it writes: a property op lives
     under its vertex's slot, so the containment of written slots already ties
     it to that vertex.
@@ -702,14 +744,17 @@ def op_reads(
     elif isinstance(op, ops.AddEdgePropertiesOp):
         for relation in op.additions:
             reads |= _relation_endpoints(base, relation, aliases)
+            reads |= _relation_members(relation, aliases)
         reads |= _per_edge_reads(op.per_edge)
     elif isinstance(op, ops.RemoveEdgePropertiesOp):
         for relation in op.removals:
             reads |= _relation_endpoints(base, relation, aliases)
+            reads |= _relation_members(relation, aliases)
         reads |= _per_edge_reads(op.per_edge)
     elif isinstance(op, ops.RenameEdgePropertiesOp):
         for relation in op.renames:
             reads |= _relation_endpoints(base, relation, aliases)
+            reads |= _relation_members(relation, aliases)
         reads |= _per_edge_reads(op.per_edge)
     elif isinstance(op, ops.RenameRelationsOp):
         for relation in op.renames:
@@ -717,7 +762,15 @@ def op_reads(
     elif isinstance(op, ops.MergeEdgesOp):
         for relation in [*op.sources, op.into]:
             reads |= _relation_endpoints(base, relation, aliases)
-    elif isinstance(op, (ops.AddInverseEdgesOp, ops.SetNativeInversesOp)):
+    elif isinstance(op, ops.AddInverseEdgesOp):
+        for relation in op.relations or []:
+            reads |= _relation_endpoints(base, relation, aliases)
+            # It adds edges to the inverse relation, unless one is there already.
+            inverse = _declared_inverse(base, relation)
+            if inverse is not None:
+                reads |= _relation_endpoints(base, inverse, aliases)
+                reads |= _relation_members(inverse, aliases)
+    elif isinstance(op, ops.SetNativeInversesOp):
         for relation in op.relations or []:
             reads |= _relation_endpoints(base, relation, aliases)
     elif isinstance(op, ops.RetractEdgeInversesOp):
@@ -729,6 +782,7 @@ def op_reads(
     elif isinstance(op, ops.ChangeFieldTypesOp):
         for relation in op.edges:
             reads |= _relation_endpoints(base, relation, aliases)
+            reads |= _relation_members(relation, aliases)
         reads |= _per_edge_reads(op.per_edge)
 
     # ── keys ────────────────────────────────────────────────────────────────
@@ -789,8 +843,21 @@ def _mapped_fields(pipeline: Sequence[ActorConfig]) -> set[tuple[str, str]]:
 
 
 def _depends_on(read: Slot, written: Slot) -> bool:
-    """A read is disturbed by a write at or above it, not by one beneath it."""
-    return _covers(written, read)
+    """A read is disturbed by a write at or above it, not by one beneath it.
+
+    One exception: a relation's edge set (:func:`_relation_members`) is also
+    disturbed by a write of an edge directly under the relation -- an edge
+    added, retargeted or re-keyed there -- but not by a write beneath an edge.
+    """
+    if _covers(written, read):
+        return True
+    return (
+        len(read) == 3
+        and read[2] == _MEMBERS
+        and len(written) == 5
+        and written[:2] == read[:2]
+        and written[2] == "edge"
+    )
 
 
 def ops_independent(
@@ -966,7 +1033,11 @@ def _covers(outer: Slot, inner: Slot) -> bool:
     *equality* alone would let one side rename ``person`` while the other adds
     a field to ``person``, merge both cleanly, and produce a change set whose
     second half addresses a vertex the first half removed.
+
+    The whole-manifest slot is the root of the tree: it contains every slot.
     """
+    if outer == _WHOLE_MANIFEST:
+        return True
     return len(outer) <= len(inner) and inner[: len(outer)] == outer
 
 
@@ -1147,7 +1218,7 @@ def merge_three_way(
         )
 
     def reason_for(slot: Slot) -> str:
-        if slot == ("manifest",):
+        if slot == _WHOLE_MANIFEST:
             return "a whole-manifest op cannot be merged with another change"
         if slot in written_by_both:
             return "both sides changed this slot differently"

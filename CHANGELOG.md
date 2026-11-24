@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- A refused evolution op raises `OpRefusal` (still a `ValueError`) with a stable `check` kind
+  and the `subjects` it is about; a manifest that fails validation while an op is applied is
+  refused as `invalid-result`. New kind: `unknown-step`.
+
+### Fixed
+
+- `remove_edges` refuses a relation the manifest does not declare instead of ignoring it.
+- `ops_independent` no longer calls `project_manifest`, or `add_inverse_edges` with no relations
+  named, independent of other ops; `add_inverse_edges` with relations named depends on the
+  inverse relation's edges.
+
+- Three-way merge reports a conflict when one side edits a property on every edge of a
+  relation and the other side adds an edge to it; the result no longer depends on which side
+  is left.
+
 ## [1.27.5]
 
 ### Added

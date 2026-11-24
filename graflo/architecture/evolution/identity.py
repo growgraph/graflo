@@ -12,6 +12,7 @@ import logging
 from typing import Any, NamedTuple
 
 from graflo.architecture.contract.manifest import GraphManifest
+from graflo.architecture.refusal import OpRefusal
 from graflo.architecture.schema.identity_funnel import IdentityFunnel
 from graflo.architecture.schema.vertex import (
     SecondaryIdentity,
@@ -28,6 +29,8 @@ from .ops import (
     ReplaceEdgeIdentitiesOp,
     ReplaceIdentityOp,
 )
+from .refusal_subjects import edge_subject, names, prop_subject
+from .refusal_subjects import edges as edge_subjects
 
 logger = logging.getLogger(__name__)
 
@@ -99,10 +102,12 @@ def _require_properties_exist(vertex: Vertex, required: list[str]) -> None:
     declared = {field.name for field in vertex.properties}
     missing = [name for name in required if name not in declared]
     if missing:
-        raise ValueError(
+        raise OpRefusal(
             f"replace_identity: vertex '{vertex.name}' does not declare "
             f"{missing}; add them with AddVertexPropertiesOp before making them "
-            "the identity"
+            "the identity",
+            check="unknown-property",
+            subjects=names(prop_subject(vertex.name, name) for name in missing),
         )
 
 
@@ -119,10 +124,12 @@ def _resolve_retire_policy(
         return spec.retire
 
     if new_is_blank:
-        raise ValueError(
+        raise OpRefusal(
             f"replace_identity: vertex '{vertex.name}' cannot demote its old identity "
             "when the new mode is blank — a blank vertex has no source-visible key and "
-            "cannot declare secondary_identities. Use retire: keep or retire: drop"
+            "cannot declare secondary_identities. Use retire: keep or retire: drop",
+            check="invalid-op",
+            subjects=(vertex.name,),
         )
     if vertex.identity_mode != "natural":
         logger.warning(
@@ -156,10 +163,12 @@ def _demoted_secondary_identities(
             # Already declared as a lookup key — reuse it rather than duplicating.
             return list(vertex.secondary_identities), entry.name or requested
         if entry.name == requested:
-            raise ValueError(
+            raise OpRefusal(
                 f"replace_identity: vertex '{vertex.name}' already declares a "
                 f"secondary identity named '{requested}' with fields "
-                f"{entry.fields}; pass a different retire_as"
+                f"{entry.fields}; pass a different retire_as",
+                check="name-collision",
+                subjects=(prop_subject(vertex.name, requested),),
             )
 
     retired = SecondaryIdentity(name=requested, fields=list(old_identity))
@@ -252,12 +261,20 @@ def apply_replace_identity(manifest: GraphManifest, op: ReplaceIdentityOp) -> No
     """
     schema = manifest.graph_schema
     if schema is None:
-        raise ValueError("replace_identity requires graph_schema")
+        raise OpRefusal(
+            "replace_identity requires graph_schema",
+            check="missing-block",
+            subjects=("schema",),
+        )
 
     vertex_config = schema.core_schema.vertex_config
     unknown = sorted(set(op.replacements) - vertex_config.vertex_set)
     if unknown:
-        raise ValueError(f"replace_identity: unknown vertices: {unknown}")
+        raise OpRefusal(
+            f"replace_identity: unknown vertices: {unknown}",
+            check="unknown-vertex",
+            subjects=names(unknown),
+        )
 
     replacements: dict[str, Vertex] = {}
     dropped_fields: dict[str, list[str]] = {}
@@ -305,10 +322,12 @@ def apply_replace_identity(manifest: GraphManifest, op: ReplaceIdentityOp) -> No
                 if spec.to.mode == "funnel"
                 else "rename the property first"
             )
-            raise ValueError(
+            raise OpRefusal(
                 f"replace_identity: vertex '{vertex.name}' declares a property "
                 f"`{digest_field}`, which a {spec.to.mode} identity uses "
-                f"for its synthetic key; {remedy}"
+                f"for its synthetic key; {remedy}",
+                check="name-collision",
+                subjects=(prop_subject(vertex.name, digest_field),),
             )
 
         old_identity = list(vertex.identity)
@@ -339,9 +358,11 @@ def apply_replace_identity(manifest: GraphManifest, op: ReplaceIdentityOp) -> No
                 dropped_fields[vertex.name] = to_drop
         elif spec.endpoints == "pin_to_retired":
             # Unreachable via the op model (validated there); guard the direct-call path.
-            raise ValueError(
+            raise OpRefusal(
                 f"replace_identity: vertex '{vertex.name}' cannot pin endpoints to a "
-                "retired identity because demotion did not happen"
+                "retired identity because demotion did not happen",
+                check="invalid-op",
+                subjects=(vertex.name,),
             )
 
         if blank:
@@ -393,6 +414,17 @@ def _selectors_in_use(manifest: GraphManifest) -> list[tuple[str, str | list[str
     return out
 
 
+def _selector_subjects(vertex_name: str, selector: str | list[str]) -> tuple[str, ...]:
+    """Refusal subjects for a secondary-identity selector on *vertex_name*.
+
+    A named selector is the vertex-qualified name; a field-set selector is the
+    vertex-qualified fields it lists.
+    """
+    if isinstance(selector, str):
+        return (prop_subject(vertex_name, selector),)
+    return names(prop_subject(vertex_name, field) for field in selector)
+
+
 def _matches_selector(
     entry: SecondaryIdentity, selector: str | list[str], declared: int
 ) -> bool:
@@ -418,12 +450,20 @@ def apply_add_secondary_identities(
     """
     schema = manifest.graph_schema
     if schema is None:
-        raise ValueError("add_secondary_identities requires graph_schema")
+        raise OpRefusal(
+            "add_secondary_identities requires graph_schema",
+            check="missing-block",
+            subjects=("schema",),
+        )
 
     vertex_config = schema.core_schema.vertex_config
     unknown = sorted(set(op.additions) - vertex_config.vertex_set)
     if unknown:
-        raise ValueError(f"add_secondary_identities: unknown vertices: {unknown}")
+        raise OpRefusal(
+            f"add_secondary_identities: unknown vertices: {unknown}",
+            check="unknown-vertex",
+            subjects=names(unknown),
+        )
 
     replacements: dict[str, Vertex] = {}
     for vertex in vertex_config.vertices:
@@ -431,9 +471,11 @@ def apply_add_secondary_identities(
         if not additions:
             continue
         if vertex.blank:
-            raise ValueError(
+            raise OpRefusal(
                 f"add_secondary_identities: vertex '{vertex.name}' is blank and has no "
-                "source-visible key to match on; secondary identities are not allowed"
+                "source-visible key to match on; secondary identities are not allowed",
+                check="not-applicable",
+                subjects=(vertex.name,),
             )
 
         declared = {field.name for field in vertex.properties}
@@ -444,19 +486,25 @@ def apply_add_secondary_identities(
         for entry in additions:
             missing = [name for name in entry.fields if name not in declared]
             if missing:
-                raise ValueError(
+                raise OpRefusal(
                     f"add_secondary_identities: vertex '{vertex.name}' does not "
-                    f"declare {missing}; add them with AddVertexPropertiesOp first"
+                    f"declare {missing}; add them with AddVertexPropertiesOp first",
+                    check="unknown-property",
+                    subjects=names(prop_subject(vertex.name, name) for name in missing),
                 )
             if entry.field_set in known_field_sets:
-                raise ValueError(
+                raise OpRefusal(
                     f"add_secondary_identities: vertex '{vertex.name}' already "
-                    f"declares a secondary identity on {entry.fields}"
+                    f"declares a secondary identity on {entry.fields}",
+                    check="already-exists",
+                    subjects=_selector_subjects(vertex.name, list(entry.fields)),
                 )
             if entry.name is not None and entry.name in known_names:
-                raise ValueError(
+                raise OpRefusal(
                     f"add_secondary_identities: vertex '{vertex.name}' already "
-                    f"declares a secondary identity named '{entry.name}'"
+                    f"declares a secondary identity named '{entry.name}'",
+                    check="already-exists",
+                    subjects=(prop_subject(vertex.name, entry.name),),
                 )
             known_field_sets.add(entry.field_set)
             if entry.name is not None:
@@ -488,12 +536,20 @@ def apply_remove_secondary_identities(
     """Withdraw alternate lookup keys and drop the indexes derived from them."""
     schema = manifest.graph_schema
     if schema is None:
-        raise ValueError("remove_secondary_identities requires graph_schema")
+        raise OpRefusal(
+            "remove_secondary_identities requires graph_schema",
+            check="missing-block",
+            subjects=("schema",),
+        )
 
     vertex_config = schema.core_schema.vertex_config
     unknown = sorted(set(op.removals) - vertex_config.vertex_set)
     if unknown:
-        raise ValueError(f"remove_secondary_identities: unknown vertices: {unknown}")
+        raise OpRefusal(
+            f"remove_secondary_identities: unknown vertices: {unknown}",
+            check="unknown-vertex",
+            subjects=names(unknown),
+        )
 
     in_use = _selectors_in_use(manifest)
     replacements: dict[str, Vertex] = {}
@@ -513,10 +569,12 @@ def apply_remove_secondary_identities(
                 if _matches_selector(entry, selector, declared_count)
             ]
             if not matched:
-                raise ValueError(
+                raise OpRefusal(
                     f"remove_secondary_identities: vertex '{vertex.name}' has no "
                     f"secondary identity matching {selector!r}; declared: "
-                    f"{vertex.secondary_identity_names}"
+                    f"{vertex.secondary_identity_names}",
+                    check="unknown-secondary-identity",
+                    subjects=_selector_subjects(vertex.name, selector),
                 )
             doomed.extend(matched)
 
@@ -528,10 +586,12 @@ def apply_remove_secondary_identities(
                 _matches_selector(entry, used_selector, declared_count)
                 for entry in doomed
             ):
-                raise ValueError(
+                raise OpRefusal(
                     f"remove_secondary_identities: vertex '{vertex.name}' secondary "
                     f"identity {used_selector!r} is still selected by an edge step "
-                    "or a `find`; repoint it before removing the lookup key"
+                    "or a `find`; repoint it before removing the lookup key",
+                    check="still-referenced",
+                    subjects=_selector_subjects(vertex.name, used_selector),
                 )
 
         replacements[vertex.name] = _replaced_vertex(
@@ -574,24 +634,35 @@ def apply_replace_edge_identities(
     """Replace the uniqueness keys of logical edges."""
     schema = manifest.graph_schema
     if schema is None:
-        raise ValueError("replace_edge_identities requires graph_schema")
+        raise OpRefusal(
+            "replace_edge_identities requires graph_schema",
+            check="missing-block",
+            subjects=("schema",),
+        )
 
     edges = schema.core_schema.edge_config.edges
     by_edge_id = {edge.edge_id: edge for edge in edges}
 
-    unknown = sorted(
-        str(entry.edge_id()) for entry in op.edges if entry.edge_id() not in by_edge_id
-    )
+    unknown_ids = [
+        entry.edge_id() for entry in op.edges if entry.edge_id() not in by_edge_id
+    ]
+    unknown = sorted(str(edge_id) for edge_id in unknown_ids)
     if unknown:
-        raise ValueError(f"replace_edge_identities: unknown edges: {unknown}")
+        raise OpRefusal(
+            f"replace_edge_identities: unknown edges: {unknown}",
+            check="unknown-edge",
+            subjects=edge_subjects(unknown_ids),
+        )
 
     for entry in op.edges:
         edge = by_edge_id[entry.edge_id()]
         for key in entry.identities:
             if not key:
-                raise ValueError(
+                raise OpRefusal(
                     f"replace_edge_identities: edge {entry.edge_id()} declares an "
-                    "empty uniqueness key"
+                    "empty uniqueness key",
+                    check="invalid-op",
+                    subjects=(edge_subject(*entry.edge_id()),),
                 )
         edge.identities = [list(key) for key in entry.identities]
         logger.debug(

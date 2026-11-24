@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from graflo.architecture.graph_types import EdgeId, EdgePhysicalKey, Index
+from graflo.architecture.refusal import OpRefusal
 from graflo.architecture.schema.database_features import (
     DatabaseProfile,
     DefaultPropertyValues,
@@ -15,20 +16,38 @@ from graflo.architecture.schema.database_features import (
     EdgeRef,
 )
 
+from .refusal_subjects import edge_subject, prop_subject
+
 logger = logging.getLogger(__name__)
 
 
 def _merge_vertex_default_maps(
-    a: dict[str, Any], b: dict[str, Any], *, label: str
+    a: dict[str, Any], b: dict[str, Any], *, label: str, owner: str | None = None
 ) -> dict[str, Any]:
+    """Union two per-property maps, refusing two values for one property.
+
+    *owner* is the vertex or edge subject the maps belong to; given, a conflict
+    is an op refusal about ``owner.property``, otherwise a plain error.
+    """
     out = dict(a)
     for pk, pv in b.items():
         if pk in out and out[pk] != pv:
-            raise ValueError(
-                f"Conflicting {label} for property {pk!r}: {out[pk]!r} vs {pv!r}"
+            message = f"Conflicting {label} for property {pk!r}: {out[pk]!r} vs {pv!r}"
+            if owner is None:
+                raise ValueError(message)
+            raise OpRefusal(
+                message,
+                check="definition-conflict",
+                subjects=(prop_subject(owner, pk),),
             )
         out[pk] = pv
     return out
+
+
+def _physical_subject(key: EdgePhysicalKey) -> str:
+    """An edge spec's physical key as a refusal subject; the purpose is dropped."""
+    source, target, relation, _ = key
+    return edge_subject(source, target, relation)
 
 
 def apply_vertex_removal_to_db_profile(
@@ -68,9 +87,11 @@ def apply_vertex_rename_to_db_profile(
     for k, v in profile.vertex_storage_names.items():
         nk = vertex_renames.get(k, k)
         if nk in new_vs and new_vs[nk] != v:
-            raise ValueError(
+            raise OpRefusal(
                 f"Conflicting vertex_storage_names for logical {nk!r}: "
-                f"{new_vs[nk]!r} vs {v!r}"
+                f"{new_vs[nk]!r} vs {v!r}",
+                check="definition-conflict",
+                subjects=(nk,),
             )
         new_vs[nk] = v
     profile.vertex_storage_names = new_vs
@@ -96,9 +117,11 @@ def apply_vertex_rename_to_db_profile(
     for k, names in profile.vertex_property_names.items():
         nk = vertex_renames.get(k, k)
         if nk in new_vpn and new_vpn[nk] != names:
-            raise ValueError(
+            raise OpRefusal(
                 f"Conflicting vertex_property_names for logical {nk!r}: "
-                f"{new_vpn[nk]!r} vs {names!r}"
+                f"{new_vpn[nk]!r} vs {names!r}",
+                check="definition-conflict",
+                subjects=(nk,),
             )
         new_vpn[nk] = dict(names)
     profile.vertex_property_names = new_vpn
@@ -111,8 +134,10 @@ def apply_vertex_rename_to_db_profile(
     for k, props in dpv.vertices.items():
         nk = vertex_renames.get(k, k)
         if nk in new_vertices and new_vertices[nk] != props:
-            raise ValueError(
-                f"Conflicting default_property_values.vertices for logical {nk!r}"
+            raise OpRefusal(
+                f"Conflicting default_property_values.vertices for logical {nk!r}",
+                check="definition-conflict",
+                subjects=(nk,),
             )
         new_vertices[nk] = dict(props)
     object.__setattr__(dpv, "vertices", new_vertices)
@@ -157,9 +182,11 @@ def remap_vertices_in_db_profile(
     for k, v in profile.vertex_storage_names.items():
         nk = m.get(k, k)
         if nk in new_vs and new_vs[nk] != v:
-            raise ValueError(
+            raise OpRefusal(
                 f"Conflicting vertex_storage_names for logical {nk!r}: "
-                f"{new_vs[nk]!r} vs {v!r}"
+                f"{new_vs[nk]!r} vs {v!r}",
+                check="definition-conflict",
+                subjects=(nk,),
             )
         new_vs[nk] = v
     profile.vertex_storage_names = new_vs
@@ -190,6 +217,7 @@ def remap_vertices_in_db_profile(
             merged_vpn.get(nk, {}),
             dict(names),
             label="vertex_property_names",
+            owner=nk,
         )
     profile.vertex_property_names = merged_vpn
 
@@ -207,6 +235,7 @@ def remap_vertices_in_db_profile(
                 merged_vert[nk],
                 dict(props),
                 label="default_property_values.vertices",
+                owner=nk,
             )
     object.__setattr__(dpv, "vertices", merged_vert)
 
@@ -396,14 +425,18 @@ def merge_relation_entries_in_db_profile(profile: DatabaseProfile) -> None:
             merged_specs[key] = spec
             continue
         if current.relation_name != spec.relation_name:
-            raise ValueError(
+            raise OpRefusal(
                 "Conflicting relation_name while merging relation entries for "
-                f"{key}: {current.relation_name!r} vs {spec.relation_name!r}"
+                f"{key}: {current.relation_name!r} vs {spec.relation_name!r}",
+                check="definition-conflict",
+                subjects=(_physical_subject(key),),
             )
         if current.indexes_mode != spec.indexes_mode:
-            raise ValueError(
+            raise OpRefusal(
                 "Conflicting indexes_mode while merging relation entries for "
-                f"{key}: {current.indexes_mode!r} vs {spec.indexes_mode!r}"
+                f"{key}: {current.indexes_mode!r} vs {spec.indexes_mode!r}",
+                check="definition-conflict",
+                subjects=(_physical_subject(key),),
             )
         merged_specs[key] = current.model_copy(
             update={
@@ -412,6 +445,7 @@ def merge_relation_entries_in_db_profile(profile: DatabaseProfile) -> None:
                     dict(current.property_names),
                     dict(spec.property_names),
                     label=f"property_names while merging relation entries for {key}",
+                    owner=_physical_subject(key),
                 ),
             },
             deep=True,
@@ -431,6 +465,7 @@ def merge_relation_entries_in_db_profile(profile: DatabaseProfile) -> None:
             dict(current.values),
             dict(edge.values),
             label="default_property_values.edges",
+            owner=edge_subject(*edge.edge_id),
         )
         merged_defaults[edge.edge_id] = current.model_copy(
             update={"values": merged_values}, deep=True

@@ -407,7 +407,8 @@ class EdgeActor(Actor):
         edge_config = init_ctx.edge_config
         refusal = inverse_emission_refusal(edge_config, edge_id)
         if refusal is not None:
-            raise ValueError(f"emit_inverse on edge step {edge_id}: {refusal}")
+            _, reason = refusal
+            raise ValueError(f"emit_inverse on edge step {edge_id}: {reason}")
         source, target, relation = edge_id
         inverse_id = (target, source, edge_config.inverse_of(relation))
         if inverse_id in edge_config and (
