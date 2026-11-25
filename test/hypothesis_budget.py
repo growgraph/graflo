@@ -28,6 +28,17 @@ def register_profiles() -> None:
     )
 
 
-def examples(at_full: int, *, floor: int = 10) -> int:
-    """*at_full* scaled by the loaded profile's share of the full budget."""
-    return max(floor, round(at_full * settings().max_examples / FULL))
+def examples(at_full: int, *, floor: int = 10, reduced: int | None = None) -> int:
+    """*at_full* scaled by the loaded profile's share of the full budget.
+
+    Args:
+        at_full: The count under the ``full`` profile.
+        floor: The least count under a reduced profile.
+        reduced: The count under a reduced profile, in place of the scaled one;
+            for a test parametrized so widely that a fifth of its count per
+            parameter is still the heaviest part of the suite.
+    """
+    share = settings().max_examples / FULL
+    if share < 1 and reduced is not None:
+        return reduced
+    return max(floor, round(at_full * share))

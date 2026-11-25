@@ -93,6 +93,10 @@ docker compose --env-file .env.example --profile graflo.nebula up -d
 - GraphStudio web interface: `http://localhost:7001` (configurable via `GRAPHSTUDIO_PORT` in `.env.example`)
 - Use `nebula-graphd` hostname to connect using GraphStudio or programmatically
 - Default credentials: `root` / `test!passfortesting` (configurable via `NEBULA_USER` and `NEBULA_PASSWORD` in `.env.example`)
+- graphd and storaged check in with metad every second (`--heartbeat_interval_secs=1`); a new
+  space, tag, edge type or index is usable only after that check-in, so the 10 s default makes
+  every schema change wait. After pulling a change to the compose file, add `--force-recreate`
+  to the command above.
 
 **Programmatic Connection:**
 You can use `NebulaConfig.from_docker_env()` in your Python code to connect:

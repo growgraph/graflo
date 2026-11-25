@@ -50,7 +50,7 @@ print([e.edge_id for e in schema.core_schema.edge_config.edges])
 ```
 
 This prints the vertex types and the edge types that will be moved. Neo4j,
-FalkorDB and ArangoDB have no schema catalog, so the schema is recovered from
+FalkorDB, ArangoDB and Grafeo have no schema catalog, so the schema is recovered from
 `sample_limit` records per type. If a type has a property that the sample
 missed, raise `sample_limit`. PostgreSQL and the file backend read a catalog
 and do not sample.

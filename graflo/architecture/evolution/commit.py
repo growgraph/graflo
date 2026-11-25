@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import suthing
 from pydantic import Field as PydanticField
@@ -46,6 +46,9 @@ from graflo.architecture.refusal import Refusal
 from .codec import RevisionOp, ops_from_dicts, ops_to_dicts
 from .hashing import manifest_hash
 from .ops import ManifestOp
+
+if TYPE_CHECKING:
+    from .autogenerate import RenameHints
 
 logger = logging.getLogger(__name__)
 
@@ -391,6 +394,7 @@ def build_multi_parent_commit(
     notes: str | None = None,
     recipe: RecipeRef | None = None,
     lead_ops: list[Any] | None = None,
+    hints: RenameHints | None = None,
 ) -> Commit:
     """Record a merge as the diff from its **first parent** to *merged*.
 
@@ -416,6 +420,10 @@ def build_multi_parent_commit(
             union -- renames, and folds of several classes into one -- and a
             plain diff can see a fold only as an unrelated add and remove. The
             diff is then taken from the relabelled first parent.
+        hints: Renames from the first parent (after *lead_ops*) to *merged*.
+            The diff cannot tell a rename from a removal plus an addition, so a
+            rename the merge brought in from another parent is recorded as one
+            only with a hint (``CommitMerge.first_parent_hints``).
 
     Raises:
         CommitError: Fewer than two parents, lead ops that do not apply, or
@@ -442,7 +450,7 @@ def build_multi_parent_commit(
                 f"the merge's relabel of its first parent does not apply: {exc}"
             ) from exc
 
-    derived, warnings = diff_manifests_verified(diff_base, merged)
+    derived, warnings = diff_manifests_verified(diff_base, merged, hints=hints)
     ops = [*lead, *derived]
     if not ops:
         raise CommitError(

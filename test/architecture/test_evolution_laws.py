@@ -100,7 +100,9 @@ LAWS = settings(
     database=None,
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.filter_too_much],
 )
-PER_KIND = settings(LAWS, max_examples=examples(60))
+#: One run per op kind: reduced profiles draw few examples of each, since
+#: every kind is its own parameter.
+PER_KIND = settings(LAWS, max_examples=examples(60, reduced=5))
 
 #: Where a generated manifest may reach: the plain schema (types, properties,
 #: edges, hierarchies), and the widenings on top of it -- lookup keys, indexes,
@@ -2802,7 +2804,7 @@ def test_contending_three_way_merges_associate(scope, data) -> None:
 #: makes shrinking a failing run outlast the test timeout.
 HISTORY = settings(
     LAWS,
-    max_examples=examples(400),
+    max_examples=examples(400, reduced=20),
     stateful_step_count=20,
     phases=[Phase.explicit, Phase.reuse, Phase.generate, Phase.shrink],
 )

@@ -31,7 +31,7 @@ jobs:
         # test/db needs database containers. The live parts of test/data_source
         # and test/object_storage skip when their service is unreachable.
         -   name: Run the container-free suites
-            run: uv run pytest test --ignore=test/db -n auto --dist loadfile
+            run: uv run pytest test --ignore=test/db -n auto --dist loadgroup
 
         # Grafeo is embedded: its live suite needs no container.
         -   name: Run the Grafeo suite

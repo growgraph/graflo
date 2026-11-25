@@ -328,6 +328,7 @@ _HISTORY_EXPORTS = frozenset(
 
 _MERGE3_EXPORTS = frozenset(
     {
+        "CommitMerge",
         "ConflictResolution",
         "MergeConflict",
         "MergeError",
@@ -336,7 +337,9 @@ _MERGE3_EXPORTS = frozenset(
         "build_merge_recipe",
         "build_recipe",
         "find_merge_base",
+        "first_parent_hints",
         "keep_both",
+        "merge_commits",
         "merge_three_way",
         "re_merge",
         "resolve_clusters",
@@ -397,6 +400,7 @@ __all__ = [
     "ClusterIndex",
     "Commit",
     "CommitError",
+    "CommitMerge",
     "CompareFocus",
     "Completion",
     "ConflictResolution",
@@ -577,6 +581,7 @@ __all__ = [
     "diff_manifests_verified",
     "find_commit_by_tree",
     "find_merge_base",
+    "first_parent_hints",
     "fold_declared_maps",
     "full_hash",
     "graph_hash",
@@ -590,6 +595,7 @@ __all__ = [
     "keep_both",
     "lift_recipe_of",
     "manifest_hash",
+    "merge_commits",
     "merge_manifests",
     "merge_manifests_with_report",
     "merge_three_way",

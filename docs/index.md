@@ -30,7 +30,7 @@ pip install "graflo[all]"
 </div>
 <figure class="gf-flow">
 <svg viewBox="0 0 400 330" role="img" aria-labelledby="gf-flow-title" xmlns="http://www.w3.org/2000/svg">
-<title id="gf-flow-title">Records from files, SQL databases, RDF, REST APIs and Kafka topics pass through one manifest into ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph, PostgreSQL or the file backend.</title>
+<title id="gf-flow-title">Records from files, SQL databases, RDF, REST APIs and Kafka topics pass through one manifest into ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph, PostgreSQL, Grafeo or the file backend.</title>
 <g class="gf-flow__edge">
 <path d="M118,65 C150,65 140,165 168,165"/>
 <path d="M118,115 C150,115 140,165 168,165"/>
@@ -38,12 +38,13 @@ pip install "graflo[all]"
 <path d="M118,215 C150,215 140,165 168,165"/>
 <path d="M118,265 C150,265 140,165 168,165"/>
 <path d="M232,165 C260,165 250,25 282,25"/>
-<path d="M232,165 C260,165 250,65 282,65"/>
-<path d="M232,165 C260,165 250,105 282,105"/>
-<path d="M232,165 C260,165 250,145 282,145"/>
-<path d="M232,165 C260,165 250,185 282,185"/>
-<path d="M232,165 C260,165 250,225 282,225"/>
-<path d="M232,165 C260,165 250,265 282,265"/>
+<path d="M232,165 C260,165 250,60 282,60"/>
+<path d="M232,165 C260,165 250,95 282,95"/>
+<path d="M232,165 C260,165 250,130 282,130"/>
+<path d="M232,165 L282,165"/>
+<path d="M232,165 C260,165 250,200 282,200"/>
+<path d="M232,165 C260,165 250,235 282,235"/>
+<path d="M232,165 C260,165 250,270 282,270"/>
 <path d="M232,165 C260,165 250,305 282,305"/>
 </g>
 <g class="gf-flow__node">
@@ -54,12 +55,13 @@ pip install "graflo[all]"
 <circle cx="112" cy="265" r="6"/>
 <circle class="gf-flow__hub" cx="200" cy="165" r="32"/>
 <circle cx="288" cy="25" r="6"/>
-<circle cx="288" cy="65" r="6"/>
-<circle cx="288" cy="105" r="6"/>
-<circle cx="288" cy="145" r="6"/>
-<circle cx="288" cy="185" r="6"/>
-<circle cx="288" cy="225" r="6"/>
-<circle cx="288" cy="265" r="6"/>
+<circle cx="288" cy="60" r="6"/>
+<circle cx="288" cy="95" r="6"/>
+<circle cx="288" cy="130" r="6"/>
+<circle cx="288" cy="165" r="6"/>
+<circle cx="288" cy="200" r="6"/>
+<circle cx="288" cy="235" r="6"/>
+<circle cx="288" cy="270" r="6"/>
 <circle cx="288" cy="305" r="6"/>
 </g>
 <g text-anchor="end">
@@ -72,12 +74,13 @@ pip install "graflo[all]"
 <text class="gf-flow__hub-label" x="200" y="169" text-anchor="middle">manifest</text>
 <g>
 <text x="302" y="29.5">ArangoDB</text>
-<text x="302" y="69.5">Neo4j</text>
-<text x="302" y="109.5">TigerGraph</text>
-<text x="302" y="149.5">FalkorDB</text>
-<text x="302" y="189.5">Memgraph</text>
-<text x="302" y="229.5">NebulaGraph</text>
-<text x="302" y="269.5">PostgreSQL</text>
+<text x="302" y="64.5">Neo4j</text>
+<text x="302" y="99.5">TigerGraph</text>
+<text x="302" y="134.5">FalkorDB</text>
+<text x="302" y="169.5">Memgraph</text>
+<text x="302" y="204.5">NebulaGraph</text>
+<text x="302" y="239.5">PostgreSQL</text>
+<text x="302" y="274.5">Grafeo</text>
 <text x="302" y="309.5">File backend</text>
 </g>
 </svg>

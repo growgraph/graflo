@@ -167,11 +167,12 @@ Everything outside `test/db` runs without the containers, and CI runs it on
 every pull request:
 
 ```shell
-uv run pytest test --ignore=test/db -n auto --dist loadfile
+uv run pytest test --ignore=test/db -n auto --dist loadgroup
 ```
 
-Property tests run a reduced example budget by default; `HYPOTHESIS_PROFILE=full`
-runs the full one.
+`--dist loadgroup` keeps each file of `test/data_source` and `test/object_storage` on one
+worker, since their tests share a live service. Property tests run a reduced example budget
+by default; `HYPOTHESIS_PROFILE=full` runs the full one, as the weekly workflow does.
 
 ## License
 

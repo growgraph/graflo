@@ -75,6 +75,23 @@ def pytest_collection_modifyitems(config, items):
             # ids, so an unmarked test with a parameter named `nebula` was skipped.
             if item.get_closest_marker(marker_name) is not None:
                 item.add_marker(skip)
+    _group_live_service_files(items)
+
+
+#: Directories whose tests share a live service (a Kafka topic, a bucket); under
+#: ``--dist loadgroup`` each of their files runs on one worker, as with loadfile.
+_LIVE_SERVICE_DIRS = ("data_source", "object_storage")
+
+
+def _group_live_service_files(items) -> None:
+    root = Path(__file__).parent
+    for item in items:
+        path = Path(str(item.path))
+        if not path.is_relative_to(root):
+            continue
+        relative = path.relative_to(root)
+        if relative.parts[0] in _LIVE_SERVICE_DIRS:
+            item.add_marker(pytest.mark.xdist_group(relative.as_posix()))
 
 
 @pytest.fixture(scope="session", autouse=True)

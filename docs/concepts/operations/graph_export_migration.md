@@ -84,8 +84,8 @@ ConnectionManager.flavors_supporting(ConnectionCapability.SCHEMA_INTROSPECTION)
 
 `migrate_graph(source, target)` runs these steps in order:
 
-1. Opens one connection to the source and reads its schema. Neo4j, FalkorDB
-   and ArangoDB have no schema catalog, so the schema is recovered by sampling
+1. Opens one connection to the source and reads its schema. Neo4j, FalkorDB,
+   ArangoDB and Grafeo have no schema catalog, so the schema is recovered by sampling
    `sample_limit` records per type (default 100); a property that appears in
    none of the sampled records is missed. PostgreSQL reads its catalog and the
    file backend reads its `schema.yaml`; neither samples.

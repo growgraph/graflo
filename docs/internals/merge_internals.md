@@ -233,7 +233,7 @@ Five verbs recur in the code, in seven senses:
 | union | assemble two collections by name: the outer step | `_union_transforms`, `_union_schema`, `_union_bindings` |
 | merge | combine the two definitions one name has, refusing conflicts: the inner step | `merge_vertex_models`, `merge_edge_pair`, `merge_semantics` |
 | merge (collapse) | send several distinct types or relations to one name | `MergeVerticesOp`, `MergeEdgesOp`, `CanonicalMap.allow_merges` |
-| merge3 | reconcile two descendants of a common ancestor | `merge_three_way`, `MergeResult`, `MergeConflict` |
+| merge3 | reconcile two descendants of a common ancestor | `merge_commits`, `merge_three_way`, `MergeResult`, `MergeConflict` |
 | fuse | two records becoming one node when cast | `allow_observation_fusion`, a derived identity |
 | collapse | group members arriving at their merged name | `VertexEquivalence`, `CanonicalizeOp` |
 

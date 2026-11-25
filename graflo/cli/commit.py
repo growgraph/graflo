@@ -49,9 +49,10 @@ from graflo.architecture.evolution.history import (
     verify_history,
 )
 from graflo.architecture.evolution.merge3 import (
+    MergeError,
     build_recipe,
     find_merge_base,
-    merge_three_way,
+    merge_commits,
     take_left,
     take_right,
 )
@@ -404,10 +405,6 @@ def merge3_cmd(
             "equivalence), not by a three-way merge3."
         )
 
-    ancestor = checkout(base_manifest, history, merge_base_id)
-    left_state = checkout(base_manifest, history, left_commit.id)
-    right_state = checkout(base_manifest, history, right_commit.id)
-
     click.echo(f"merge base: {merge_base_id[:8]}")
     if history_plot_path is not None:
         _plot_history(
@@ -417,7 +414,13 @@ def merge3_cmd(
             merge_base=merge_base_id,
         )
 
-    merged, result = merge_three_way(ancestor, left_state, right_state)
+    # Each side's renames are read from its commits, so two sides renaming one
+    # field differently conflict instead of merging into both names.
+    try:
+        merge = merge_commits(base_manifest, history, left_commit.id, right_commit.id)
+    except MergeError as exc:
+        raise click.ClickException(str(exc)) from exc
+    merged, result = merge.merged, merge.result
 
     # Drawn before the refusal below, since an unresolved merge is exactly the
     # case the picture is for.
@@ -432,16 +435,24 @@ def merge3_cmd(
             click.echo(f"    right: {[op.op for op in conflict.right_ops]}")
         raise click.ClickException(
             "unresolved conflicts; re-run with --take left/right, or resolve "
-            "them per slot in Python with merge_three_way(..., resolutions=...)"
+            "them per slot in Python with merge_commits(..., resolutions=...)"
         )
 
     resolutions = []
     if result.conflicts:
         chooser = take_left if take == "left" else take_right
         resolutions = [chooser(conflict) for conflict in result.conflicts]
-        merged, result = merge_three_way(
-            ancestor, left_state, right_state, resolutions=resolutions
-        )
+        try:
+            merge = merge_commits(
+                base_manifest,
+                history,
+                left_commit.id,
+                right_commit.id,
+                resolutions=resolutions,
+            )
+        except MergeError as exc:
+            raise click.ClickException(str(exc)) from exc
+        merged, result = merge.merged, merge.result
 
     if merged is None:
         raise click.ClickException("merge did not resolve; nothing to record")
@@ -450,7 +461,9 @@ def merge3_cmd(
         click.echo(f"warning: {warning}", err=True)
     click.echo(f"merged hash: {manifest_hash(merged)[:12]}")
 
-    recipe = build_recipe(ancestor, left_state, right_state, resolutions=resolutions)
+    recipe = build_recipe(
+        merge.ancestor, merge.left, merge.right, resolutions=resolutions
+    )
     stamp_provenance(
         merged,
         content_hash=manifest_hash(merged),
@@ -468,9 +481,11 @@ def merge3_cmd(
 
     try:
         entry = build_multi_parent_commit(
-            left_state,
+            merge.left,
             merged,
             parents=[left_commit.id, right_commit.id],
+            # Renames the merge brought in from the right side stay renames.
+            hints=merge.first_parent_hints,
             label=label or f"merge {right_commit.short()} into {left_commit.short()}",
             created_at=datetime.now(UTC).isoformat(),
             recipe=RecipeRef(

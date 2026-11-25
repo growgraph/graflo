@@ -37,6 +37,9 @@ services:
         -   --log_dir=/usr/local/nebula/logs
         -   --v=0
         -   --minloglevel=0
+        # A new tag, edge type or index reaches this daemon at its next
+        # heartbeat; the 10 s default makes every schema change wait.
+        -   --heartbeat_interval_secs=1
 
     nebula-graphd:
         image: vesoft/nebula-graphd:${NEBULA_VERSION}
@@ -64,6 +67,9 @@ services:
         -   --log_dir=/usr/local/nebula/logs
         -   --v=0
         -   --minloglevel=0
+        # A new tag, edge type or index reaches this daemon at its next
+        # heartbeat; the 10 s default makes every schema change wait.
+        -   --heartbeat_interval_secs=1
 
     nebula-graphstudio:
         image: vesoft/nebula-graph-studio:${NEBULA_VERSION}

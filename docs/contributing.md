@@ -130,12 +130,14 @@ Tests marked `tigergraph`, `nebula`, `kafka` or `performance` are skipped unless
 The suites under `test/db` need the containers. The rest runs in-process — the live parts of `test/data_source` and `test/object_storage` skip when their service is unreachable — and CI runs exactly that part on every pull request:
 
 ```bash
-uv run pytest test --ignore=test/db -n auto --dist loadfile
+uv run pytest test --ignore=test/db -n auto --dist loadgroup
 ```
 
 CI does not run `test/db`, so run it locally before a change to a backend. A weekly workflow runs the same suites against the newest dependency versions `pyproject.toml` admits, rather than the ones `uv.lock` pins. Unit tests of backend code that need no database go in `test/backends/`, where CI runs them.
 
-Property tests (Hypothesis) run under the `ci` profile by default: a fifth of each test's example count, derandomized. Run them at the full count with `HYPOTHESIS_PROFILE=full` (or `--hypothesis-profile=full`). A test that sets its own count writes it through `examples()` in `test/hypothesis_budget.py`, so the profile still scales it.
+`--dist loadgroup` spreads tests across workers one by one, except the files of `test/data_source` and `test/object_storage`, which `test/conftest.py` keeps each on one worker because their tests share a live service (a Kafka topic, a bucket).
+
+Property tests (Hypothesis) run under the `ci` profile by default: a fifth of each test's example count, derandomized. Run them at the full count with `HYPOTHESIS_PROFILE=full` (or `--hypothesis-profile=full`); the weekly workflow does. A test that sets its own count writes it through `examples()` in `test/hypothesis_budget.py`, so the profile still scales it; `reduced=` gives a smaller count for a test parametrized so widely that a fifth is still heavy.
 
 ### uv version
 

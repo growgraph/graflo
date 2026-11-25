@@ -905,6 +905,191 @@ def re_merge(
     return merged, result
 
 
+# ── merging commits ─────────────────────────────────────────────────────────
+
+
+class CommitMerge(ConfigBaseModel):
+    """A three-way merge of two commits, with the renames their history records.
+
+    Everything a caller needs to resolve, record and re-run the merge with the
+    same hints: pass ``left_hints`` and ``right_hints`` to :func:`re_merge`, and
+    ``first_parent_hints`` to ``build_multi_parent_commit``.
+    """
+
+    merge_base: str = PydanticField(..., description="Commit id of the merge base.")
+    ancestor: GraphManifest = PydanticField(..., description="State at the merge base.")
+    left: GraphManifest = PydanticField(..., description="State at the left commit.")
+    right: GraphManifest = PydanticField(..., description="State at the right commit.")
+    left_hints: RenameHints = PydanticField(
+        ..., description="Renames from the merge base to the left commit."
+    )
+    right_hints: RenameHints = PydanticField(
+        ..., description="Renames from the merge base to the right commit."
+    )
+    merged: GraphManifest | None = PydanticField(
+        default=None, description="The merged state; None while conflicts remain."
+    )
+    result: MergeResult
+    first_parent_hints: RenameHints | None = PydanticField(
+        default=None,
+        description=(
+            "Renames from the left state to the merged one, for recording the "
+            "merge commit as a diff from its first parent; None with no merge."
+        ),
+    )
+
+
+def _undoing(hints: RenameHints) -> list[ManifestOp]:
+    """Rename ops taking every renamed name in *hints* back, last kind first.
+
+    Property renames are keyed by their owner's new name, so they are undone
+    while the owner still has it, before the owner's own rename is undone.
+    """
+
+    def flipped(renames: dict[str, str]) -> dict[str, str]:
+        return {new: old for old, new in renames.items()}
+
+    undo: list[ManifestOp] = []
+    if hints.edge_properties:
+        undo.append(
+            ops.RenameEdgePropertiesOp(
+                renames={o: flipped(f) for o, f in hints.edge_properties.items()}
+            )
+        )
+    if hints.vertex_properties:
+        undo.append(
+            ops.RenameVertexPropertiesOp(
+                renames={o: flipped(f) for o, f in hints.vertex_properties.items()}
+            )
+        )
+    if hints.resources:
+        undo.append(ops.RenameResourcesOp(renames=flipped(hints.resources)))
+    if hints.relations:
+        undo.append(ops.RenameRelationsOp(renames=flipped(hints.relations)))
+    if hints.vertices:
+        undo.append(ops.RenameVerticesOp(renames=flipped(hints.vertices)))
+    return undo
+
+
+def first_parent_hints(
+    ancestor: GraphManifest,
+    left: GraphManifest,
+    left_hints: RenameHints,
+    result: MergeResult,
+) -> RenameHints:
+    """Renames from *left* to the merged state, for recording the merge commit.
+
+    A merge commit is stored as the diff from its first parent, and a diff
+    cannot see a rename. The merge applied ``result.ops`` to the ancestor, so
+    its renames from the ancestor are known; undoing the left side's own
+    renames first leaves what the merge renamed relative to the left state,
+    including a contested rename decided for the right side (``amount`` back to
+    ``total``, then on to ``grand_total``).
+
+    Args:
+        ancestor: The merge base the merge ran against.
+        left: The left state, the merge commit's first parent.
+        left_hints: The renames from *ancestor* to *left*, as given to the merge.
+        result: The merge's result; its ``ops`` reach the merged state.
+
+    Returns:
+        Hints for ``build_multi_parent_commit(left, merged, hints=...)``; their
+        ``to_ops()`` are the merge's renames as ops on the first parent.
+    """
+    merged_hints = RenameHints.from_ops(list(result.ops), base=ancestor)
+    return RenameHints.from_ops(
+        [*_undoing(left_hints), *merged_hints.to_ops()], base=left
+    )
+
+
+def merge_commits(
+    base: GraphManifest,
+    history: Any,
+    left: str,
+    right: str,
+    *,
+    resolutions: list[ConflictResolution] | None = None,
+) -> CommitMerge:
+    """Merge two commits of *history* against their merge base.
+
+    A diff cannot tell a rename from a removal plus an addition, but the commits
+    can: each side's renames are read from the commits between the merge base
+    and that side, and handed to :func:`merge_three_way` as that side's hints.
+    Without them, two sides renaming one field differently would merge into
+    both names.
+
+    Args:
+        base: The manifest the history's root commit starts from.
+        history: A ``History`` (kept structural to avoid an import cycle).
+        left: The left commit id, or a unique prefix. Its ops are applied first,
+            and it is the merge commit's first parent.
+        right: The right commit id, or a unique prefix.
+        resolutions: Decisions for contested slots, as in
+            :func:`merge_three_way`.
+
+    Returns:
+        The states, the hints and the outcome; ``merged`` is ``None`` exactly
+        when unresolved conflicts remain.
+
+    Raises:
+        MergeError: The commits share no ancestor (unrelated lineages are
+            joined by a union, ``merge_manifests``), or the merge base is not on
+            a side's first-parent path, so that side's renames cannot be read
+            from the commits. Merge such states with :func:`merge_three_way`
+            and hints you supply. Also as :func:`merge_three_way`.
+    """
+    from .history import checkout
+
+    left_id = history.require(left).id
+    right_id = history.require(right).id
+    merge_base = find_merge_base(history, left_id, right_id)
+    if merge_base is None:
+        raise MergeError(
+            f"{left_id[:8]} and {right_id[:8]} share no ancestor; unrelated "
+            "lineages are joined by a union (merge_manifests), not a three-way merge"
+        )
+
+    ancestor = checkout(base, history, merge_base)
+
+    def side(name: str, commit_id: str) -> tuple[GraphManifest, RenameHints]:
+        between = history.ops_between(merge_base, commit_id)
+        if between is None:
+            raise MergeError(
+                f"the {name} side's renames since merge base {merge_base[:8]} cannot "
+                f"be read: the base is not on the first-parent path of "
+                f"{commit_id[:8]}. Merge the states with merge_three_way and "
+                "hints you supply"
+            )
+        return (
+            checkout(base, history, commit_id),
+            RenameHints.from_ops(list(between), base=ancestor),
+        )
+
+    left_state, left_hints = side("left", left_id)
+    right_state, right_hints = side("right", right_id)
+    merged, result = merge_three_way(
+        ancestor,
+        left_state,
+        right_state,
+        resolutions=resolutions,
+        left_hints=left_hints,
+        right_hints=right_hints,
+    )
+    return CommitMerge(
+        merge_base=merge_base,
+        ancestor=ancestor,
+        left=left_state,
+        right=right_state,
+        left_hints=left_hints,
+        right_hints=right_hints,
+        merged=merged,
+        result=result,
+        first_parent_hints=None
+        if merged is None
+        else first_parent_hints(ancestor, left_state, left_hints, result),
+    )
+
+
 def take_left(
     conflict: MergeConflict, *, rationale: str | None = None
 ) -> ConflictResolution:
@@ -979,6 +1164,7 @@ def keep_both(
 
 
 __all__ = [
+    "CommitMerge",
     "ConflictResolution",
     "MergeConflict",
     "MergeError",
@@ -987,7 +1173,9 @@ __all__ = [
     "build_merge_recipe",
     "build_recipe",
     "find_merge_base",
+    "first_parent_hints",
     "keep_both",
+    "merge_commits",
     "merge_three_way",
     "re_merge",
     "take_left",

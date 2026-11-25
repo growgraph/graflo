@@ -86,9 +86,13 @@ logger = logging.getLogger(__name__)
 
 _SCHEMA_WAIT_INTERVAL = 1.0
 _SCHEMA_WAIT_RETRIES = 30
-#: Times a job that ends FAILED or STOPPED is submitted again: a rebuild
-#: submitted before storaged knows a new index fails, and succeeds later.
-_JOB_ATTEMPTS = 5
+#: How long a job that ends FAILED or STOPPED is submitted again. storaged
+#: learns a new index only at its next metad heartbeat (``heartbeat_interval_secs``,
+#: 10 s by default), and a rebuild submitted before then fails with
+#: E_INDEX_NOT_FOUND; this covers three heartbeats.
+_JOB_RETRY_SECONDS = 30.0
+#: First ``SHOW JOB`` poll; doubles up to ``_SCHEMA_WAIT_INTERVAL``.
+_JOB_POLL_FIRST = 0.05
 _JOB_DONE = "FINISHED"
 _JOB_ENDED = frozenset({"FINISHED", "FAILED", "STOPPED"})
 #: Statements joined into one request on the upsert path.
@@ -482,12 +486,27 @@ class NebulaConnection(Connection):
     # ------------------------------------------------------------------
 
     def define_schema(self, schema: Schema) -> None:
+        """Create the tags and edge types, then wait once until both are writable.
+
+        Neither depends on the other, so they share one wait for storaged's
+        next heartbeat instead of one wait each.
+        """
         assert_schema_supported(self.flavor, schema)
-        self.define_vertex_classes(schema)
-        edges = list(schema.core_schema.edge_config.values())
-        self.define_edge_classes(edges)
+        tag = self._create_tags(schema)
+        edge_type = self._create_edge_types(
+            list(schema.core_schema.edge_config.values())
+        )
+        self._wait_until_writable(tag, edge_type)
 
     def define_vertex_classes(self, schema: Schema) -> None:
+        """Create one tag per vertex type and wait until it is writable."""
+        self._wait_until_writable(self._create_tags(schema), None)
+
+    def define_edge_classes(self, edges: list[Edge]) -> None:
+        """Create one edge type per relation and wait until it is writable."""
+        self._wait_until_writable(None, self._create_edge_types(edges))
+
+    def _create_tags(self, schema: Schema) -> str | None:
         """Create one tag per vertex type, named as the rest of this class reads it.
 
         The tag name comes from the db-aware projection, not the logical vertex
@@ -495,31 +514,44 @@ class NebulaConnection(Connection):
         ``vertex_dbname``, so declaring a tag under the logical name instead
         leaves a schema nothing writes to, and every UPSERT fails with
         ``No schema found`` on any manifest that sets ``vertex_storage_names``.
+
+        Returns:
+            One tag created, to wait on; None when there is none.
         """
         logical = schema.core_schema.vertex_config
         db_aware = schema.resolve_db_aware(DBType.NEBULA).vertex_config
+        created: str | None = None
         for vname in logical.vertex_set:
             tag = db_aware.vertex_dbname(vname)
             fields = logical.properties(vname)
-            stmt = create_tag_ngql(tag, fields)
-            self._execute(stmt)
+            self._execute(create_tag_ngql(tag, fields))
             self._tag_fields[tag] = [f.name for f in fields]
+            created = created or tag
             logger.debug("Created tag '%s' for vertex '%s'", tag, vname)
+        return created
 
-        if logical.vertex_set:
-            sample = next(iter(logical.vertex_set))
-            self._wait_for_dml_ready(db_aware.vertex_dbname(sample))
+    def _create_edge_types(self, edges: list[Edge]) -> str | None:
+        """Create one edge type per relation, with every field an edge of it has.
 
-    def define_edge_classes(self, edges: list[Edge]) -> None:
-        """Create one edge type per relation, with every field an edge of it has."""
+        Returns:
+            One edge type created, to wait on; None when there is none.
+        """
         created = edge_types(edges)
         for rel, fields in created.items():
             self._execute(create_edge_type_ngql(rel, fields))
             logger.debug("Created edge type '%s'", rel)
+        return next(iter(created), None)
 
-        if created:
-            sample_et = next(iter(created))
-            self._wait_for_edge_dml_ready(sample_et)
+    def _wait_until_writable(self, tag: str | None, edge_type: str | None) -> None:
+        """Wait until storaged accepts DML on *tag* and *edge_type*.
+
+        Types created together reach storaged at the same heartbeat, so one of
+        each kind stands for the rest.
+        """
+        if tag is not None:
+            self._wait_for_dml_ready(tag)
+        if edge_type is not None:
+            self._wait_for_edge_dml_ready(edge_type)
 
     # ------------------------------------------------------------------
     # Index management
@@ -532,58 +564,52 @@ class NebulaConnection(Connection):
             logger.warning(
                 "Schema is None: identity indexes cannot be ensured without schema"
             )
-        for tag, name, stmt in tag_index_specs(vertex_config, schema):
-            self._create_index("TAG", tag, name, stmt)
+        self._create_indexes("TAG", tag_index_specs(vertex_config, schema))
 
     def define_edge_indexes(
         self, edges: list[Edge], schema: Schema | None = None
     ) -> None:
-        for edge_type, name, stmt in edge_index_specs(edges, schema):
-            self._create_index("EDGE", edge_type, name, stmt)
+        self._create_indexes("EDGE", edge_index_specs(edges, schema))
 
-    def _create_index(self, kind: str, owner: str, idx_name: str, stmt: str) -> None:
-        """Create and build one index; a failure is logged, not raised."""
+    def _create_indexes(self, kind: str, specs: list[IndexSpec]) -> None:
+        """Create indexes, then build them in one job; a failure is logged, not raised."""
+        created: list[IndexSpec] = []
+        for spec in specs:
+            try:
+                self._execute(spec[2])
+                created.append(spec)
+            except Exception as e:
+                self._warn_index_missing(kind, spec, e)
+        if not created:
+            return
         try:
-            self._execute(stmt)
-            self._rebuild_index(idx_name, kind=kind)
-            logger.debug("Created %s index '%s'", kind.lower(), idx_name)
+            self._rebuild_indexes(kind, [name for _, name, _ in created])
         except Exception as e:
-            # Not debug: without this index every filtered read on it fails
-            # with IndexNotFound, and the cause is three layers away.
-            logger.warning(
-                "%s index '%s' on '%s' was not created: %s. Filtered reads on "
-                "these fields will fail with IndexNotFound.",
-                kind.capitalize(),
-                idx_name,
-                owner,
-                e,
-            )
+            for spec in created:
+                self._warn_index_missing(kind, spec, e)
 
-    def _rebuild_index(self, idx_name: str, kind: str = "TAG") -> None:
-        """Rebuild an index, waiting for propagation first, then for completion."""
-        rebuild_stmt = f"REBUILD {kind} INDEX `{idx_name}`"
-        for attempt in range(_SCHEMA_WAIT_RETRIES):
-            try:
-                self._adapter.execute(rebuild_stmt)
-                break
-            except Exception:
-                if attempt == _SCHEMA_WAIT_RETRIES - 1:
-                    logger.warning("Could not start rebuild for '%s'", idx_name)
-                    return
-                time.sleep(_SCHEMA_WAIT_INTERVAL)
+    @staticmethod
+    def _warn_index_missing(kind: str, spec: IndexSpec, error: Exception) -> None:
+        # Not debug: without this index every filtered read on it fails
+        # with IndexNotFound, and the cause is three layers away.
+        owner, name, _ = spec
+        logger.warning(
+            "%s index '%s' on '%s' was not built: %s. Filtered reads on "
+            "these fields will fail with IndexNotFound.",
+            kind.capitalize(),
+            name,
+            owner,
+            error,
+        )
 
-        for _ in range(_SCHEMA_WAIT_RETRIES):
-            try:
-                rs = self._adapter.execute(f"SHOW {kind} INDEX STATUS")
-                for row in rs.rows_as_dicts():
-                    name = row.get("Name", row.get("name", ""))
-                    status = row.get("Index Status", row.get("index_status", ""))
-                    if name == idx_name and status.upper() == "FINISHED":
-                        return
-            except Exception:
-                pass
-            time.sleep(_SCHEMA_WAIT_INTERVAL)
-        logger.warning("Index rebuild for '%s' may not be complete", idx_name)
+    def _rebuild_indexes(self, kind: str, names: list[str]) -> None:
+        """Build *names* in one ``REBUILD`` job, run to completion.
+
+        Raises:
+            RuntimeError: The job never finished.
+        """
+        listed = ", ".join(f"`{name}`" for name in names)
+        self._run_job(f"REBUILD {kind} INDEX {listed}")
 
     # ------------------------------------------------------------------
     # init_db
@@ -628,11 +654,14 @@ class NebulaConnection(Connection):
         self.create_database(space_name, schema=schema)
 
     def _schema_has_artifacts(self) -> bool:
-        try:
-            rs = self._execute("SHOW TAGS")
-            return bool(rs.rows_as_dicts())
-        except Exception:
-            return False
+        """Whether the current space holds a tag or an edge type."""
+        for statement in ("SHOW TAGS", "SHOW EDGES"):
+            try:
+                if self._execute(statement).rows_as_dicts():
+                    return True
+            except Exception:
+                logger.debug("%s failed", statement, exc_info=True)
+        return False
 
     def apply_target_schema(
         self,
@@ -644,7 +673,11 @@ class NebulaConnection(Connection):
         """Define tags, edge types, and indexes in the current space."""
         self.report_edge_direction_support(schema)
         space_name = self._resolve_space_name(schema)
-        if recreate:
+        # The selected target space with no schema is already what a recreate
+        # would make: dropping and creating it again costs two heartbeats.
+        if recreate and (
+            self._space_name != space_name or self._schema_has_artifacts()
+        ):
             if create_namespace:
                 try:
                     self.delete_database(space_name)
@@ -660,7 +693,7 @@ class NebulaConnection(Connection):
                             self._execute(f"DROP TAG IF EXISTS `{tag}`")
                 except Exception as e:
                     logger.warning("Failed to drop tags during recreate: %s", e)
-        elif self._schema_has_artifacts():
+        elif not recreate and self._schema_has_artifacts():
             raise SchemaExistsError(
                 f"Schema already exists in space '{space_name}'. "
                 "Set recreate_schema=True to replace."
@@ -778,11 +811,9 @@ class NebulaConnection(Connection):
         for _, _, stmt in [*tag_specs, *edge_specs]:
             self._execute(stmt)
         if tag_specs:
-            names = ", ".join(f"`{name}`" for _, name, _ in tag_specs)
-            self._run_job(f"REBUILD TAG INDEX {names}")
+            self._rebuild_indexes("TAG", [name for _, name, _ in tag_specs])
         if edge_specs:
-            names = ", ".join(f"`{name}`" for _, name, _ in edge_specs)
-            self._run_job(f"REBUILD EDGE INDEX {names}")
+            self._rebuild_indexes("EDGE", [name for _, name, _ in edge_specs])
         self._run_job("SUBMIT JOB STATS")
         return self._stored_counts(schema)
 
@@ -800,30 +831,35 @@ class NebulaConnection(Connection):
 
     def _await_job(self, job_id: int) -> str:
         """Poll ``SHOW JOB`` until the job ends; return its status."""
+        delay = _JOB_POLL_FIRST
         while True:
             rows = self._execute(f"SHOW JOB {job_id}").rows_as_dicts()
             status = str(rows[0].get("Status", "")).upper() if rows else ""
             if status in _JOB_ENDED:
                 return status
-            time.sleep(_SCHEMA_WAIT_INTERVAL)
+            time.sleep(delay)
+            delay = min(delay * 2, _SCHEMA_WAIT_INTERVAL)
 
     def _run_job(self, statement: str) -> None:
-        """Run a job to completion, submitting it again if it fails.
+        """Run a job to completion, submitting it again while it fails.
 
         Raises:
-            RuntimeError: It did not finish within the allowed attempts.
+            RuntimeError: It still failed after ``_JOB_RETRY_SECONDS``.
         """
-        status = ""
-        for _ in range(_JOB_ATTEMPTS):
+        deadline = time.monotonic() + _JOB_RETRY_SECONDS
+        while True:
             job_id = self._submit_job(statement)
             status = self._await_job(job_id)
             if status == _JOB_DONE:
                 return
-            logger.warning(
+            if time.monotonic() >= deadline:
+                raise RuntimeError(
+                    f"{statement} still ended {status} after {_JOB_RETRY_SECONDS:g} s"
+                )
+            logger.debug(
                 "Job %s (%s) ended %s; submitting again", job_id, statement, status
             )
             time.sleep(_SCHEMA_WAIT_INTERVAL)
-        raise RuntimeError(f"{statement} ended {status} {_JOB_ATTEMPTS} times")
 
     def _stored_counts(self, schema: Schema) -> BulkCounts:
         """Vertices per tag and edges per stored edge id, from the last STATS job.
