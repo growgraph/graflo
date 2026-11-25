@@ -7,10 +7,7 @@ import json
 import logging
 from collections.abc import Callable, Collection, Sequence
 from functools import partial
-from typing import Any, Protocol
-
-from psycopg2 import sql
-from psycopg2.extras import execute_values
+from typing import TYPE_CHECKING, Any, Protocol
 
 from graflo.architecture.graph_types import EdgeDirection
 from graflo.architecture.query.timeout import timeout_kwargs
@@ -40,6 +37,14 @@ from graflo.db.conn import (
 from graflo.db.field_type_support import assert_field_type_supported
 from graflo.filter.onto import BoundParams, FilterExpression, parse_filter_expression
 from graflo.onto import AggregationType, DBType, ExpressionFlavor
+from graflo.util.extras import lazy_module
+
+if TYPE_CHECKING:
+    import psycopg2.extras as _psycopg2_extras
+    from psycopg2 import sql
+else:
+    _psycopg2_extras = lazy_module("psycopg2.extras", "postgres")
+    sql = lazy_module("psycopg2.sql", "postgres")
 
 
 class _Psycopg2Conn(Protocol):
@@ -758,7 +763,7 @@ def _write_batches(
             if prepare is not None:
                 prepare(cursor)
             for query, values in statements:
-                execute_values(cursor, query, values)
+                _psycopg2_extras.execute_values(cursor, query, values)
     except Exception:
         conn.rollback()
         raise
@@ -1231,14 +1236,16 @@ class PostgresTargetWriteMixin:
             for start in range(0, len(values), chunk_size):
                 chunk = values[start : start + chunk_size]
                 for other, columns in referencing:
-                    execute_values(
+                    _psycopg2_extras.execute_values(
                         cursor,
                         delete_referencing_rows_query(
                             pg_schema, other, columns, table, keys
                         ),
                         chunk,
                     )
-                execute_values(cursor, delete_rows_query(pg_schema, table, keys), chunk)
+                _psycopg2_extras.execute_values(
+                    cursor, delete_rows_query(pg_schema, table, keys), chunk
+                )
         self.conn.commit()
 
     def delete_edges(
@@ -1273,7 +1280,9 @@ class PostgresTargetWriteMixin:
         ]
         with self.conn.cursor() as cursor:
             for start in range(0, len(values), chunk_size):
-                execute_values(cursor, query, values[start : start + chunk_size])
+                _psycopg2_extras.execute_values(
+                    cursor, query, values[start : start + chunk_size]
+                )
         self.conn.commit()
 
     def fetch_edge_targets(
@@ -1308,7 +1317,7 @@ class PostgresTargetWriteMixin:
         keys = list(positions)
         with self.conn.cursor() as cursor:
             for start in range(0, len(keys), chunk_size):
-                rows = execute_values(
+                rows = _psycopg2_extras.execute_values(
                     cursor, query, keys[start : start + chunk_size], fetch=True
                 )
                 for row in rows:

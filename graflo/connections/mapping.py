@@ -1,3 +1,4 @@
+from graflo.connections.grafeo import GrafeoConfig
 from graflo.connections.graflo_backend import GraFloBackendConfig
 from graflo.onto import DBType
 
@@ -25,6 +26,7 @@ DB_TYPE_MAPPING: dict[DBType, type[DBConfig]] = {
     DBType.POSTGRES: PostgresConfig,
     DBType.SPARQL: SparqlEndpointConfig,
     DBType.GRAPHDB: GraphDBConfig,
+    DBType.GRAFEO: GrafeoConfig,
     DBType.GRAFLO_BACKEND: GraFloBackendConfig,
 }
 

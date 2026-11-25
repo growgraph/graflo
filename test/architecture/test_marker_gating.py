@@ -6,6 +6,7 @@ it skips an unmarked test whose parameter happens to be called ``nebula``.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -24,10 +25,16 @@ class _Config:
         return False
 
 
+TEST_ROOT = Path(__file__).parents[1]
+
+
 class _Item:
-    def __init__(self, *, keywords: set[str], marks: set[str]) -> None:
+    def __init__(
+        self, *, keywords: set[str], marks: set[str], path: Path = Path(__file__)
+    ) -> None:
         self.keywords = dict.fromkeys(keywords, True)
         self._marks = marks
+        self.path = path
         self.added: list[Any] = []
 
     def get_closest_marker(self, name: str) -> Any:
@@ -53,3 +60,25 @@ def test_a_marked_test_is_skipped_without_its_option(name: str) -> None:
     pytest_collection_modifyitems(_Config(), [item])
 
     assert len(item.added) == 1
+
+
+def test_a_live_service_file_runs_on_one_worker() -> None:
+    item = _Item(
+        keywords={"test_something"},
+        marks=set(),
+        path=TEST_ROOT / "data_source" / "test_kafka_data_source.py",
+    )
+
+    pytest_collection_modifyitems(_Config(), [item])
+
+    [group] = item.added
+    assert group.name == "xdist_group"
+    assert group.args == ("data_source/test_kafka_data_source.py",)
+
+
+def test_a_pure_test_is_not_grouped() -> None:
+    item = _Item(keywords={"test_something"}, marks=set())
+
+    pytest_collection_modifyitems(_Config(), [item])
+
+    assert item.added == []

@@ -265,6 +265,9 @@ def _load_graph(
     g = Graph()
 
     if endpoint_url:
+        from graflo.util.extras import require
+
+        require("SPARQLWrapper", "sparql", feature="SPARQL inference")
         from SPARQLWrapper import N3, SPARQLWrapper
 
         sparql = SPARQLWrapper(endpoint_url)

@@ -31,6 +31,7 @@ _LIST_NATIVE_DBS: frozenset[DBType] = frozenset(
         DBType.NEO4J,
         DBType.MEMGRAPH,
         DBType.FALKORDB,
+        DBType.GRAFEO,
         DBType.ARANGO,
         DBType.POSTGRES,
         DBType.GRAFLO_BACKEND,
@@ -141,6 +142,9 @@ class UnsupportedIndexError(ValueError):
 #: needs one is refused; one GraFlo derives (identity, secondary identity, edge
 #: identity) is skipped by the backend instead, since no lookup depends on it.
 _INDEX_LIMITS: dict[DBType, frozenset[str]] = {
+    # No index on relationship properties; uniqueness constraints are
+    # database-wide, shared by every named graph, so none is built.
+    DBType.GRAFEO: frozenset({"edge", "unique vertex"}),
     DBType.MEMGRAPH: frozenset({"composite edge", "unique edge"}),
     DBType.NEBULA: frozenset({"unique vertex", "unique edge"}),
     DBType.TIGERGRAPH: frozenset({"composite vertex", "unique vertex", "edge"}),

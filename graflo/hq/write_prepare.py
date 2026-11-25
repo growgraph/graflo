@@ -31,7 +31,9 @@ from graflo.onto import DBType
 
 logger = logging.getLogger(__name__)
 
-CYPHER_FLAVORS = frozenset({DBType.NEO4J, DBType.MEMGRAPH, DBType.FALKORDB})
+CYPHER_FLAVORS = frozenset(
+    {DBType.NEO4J, DBType.MEMGRAPH, DBType.FALKORDB, DBType.GRAFEO}
+)
 
 
 class WriteContext(BaseModel):

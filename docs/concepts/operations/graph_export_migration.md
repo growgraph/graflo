@@ -49,6 +49,7 @@ and not every backend has both.
 | Neo4j | yes | yes | yes |
 | FalkorDB | yes | yes | yes |
 | PostgreSQL | yes | yes, in the table layout GraFlo writes | yes, as tables |
+| Grafeo | yes | yes | yes |
 | GraFlo file backend | yes | yes | yes |
 | TigerGraph | yes | no | yes |
 | Memgraph | yes | no | yes |
@@ -73,17 +74,18 @@ from graflo.db.conn import ConnectionCapability
 from graflo.db.manager import ConnectionManager
 
 ConnectionManager.graph_export_flavors()
-# [DBType.ARANGO, DBType.NEO4J, DBType.FALKORDB, DBType.POSTGRES, DBType.GRAFLO_BACKEND]
+# [DBType.ARANGO, DBType.NEO4J, DBType.FALKORDB, DBType.POSTGRES, DBType.GRAFEO,
+#  DBType.GRAFLO_BACKEND]
 ConnectionManager.flavors_supporting(ConnectionCapability.SCHEMA_INTROSPECTION)
-# all eight
+# all nine
 ```
 
 ## What a migration does
 
 `migrate_graph(source, target)` runs these steps in order:
 
-1. Opens one connection to the source and reads its schema. Neo4j, FalkorDB
-   and ArangoDB have no schema catalog, so the schema is recovered by sampling
+1. Opens one connection to the source and reads its schema. Neo4j, FalkorDB,
+   ArangoDB and Grafeo have no schema catalog, so the schema is recovered by sampling
    `sample_limit` records per type (default 100); a property that appears in
    none of the sampled records is missed. PostgreSQL reads its catalog and the
    file backend reads its `schema.yaml`; neither samples.

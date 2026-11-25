@@ -242,6 +242,9 @@ GROUP BY ?class ORDER BY DESC(?n) ?class LIMIT {limit}"""
 
 def sparql_select(conn: SparqlEndpointConfig, query: str) -> list[dict[str, Any]]:
     """The bindings of a ``SELECT`` *query* against *conn*'s endpoint."""
+    from graflo.util.extras import require
+
+    require("SPARQLWrapper", "sparql", feature="SPARQL discovery")
     from SPARQLWrapper import JSON, SPARQLWrapper
 
     client = SPARQLWrapper(conn.query_endpoint)
@@ -281,6 +284,9 @@ def _discover_sparql(conn: SparqlEndpointConfig, limit: int) -> Discovery:
 
 def kafka_topics(conn: KafkaConnConfig) -> list[str]:
     """The topics *conn*'s cluster holds, internal ones (``__``) left out."""
+    from graflo.util.extras import require
+
+    require("confluent_kafka", "kafka", feature="Kafka discovery")
     from confluent_kafka.admin import AdminClient
 
     admin = AdminClient(dict[str, Any](conn.to_consumer_config()))

@@ -5,10 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.28.0]
+
+### Breaking
+
+- Python 3.12 or newer is required.
+- Database clients and source integrations are optional extras: `arango`, `neo4j`, `falkordb`,
+  `memgraph`, `nebula`, `postgres`, `grafeo`, `sql`, `kafka`, `s3`, `sparql`; `graflo[all]`
+  installs what `graflo` used to. Connecting without the extra raises `MissingExtraError`
+  (an `ImportError`) naming it; a missing `bulk` extra raises it too, instead of `RuntimeError`.
 
 ### Added
 
+- Grafeo backend (`graflo[grafeo]`): an embedded graph database in this process, from a file or
+  memory, one named graph per namespace; `GrafeoConfig`, `GrafeoConnection`,
+  `graflo.db.grafeo.close_database`. Supports export, introspection, deletes, read guards,
+  union merge, bulk load and sync; no edge or unique indexes.
+- `graflo.util.extras`: `require` and `lazy_module` import an optional dependency on first use.
 - `graflo.architecture.evolution.op_laws`: one `OpLaws` record per op (apply, writes, reads,
   inverse or irreversible reason); `inverse._HANDLERS` is public as `INVERTERS`.
 - `graflo.architecture.evolution.slot_projection`: `slot_contents` (a manifest as slots) and
@@ -16,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `normalize()` and `validate()` on `GraphManifest`, `Schema`, `CoreSchema`, `VertexConfig`,
   `EdgeConfig`, `Edge`, `DatabaseProfile` and `IngestionModel`: `normalize` is the only mutator
   and is idempotent, `validate` is a pure check; `finish_init` runs both, then builds runtimes.
+- `merge_commits` merges two commits of a `History`, reading each side's renames from its commits;
+  `CommitMerge` holds the states, the hints and the result. `build_multi_parent_commit` takes `hints`,
+  and `first_parent_hints` gives them after a `merge_three_way` of bare manifests.
 
 ### Changed
 
@@ -60,6 +76,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `graflo merge3`: two branches renaming one field differently conflict on that field instead of
+  merging into both names, and a rename taken from the right side is recorded in the merge commit
+  as a rename, not as a removal plus an addition.
+- NebulaGraph: indexes defined with the schema are built in one job, submitted again until
+  storaged knows them; before, each one waited 30 s and could be left unbuilt. Tags and edge
+  types share one propagation wait, and `recreate_schema` no longer drops and recreates a
+  space that holds no schema.
 - The equivalence identity figure draws its branches as one column in funnel order, `#1` on
   top, and draws the member key each own-key branch reads.
 - A commit that clears a field's declared type records: the op payload keeps `type: null`.

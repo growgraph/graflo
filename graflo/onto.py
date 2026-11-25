@@ -37,19 +37,19 @@ class MetaEnum(EnumMeta):
         >>> "invalid" in MyEnum  # False
     """
 
-    def __contains__(self, member: object) -> bool:
+    def __contains__(self, value: object) -> bool:
         """Check if an item is a valid member of the enum.
 
         Args:
-            member: Value to check for membership
+            value: Value to check for membership
 
         Returns:
             bool: True if the item is a valid enum member, False otherwise
         """
-        if isinstance(member, self):
+        if isinstance(value, self):
             return True
         try:
-            self(member)
+            self(value)
             return True
         except ValueError:
             return False
@@ -150,6 +150,7 @@ class DBType(StrEnum, metaclass=MetaEnum):
     FALKORDB = "falkordb"
     MEMGRAPH = "memgraph"
     NEBULA = "nebula"
+    GRAFEO = "grafeo"
     GRAFLO_BACKEND = "graflo_backend"
 
     # Source databases (SQL, NoSQL, RDF)
@@ -170,6 +171,7 @@ DB_TYPE_TO_EXPRESSION_FLAVOR: dict[DBType, ExpressionFlavor] = {
     DBType.MEMGRAPH: ExpressionFlavor.CYPHER,
     DBType.NEBULA: ExpressionFlavor.NGQL,
     DBType.TIGERGRAPH: ExpressionFlavor.GSQL,
+    DBType.GRAFEO: ExpressionFlavor.CYPHER,
     DBType.GRAFLO_BACKEND: ExpressionFlavor.AQL,
 }
 

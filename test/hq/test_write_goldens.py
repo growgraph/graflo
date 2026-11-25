@@ -30,6 +30,7 @@ import pytest
 
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.graph_types import GraphContainer
+from graflo.connections.grafeo import GrafeoConfig
 from graflo.connections.graflo_backend import GraFloBackendConfig
 from graflo.connections.onto import (
     ArangoConfig,
@@ -220,6 +221,7 @@ def _configs() -> dict[DBType, DBConfig]:
             uri="postgresql://localhost:5432", database="d"
         ),
         DBType.GRAFLO_BACKEND: GraFloBackendConfig(output_dir=Path("unused")),
+        DBType.GRAFEO: GrafeoConfig(database="g"),
     }
 
 

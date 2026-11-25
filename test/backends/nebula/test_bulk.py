@@ -358,10 +358,32 @@ def test_a_failed_job_is_submitted_again(adapter) -> None:
     ]
 
 
-def test_a_job_that_keeps_failing_is_raised(adapter) -> None:
-    adapter.job_status = ["FAILED"] * 10
+def test_a_job_that_keeps_failing_is_raised(adapter, monkeypatch) -> None:
+    monkeypatch.setattr(nebula_conn, "_JOB_RETRY_SECONDS", 0.0)
+    adapter.job_status = ["FAILED"]
     with pytest.raises(RuntimeError, match="ended FAILED"):
         _connect()._run_job("SUBMIT JOB STATS")
+
+
+def test_schema_indexes_are_built_in_one_job_that_outlasts_a_heartbeat(
+    adapter,
+) -> None:
+    # A rebuild sent before storaged's next heartbeat fails with
+    # E_INDEX_NOT_FOUND; it is submitted again, not polled until a timeout.
+    adapter.job_status = ["FAILED", "FAILED", "FINISHED"]
+    db = _connect()
+    start = len(adapter.statements)
+    db.define_vertex_indexes(_schema().core_schema.vertex_config, schema=_schema())
+
+    statements = _after(adapter.statements, start)
+    assert [s for s in statements if s.startswith("CREATE")] == [
+        "CREATE TAG INDEX IF NOT EXISTS `idx_City_cid` ON `City` (`cid`)",
+        "CREATE TAG INDEX IF NOT EXISTS `idx_Org_oid` ON `Org` (`oid`(256))",
+        "CREATE TAG INDEX IF NOT EXISTS `idx_Person_pid` ON `Person` (`pid`(256))",
+    ]
+    rebuild = "REBUILD TAG INDEX `idx_City_cid`, `idx_Org_oid`, `idx_Person_pid`"
+    assert statements.count(rebuild) == 3
+    assert not any(s.startswith("SHOW TAG INDEX STATUS") for s in statements)
 
 
 # -- the upsert path ------------------------------------------------------------
@@ -420,3 +442,35 @@ def test_an_edge_identity_beyond_its_endpoints_ranks_the_edge() -> None:
     assert home == edge_rank({"role": "home", "since": 2}, ["role"])
     assert home != edge_rank({"role": "work", "since": 1}, ["role"])
     assert home is not None and -(2**63) <= home < 2**63
+
+
+# -- schema definition ----------------------------------------------------------
+
+
+def test_a_recreate_into_a_fresh_space_does_not_drop_it(adapter) -> None:
+    # Dropping and creating an empty space again costs two heartbeats.
+    _connect().init_db(_schema(), recreate_schema=True)
+
+    spaces = [s for s in adapter.statements if "SPACE" in s and "SHOW" not in s]
+    assert [s.split(" ")[0] for s in spaces] == ["CREATE"]
+
+
+def test_a_recreate_drops_a_space_that_holds_a_schema(adapter) -> None:
+    adapter.spaces = ["g"]
+    adapter.tags = ["Person"]
+    _connect().init_db(_schema(), recreate_schema=True)
+
+    spaces = [s for s in adapter.statements if "SPACE" in s and "SHOW" not in s]
+    assert [s.split(" ")[0] for s in spaces] == ["DROP", "CREATE"]
+
+
+def test_tags_and_edge_types_are_created_before_one_wait(adapter) -> None:
+    # Each wait lasts up to a storaged heartbeat; edge types need no tag.
+    db = _connect()
+    start = len(adapter.statements)
+    db.define_schema(_schema())
+
+    statements = adapter.statements[start:]
+    first_wait = next(i for i, s in enumerate(statements) if s.startswith("FETCH"))
+    created = [i for i, s in enumerate(statements) if s.startswith("CREATE")]
+    assert created and max(created) < first_wait

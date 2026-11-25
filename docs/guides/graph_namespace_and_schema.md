@@ -41,7 +41,7 @@ the result `maintenance+sensors`. The rewriting per backend:
 | Neo4j | lowercase letters, digits, `-`; starts with a letter; 3 to 63 characters; does not start with `system` | `maintenance-sensors` |
 | TigerGraph | letters, digits, `_`; reserved words and the `gsql_sys_` prefix escaped | `maintenance_sensors` |
 | NebulaGraph | letters, digits, `_` | `maintenance_sensors` |
-| FalkorDB, Memgraph | letters, digits, `_`, `-` | `maintenance_sensors` |
+| FalkorDB, Memgraph, Grafeo | letters, digits, `_`, `-` | `maintenance_sensors` |
 
 A name the backend already accepts is kept as it is. A name longer than the
 ArangoDB or Neo4j limit is cut and ends with a short hash of the full name, so
@@ -161,7 +161,7 @@ What this means when two manifests share a Neo4j Community or Memgraph server:
 
 To keep two graphs apart, run one server for each. FalkorDB, ArangoDB,
 TigerGraph, NebulaGraph and PostgreSQL keep several graphs on one server under
-their own names.
+their own names, and Grafeo keeps several in one database file.
 
 ## TigerGraph
 

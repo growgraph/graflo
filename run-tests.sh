@@ -43,7 +43,7 @@ Usage:
   ./run-tests.sh [OPTIONS] [DB_SUITES...]
 
 DB_SUITES:
-  memgraphs postgres tigergraphs arangos falkordbs neo4js nebulas
+  memgraphs postgres tigergraphs arangos falkordbs neo4js nebulas grafeos
 
 OPTIONS:
   --run-performance  Include tests marked performance
@@ -68,7 +68,7 @@ EOF
 done
 
 if [ "${#suites[@]}" -eq 0 ]; then
-  suites=(memgraphs postgres tigergraphs arangos falkordbs neo4js nebulas)
+  suites=(memgraphs postgres tigergraphs arangos falkordbs neo4js nebulas grafeos)
 fi
 
 pids=()
@@ -101,7 +101,7 @@ done
 # Run all non-db tests as a separate job.
 if [ -d "test" ]; then
   if uv run pytest --help 2>/dev/null | rg -q -- '^\s*-n\s'; then
-    run_suite "other-tests" "uv run pytest test --ignore=test/db -n auto --dist=loadfile ${pytest_opts[*]}"
+    run_suite "other-tests" "uv run pytest test --ignore=test/db -n auto --dist=loadgroup ${pytest_opts[*]}"
   else
     run_suite "other-tests" "uv run pytest test --ignore=test/db ${pytest_opts[*]}"
   fi

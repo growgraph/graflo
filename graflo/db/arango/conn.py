@@ -23,15 +23,12 @@ Example:
     >>> conn.upsert_docs_batch(docs, "users", match_keys=["email"])
 """
 
+from __future__ import annotations
+
 import json
 import logging
 from collections.abc import Sequence
-from typing import Any, cast
-
-from arango import ArangoClient
-from arango.exceptions import ArangoServerError
-from arango.graph import Graph
-from arango.request import Request
+from typing import TYPE_CHECKING, Any, cast
 
 from graflo.architecture.graph_types import (
     EdgeDirection,
@@ -85,7 +82,19 @@ from graflo.db.graph_introspection import (
 from graflo.db.util import get_data_from_cursor, json_serializer
 from graflo.filter.onto import BoundParams, FilterExpression
 from graflo.onto import AggregationType, DBType, ExpressionFlavor
+from graflo.util.extras import lazy_module
 from graflo.util.transform import pick_unique_dict
+
+if TYPE_CHECKING:
+    import arango as _arango
+    import arango.exceptions as _arango_exceptions
+    import arango.graph as _arango_graph
+    import arango.request as _arango_request
+else:
+    _arango = lazy_module("arango", "arango")
+    _arango_exceptions = lazy_module("arango.exceptions", "arango")
+    _arango_graph = lazy_module("arango.graph", "arango")
+    _arango_request = lazy_module("arango.request", "arango")
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +110,7 @@ def _timed_aql_rows(
     try:
         cursor = db.aql.execute(query, bind_vars=bind_vars or None, max_runtime=limit)
         return get_data_from_cursor(cursor)
-    except ArangoServerError as error:
+    except _arango_exceptions.ArangoServerError as error:
         if error.error_code == _QUERY_KILLED:
             raise QueryTimeoutError(limit) from error
         raise
@@ -339,7 +348,7 @@ class ArangoConnection(Connection):
         username = config.username if config.username is not None else "root"
 
         # Store client for system operations
-        self.client = ArangoClient(
+        self.client = _arango.ArangoClient(
             hosts=config.url, request_timeout=config.request_timeout
         )
         # Connect to the configured database for regular operations
@@ -622,8 +631,8 @@ class ArangoConnection(Connection):
                 g_result = self.conn.create_graph(gname)
 
             # Type narrowing: ensure g is a Graph instance
-            g: Graph | None = None
-            if isinstance(g_result, Graph):
+            g: _arango_graph.Graph | None = None
+            if isinstance(g_result, _arango_graph.Graph):
                 g = g_result
             elif g_result is not None:
                 # If it's not a Graph, log warning and skip
@@ -672,7 +681,7 @@ class ArangoConnection(Connection):
                 else:
                     g_result = self.conn.create_graph(gname)
                 # Type guard: ensure g is a Graph instance
-                if not isinstance(g_result, Graph):
+                if not isinstance(g_result, _arango_graph.Graph):
                     logger.warning(f"Graph {gname} is not a Graph instance, skipping")
                     continue
                 g = g_result
@@ -810,7 +819,7 @@ class ArangoConnection(Connection):
         self,
         db_class_name: str,
         index: None | Index = None,
-        g: Graph | None = None,
+        g: _arango_graph.Graph | None = None,
     ) -> Any | None:
         """Create a new vertex or edge class (ArangoDB uses collections internally).
 
@@ -1190,7 +1199,7 @@ class ArangoConnection(Connection):
             ArangoImportError: A request did not store every document it sent.
         """
         for body, sent in import_bodies(docs):
-            request = Request(
+            request = _arango_request.Request(
                 method="post",
                 endpoint="/_api/import",
                 params=import_params(collection),
@@ -1770,7 +1779,6 @@ class ArangoConnection(Connection):
         The one query runs under ``maxRuntime`` *timeout_s*, if set.
         """
         from graflo.architecture.graph_types import EdgeId
-        from graflo.architecture.schema.edge import Edge
         from graflo.db.traversal import (
             _row_marker,
             _vertex_identity_value,

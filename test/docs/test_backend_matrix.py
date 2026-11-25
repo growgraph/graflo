@@ -38,6 +38,7 @@ BACKENDS = {
     "TigerGraph": DBType.TIGERGRAPH,
     "NebulaGraph": DBType.NEBULA,
     "PostgreSQL": DBType.POSTGRES,
+    "Grafeo": DBType.GRAFEO,
     "GraFlo file backend": DBType.GRAFLO_BACKEND,
 }
 

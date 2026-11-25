@@ -69,19 +69,10 @@ class KafkaConfig(ConfigBaseModel):
 
 
 def _import_confluent_kafka():
-    try:
-        from confluent_kafka import (
-            Consumer,
-            KafkaError,
-            KafkaException,
-            TopicPartition,
-        )
-    except ImportError as e:
-        raise ImportError(
-            "Kafka support requires confluent-kafka. "
-            "Install package dependencies (e.g. uv sync) so confluent-kafka is available."
-        ) from e
-    return Consumer, KafkaError, KafkaException, TopicPartition
+    from graflo.util.extras import require
+
+    ck = require("confluent_kafka", "kafka", feature="Kafka sources")
+    return ck.Consumer, ck.KafkaError, ck.KafkaException, ck.TopicPartition
 
 
 #: Next offset to read on each ``(topic, partition)``.

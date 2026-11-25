@@ -28,10 +28,11 @@ description in one reviewable file rather than spread across load scripts.
 - **Describe a graph once and load data into it.** A manifest names the vertex
   and edge types, says which properties identify a vertex, and says how each
   kind of record becomes vertices and edges. The same manifest loads into
-  ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph, PostgreSQL or
-  the file backend, and records with the same identity become one vertex.
-  GraFlo also copies an existing graph from Neo4j, ArangoDB, FalkorDB or
-  PostgreSQL into another database (`GraphEngine.migrate_graph`).
+  ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph, PostgreSQL,
+  Grafeo (embedded, in your Python process) or the file backend, and records
+  with the same identity become one vertex. GraFlo also copies an existing graph
+  from Neo4j, ArangoDB, FalkorDB, PostgreSQL or Grafeo into another database
+  (`GraphEngine.migrate_graph`).
 - **Change the description over time, with a recorded history.** Renaming a
   type, combining two types or changing a property type is a typed operation.
   Operations are recorded as commits (`graflo commit`, `log`, `checkout`,
@@ -103,17 +104,22 @@ Full documentation: [growgraph.github.io/graflo](https://growgraph.github.io/gra
 
 ## Installation
 
-GraFlo needs Python 3.11 or newer. The database clients, RDF and Kafka support
-are part of the default install.
+GraFlo needs Python 3.12 or newer. Install it with the client of the database
+you load into, as an extra:
 
 ```bash
-pip install graflo
+pip install "graflo[neo4j]"
 ```
 
-Optional extras (see the
+Database extras: `arango`, `neo4j`, `falkordb`, `memgraph`, `nebula`,
+`postgres`, `grafeo`. Source extras: `sql`, `kafka`, `s3`, `sparql`. `all`
+installs every one; TigerGraph and the file backend need none.
+
+Tooling extras (see the
 [Installation](https://growgraph.github.io/graflo/getting_started/installation/) guide):
 
-- `dev`: pytest and its plugins, hypothesis, ty, pre-commit
+- `bulk`: bulk loading into an empty target
+- `dev`: `all` and `bulk`, plus pytest and its plugins, hypothesis, ty, pre-commit
 - `docs`: ProperDocs and its plugins, for building the documentation site
 - `plot`: draws `graflo plot-manifest` and the `--plot` figures of `graflo merge`
   and `graflo merge3` (SVG, PDF, PNG); no system Graphviz or fonts needed
@@ -161,11 +167,12 @@ Everything outside `test/db` runs without the containers, and CI runs it on
 every pull request:
 
 ```shell
-uv run pytest test --ignore=test/db -n auto --dist loadfile
+uv run pytest test --ignore=test/db -n auto --dist loadgroup
 ```
 
-Property tests run a reduced example budget by default; `HYPOTHESIS_PROFILE=full`
-runs the full one.
+`--dist loadgroup` keeps each file of `test/data_source` and `test/object_storage` on one
+worker, since their tests share a live service. Property tests run a reduced example budget
+by default; `HYPOTHESIS_PROFILE=full` runs the full one, as the weekly workflow does.
 
 ## License
 

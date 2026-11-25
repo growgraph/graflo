@@ -30,6 +30,7 @@ from graflo.connections.onto import TARGET_DATABASES, DBConfig
 from graflo.db.arango.conn import ArangoConnection
 from graflo.db.conn import ConnectionCapability
 from graflo.db.falkordb.conn import FalkordbConnection
+from graflo.db.grafeo.conn import GrafeoConnection
 from graflo.db.graflo_backend.connection import GraFloBackendConnection
 from graflo.db.memgraph.conn import MemgraphConnection
 from graflo.db.nebula.conn import NebulaConnection
@@ -66,6 +67,7 @@ class ConnectionManager:
         DBType.MEMGRAPH: MemgraphConnection,
         DBType.NEBULA: NebulaConnection,
         DBType.POSTGRES: PostgresConnection,
+        DBType.GRAFEO: GrafeoConnection,
         DBType.GRAFLO_BACKEND: GraFloBackendConnection,
     }
 

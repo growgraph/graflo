@@ -76,15 +76,15 @@ See Also
 - graflo.db.conn.Connection: Base connection interface
 """
 
+from __future__ import annotations
+
 import logging
 import math
 import random
 import time
 from collections.abc import Sequence
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 from urllib.parse import urlparse
-
-import mgclient
 
 from graflo.architecture.graph_types import EdgeDirection, GraphContainer, Index
 from graflo.architecture.schema import Schema
@@ -135,12 +135,19 @@ from graflo.filter.onto import (
     render_conjunct,
 )
 from graflo.onto import AggregationType, DBType
+from graflo.util.extras import lazy_module
+
+if TYPE_CHECKING:
+    import mgclient
+else:
+    mgclient = lazy_module("mgclient", "memgraph")
 
 logger = logging.getLogger(__name__)
 
 
-#: mgclient's query error; a C extension member the type checker cannot see.
-_DATABASE_ERROR: type[Exception] = mgclient.DatabaseError  # ty: ignore[missing-attribute]
+def _database_error() -> type[Exception]:
+    """mgclient's query error; a C extension member the type checker cannot see."""
+    return mgclient.DatabaseError  # ty: ignore[missing-attribute]
 
 
 def _cursor_column_names(description: Any) -> list[str]:
@@ -914,7 +921,7 @@ class MemgraphConnection(Connection):
             try:
                 self.execute(query, rows=rows)
                 return
-            except _DATABASE_ERROR as error:
+            except _database_error() as error:
                 if "conflict" not in str(error).lower() or (
                     attempt == self.BULK_ATTEMPTS - 1
                 ):

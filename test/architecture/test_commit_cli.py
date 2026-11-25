@@ -650,6 +650,69 @@ def test_a_refused_merge3_still_draws_its_slot_tree(workspace, tmp_path) -> None
     assert slots.is_file(), "written even though the merge refused"
 
 
+def test_merge3_reads_each_side_s_renames_from_its_commits(workspace) -> None:
+    """Two renames of one field conflict on it, and a decision stays a rename."""
+    from graflo.architecture.contract.manifest import GraphManifest
+    from graflo.architecture.evolution.apply import apply_evolution
+    from graflo.architecture.evolution.codec import op_to_dict
+    from graflo.architecture.evolution.commit import build_commit
+    from graflo.architecture.evolution.history import FileCommitStore, History
+    from graflo.architecture.evolution.ops import (
+        AddVertexPropertiesOp,
+        RenameVertexPropertiesOp,
+    )
+
+    base = GraphManifest.from_dict(BASE_MANIFEST)
+    root = build_commit(
+        base, [AddVertexPropertiesOp(additions={"person": ["shared"]})], label="root"
+    )
+    after_root = apply_evolution(
+        base, list(root.ops), bump_version=False, finish_init=False
+    )
+    left = build_commit(
+        after_root,
+        [
+            RenameVertexPropertiesOp(renames={"person": {"shared": "common"}}),
+            AddVertexPropertiesOp(additions={"person": ["age"]}),
+        ],
+        parents=[root.id],
+        label="call it common",
+    )
+    right = build_commit(
+        after_root,
+        [RenameVertexPropertiesOp(renames={"person": {"shared": "joint"}})],
+        parents=[root.id],
+        label="call it joint",
+    )
+    FileCommitStore(workspace["store"]).save(History(commits=[root, left, right]))
+    args = [
+        "merge3",
+        left.id,
+        right.id,
+        "--base",
+        workspace["v1"],
+        "--store",
+        workspace["store"],
+        "--output-path",
+        workspace["out"],
+    ]
+
+    refused = _run(*args)
+    assert refused.exit_code != 0
+    assert "vertex/person/field/shared" in refused.output
+
+    taken = _run(*args, "--take", "right")
+    assert taken.exit_code == 0, taken.output
+    assert _property_names(workspace["out"]) == ["id", "joint", "age"]
+    merge_commit = FileCommitStore(workspace["store"]).load().heads()[0]
+    assert [op_to_dict(op) for op in merge_commit.ops] == [
+        {
+            "op": "rename_vertex_properties",
+            "renames": {"person": {"common": "joint"}},
+        }
+    ]
+
+
 # ── stamp ───────────────────────────────────────────────────────────────────
 
 

@@ -4,7 +4,7 @@ Every upsert looks up the stored vertex with the same identity, and without an
 index on the identity fields each lookup scans the whole vertex type. This page
 is for anyone who writes to a graph database with GraFlo: it says which indexes
 GraFlo creates on each backend when it defines the schema, which ones you
-declare yourself, and how Neo4j, Memgraph and FalkorDB match edges. After
+declare yourself, and how Neo4j, Memgraph, FalkorDB and Grafeo match edges. After
 reading it you know what to put in the `db_profile` block and what to leave to
 GraFlo.
 
@@ -99,7 +99,7 @@ fields whatever they are called.
 | Backend | The database keys a vertex on |
 |---|---|
 | ArangoDB | `_key`, which GraFlo derives from the identity fields; `_id` is `<collection>/<_key>` |
-| Neo4j, Memgraph, FalkorDB | nothing native: GraFlo finds a vertex by its identity field |
+| Neo4j, Memgraph, FalkorDB, Grafeo | nothing native: GraFlo finds a vertex by its identity field |
 | TigerGraph | the primary key, named after the identity fields |
 | PostgreSQL | the table's primary key, over the identity fields |
 | NebulaGraph | the vertex ID, built from the identity values; it has no name |
@@ -107,7 +107,7 @@ fields whatever they are called.
 Off ArangoDB, a generated key stored under another name is copied into `id`
 only when the vertex declares a property `id`: GraFlo writes no property the
 schema does not declare. On Neo4j,
-Memgraph and FalkorDB, a direct `fetch_edges` call names the property each end
+Memgraph, FalkorDB and Grafeo, a direct `fetch_edges` call names the property each end
 is matched on with `from_key` and `to_key`, which default to `id`.
 
 ## Per backend
@@ -120,6 +120,7 @@ For the same limits at a glance, beside the other features of each backend, see
 | Neo4j | A uniqueness constraint over the identity fields, created with the other indexes. If the server refuses a composite constraint, a plain index with a warning | `CREATE INDEX`, or a uniqueness constraint when `unique: true`; a constraint the server refuses is an error | A relationship index, or a uniqueness constraint when `unique: true` |
 | Memgraph (3.2 or later) | One index over the identity fields and a uniqueness constraint over them, created with the other indexes | One index over the fields, plus a uniqueness constraint when `unique: true` | `CREATE EDGE INDEX ON :<relation>(<field>)`, one field only, never unique |
 | FalkorDB | Each identity field indexed and a uniqueness constraint over them, created with the other indexes | Each field indexed (FalkorDB keeps one index per label), plus a uniqueness constraint when `unique: true` | The same, on the relationship type |
+| Grafeo | Each identity field indexed, in the graph alone; no uniqueness constraint, since Grafeo's constraints are shared by every graph in a database file. `MERGE`, run one query at a time, keeps the identity unique | Each field indexed; `unique: true` is refused | None: Grafeo has no index on edge properties, so a declared one is refused |
 | NebulaGraph | A tag index over the identity fields, always created, because `LOOKUP` and filtered `MATCH` need it | A tag index; never unique | An edge index; never unique |
 | ArangoDB | A unique persistent index over the identity fields, created with the collection; none when the identity is `_key`, which ArangoDB indexes itself | As declared, with `unique` and `type` applied | As declared, on each edge collection |
 | TigerGraph | The primary key (`PRIMARY_ID`, or `PRIMARY KEY` for a composite identity), which TigerGraph indexes itself | One field only, never unique | None |
@@ -127,8 +128,8 @@ For the same limits at a glance, beside the other features of each backend, see
 | GraFlo file backend | None | None | None |
 
 On ArangoDB, TigerGraph and PostgreSQL the identity is covered when the
-collection, vertex type or table is created. On Neo4j, Memgraph, FalkorDB and
-NebulaGraph, GraFlo creates the identity index together with the declared
+collection, vertex type or table is created. On Neo4j, Memgraph, FalkorDB, Grafeo
+and NebulaGraph, GraFlo creates the identity index together with the declared
 indexes when it defines the schema.
 
 On PostgreSQL an index name longer than 63 bytes, the identifier limit, is
@@ -139,7 +140,7 @@ sharing a prefix stay two indexes.
 
 The low-level `define_vertex_indexes` call takes the schema as an optional
 argument, and only the schema says which fields form each identity. Called
-without it, Neo4j, Memgraph and FalkorDB get no identity index and GraFlo logs
+without it, Neo4j, Memgraph, FalkorDB and Grafeo get no identity index and GraFlo logs
 a warning; NebulaGraph gets one anyway, and PostgreSQL gets no secondary
 indexes. `GraphEngine.define_schema` and `define_and_ingest` always pass the
 schema. Pass it yourself when you call `define_vertex_indexes` or
@@ -148,7 +149,7 @@ schema. Pass it yourself when you call `define_vertex_indexes` or
 Writing never creates an index, on any backend. Upserting into a database whose
 schema was not defined is still correct, but each lookup scans.
 
-## Edge upserts and `MERGE` (Neo4j, Memgraph, FalkorDB)
+## Edge upserts and `MERGE` (Cypher backends)
 
 An edge is identified by its endpoints and its relation. On the Cypher
 backends it is written with `MERGE`: the endpoints are matched on their vertex

@@ -102,7 +102,16 @@ MANIFEST: dict[str, Any] = {
 #: TigerGraph is excluded: its reverse reachability is a DDL-time decision and
 #: the outbound-only case is covered by the query-shape suite.
 BACKENDS = backend_params(
-    ["neo4j", "arango", "memgraph", "falkordb", "postgres", "nebula", "graflo_backend"]
+    [
+        "neo4j",
+        "arango",
+        "memgraph",
+        "falkordb",
+        "postgres",
+        "nebula",
+        "graflo_backend",
+        "grafeo",
+    ]
 )
 
 

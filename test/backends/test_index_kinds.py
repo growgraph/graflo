@@ -48,6 +48,7 @@ def _schema(kind: IndexType) -> Schema:
         DBType.TIGERGRAPH,
         DBType.NEBULA,
         DBType.POSTGRES,
+        DBType.GRAFEO,
     ],
 )
 def test_a_full_text_index_is_refused_where_it_cannot_be_built(flavor) -> None:

@@ -83,7 +83,7 @@ def test_the_absent_clause_matches_unset_properties_and_never_merges_on_null():
     assert "SET existing += row[2]" in clause
 
 
-@patch("graflo.db.neo4j.conn.GraphDatabase.driver")
+@patch("neo4j.GraphDatabase.driver")
 def test_neo4j_writes_a_row_without_its_merge_property_apart(mock_driver):
     session = MagicMock()
     # Edge writes run in a managed write transaction; record its queries here.
@@ -199,7 +199,7 @@ def test_without_union_fields_the_complete_group_is_left_as_given():
     assert len(group) == 2
 
 
-@patch("graflo.db.neo4j.conn.GraphDatabase.driver")
+@patch("neo4j.GraphDatabase.driver")
 def test_neo4j_writes_union_edges_deduplicated_with_a_union_slot(mock_driver):
     session = MagicMock()
     session.execute_write.side_effect = lambda work: work(session)

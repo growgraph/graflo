@@ -160,6 +160,11 @@ A merge commit's `ops` are the diff from its first parent to the merged result,
 not an interleaving of both sides. So replay and hash verification work the
 same way for edit and merge commits, and nothing downstream needs a special
 case. The record of how the merge was resolved is stored beside it as a recipe.
+A diff cannot see a rename, so pass `hints=merge.first_parent_hints` from
+`merge_commits` to `build_multi_parent_commit`: a rename the merge took from
+the other side is then recorded as a rename, not as a removal plus an addition.
+After a `merge_three_way` of bare manifests, `first_parent_hints(ancestor, left,
+left_hints, result)` gives the same hints.
 
 ### Undoing
 
@@ -204,15 +209,28 @@ description and grounding.
 ## Merging two branches
 
 ```python
-from graflo.architecture.evolution import find_merge_base, merge_three_way, take_left
+from graflo.architecture.evolution import merge_commits, take_left
 
-base_id = find_merge_base(history, left_id, right_id)
-merged, result = merge_three_way(ancestor, left, right)
-if not result.clean:
-    merged, result = merge_three_way(
-        ancestor, left, right, resolutions=[take_left(result.conflicts[0])]
+merge = merge_commits(base, history, left_id, right_id)
+if not merge.result.clean:
+    merge = merge_commits(
+        base,
+        history,
+        left_id,
+        right_id,
+        resolutions=[take_left(c) for c in merge.result.conflicts],
     )
+merged = merge.merged
 ```
+
+`merge_commits` finds the merge base, checks out the three states and reads
+each side's renames from the commits between the base and that side. A diff
+cannot tell a rename from a removal plus an addition, so without them two sides
+renaming one field differently would merge into both names. It refuses when
+the merge base is not on a side's first-parent path, where those renames
+cannot be read. `merge_three_way(ancestor, left, right)` merges bare manifests
+and takes renames as `left_hints` and `right_hints`
+(`RenameHints.from_ops(side_ops, base=ancestor)`).
 
 A three-way merge is not a diff. Both sides descend from a common ancestor, so
 the question is not what differs between them but what each side changed, and
@@ -359,7 +377,7 @@ against the removal keeps the removed type.
 |---|---|---|
 | Inputs | two descendants of a common ancestor | two unrelated manifests |
 | Names | expected to agree; a disagreement is a conflict | expected to differ; declared equivalences reconcile them |
-| Function and command | `merge_three_way`, `graflo merge3` | `merge_manifests`, `graflo merge` |
+| Function and command | `merge_commits`, `merge_three_way`, `graflo merge3` | `merge_manifests`, `graflo merge` |
 | Order of the sides | significant: the commit's ops are the diff from the first parent | significant in five fields only; see below |
 
 Both produce commits with several parents. The stored commit `kind` and the

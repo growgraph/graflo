@@ -124,6 +124,7 @@ BACKENDS = backend_params(
         "nebula",
         "tigergraph",
         "graflo_backend",
+        "grafeo",
     ]
 )
 
@@ -223,8 +224,8 @@ def _edge_pairs(flavor: str, db) -> list[tuple[str, str]]:
         rows = db.execute(CYPHER_PAIRS).data()
         return [(row["sid"], row["iid"]) for row in rows]
 
-    if flavor in ("memgraph", "falkordb"):
-        # Both expose rows positionally via result_set, not a .data() mapping.
+    if flavor in ("memgraph", "falkordb", "grafeo"):
+        # Each exposes rows positionally via result_set, not a .data() mapping.
         result = db.execute(CYPHER_PAIRS)
         return [(row[0], row[1]) for row in result.result_set]
 

@@ -7,7 +7,6 @@ from typing import Any, Self, cast
 import pytest
 
 from graflo.architecture.graph_types import EdgeDirection
-from graflo.db.postgres import target_write
 from graflo.db.postgres.conn import PostgresConnection
 from graflo.db.postgres.target_write import edge_endpoint_columns, edge_table_ddl
 
@@ -99,8 +98,7 @@ class _Pg:
 def statements(monkeypatch) -> list[tuple[str, list[tuple]]]:
     recorded: list[tuple[str, list[tuple]]] = []
     monkeypatch.setattr(
-        target_write,
-        "execute_values",
+        "psycopg2.extras.execute_values",
         lambda cursor, query, values: recorded.append((str(query), values)),
     )
     return recorded

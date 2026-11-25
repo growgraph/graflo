@@ -369,6 +369,6 @@
         }
     ],
     "topics": {
-        "refused": "Database type <DBType.TIGERGRAPH: 'tigergraph'> does not support union-merged list fields. Supported types: ['neo4j', 'falkordb', 'graflo_backend']"
+        "refused": "Database type <DBType.TIGERGRAPH: 'tigergraph'> does not support union-merged list fields. Supported types: ['neo4j', 'falkordb', 'grafeo', 'graflo_backend']"
     }
 }

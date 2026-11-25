@@ -99,6 +99,7 @@ def edge_identity_index(identity_key: Sequence[str], db_flavor: DBType) -> Index
         DBType.FALKORDB,
         DBType.MEMGRAPH,
         DBType.NEBULA,
+        DBType.GRAFEO,
     )
     return Index(fields=fields, unique=unique)
 

@@ -103,7 +103,9 @@ MANIFEST: dict[str, Any] = {
 # Backends whose fetch_edges can answer a direction at all. TigerGraph is
 # excluded on purpose: reverse reachability there is a DDL-time decision, and
 # PostgreSQL / the file backend do not implement fetch_edges.
-BACKENDS = backend_params(["neo4j", "arango", "memgraph", "falkordb", "nebula"])
+BACKENDS = backend_params(
+    ["neo4j", "arango", "memgraph", "falkordb", "nebula", "grafeo"]
+)
 
 
 def _config(flavor: str):

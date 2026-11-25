@@ -83,6 +83,7 @@ A backend loads in bulk when its connection declares `supports_bulk_load`:
 | ArangoDB | Imports JSON Lines through `/_api/import`, with each `_key`, `_from` and `_to` computed from the identities; builds the identity indexes after the load. |
 | Neo4j | Creates nodes with no lookups over parallel sessions, then builds the identity indexes. It then creates edges in rounds, where no two writers in a round touch the same node. |
 | FalkorDB | `GRAPH.BULK` into a new graph, one writer; an existing empty graph is dropped first. If a failed batch drops the graph, running again writes everything again. |
+| Grafeo | Creates nodes with no lookups, one chunk at a time, then indexes the identities and creates the edges; builds the declared indexes after the load. |
 | Memgraph | Builds the identity indexes first, then creates nodes with no lookups, then edges in rounds of writers that share no node; a write a transaction conflict aborts is retried. |
 | NebulaGraph | `INSERT VERTEX` and `INSERT EDGE` batches under the statement limit; builds the indexes after the load and counts with a STATS job. |
 | PostgreSQL | `COPY` into tables without keys, then primary keys, unique edge keys and validated foreign keys. |

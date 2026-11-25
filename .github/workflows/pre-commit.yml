@@ -22,7 +22,7 @@ jobs:
             uses: astral-sh/setup-uv@v10.3.0
             with:
                 version: "0.12.21"
-                python-version: "3.11"
+                python-version: "3.12"
                 enable-cache: true
                 # tests.yml saves the same key; restoring it is enough here.
                 save-cache: false

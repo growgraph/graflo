@@ -28,6 +28,7 @@ FLAVORS = [
     DBType.NEBULA,
     DBType.FALKORDB,
     DBType.MEMGRAPH,
+    DBType.GRAFEO,
     DBType.GRAFLO_BACKEND,
 ]
 

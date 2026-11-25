@@ -1,6 +1,6 @@
 # Which graph database should I use with GraFlo?
 
-One manifest loads into eight targets, but they do not all offer the same
+One manifest loads into nine targets, but they do not all offer the same
 features. This page is for anyone choosing where to put a graph. Start with the
 tree: it leads to a target from what you need. The tables behind it show what
 GraFlo does on each target, and what each server's free edition allows, so you
@@ -15,6 +15,7 @@ target you reach against the tables for anything else you need.
 ```mermaid
 flowchart TD
     DUMP(["Do you only need a dump on disk?"])
+    EMBEDDED(["Should the database run inside your<br/>Python process, with no server?"])
     POSTGRES(["Must the graph live in PostgreSQL?"])
     SPAN(["Must one graph span servers,<br/>on a free licence?"])
     FULLTEXT(["Do you need a fulltext index?"])
@@ -23,6 +24,7 @@ flowchart TD
     GUARD(["Do you need a read guard,<br/>union merge or several graphs?"])
 
     FILE_LEAF["<b>GraFlo file backend</b><br/>a dump, not a database"]
+    EMBEDDED_LEAF["<b>Grafeo</b><br/>in memory, one process per file;<br/>alpha"]
     POSTGRES_LEAF["<b>PostgreSQL</b><br/>scalars stored as TEXT"]
     SPAN_LEAF["<b>NebulaGraph</b><br/>no parallel edges or<br/>list properties"]
     FULLTEXT_LEAF["<b>ArangoDB</b><br/>free edition: 100 GiB,<br/>no commercial production"]
@@ -32,7 +34,9 @@ flowchart TD
     REPLICA_LEAF["<b>Memgraph</b><br/>one graph per server;<br/>in memory by default; BSL 1.1"]
 
     DUMP -- yes --> FILE_LEAF
-    DUMP -- no --> POSTGRES
+    DUMP -- no --> EMBEDDED
+    EMBEDDED -- yes --> EMBEDDED_LEAF
+    EMBEDDED -- no --> POSTGRES
     POSTGRES -- yes --> POSTGRES_LEAF
     POSTGRES -- no --> SPAN
     SPAN -- yes --> SPAN_LEAF
@@ -47,13 +51,18 @@ flowchart TD
     GUARD -- no --> REPLICA_LEAF
 
     classDef target stroke:#E67E22,stroke-width:2px
-    class FILE_LEAF,POSTGRES_LEAF,SPAN_LEAF,FULLTEXT_LEAF,TYPES_LEAF,DEFAULT_LEAF,GUARD_LEAF,REPLICA_LEAF target
+    class FILE_LEAF,EMBEDDED_LEAF,POSTGRES_LEAF,SPAN_LEAF,FULLTEXT_LEAF,TYPES_LEAF,DEFAULT_LEAF,GUARD_LEAF,REPLICA_LEAF target
 ```
 
 - **File backend:** a dump of a graph, not a database to serve it from. It has no
   index and no query language, every read scans the records it reads, and it
   cannot delete. Use it to save or move a graph and in tests, and load the graph
   into a database to use it.
+- **Grafeo:** an embedded database: it runs inside the Python process that
+  loads the graph, from a file or from memory, with no server to install.
+  [Its graph data stays in memory](https://github.com/GrafeoDB/grafeo), one
+  process at a time opens a file, and the project calls itself alpha. Use it for
+  notebooks, tests and graphs that fit in memory.
 - **One graph per server:** Neo4j Community and Memgraph hold one database for
   your data, so one server holds one schema. Neo4j Enterprise holds one per
   namespace. See
@@ -83,12 +92,17 @@ cannot build. `no` means the target does not have the feature.
 | TigerGraph | refused | refused | refused | refused | refused | refused |
 | NebulaGraph | yes | yes | refused | refused | yes | refused |
 | PostgreSQL | yes | yes | yes | yes | yes | refused |
+| Grafeo | per field | refused | refused | refused | refused | refused |
 | GraFlo file backend | no | no | no | no | no | no |
 
 - `refused` applies to an index you declare. One GraFlo derives itself, for an
   identity or a secondary identity, is skipped with a warning instead.
 - `per field`: FalkorDB keeps one index per label, so each field is indexed
   separately. A `unique` index is still one constraint over the fields together.
+- Grafeo has no index on edge properties. Its uniqueness constraints are shared
+  by every graph in a database file, so GraFlo builds none there: identity is a
+  plain index, kept unique because GraFlo writes with `MERGE`, one query at a
+  time.
 - On NebulaGraph, GraFlo gives every field of an edge index a string length, and
   the server may reject that on a non-string field. A rejected index only logs a
   warning.
@@ -107,6 +121,7 @@ cannot build. `no` means the target does not have the feature.
 | TigerGraph | yes | yes | primary key | yes | yes | needs a declared inverse |
 | NebulaGraph | yes | refused | vertex ID built from the identity | no | no | reverse clause |
 | PostgreSQL | lists only | yes | primary key | yes | no | same as forward |
+| Grafeo | no | yes | `MERGE` on the identity | yes | no | little cost |
 | GraFlo file backend | no | yes | not enforced; reads fold by identity | yes | no | index built on read |
 
 - **Declared types reach the schema:** where it says `no`, a value is stored as
@@ -118,6 +133,8 @@ cannot build. `no` means the target does not have the feature.
 - **Reverse read:** on TigerGraph, an undirected edge type also reads both ways.
   See [directed, undirected, and bidirectional
   edges](architecture/core_components.md#directed-undirected-and-bidirectional-edges).
+- **Datetimes on Grafeo:** stored as instants in UTC. A value with a time zone
+  is converted to UTC, and every datetime reads back in UTC.
 - **Multiple labels:** each vertex type writes one label on every target.
 - **Existence constraints:** GraFlo creates none on a graph database. PostgreSQL
   edge tables declare their endpoint columns `NOT NULL`.
@@ -133,6 +150,7 @@ cannot build. `no` means the target does not have the feature.
 | TigerGraph | no | catalog | no | yes | no | no | no | yes | no |
 | NebulaGraph | no | sampled | no | yes | no | no | no | yes | no |
 | PostgreSQL | yes | catalog | no | yes | no | no | no | yes | no |
+| Grafeo | yes | sampled | no | yes | yes | yes | yes | yes | yes |
 | GraFlo file backend | yes | catalog | no | no | no | yes | yes | yes | no |
 
 - **Read back whole:** the target can be the source of `export_graph` and
@@ -164,6 +182,7 @@ change, so read the linked page and the licence before you rely on a row.
 | TigerGraph | Community Edition, [free proprietary licence](https://www.tigergraph.com/license-agreement/) | 300 GB of graph and vector data; the licence covers internal use and bars running or publishing benchmarks | [single server only](https://www.tigergraph.com/docs/tigergraph-server/4.2/intro/comparison-of-editions) | not stated for this edition | 4.2.5 |
 | NebulaGraph | Community Edition, [Apache-2.0](https://docs.nebula-graph.io/3.8.0/1.introduction/1.what-is-nebula-graph/) | none in the licence | [yes](https://docs.nebula-graph.io/3.8.0/4.deployment-and-installation/2.compile-and-install-nebula-graph/deploy-nebula-graph-cluster/) | [yes, graph spaces](https://docs.nebula-graph.io/3.8.0/3.ngql-guide/9.space-statements/1.create-space/) | 3.8.0 |
 | PostgreSQL | [PostgreSQL License](https://www.postgresql.org/about/licence/) | none in the licence | [streaming replication](https://www.postgresql.org/docs/current/warm-standby.html) | [yes](https://www.postgresql.org/docs/current/managing-databases.html) | 18.6 |
+| Grafeo | one edition, [Apache-2.0](https://github.com/GrafeoDB/grafeo/blob/main/LICENSE) | none in the licence | no; embedded, one process per file | yes, named graphs in one file | 0.6.3 |
 
 The `Multiple databases` column is what the server allows. On Memgraph, GraFlo
 does not use more than one, whatever the edition allows.

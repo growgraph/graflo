@@ -34,6 +34,7 @@ ALL_BACKENDS: tuple[str, ...] = (
     "nebula",
     "tigergraph",
     "graflo_backend",
+    "grafeo",
 )
 
 #: Backends whose live tests are opt-in, and the marker that gates them.
@@ -93,8 +94,8 @@ def config_for(
     """Build a live connection config for *flavor*, namespaced to *space*.
 
     ``space`` is the per-suite namespace: an ArangoDB/FalkorDB database, a
-    TigerGraph graph, a Nebula space, a PostgreSQL schema. Isolating on it is
-    not cosmetic -- several suites share one docker instance, and
+    Grafeo named graph, a TigerGraph graph, a Nebula space, a PostgreSQL schema.
+    Isolating on it is not cosmetic -- several suites share one docker instance, and
     ``test/db/postgres/test_introspection.py`` asserts exact table counts, so a
     suite that ingests into ``public`` breaks it.
 
@@ -159,5 +160,10 @@ def config_for(
                 )
             output_dir = tmp_path_factory.mktemp(space)
         return GraFloBackendConfig(output_dir=output_dir)
+    if flavor == "grafeo":
+        from graflo.connections.grafeo import GrafeoConfig
+
+        # Embedded: the process's in-memory database, one named graph per suite.
+        return GrafeoConfig(database=space)
 
     raise ValueError(f"unknown backend flavor: {flavor!r}")

@@ -15,7 +15,7 @@ def test_neo4j_rel_merge_map_uses_bracket_access() -> None:
     assert "`relation`: row[2]['relation']" in clause
 
 
-@patch("graflo.db.neo4j.conn.GraphDatabase.driver")
+@patch("neo4j.GraphDatabase.driver")
 def test_insert_edges_batch_includes_merge_properties_in_cypher(mock_driver) -> None:
     session = MagicMock()
     # Edge writes run in a managed write transaction; record its queries here.
@@ -46,7 +46,7 @@ def test_insert_edges_batch_includes_merge_properties_in_cypher(mock_driver) -> 
     assert "MERGE (source)-[r:REL {`kind`: row[2]['kind']}]->(target)" in collapsed
 
 
-@patch("graflo.db.neo4j.conn.GraphDatabase.driver")
+@patch("neo4j.GraphDatabase.driver")
 def test_upsert_docs_batch_runs_in_a_managed_transaction(mock_driver) -> None:
     """Only a managed transaction retries a deadlock with a concurrent write."""
     session = MagicMock()

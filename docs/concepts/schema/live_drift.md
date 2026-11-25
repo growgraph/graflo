@@ -53,7 +53,7 @@ Anything undeclared keeps its database name, because it has no other.
 Property types, identities and indexes are left out, because introspection
 cannot report them reliably:
 
-- the Cypher backends (Neo4j, Memgraph, FalkorDB) return property names
+- the Cypher backends (Neo4j, Memgraph, FalkorDB, Grafeo) return property names
   without types;
 - identity is guessed from property names, since most databases do not record
   which properties identify a node;

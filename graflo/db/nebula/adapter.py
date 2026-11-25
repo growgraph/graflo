@@ -98,6 +98,9 @@ class NebulaV3Adapter(NebulaClientAdapter):
         self._session: Any = None
 
     def connect(self, config: NebulaConfig) -> None:
+        from graflo.util.extras import require
+
+        require("nebula3", "nebula", feature="NebulaGraph 3.x")
         from nebula3.Config import Config as N3Config
         from nebula3.gclient.net import ConnectionPool
 
@@ -160,6 +163,9 @@ class NebulaV5Adapter(NebulaClientAdapter):
         self._client: Any = None
 
     def connect(self, config: NebulaConfig) -> None:
+        from graflo.util.extras import require
+
+        require("nebulagraph_python", "nebula", feature="NebulaGraph 5.x")
         from nebulagraph_python.client import NebulaClient
 
         hostname = config.hostname or "localhost"

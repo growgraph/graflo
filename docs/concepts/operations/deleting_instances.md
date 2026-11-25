@@ -34,7 +34,7 @@ translates them to the names the database stores.
 
 | Target | Removes |
 |---|---|
-| ArangoDB, Neo4j, Memgraph, FalkorDB, TigerGraph, PostgreSQL, NebulaGraph | Vertices with their edges, and edges |
+| ArangoDB, Neo4j, Memgraph, FalkorDB, Grafeo, TigerGraph, PostgreSQL, NebulaGraph | Vertices with their edges, and edges |
 | File backend | Nothing: its chunks are append-only |
 
 Both calls raise `ValueError` before a connection is opened on a target that
@@ -62,5 +62,5 @@ every edge that touches it, scoped or not. A `None` value is refused.
 
 | Target | Removes a scope |
 |---|---|
-| Neo4j, FalkorDB | Yes |
+| Neo4j, FalkorDB, Grafeo | Yes |
 | Every other target | No: `ValueError` before a connection is opened |

@@ -6,54 +6,47 @@ requires = ["hatchling"]
 authors = [{ email = "alexander@growgraph.dev", name = "Alexander Belikov" }]
 classifiers = [
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: Implementation :: CPython"
 ]
 dependencies = [
-  "SPARQLWrapper>=2.0.0",
-  "boto3>=1.35.0,<2",
   "click>=8.2.0,<9",
-  "confluent-kafka>=2.6.0",
-  "falkordb>=1.0.9",
   "ijson>=3.2.3,<4",
-  "nebula3-python>=3.8.3",
-  "nebula5-python>=5.2.1",
-  "neo4j>=5.22.0,<6",
   "networkx~=3.3",
   "pandas-stubs==2.3.0.250703",
   "pandas>=2.0.3,<4",
-  "psycopg2-binary>=2.9.11",
   "pydantic-settings>=2.12.0",
   "pydantic>=2.12.5",
-  "pymgclient>=1.3.1",
-  "python-arango>=8.1.2,<9",
   "rdflib>=7.0.0",
-  "redis>=5.0.0",
   "requests>=2.31.0",
-  "sqlalchemy>=2.0.0",
   "strenum>=0.4.15",
   "suthing>=0.6.1,<0.7",
   "urllib3>=2.0.0",
   "xmltodict>=0.14.2,<0.15"
 ]
-description = "Manifest-driven Graph Schema & Transformation Language (GSTL): declare a labeled property graph with explicit identities, typed properties and semantic grounding; evolve it with an invertible op algebra, content-addressed commits and three-way merge; ingest from CSV/JSON/Parquet/SQL/RDF/SPARQL/API/Kafka; and project to ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph, PostgreSQL or a chunked file backend."
+description = "Manifest-driven Graph Schema & Transformation Language (GSTL): declare a labeled property graph with explicit identities, typed properties and semantic grounding; evolve it with an invertible op algebra, content-addressed commits and three-way merge; ingest from CSV/JSON/Parquet/SQL/RDF/SPARQL/API/Kafka; and project to ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph, Grafeo, PostgreSQL or a chunked file backend."
 # PEP 639 SPDX expression; no `License ::` classifier (the two must not disagree).
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
 name = "graflo"
 readme = "README.md"
-requires-python = ">=3.11"
-version = "1.27.6"
+requires-python = ">=3.12"
+version = "1.28.0"
 
 [project.optional-dependencies]
+all = [
+  "graflo[arango,falkordb,grafeo,kafka,memgraph,nebula,neo4j,postgres,s3,sparql,sql]"
+]
+arango = [
+  "python-arango>=8.1.2,<9"
+]
 bulk = [
   "duckdb>=1.1",
   "zstandard>=0.23"
 ]
 dev = [
-  "graflo[bulk]",
+  "graflo[all,bulk]",
   "hypothesis>=6.140.0",
   "jsonschema>=4.23.0",
   "pre-commit>=4.2.0",
@@ -71,10 +64,44 @@ docs = [
   "mkdocstrings[python]>=0.29.1",
   "properdocs>=1.6.7"
 ]
+falkordb = [
+  "falkordb>=1.0.9",
+  "redis>=5.0.0"
+]
+grafeo = [
+  "grafeo>=0.6.3,<0.7"
+]
+kafka = [
+  "confluent-kafka>=2.6.0"
+]
+memgraph = [
+  "pymgclient>=1.3.1"
+]
+nebula = [
+  "nebula3-python>=3.8.3",
+  "nebula5-python>=5.2.1"
+]
+neo4j = [
+  "neo4j>=5.22.0,<6"
+]
 plot = [
   "pypdfium2>=5,<6",
   "svglib>=2.2,<3",
   "wasi-graphviz[wasmtime]>=0.1.4,<0.2"
+]
+postgres = [
+  "psycopg2-binary>=2.9.11",
+  "sqlalchemy>=2.0.0"
+]
+s3 = [
+  "boto3>=1.35.0,<2"
+]
+sparql = [
+  "SPARQLWrapper>=2.0.0"
+]
+sql = [
+  "psycopg2-binary>=2.9.11",
+  "sqlalchemy>=2.0.0"
 ]
 
 [project.scripts]
@@ -107,7 +134,8 @@ include = ["graflo"]
 # B017 pytest.raises(Exception); BLE001/S110/S112 broad except cleanup;
 # DTZ* naive graph datetimes; E722 bare except; G201 logger.error+exc_info;
 # LOG015 CLI root logger; RUF012 class mutable defaults; TRY004 ValueError
-# validation API; TRY203 mixin re-raise wrappers.
+# validation API; TRY203 mixin re-raise wrappers; UP040/UP046/UP047 PEP 695
+# syntax, whose aliases are TypeAliasType at runtime (isinstance, get_args).
 ignore = [
   "B017",
   "BLE001",
@@ -121,7 +149,10 @@ ignore = [
   "S110",
   "S112",
   "TRY004",
-  "TRY203"
+  "TRY203",
+  "UP040",
+  "UP046",
+  "UP047"
 ]
 
 [tool.uv]

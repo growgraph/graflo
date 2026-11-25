@@ -56,7 +56,7 @@ def open_staging(staging_dir: Path, mode: str = "bulk") -> RunLedger:
     later resumes.
 
     Raises:
-        RuntimeError: The ``bulk`` extra is not installed.
+        MissingExtraError: The ``bulk`` extra is not installed.
         ValueError: *staging_dir* holds files but no run, or a run of the other mode.
     """
     _deps.require()

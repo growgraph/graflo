@@ -67,7 +67,7 @@ _SCHEMA: Any = None  # the writer reads no schema
 def _connection(graphs: list[str], nodes: int = 0) -> tuple[FalkordbConnection, Any]:
     client = MagicMock()
     client.list_graphs.return_value = [g.encode() for g in graphs]
-    with patch("graflo.db.falkordb.conn.FalkorDB", return_value=client):
+    with patch("falkordb.FalkorDB", return_value=client):
         conn = FalkordbConnection(
             FalkordbConfig(uri="redis://localhost:6379", database="g")
         )

@@ -5,10 +5,14 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from botocore.exceptions import ClientError, EndpointConnectionError
+from graflo.util.extras import lazy_module
 
 if TYPE_CHECKING:
+    import botocore.exceptions as _botocore_exceptions
+
     from graflo.object_storage.config import S3EndpointConfig
+else:
+    _botocore_exceptions = lazy_module("botocore.exceptions", "s3")
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +27,7 @@ def ensure_bucket_exists(client: Any, bucket: str) -> str:
         client.head_bucket(Bucket=bucket)
         logger.info("S3 bucket %r already exists", bucket)
         return bucket
-    except ClientError as e:
+    except _botocore_exceptions.ClientError as e:
         code = str(e.response.get("Error", {}).get("Code", ""))
         http = e.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
         missing = code in ("404", "NoSuchBucket", "NotFound") or http == 404
@@ -33,7 +37,7 @@ def ensure_bucket_exists(client: Any, bucket: str) -> str:
     try:
         client.create_bucket(Bucket=bucket)
         logger.info("Created S3 bucket %r", bucket)
-    except ClientError as e:
+    except _botocore_exceptions.ClientError as e:
         code = str(e.response.get("Error", {}).get("Code", ""))
         if code in ("BucketAlreadyOwnedByYou", "BucketAlreadyExists"):
             logger.info(
@@ -57,7 +61,7 @@ def ensure_staging_bucket_for_config(cfg: S3EndpointConfig | None = None) -> str
     client = boto3_s3_client_from_endpoint(resolved)
     try:
         return ensure_bucket_exists(client, resolved.bucket)
-    except EndpointConnectionError as e:
+    except _botocore_exceptions.EndpointConnectionError as e:
         raise RuntimeError(
             f"Cannot connect to {resolved.endpoint_url!r}. "
             "Start the S3 service (e.g. `docker compose --profile graflo.seaweedfs up -d` "

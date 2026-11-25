@@ -13,12 +13,12 @@ operations do and which backends support them, read
 
 ## What you need
 
-- GraFlo installed (`pip install graflo`). The drivers for every backend come
-  with it.
-- A source that GraFlo can read as a graph: Neo4j, ArangoDB, FalkorDB,
+- GraFlo installed with the extras of both databases, for example
+  `pip install "graflo[neo4j,arango]"`; `graflo[all]` installs every driver.
+- A source that GraFlo can read as a graph: Neo4j, ArangoDB, FalkorDB, Grafeo,
   PostgreSQL holding a graph that GraFlo wrote, or a GraFlo file backend.
-- A target: any of the eight backends (ArangoDB, Neo4j, TigerGraph, FalkorDB,
-  Memgraph, NebulaGraph, PostgreSQL, the file backend).
+- A target: any of the nine backends (ArangoDB, Neo4j, TigerGraph, FalkorDB,
+  Memgraph, NebulaGraph, PostgreSQL, Grafeo, the file backend).
 - Connection settings for both. Each config class loads them with
   `from_env()` (environment variables) or `from_docker_env()` (the container
   settings shipped under `docker/`); see
@@ -50,7 +50,7 @@ print([e.edge_id for e in schema.core_schema.edge_config.edges])
 ```
 
 This prints the vertex types and the edge types that will be moved. Neo4j,
-FalkorDB and ArangoDB have no schema catalog, so the schema is recovered from
+FalkorDB, ArangoDB and Grafeo have no schema catalog, so the schema is recovered from
 `sample_limit` records per type. If a type has a property that the sample
 missed, raise `sample_limit`. PostgreSQL and the file backend read a catalog
 and do not sample.

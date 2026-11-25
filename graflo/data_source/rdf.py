@@ -547,14 +547,10 @@ class SparqlEndpointDataSource(RdfDataSource):
 
     def _create_wrapper(self) -> Any:
         """Create a configured ``SPARQLWrapper`` instance."""
-        try:
-            from SPARQLWrapper import JSON, SPARQLWrapper
-        except ImportError as exc:
-            raise ImportError(
-                "SPARQLWrapper is required for SPARQL endpoint data sources. "
-                "It is a core dependency of graflo; reinstall with "
-                "`pip install --force-reinstall graflo` or install SPARQLWrapper manually."
-            ) from exc
+        from graflo.util.extras import require
+
+        require("SPARQLWrapper", "sparql", feature="SPARQL endpoint sources")
+        from SPARQLWrapper import JSON, SPARQLWrapper
 
         sparql = SPARQLWrapper(self.config.endpoint_url)
         sparql.setReturnFormat(JSON)
