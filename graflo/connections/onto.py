@@ -38,6 +38,7 @@ TARGET_DATABASES: set[DBType] = {
     DBType.FALKORDB,
     DBType.MEMGRAPH,
     DBType.NEBULA,
+    DBType.GRAFEO,
     DBType.GRAFLO_BACKEND,
     DBType.POSTGRES,
 }

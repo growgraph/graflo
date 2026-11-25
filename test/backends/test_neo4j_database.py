@@ -23,7 +23,7 @@ SCHEMA: dict[str, Any] = {
 
 
 def _connection(driver: MagicMock, *, database: str | None = None) -> Neo4jConnection:
-    with patch("graflo.db.neo4j.conn.GraphDatabase.driver", return_value=driver):
+    with patch("neo4j.GraphDatabase.driver", return_value=driver):
         return Neo4jConnection(
             Neo4jConfig(uri="bolt://localhost:7687", password="x", database=database)
         )

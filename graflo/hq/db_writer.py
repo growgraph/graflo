@@ -76,8 +76,9 @@ _CONCURRENT_UPSERT_SAFE_FLAVORS = frozenset(
 )
 
 # Flavors that write one edge type at a time: Memgraph aborts concurrent
-# transactions that change the edges of one node, and does not retry them.
-_SERIAL_EDGE_FLAVORS = frozenset({DBType.MEMGRAPH})
+# transactions that change the edges of one node, and does not retry them;
+# Grafeo runs one query at a time per store, so concurrency buys nothing.
+_SERIAL_EDGE_FLAVORS = frozenset({DBType.MEMGRAPH, DBType.GRAFEO})
 
 # Flavors whose connection is opened per write rather than kept for the run:
 # the file backend flushes its on-disk index on close, and readers need it.

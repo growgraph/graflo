@@ -55,6 +55,8 @@ REVERSE_TRAVERSAL_COST: dict[DBType, ReverseTraversalCost] = {
     DBType.MEMGRAPH: ReverseTraversalCost.CHEAP,
     # Adjacency matrices are stored alongside their transposes.
     DBType.FALKORDB: ReverseTraversalCost.CHEAP,
+    # Relationships are reachable from either endpoint.
+    DBType.GRAFEO: ReverseTraversalCost.CHEAP,
     # Edges are stored under both an out-key and an in-key, reachable via
     # `GO ... OVER <type> REVERSELY` / `BIDIRECT`.
     DBType.NEBULA: ReverseTraversalCost.CLAUSE_REQUIRED,

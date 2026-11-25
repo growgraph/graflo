@@ -213,6 +213,7 @@ def test_tigergraph_out_is_always_fine() -> None:
         DBType.NEBULA,
         DBType.POSTGRES,
         DBType.GRAFLO_BACKEND,
+        DBType.GRAFEO,
     ],
 )
 @pytest.mark.parametrize(

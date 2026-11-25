@@ -23,7 +23,7 @@ SPACE = "gf_live_drift_e2e"
 
 #: The Cypher family, where a property can be planted with one statement, and
 #: PostgreSQL, whose edge types are read back from table names and comments.
-BACKENDS = backend_params(["neo4j", "memgraph", "falkordb", "postgres"])
+BACKENDS = backend_params(["neo4j", "memgraph", "falkordb", "postgres", "grafeo"])
 
 
 @pytest.fixture(scope="module", params=BACKENDS)

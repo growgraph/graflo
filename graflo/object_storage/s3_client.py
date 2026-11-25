@@ -11,7 +11,9 @@ if TYPE_CHECKING:
 
 def boto3_s3_client(cfg: S3ConnConfig) -> Any:
     """Build a boto3 S3 client from :class:`~graflo.connections.sources.S3ConnConfig`."""
-    import boto3
+    from graflo.util.extras import require
+
+    boto3 = require("boto3", "s3", feature="S3 object storage")
 
     return boto3.client(
         "s3",
@@ -24,7 +26,9 @@ def boto3_s3_client(cfg: S3ConnConfig) -> Any:
 
 def boto3_s3_client_from_endpoint(cfg: S3EndpointConfig) -> Any:
     """Build a boto3 S3 client from :class:`~graflo.object_storage.config.S3EndpointConfig`."""
-    import boto3
+    from graflo.util.extras import require
+
+    boto3 = require("boto3", "s3", feature="S3 object storage")
 
     return boto3.client(
         "s3",

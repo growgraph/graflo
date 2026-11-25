@@ -6,7 +6,7 @@ properties and the edges it owns. A record whose content did not change is
 skipped. The result is the graph a bulk load of the new records into an empty
 target would hold.
 
-Sync mode needs the `bulk` extra and runs on Neo4j and FalkorDB.
+Sync mode needs the `bulk` extra and runs on Neo4j, FalkorDB and Grafeo.
 
 ## Declare what each record owns
 
@@ -57,7 +57,7 @@ records of one owner in several batches fold together. It then:
    its properties, deletes the edges it owns and creates its edges, then stores
    the new hash.
 
-On Neo4j a chunk of owners is one transaction. On FalkorDB it is one
+On Neo4j and Grafeo a chunk of owners is one transaction. On FalkorDB it is one
 `MULTI`/`EXEC`, with the hashes stored only after it succeeded. An owner whose
 write failed keeps no current hash, so the next sync rewrites it. Running the
 same command again with the same staging directory resumes a stopped run.

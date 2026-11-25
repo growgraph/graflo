@@ -5,19 +5,28 @@ configuration. It supports parameterized queries and streams rows in bounded
 memory using server-side cursor semantics where the driver supports them.
 """
 
+from __future__ import annotations
+
 import logging
 from collections import Counter
 from collections.abc import Iterable, Iterator
 from decimal import Decimal
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import Field, PrivateAttr
-from sqlalchemy import create_engine, literal_column, select, text
-from sqlalchemy.engine import Engine, make_url
-from sqlalchemy.sql.expression import Executable
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.data_source.base import AbstractDataSource, DataSourceType
+from graflo.util.extras import lazy_module
+
+if TYPE_CHECKING:
+    import sqlalchemy as _sqlalchemy
+    import sqlalchemy.engine as _sqlalchemy_engine
+    import sqlalchemy.sql.expression as _sqlalchemy_sql_expression
+else:
+    _sqlalchemy = lazy_module("sqlalchemy", "sql")
+    _sqlalchemy_engine = lazy_module("sqlalchemy.engine", "sql")
+    _sqlalchemy_sql_expression = lazy_module("sqlalchemy.sql.expression", "sql")
 
 logger = logging.getLogger(__name__)
 
@@ -69,21 +78,22 @@ class SQLDataSource(AbstractDataSource):
 
     config: SQLConfig
     source_type: DataSourceType = DataSourceType.SQL
-    _engine: Engine | None = PrivateAttr(default=None)
+    # ``Any``: pydantic evaluates this annotation, which must not import the driver.
+    _engine: Any = PrivateAttr(default=None)
 
-    def _get_engine(self) -> Engine:
+    def _get_engine(self) -> _sqlalchemy_engine.Engine:
         """Get or create SQLAlchemy engine.
 
         Returns:
             SQLAlchemy engine instance
         """
         if self._engine is None:
-            url = make_url(self.config.connection_string)
+            url = _sqlalchemy_engine.make_url(self.config.connection_string)
             # SQLAlchemy 2.1 maps a bare ``postgresql://`` to psycopg (v3);
             # graflo ships psycopg2, so pin it unless a driver is named.
             if url.drivername == "postgresql":
                 url = url.set(drivername="postgresql+psycopg2")
-            self._engine = create_engine(url)
+            self._engine = _sqlalchemy.create_engine(url)
         return self._engine
 
     @staticmethod
@@ -95,7 +105,7 @@ class SQLDataSource(AbstractDataSource):
                 row_dict[key] = float(value)
         return row_dict
 
-    def _statement(self, limit: int | None) -> Executable:
+    def _statement(self, limit: int | None) -> _sqlalchemy_sql_expression.Executable:
         """The configured query, bounded to *limit* rows when one is given.
 
         The bound is part of the statement, so the database plans for it and
@@ -105,10 +115,14 @@ class SQLDataSource(AbstractDataSource):
         so a query that returns two columns of one name cannot be limited there.
         """
         if limit is None:
-            return text(self.config.query)
-        inner = text(self.config.query.strip().rstrip(";").rstrip())
+            return _sqlalchemy.text(self.config.query)
+        inner = _sqlalchemy.text(self.config.query.strip().rstrip(";").rstrip())
         source = inner.columns().subquery("graflo_source")
-        return select(literal_column("*")).select_from(source).limit(limit)
+        return (
+            _sqlalchemy.select(_sqlalchemy.literal_column("*"))
+            .select_from(source)
+            .limit(limit)
+        )
 
     def iter_batches(
         self, batch_size: int = 1000, limit: int | None = None

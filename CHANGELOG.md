@@ -7,8 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking
+
+- Python 3.12 or newer is required.
+- Database clients and source integrations are optional extras: `arango`, `neo4j`, `falkordb`,
+  `memgraph`, `nebula`, `postgres`, `grafeo`, `sql`, `kafka`, `s3`, `sparql`; `graflo[all]`
+  installs what `graflo` used to. Connecting without the extra raises `MissingExtraError`
+  (an `ImportError`) naming it; a missing `bulk` extra raises it too, instead of `RuntimeError`.
+
 ### Added
 
+- Grafeo backend (`graflo[grafeo]`): an embedded graph database in this process, from a file or
+  memory, one named graph per namespace; `GrafeoConfig`, `GrafeoConnection`,
+  `graflo.db.grafeo.close_database`. Supports export, introspection, deletes, read guards,
+  union merge, bulk load and sync; no edge or unique indexes.
+- `graflo.util.extras`: `require` and `lazy_module` import an optional dependency on first use.
 - `graflo.architecture.evolution.op_laws`: one `OpLaws` record per op (apply, writes, reads,
   inverse or irreversible reason); `inverse._HANDLERS` is public as `INVERTERS`.
 - `graflo.architecture.evolution.slot_projection`: `slot_contents` (a manifest as slots) and

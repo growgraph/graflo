@@ -23,13 +23,11 @@ Example:
     >>> conn.upsert_docs_batch(docs, "User", match_keys=["email"])
 """
 
+from __future__ import annotations
+
 import logging
 from collections.abc import Sequence
-from typing import Any, LiteralString, cast
-
-from neo4j import GraphDatabase, NotificationDisabledCategory, Query, Result
-from neo4j.exceptions import ClientError, Neo4jError
-from neo4j.time import Date, DateTime, Time
+from typing import TYPE_CHECKING, Any, LiteralString, cast
 
 from graflo.architecture.graph_types import EdgeDirection, GraphContainer, Index
 from graflo.architecture.query.timeout import (
@@ -101,6 +99,16 @@ from graflo.filter.onto import (
     render_conjunct,
 )
 from graflo.onto import AggregationType, DBType
+from graflo.util.extras import lazy_module
+
+if TYPE_CHECKING:
+    import neo4j as _neo4j
+    import neo4j.exceptions as _neo4j_exceptions
+    import neo4j.time as _neo4j_time
+else:
+    _neo4j = lazy_module("neo4j", "neo4j")
+    _neo4j_exceptions = lazy_module("neo4j.exceptions", "neo4j")
+    _neo4j_time = lazy_module("neo4j.time", "neo4j")
 
 logger = logging.getLogger(__name__)
 
@@ -121,7 +129,7 @@ DEFAULT_NEO4J_USERNAME = "neo4j"
 
 def _native(value: Any) -> Any:
     """*value* in plain Python: a Neo4j date, time or datetime becomes its ``datetime`` type."""
-    if isinstance(value, (DateTime, Date, Time)):
+    if isinstance(value, (_neo4j_time.DateTime, _neo4j_time.Date, _neo4j_time.Time)):
         return value.to_native()
     if isinstance(value, dict):
         return {k: _native(v) for k, v in value.items()}
@@ -130,7 +138,7 @@ def _native(value: Any) -> Any:
     return value
 
 
-def _rows(result: Result) -> list[dict[str, Any]]:
+def _rows(result: _neo4j.Result) -> list[dict[str, Any]]:
     """The records of *result* as plain-Python dicts.
 
     ``Result.data()`` keeps the driver's temporal types, which no caller can
@@ -139,7 +147,7 @@ def _rows(result: Result) -> list[dict[str, Any]]:
     return [_native(row) for row in result.data()]
 
 
-def _timed_out(error: Neo4jError) -> bool:
+def _timed_out(error: _neo4j_exceptions.Neo4jError) -> bool:
     """Whether the server stopped the transaction at its time limit."""
     return "TransactionTimedOut" in (error.code or "")
 
@@ -157,9 +165,9 @@ def _read_rows(
         return _rows(db.execute(query, **params))
     try:
         return _rows(
-            db.conn.run(Query(cast(LiteralString, query), timeout=limit), params)
+            db.conn.run(_neo4j.Query(cast(LiteralString, query), timeout=limit), params)
         )
-    except Neo4jError as error:
+    except _neo4j_exceptions.Neo4jError as error:
         if _timed_out(error):
             raise QueryTimeoutError(limit) from error
         raise
@@ -169,7 +177,7 @@ def _create_schema_rule(db: Any, query: str) -> None:
     """Run an index or constraint DDL statement; an existing rule is not an error."""
     try:
         db.execute(query)
-    except ClientError as e:
+    except _neo4j_exceptions.ClientError as e:
         if e.code in _BENIGN_DUPLICATE_SCHEMA_CODES:
             logger.debug(
                 "Skipping index/constraint creation (already present): %s", e.message
@@ -228,17 +236,17 @@ class Neo4jConnection(Connection):
             auth = (config.username or DEFAULT_NEO4J_USERNAME, config.password)
         # Queries are built from the schema, so an unrecognized label, property or
         # relation is one nothing has written yet, never a typo: no notification.
-        self._driver = GraphDatabase.driver(
+        self._driver = _neo4j.GraphDatabase.driver(
             uri=config.url,
             auth=auth,
             notifications_disabled_categories=[
-                NotificationDisabledCategory.UNRECOGNIZED
+                _neo4j.NotificationDisabledCategory.UNRECOGNIZED
             ],
         )
         # ``None`` is the user's home database.
         self.conn = self._driver.session(database=config.database)
 
-    def execute(self, query: str, **kwargs: Any) -> Result:
+    def execute(self, query: str, **kwargs: Any) -> _neo4j.Result:
         """Execute a Cypher query.
 
         Args:
@@ -417,7 +425,7 @@ class Neo4jConnection(Connection):
         )
         try:
             _create_schema_rule(self, constraint)
-        except ClientError as e:
+        except _neo4j_exceptions.ClientError as e:
             if not is_identity or len(index.fields) == 1:
                 raise
             logger.warning(
@@ -439,7 +447,7 @@ class Neo4jConnection(Connection):
         try:
             con_cursor = self.execute("SHOW CONSTRAINTS")
             rows = con_cursor.data()
-        except ClientError as e:
+        except _neo4j_exceptions.ClientError as e:
             logger.warning("Could not list constraints: %s", e)
             rows = []
         for row in rows:
@@ -449,13 +457,13 @@ class Neo4jConnection(Connection):
             esc = cypher_name(str(name), quoted=True)
             try:
                 self.execute(f"DROP CONSTRAINT {esc} IF EXISTS")
-            except ClientError as drop_exc:
+            except _neo4j_exceptions.ClientError as drop_exc:
                 logger.debug("DROP CONSTRAINT %s: %s", name, drop_exc)
 
         try:
             idx_cursor = self.execute("SHOW INDEXES")
             idx_rows = idx_cursor.data()
-        except ClientError as e:
+        except _neo4j_exceptions.ClientError as e:
             logger.warning("Could not list indexes: %s", e)
             idx_rows = []
         for row in idx_rows:
@@ -468,7 +476,7 @@ class Neo4jConnection(Connection):
             esc = cypher_name(str(name), quoted=True)
             try:
                 self.execute(f"DROP INDEX {esc} IF EXISTS")
-            except ClientError as drop_exc:
+            except _neo4j_exceptions.ClientError as drop_exc:
                 logger.debug("DROP INDEX %s: %s", name, drop_exc)
 
     def define_schema(self, schema: Schema):

@@ -96,8 +96,7 @@ class _Pg:
 def statements(monkeypatch) -> list[tuple[str, list[tuple]]]:
     recorded: list[tuple[str, list[tuple]]] = []
     monkeypatch.setattr(
-        target_write,
-        "execute_values",
+        "psycopg2.extras.execute_values",
         lambda cursor, query, values: recorded.append((_render(query), values)),
     )
     return recorded
@@ -107,8 +106,7 @@ def statements(monkeypatch) -> list[tuple[str, list[tuple]]]:
 def logged_writes(monkeypatch) -> None:
     """Record each ``VALUES`` write among the statements its cursor executed."""
     monkeypatch.setattr(
-        target_write,
-        "execute_values",
+        "psycopg2.extras.execute_values",
         lambda cursor, query, values: cursor.executed.append(_render(query)),
     )
 
@@ -118,7 +116,7 @@ def failing_write(monkeypatch) -> None:
     def _fail(cursor: Any, query: Any, values: Any) -> None:
         raise RuntimeError("write failed")
 
-    monkeypatch.setattr(target_write, "execute_values", _fail)
+    monkeypatch.setattr("psycopg2.extras.execute_values", _fail)
 
 
 def _upsert(pg: _Pg, docs: list[dict[str, Any]]) -> None:

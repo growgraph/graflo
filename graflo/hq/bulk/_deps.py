@@ -2,48 +2,36 @@
 
 from __future__ import annotations
 
-import sys
 from types import ModuleType
 
-_MISSING_EXTRA = (
-    "bulk mode needs the `bulk` extra, which is not installed for {python} "
-    "(missing module {module!r}): install it with `uv add 'graflo[bulk]'` "
-    "(or `pip install 'graflo[bulk]'`)"
-)
+from graflo.util.extras import require as _require
 
-
-def _import(name: str) -> ModuleType:
-    try:
-        return __import__(name)
-    except ImportError as exc:
-        raise RuntimeError(
-            _MISSING_EXTRA.format(python=sys.executable, module=exc.name or name)
-        ) from exc
+_FEATURE = "bulk mode"
 
 
 def duckdb() -> ModuleType:
     """The ``duckdb`` module.
 
     Raises:
-        RuntimeError: The ``bulk`` extra is not installed.
+        MissingExtraError: The ``bulk`` extra is not installed.
     """
-    return _import("duckdb")
+    return _require("duckdb", "bulk", feature=_FEATURE)
 
 
 def zstandard() -> ModuleType:
     """The ``zstandard`` module.
 
     Raises:
-        RuntimeError: The ``bulk`` extra is not installed.
+        MissingExtraError: The ``bulk`` extra is not installed.
     """
-    return _import("zstandard")
+    return _require("zstandard", "bulk", feature=_FEATURE)
 
 
 def require() -> None:
     """Fail now, naming the extra, if a bulk run could not fold.
 
     Raises:
-        RuntimeError: The ``bulk`` extra is not installed.
+        MissingExtraError: The ``bulk`` extra is not installed.
     """
     duckdb()
     zstandard()

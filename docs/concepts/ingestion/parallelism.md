@@ -117,7 +117,7 @@ When throughput matters, use `dynamic_edges` to discover edges, not to load:
 3. Load the full data with `dynamic_edges=False`, which restores every level
    of parallelism.
 
-!!! note "Neo4j, Memgraph and FalkorDB write one collection at a time"
+!!! note "Neo4j, Memgraph, FalkorDB and Grafeo write one collection at a time"
     These databases upsert with `MERGE`, which is not atomic across
     concurrent transactions: two writers merging the same key could both
     create it. GraFlo therefore writes each vertex type and each relation

@@ -107,6 +107,7 @@ BACKENDS = backend_params(
         "postgres",
         "tigergraph",
         "nebula",
+        "grafeo",
     ]
 )
 

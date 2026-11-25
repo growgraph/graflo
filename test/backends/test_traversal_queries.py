@@ -56,7 +56,14 @@ def test_cypher_rejects_zero_hops():
 
 @pytest.mark.parametrize(
     "db_type",
-    [DBType.ARANGO, DBType.NEO4J, DBType.MEMGRAPH, DBType.FALKORDB, DBType.NEBULA],
+    [
+        DBType.ARANGO,
+        DBType.NEO4J,
+        DBType.MEMGRAPH,
+        DBType.FALKORDB,
+        DBType.NEBULA,
+        DBType.GRAFEO,
+    ],
 )
 @pytest.mark.parametrize(
     "direction", [EdgeDirection.OUT, EdgeDirection.IN, EdgeDirection.ANY]

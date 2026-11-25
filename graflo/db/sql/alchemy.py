@@ -17,12 +17,17 @@ nothing in the catalogue says which columns were meant to be joins.
 from __future__ import annotations
 
 import logging
-from typing import Any
-
-from sqlalchemy import Engine, inspect, text
-from sqlalchemy.engine import Inspector
+from typing import TYPE_CHECKING, Any
 
 from graflo.db.sql.provider import SqlMetadataProvider
+from graflo.util.extras import lazy_module
+
+if TYPE_CHECKING:
+    import sqlalchemy as _sqlalchemy
+    import sqlalchemy.engine as _sqlalchemy_engine
+else:
+    _sqlalchemy = lazy_module("sqlalchemy", "sql")
+    _sqlalchemy_engine = lazy_module("sqlalchemy.engine", "sql")
 
 logger = logging.getLogger(__name__)
 
@@ -37,15 +42,17 @@ class SqlAlchemyMetadataProvider(SqlMetadataProvider):
             most single-namespace engines want.
     """
 
-    def __init__(self, engine: Engine, *, default_schema: str | None = None):
+    def __init__(
+        self, engine: _sqlalchemy.Engine, *, default_schema: str | None = None
+    ):
         self.engine = engine
         self.default_schema = default_schema
-        self._inspector: Inspector | None = None
+        self._inspector: _sqlalchemy_engine.Inspector | None = None
 
     @property
-    def inspector(self) -> Inspector:
+    def inspector(self) -> _sqlalchemy_engine.Inspector:
         if self._inspector is None:
-            self._inspector = inspect(self.engine)
+            self._inspector = _sqlalchemy.inspect(self.engine)
         return self._inspector
 
     def _schema(self, schema_name: str | None) -> str | None:
@@ -198,7 +205,9 @@ class SqlAlchemyMetadataProvider(SqlMetadataProvider):
         qualified = self._qualified(table_name, schema_name)
         try:
             with self.engine.connect() as connection:
-                result = connection.execute(text(f"SELECT COUNT(*) FROM {qualified}"))
+                result = connection.execute(
+                    _sqlalchemy.text(f"SELECT COUNT(*) FROM {qualified}")
+                )
                 return int(result.scalar() or 0)
         except Exception as error:
             logger.debug("Row count unavailable for '%s': %s", table_name, error)
@@ -228,7 +237,9 @@ class SqlAlchemyMetadataProvider(SqlMetadataProvider):
         try:
             with self.engine.connect() as connection:
                 rows = connection.execute(
-                    text(f"SELECT * FROM {qualified}{order_clause} LIMIT {int(limit)}")
+                    _sqlalchemy.text(
+                        f"SELECT * FROM {qualified}{order_clause} LIMIT {int(limit)}"
+                    )
                 )
                 return [dict(row._mapping) for row in rows]
         except Exception as error:

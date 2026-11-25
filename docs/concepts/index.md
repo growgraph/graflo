@@ -3,7 +3,7 @@
 GraFlo loads records from files, SQL tables, RDF data, REST APIs and Kafka
 topics into a labeled property graph. You describe the graph, and how each
 kind of record maps onto it, once in a manifest written in GSTL, the Graph
-Schema & Transformation Language; the same manifest then loads any of eight
+Schema & Transformation Language; the same manifest then loads any of nine
 targets. This page is the map of the concept pages: it follows a record from
 its source to the database, lists what GraFlo reads and writes, and says which
 page answers which question. Terms are defined in the
@@ -94,7 +94,7 @@ flowchart LR
   identity become one vertex, and then the edges. Some databases refuse some names (a
   reserved word, a hyphen); the writer uses the stored names recorded in
   `schema.db_profile`, so the names in the manifest never change.
-- **Database**: one of the eight targets below.
+- **Database**: one of the nine targets below.
 - **Schema**: a vertex step keeps only the properties its vertex type
   declares, and by default the vertices of one record are connected by the
   edges the schema declares between their types. A vertex type without an
@@ -143,13 +143,14 @@ exports and for moving a graph between databases.
 | TigerGraph | vertex and edge types, with native undirected edges and reverse edges | no |
 | NebulaGraph | tags and edge types | no |
 | PostgreSQL | one table per vertex type and one table per edge type | yes |
+| Grafeo | labels and relationship types, in a named graph | yes |
 | GraFlo file backend | chunked files on disk | yes |
 
 A target that can be read back whole is a graph source:
 `GraphEngine.export_graph()` returns its graph in memory, and
 `GraphEngine.migrate_graph()` moves it into any target without a manifest.
 `ConnectionManager.graph_export_flavors()` lists the graph sources in code.
-GraFlo can read the schema of all eight targets. Keep a copy in the file
+GraFlo can read the schema of all nine targets. Keep a copy in the file
 backend of a graph you may need to move out of a target that cannot be read
 back. See [graph export and migration](operations/graph_export_migration.md).
 To compare the targets feature by feature, see

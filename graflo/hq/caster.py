@@ -951,7 +951,7 @@ class Caster:
         """Refuse a sync run that could not complete, before anything is read.
 
         Raises:
-            RuntimeError: The ``bulk`` extra is not installed.
+            MissingExtraError: The ``bulk`` extra is not installed.
             ValueError: The target has no sync writer, a resource in scope reads
                 the target while ingesting, or writes what no sync block owns.
         """
@@ -980,7 +980,7 @@ class Caster:
         """Refuse a bulk run that could not complete, before anything is read.
 
         Raises:
-            RuntimeError: The ``bulk`` extra is not installed.
+            MissingExtraError: The ``bulk`` extra is not installed.
             ValueError: The target has no bulk writer, a resource in scope
                 reads the target while ingesting, or the schema has a union
                 field the target's upsert refuses.

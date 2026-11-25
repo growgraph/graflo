@@ -43,7 +43,7 @@ Usage:
   ./run-tests.sh [OPTIONS] [DB_SUITES...]
 
 DB_SUITES:
-  memgraphs postgres tigergraphs arangos falkordbs neo4js nebulas
+  memgraphs postgres tigergraphs arangos falkordbs neo4js nebulas grafeos
 
 OPTIONS:
   --run-performance  Include tests marked performance
@@ -68,7 +68,7 @@ EOF
 done
 
 if [ "${#suites[@]}" -eq 0 ]; then
-  suites=(memgraphs postgres tigergraphs arangos falkordbs neo4js nebulas)
+  suites=(memgraphs postgres tigergraphs arangos falkordbs neo4js nebulas grafeos)
 fi
 
 pids=()

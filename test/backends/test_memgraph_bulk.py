@@ -20,7 +20,7 @@ class _Conflict(Exception):
 
 
 def _connection(monkeypatch: pytest.MonkeyPatch, failures: int = 0) -> Any:
-    monkeypatch.setattr(memgraph, "_DATABASE_ERROR", _Conflict)
+    monkeypatch.setattr(memgraph, "_database_error", lambda: _Conflict)
     monkeypatch.setattr(memgraph.time, "sleep", lambda _: None)
     conn = cast(Any, MemgraphConnection.__new__(MemgraphConnection))
     calls: list[tuple[str, dict[str, Any]]] = []

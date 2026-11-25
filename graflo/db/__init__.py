@@ -41,6 +41,7 @@ _EXPORTS: dict[str, str] = {
     "PostgresConnection": "graflo.db.postgres.conn",
     "TigerGraphConnection": "graflo.db.tigergraph.conn",
     "GraFloBackendConnection": "graflo.db.graflo_backend.connection",
+    "GrafeoConnection": "graflo.db.grafeo.conn",
 }
 
 __all__ = [
@@ -50,6 +51,7 @@ __all__ = [
     "ConnectionType",
     "FalkordbConnection",
     "GraFloBackendConnection",
+    "GrafeoConnection",
     "InsertEdgesKwArgs",
     "MemgraphConnection",
     "NamespaceNotFoundError",

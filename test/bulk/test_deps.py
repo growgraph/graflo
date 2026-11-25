@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import builtins
 import subprocess
 import sys
 
 import pytest
 
 from graflo.hq.bulk import _deps
+from graflo.util.extras import MissingExtraError
 
 
 def test_importing_graflo_loads_no_duckdb() -> None:
@@ -24,13 +24,6 @@ def test_importing_graflo_loads_no_duckdb() -> None:
 
 
 def test_a_missing_extra_is_named(monkeypatch) -> None:
-    real_import = builtins.__import__
-
-    def _no_duckdb(name, *args, **kwargs):
-        if name == "duckdb":
-            raise ModuleNotFoundError("No module named 'duckdb'", name="duckdb")
-        return real_import(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", _no_duckdb)
-    with pytest.raises(RuntimeError, match=r"`bulk` extra.*'duckdb'"):
+    monkeypatch.setitem(sys.modules, "duckdb", None)  # blocks the import
+    with pytest.raises(MissingExtraError, match=r"`bulk` extra.*'duckdb'"):
         _deps.require()

@@ -41,6 +41,8 @@ _EXPORTS: dict[str, str] = {
     "TigergraphConfig": "graflo.connections.onto",
     # graflo_backend
     "GraFloBackendConfig": "graflo.connections.graflo_backend",
+    # grafeo — embedded
+    "GrafeoConfig": "graflo.connections.grafeo",
     # mapping
     "DB_TYPE_MAPPING": "graflo.connections.mapping",
     "get_config_class": "graflo.connections.mapping",
@@ -88,6 +90,7 @@ __all__ = [
     "FalkordbConfig",
     "FilesConnConfig",
     "GraFloBackendConfig",
+    "GrafeoConfig",
     "GraphDBConfig",
     "InMemoryConnectionProvider",
     "KafkaConnConfig",

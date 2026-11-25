@@ -13,6 +13,7 @@ from typing import Annotated, Any, TypeAlias
 
 from pydantic import Discriminator, Field, Tag, TypeAdapter
 
+from graflo.connections.grafeo import GrafeoConfig
 from graflo.connections.graflo_backend import GraFloBackendConfig
 from graflo.connections.onto import (
     SOURCE_DATABASES,
@@ -66,6 +67,7 @@ DatabaseConnection: TypeAlias = Annotated[
     | Annotated[FalkordbConfig, Tag("falkordb")]
     | Annotated[MemgraphConfig, Tag("memgraph")]
     | Annotated[NebulaConfig, Tag("nebula")]
+    | Annotated[GrafeoConfig, Tag("grafeo")]
     | Annotated[GraFloBackendConfig, Tag("graflo_backend")]
     | Annotated[PostgresConfig, Tag("postgres")]
     | Annotated[SparqlEndpointConfig, Tag("sparql")]

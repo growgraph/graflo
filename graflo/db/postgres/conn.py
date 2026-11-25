@@ -19,16 +19,13 @@ Example:
     >>> conn.close()
 """
 
+from __future__ import annotations
+
 import logging
 import math
 from collections.abc import Collection
 from types import TracebackType
-from typing import Any, Literal, Self
-
-import psycopg2
-from psycopg2 import sql
-from psycopg2.extensions import QueryCanceledError
-from psycopg2.extras import RealDictCursor
+from typing import TYPE_CHECKING, Any, Literal, Self
 
 from graflo.architecture.onto_sql import (
     EdgeTableInfo,
@@ -41,6 +38,18 @@ from graflo.connections.onto import PostgresConfig
 from graflo.db import sql as sql_introspect
 from graflo.db.conn import Connection
 from graflo.db.postgres.bulk import PostgresBulkMixin
+from graflo.util.extras import lazy_module
+
+if TYPE_CHECKING:
+    import psycopg2
+    import psycopg2.extensions as _psycopg2_extensions
+    import psycopg2.extras as _psycopg2_extras
+    from psycopg2 import sql
+else:
+    _psycopg2_extensions = lazy_module("psycopg2.extensions", "postgres")
+    _psycopg2_extras = lazy_module("psycopg2.extras", "postgres")
+    psycopg2 = lazy_module("psycopg2", "postgres")
+    sql = lazy_module("psycopg2.sql", "postgres")
 
 logger = logging.getLogger(__name__)
 
@@ -131,7 +140,7 @@ class PostgresConnection(PostgresBulkMixin, Connection):
         from decimal import Decimal
 
         limit = check_timeout(timeout_s)
-        with self.conn.cursor(cursor_factory=RealDictCursor) as cursor:
+        with self.conn.cursor(cursor_factory=_psycopg2_extras.RealDictCursor) as cursor:
             previous: str | None = None
             if limit is not None:
                 cursor.execute("SHOW statement_timeout")
@@ -146,7 +155,7 @@ class PostgresConnection(PostgresBulkMixin, Connection):
                 else:
                     cursor.execute(query)
                 fetched = cursor.fetchall()
-            except QueryCanceledError as error:
+            except _psycopg2_extensions.QueryCanceledError as error:
                 if limit is None:
                     raise
                 # The statement aborted the transaction; nothing else is usable
@@ -228,7 +237,9 @@ class PostgresConnection(PostgresBulkMixin, Connection):
                 WHERE table_schema = %s
                   AND table_type = 'BASE TABLE'
             """
-            with self.conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            with self.conn.cursor(
+                cursor_factory=_psycopg2_extras.RealDictCursor
+            ) as cursor:
                 cursor.execute(query, (schema_name,))
                 result = cursor.fetchone()
                 # If query succeeds, check if we can also query constraints
@@ -272,7 +283,7 @@ class PostgresConnection(PostgresBulkMixin, Connection):
             ORDER BY c.relname;
         """
 
-        with self.conn.cursor(cursor_factory=RealDictCursor) as cursor:
+        with self.conn.cursor(cursor_factory=_psycopg2_extras.RealDictCursor) as cursor:
             cursor.execute(query, (schema_name,))
             return [dict(row) for row in cursor.fetchall()]
 
@@ -310,7 +321,9 @@ class PostgresConnection(PostgresBulkMixin, Connection):
                 ORDER BY table_name;
             """
 
-            with self.conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            with self.conn.cursor(
+                cursor_factory=_psycopg2_extras.RealDictCursor
+            ) as cursor:
                 cursor.execute(query, (schema_name,))
                 results = [dict(row) for row in cursor.fetchall()]
                 # If we got results, check if information_schema is reliable
@@ -362,7 +375,7 @@ class PostgresConnection(PostgresBulkMixin, Connection):
             ORDER BY a.attnum;
         """
 
-        with self.conn.cursor(cursor_factory=RealDictCursor) as cursor:
+        with self.conn.cursor(cursor_factory=_psycopg2_extras.RealDictCursor) as cursor:
             cursor.execute(query, (schema_name, table_name))
             columns = []
             for row in cursor.fetchall():
@@ -444,7 +457,9 @@ class PostgresConnection(PostgresBulkMixin, Connection):
                 ORDER BY c.ordinal_position;
             """
 
-            with self.conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            with self.conn.cursor(
+                cursor_factory=_psycopg2_extras.RealDictCursor
+            ) as cursor:
                 cursor.execute(query, (schema_name, table_name))
                 columns = []
                 for row in cursor.fetchall():
@@ -690,7 +705,7 @@ class PostgresConnection(PostgresBulkMixin, Connection):
             ORDER BY con.conname, i;
         """
 
-        with self.conn.cursor(cursor_factory=RealDictCursor) as cursor:
+        with self.conn.cursor(cursor_factory=_psycopg2_extras.RealDictCursor) as cursor:
             cursor.execute(query, (schema_name, table_name))
             return [dict(row) for row in cursor.fetchall()]
 
@@ -733,7 +748,9 @@ class PostgresConnection(PostgresBulkMixin, Connection):
                 ORDER BY kcu.ordinal_position;
             """
 
-            with self.conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            with self.conn.cursor(
+                cursor_factory=_psycopg2_extras.RealDictCursor
+            ) as cursor:
                 cursor.execute(query, (schema_name, table_name))
                 results = [dict(row) for row in cursor.fetchall()]
                 # If we got results and information_schema is reliable, return them
@@ -805,7 +822,9 @@ class PostgresConnection(PostgresBulkMixin, Connection):
             order_by,
         )
         try:
-            with self.conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            with self.conn.cursor(
+                cursor_factory=_psycopg2_extras.RealDictCursor
+            ) as cursor:
                 cursor.execute(query, (limit,))
                 return [dict(row) for row in cursor.fetchall()]
         except Exception as e:

@@ -10,9 +10,10 @@ database declares.
 
 ## What you need
 
-- GraFlo installed (`pip install graflo`). It reads PostgreSQL as it is; for
-  another engine, install that engine's SQLAlchemy dialect, such as `pymysql`
-  for MySQL, `duckdb-engine` for DuckDB or `sqlalchemy-bigquery` for BigQuery.
+- GraFlo installed with the `sql` extra (`pip install "graflo[sql]"`). It reads
+  PostgreSQL as it is; for another engine, install that engine's SQLAlchemy
+  dialect, such as `pymysql` for MySQL, `duckdb-engine` for DuckDB or
+  `sqlalchemy-bigquery` for BigQuery.
 - Tables that declare primary keys, and foreign keys where rows refer to each
   other.
 - A target graph database and its connection settings; see

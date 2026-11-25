@@ -8,7 +8,8 @@ that you can point any script or example at your own database.
 
 ## What you need
 
-- GraFlo installed (`pip install graflo`).
+- GraFlo installed with your database's extra, such as
+  `pip install "graflo[neo4j]"`; see [Installation](../getting_started/installation.md#databases-and-sources).
 - The address and credentials of a running database, or a directory for the
   file backend. To decide which database, see
   [Choosing a backend](../concepts/backends.md).
@@ -28,6 +29,7 @@ Every class is imported from `graflo.connections`.
 | Memgraph | `MemgraphConfig` | `MEMGRAPH_` | `bolt://localhost:7687` | `database` |
 | NebulaGraph | `NebulaConfig` | `NEBULA_` | `nebula://localhost:9669` | `schema_name` (the space) |
 | PostgreSQL | `PostgresConfig` | `POSTGRES_` | `postgresql://localhost:5432` | `database` and `schema_name` |
+| Grafeo | `GrafeoConfig` | `GRAFEO_` | none; `path` names the file | `database` (a named graph) |
 | File backend | `GraFloBackendConfig` | `GRAFLO_BACKEND_` | none | `output_dir` |
 
 If you leave the field that names the graph empty, GraFlo uses the manifest's
@@ -39,6 +41,12 @@ tables in the schema `schema_name`, `public` when it is not set. It needs
 PostgreSQL 15 or later, for the unique key on each edge table. An edge table
 created by an earlier version gains that key at schema definition or on its
 first ingest, which fails with a clear error if the table holds duplicate edges.
+
+Grafeo runs inside your Python process. `path` names the database file, created
+on first use; without it the database lives in memory until the process exits.
+Every connection to one path in a process shares one open database, and
+`graflo.db.grafeo.close_database(path)` closes it, so another process may open
+the file. One file holds several graphs, one per `database`.
 
 GraFlo needs Neo4j 5.7 or later. Its queries are built from the schema, so it
 turns off Neo4j's notifications about labels, properties and relation types
@@ -117,7 +125,7 @@ fills the address, credentials and database from one connection string.
 `graflo ingest --db-config-path db.yaml` and
 `graflo migrate-schema apply --db-config-path db.yaml` read the database from
 a file. `db_type` picks the class: `arango`, `neo4j`, `tigergraph`,
-`falkordb`, `memgraph`, `nebula`, `postgres` or `graflo_backend`. The other
+`falkordb`, `memgraph`, `nebula`, `postgres`, `grafeo` or `graflo_backend`. The other
 keys are the fields of that class. Every config writes its `db_type` back, with
 `kind: database`, when dumped.
 

@@ -100,7 +100,7 @@ MANIFEST: dict[str, Any] = {
 #: TigerGraph is excluded for the same reason as the single-relation suite:
 #: its reverse reachability is decided at DDL time.
 BACKENDS = backend_params(
-    ["neo4j", "arango", "memgraph", "falkordb", "postgres", "nebula"]
+    ["neo4j", "arango", "memgraph", "falkordb", "postgres", "nebula", "grafeo"]
 )
 
 

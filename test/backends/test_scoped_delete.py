@@ -31,7 +31,7 @@ from graflo.onto import DBType
 def test_the_backends_that_delete_by_scope() -> None:
     assert set(
         ConnectionManager.flavors_supporting(ConnectionCapability.SCOPED_DELETE)
-    ) == {DBType.NEO4J, DBType.FALKORDB}
+    ) == {DBType.NEO4J, DBType.FALKORDB, DBType.GRAFEO}
 
 
 def test_a_backend_without_it_says_so() -> None:

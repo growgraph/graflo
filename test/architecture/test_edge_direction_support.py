@@ -91,6 +91,7 @@ def test_tigergraph_represents_undirected_natively() -> None:
         (DBType.NEO4J, "info"),
         (DBType.MEMGRAPH, "info"),
         (DBType.FALKORDB, "info"),
+        (DBType.GRAFEO, "info"),
         (DBType.NEBULA, "info"),
         (DBType.POSTGRES, "info"),
         (DBType.GRAFLO_BACKEND, "warning"),

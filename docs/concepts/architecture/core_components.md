@@ -119,8 +119,8 @@ properties:
 | `UUID` | a UUID; TigerGraph, NebulaGraph and PostgreSQL store it as text |
 | `LIST` | a list of values of one scalar type, given by `item_type` |
 
-Types are optional on every target. ArangoDB, Neo4j, Memgraph, FalkorDB and
-the file backend store each value as it arrives. TigerGraph and NebulaGraph
+Types are optional on every target. ArangoDB, Neo4j, Memgraph, FalkorDB, Grafeo
+and the file backend store each value as it arrives. TigerGraph and NebulaGraph
 declare a typed attribute per property and use `STRING` for an untyped one.
 PostgreSQL stores every scalar property as `TEXT` and a `LIST` as an array.
 [Choosing a backend](../backends.md) sets this beside the other backend
@@ -173,9 +173,9 @@ edges:
   the endpoints; any other token is an edge property and is added to
   `properties` if missing. Without `identities` an edge is keyed by its
   endpoints and relation alone, and its other properties are written, never
-  matched on. Neo4j, Memgraph and FalkorDB match an existing edge (Cypher
-  `MERGE`) on the endpoints, relation and the properties of the first identity; see
-  [backend indexes](../schema/backend_indexes.md#edge-upserts-and-merge-neo4j-memgraph-falkordb).
+  matched on. Neo4j, Memgraph, FalkorDB and Grafeo match an existing edge
+  (Cypher `MERGE`) on the endpoints, relation and the properties of the first identity; see
+  [backend indexes](../schema/backend_indexes.md#edge-upserts-and-merge-cypher-backends).
 - `directed` (default `true`): see the next section.
 - `merge` (default `union`): how many targets one source holds in the relation.
   With `union` they accumulate. With `replace` a source holds one target, and a
@@ -253,7 +253,7 @@ Read an undirected edge with `ANY`. A reverse read (`IN` or `ANY`) costs:
 | Target | Reverse read |
 |---|---|
 | ArangoDB, PostgreSQL | the same as a forward read: both endpoints are indexed |
-| Neo4j, Memgraph, FalkorDB | little: relationships are stored in both directions |
+| Neo4j, Memgraph, FalkorDB, Grafeo | little: relationships are stored in both directions |
 | NebulaGraph | little: GraFlo adds the reverse clause to the query |
 | TigerGraph | possible only on an undirected edge type or one with a native inverse; otherwise it raises `UnsupportedEdgeDirectionError` instead of returning half a neighborhood |
 | GraFlo file backend | an index GraFlo builds over the edge files it reads |

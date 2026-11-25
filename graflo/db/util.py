@@ -29,11 +29,15 @@ import json
 import logging
 from functools import cache, lru_cache
 from pathlib import Path
-from typing import Any, NamedTuple
-
-from arango.exceptions import CursorNextError
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from graflo.onto import DBType
+from graflo.util.extras import lazy_module
+
+if TYPE_CHECKING:
+    import arango.exceptions as _arango_exceptions
+else:
+    _arango_exceptions = lazy_module("arango.exceptions", "arango")
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +82,7 @@ def get_data_from_cursor(cursor: Any, limit: int | None = None) -> list[Any]:
             cnt += 1
         except StopIteration:
             return batch
-        except CursorNextError:
+        except _arango_exceptions.CursorNextError:
             return batch
 
 

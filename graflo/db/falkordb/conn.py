@@ -24,18 +24,14 @@ Example:
     >>> conn.upsert_docs_batch(docs, "Person", match_keys=["id"])
 """
 
+from __future__ import annotations
+
 import logging
 import math
 import sys
 from collections.abc import Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
-
-from falkordb import FalkorDB
-from falkordb.graph import Graph
-from falkordb.helpers import stringify_param_value
-from falkordb.query_result import QueryResult
-from redis.exceptions import ResponseError
 
 from graflo.architecture.graph_types import EdgeDirection, GraphContainer, Index
 from graflo.architecture.query.timeout import (
@@ -103,6 +99,20 @@ from graflo.filter.onto import (
     render_conjunct,
 )
 from graflo.onto import AggregationType, DBType
+from graflo.util.extras import lazy_module
+
+if TYPE_CHECKING:
+    import falkordb as _falkordb
+    import falkordb.graph as _falkordb_graph
+    import falkordb.helpers as _falkordb_helpers
+    import falkordb.query_result as _falkordb_query_result
+    import redis.exceptions as _redis_exceptions
+else:
+    _falkordb = lazy_module("falkordb", "falkordb")
+    _falkordb_graph = lazy_module("falkordb.graph", "falkordb")
+    _falkordb_helpers = lazy_module("falkordb.helpers", "falkordb")
+    _falkordb_query_result = lazy_module("falkordb.query_result", "falkordb")
+    _redis_exceptions = lazy_module("redis.exceptions", "falkordb")
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +132,7 @@ def _read(db: Any, query: str, params: dict[str, Any], timeout_s: float | None) 
     timeout_ms = max(1, math.ceil(limit * 1000))
     try:
         return db.graph.query(query, params=params or None, timeout=timeout_ms)
-    except ResponseError as error:
+    except _redis_exceptions.ResponseError as error:
         if "timed out" in str(error).lower():
             raise QueryTimeoutError(limit) from error
         raise
@@ -162,8 +172,8 @@ class FalkordbConnection(Connection):
     supports_query_timeout = True
 
     # Type annotations for instance attributes
-    client: FalkorDB | None
-    graph: Graph | None
+    client: _falkordb.FalkorDB | None
+    graph: _falkordb_graph.Graph | None
     _graph_name: str
 
     def __init__(self, config: FalkordbConfig):
@@ -186,16 +196,18 @@ class FalkordbConnection(Connection):
 
         # Initialize FalkorDB client
         if config.password:
-            self.client = FalkorDB(host=host, port=port, password=config.password)
+            self.client = _falkordb.FalkorDB(
+                host=host, port=port, password=config.password
+            )
         else:
-            self.client = FalkorDB(host=host, port=port)
+            self.client = _falkordb.FalkorDB(host=host, port=port)
 
         # Select the graph (database in config maps to graph name)
         graph_name = config.database or "default"
         self.graph = self.client.select_graph(graph_name)
         self._graph_name = graph_name
 
-    def execute(self, query: str, **kwargs: Any) -> QueryResult:
+    def execute(self, query: str, **kwargs: Any) -> _falkordb_query_result.QueryResult:
         """Execute a raw OpenCypher query against the graph.
 
         Args:
@@ -890,7 +902,7 @@ class FalkordbConnection(Connection):
         pipe = self.client.connection.pipeline(transaction=True)
         for query, params in statements:
             header = "CYPHER " + "".join(
-                f"`{key}`={stringify_param_value(value)} "
+                f"`{key}`={_falkordb_helpers.stringify_param_value(value)} "
                 for key, value in self._sanitize_value(params).items()
             )
             pipe.execute_command(

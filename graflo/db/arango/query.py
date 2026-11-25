@@ -14,16 +14,22 @@ Example:
     >>> profile_query("FOR doc IN users RETURN doc", nq=1, profile_times=3, fpath=".")
 """
 
+from __future__ import annotations
+
 import gzip
 import json
 import logging
 from os.path import join
-from typing import Any
-
-from arango import ArangoClient
+from typing import TYPE_CHECKING, Any
 
 from graflo.filter.onto import BoundParams, FilterExpression, render_conjunct
 from graflo.onto import ExpressionFlavor
+from graflo.util.extras import lazy_module
+
+if TYPE_CHECKING:
+    import arango as _arango
+else:
+    _arango = lazy_module("arango", "arango")
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +65,7 @@ def basic_query(
         Cursor: ArangoDB cursor for the query results
     """
     hosts = f"http://{hostname}:{port}"
-    client = ArangoClient(hosts=hosts)
+    client = _arango.ArangoClient(hosts=hosts)
 
     sys_db = client.db(db_name, username=cred_name, password=cred_pass)
     cursor = sys_db.aql.execute(

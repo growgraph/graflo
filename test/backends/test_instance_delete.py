@@ -21,7 +21,6 @@ from graflo.db.graflo_backend.connection import GraFloBackendConnection
 from graflo.db.manager import ConnectionManager
 from graflo.db.memgraph.conn import MemgraphConnection
 from graflo.db.neo4j.conn import Neo4jConnection
-from graflo.db.postgres import target_write
 from graflo.db.postgres.conn import PostgresConnection
 from graflo.db.tigergraph.data_ops import TigerGraphDataOps
 from graflo.hq.db_writer import DBWriter
@@ -39,6 +38,7 @@ def test_the_backends_that_delete() -> None:
         DBType.TIGERGRAPH,
         DBType.POSTGRES,
         DBType.NEBULA,
+        DBType.GRAFEO,
     }
 
 
@@ -282,8 +282,7 @@ class _Pg:
 def test_postgres_removes_referencing_edge_rows_first(monkeypatch) -> None:
     statements: list[tuple[str, list[tuple]]] = []
     monkeypatch.setattr(
-        target_write,
-        "execute_values",
+        "psycopg2.extras.execute_values",
         lambda cursor, query, values: statements.append((query, values)),
     )
     fake = _Pg()
@@ -306,8 +305,7 @@ def test_postgres_removes_referencing_edge_rows_first(monkeypatch) -> None:
 def test_postgres_removes_edge_rows_by_stored_endpoint_values(monkeypatch) -> None:
     statements: list[tuple[str, list[tuple]]] = []
     monkeypatch.setattr(
-        target_write,
-        "execute_values",
+        "psycopg2.extras.execute_values",
         lambda cursor, query, values: statements.append((query, values)),
     )
 

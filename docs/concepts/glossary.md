@@ -255,7 +255,7 @@ The runtime object that turns each connection proxy into a real connection confi
 
 ### target backend
 
-The database the graph is written to, chosen when you run ingestion by the connection config you pass. Eight are supported: ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph, PostgreSQL and the file backend, listed in the `DBType` enum. See [Concepts overview](index.md).
+The database the graph is written to, chosen when you run ingestion by the connection config you pass. Nine are supported: ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph, PostgreSQL, Grafeo and the file backend, listed in the `DBType` enum. See [Concepts overview](index.md).
 
 ### file backend
 
@@ -263,7 +263,7 @@ A target backend that is a directory instead of a database: `schema.yaml`, `INDE
 
 ### graph migration
 
-Copying a whole graph, schema and data, from one database to another with `GraphEngine.migrate_graph()`, without a manifest. The source can be Neo4j, ArangoDB, FalkorDB, PostgreSQL or the file backend, and the target any of the eight target backends. See [Graph export and migration](operations/graph_export_migration.md).
+Copying a whole graph, schema and data, from one database to another with `GraphEngine.migrate_graph()`, without a manifest. The source can be Neo4j, ArangoDB, FalkorDB, PostgreSQL, Grafeo or the file backend, and the target any of the nine target backends. See [Graph export and migration](operations/graph_export_migration.md).
 
 ## Evolution
 
