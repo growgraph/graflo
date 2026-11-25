@@ -42,6 +42,13 @@ from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import VertexConfig
 from graflo.connections.bulk import BulkConfig
 from graflo.connections.onto import Neo4jConfig
+from graflo.db.aggregation import (
+    KEY,
+    VALUE,
+    aggregation_result,
+    check_aggregation,
+    cypher_aggregation_return,
+)
 from graflo.db.bulk import BulkCounts, BulkEdgeChunk, BulkPlan, BulkVertexChunk
 from graflo.db.conn import (
     DEFAULT_DELETE_CHUNK_SIZE,
@@ -231,7 +238,7 @@ class Neo4jConnection(Connection):
         # ``None`` is the user's home database.
         self.conn = self._driver.session(database=config.database)
 
-    def execute(self, query, **kwargs):
+    def execute(self, query: str, **kwargs: Any) -> Result:
         """Execute a Cypher query.
 
         Args:
@@ -241,7 +248,7 @@ class Neo4jConnection(Connection):
         Returns:
             Result: Neo4j query result
         """
-        cursor = self.conn.run(query, **kwargs)
+        cursor = self.conn.run(cast(LiteralString, query), **kwargs)
         return cursor
 
     def reset_after_use(self) -> None:
@@ -798,7 +805,13 @@ class Neo4jConnection(Connection):
         """Wait until every index is online; building one may take long."""
         self.execute("CALL db.awaitIndexes(86400)").consume()
 
-    def upsert_docs_batch(self, docs, class_name, match_keys, **kwargs):
+    def upsert_docs_batch(
+        self,
+        docs: list[dict[str, Any]],
+        class_name: str,
+        match_keys: list[str] | tuple[str, ...],
+        **kwargs: Any,
+    ) -> None:
         """Upsert a batch of nodes using Cypher.
 
         Performs an upsert operation on a batch of nodes, using the specified
@@ -947,15 +960,15 @@ class Neo4jConnection(Connection):
 
     def fetch_docs(
         self,
-        class_name,
+        class_name: str,
         filters: list | dict | None = None,
         limit: int | None = None,
         return_keys: list | None = None,
         unset_keys: list | None = None,
         *,
         timeout_s: float | None = None,
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> list[dict[str, Any]]:
         """Fetch nodes from a label.
 
         Args:
@@ -1013,8 +1026,8 @@ class Neo4jConnection(Connection):
         from_key: str = "id",
         to_key: str = "id",
         timeout_s: float | None = None,
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> list[dict[str, Any]]:
         """Fetch edges from Neo4j using Cypher.
 
         Relationships are stored bidirectionally, so ``IN`` and ``ANY`` are as
@@ -1212,34 +1225,28 @@ class Neo4jConnection(Connection):
 
     def aggregate(
         self,
-        class_name,
+        class_name: str,
         aggregation_function: AggregationType,
         discriminant: str | None = None,
         aggregated_field: str | None = None,
         filters: FilterExpression | list | dict | None = None,
         *,
         timeout_s: float | None = None,
-    ):
-        """Aggregate over nodes of a label.
+    ) -> Any:
+        """Aggregate over nodes of a label; the result is shaped as in :mod:`graflo.db.aggregation`.
 
         Args:
             class_name: Label to aggregate.
             aggregation_function: COUNT, MAX, MIN, AVERAGE or SORTED_UNIQUE.
-            discriminant: Field to group by. COUNT only; returns a mapping.
-            aggregated_field: Field to aggregate. Required for everything but
-                an ungrouped COUNT.
+            discriminant: Field to group by.
+            aggregated_field: Field to aggregate. Required for everything but COUNT.
             filters: Applied before aggregating.
             timeout_s: Transaction timeout the server enforces; ``None`` for none.
 
-        Returns:
-            An ungrouped COUNT returns an int; a grouped COUNT returns
-            ``{value: count}``; MAX/MIN/AVERAGE return a scalar or ``None``;
-            SORTED_UNIQUE returns a list.
-
         Raises:
-            ValueError: If *aggregated_field* is missing where it is required,
-                or the aggregation type is not supported.
+            ValueError: If *aggregated_field* is missing where it is required.
         """
+        function = check_aggregation(aggregation_function, aggregated_field)
         filter_clause = ""
         params = BoundParams(self.expression_flavor())
         if filters is not None:
@@ -1249,38 +1256,21 @@ class Neo4jConnection(Connection):
             )
 
         label = cypher_name(str(class_name), quoted=True)
-        query = f"MATCH (n:{label}){filter_clause}"
-
-        if aggregation_function == AggregationType.COUNT:
-            if discriminant:
-                field = cypher_name(discriminant, quoted=True)
-                query += f" RETURN n.{field} AS key, count(*) AS value"
-                rows = _read_rows(self, query, params.values, timeout_s)
-                return {row["key"]: row["value"] for row in rows}
-            query += " RETURN count(n) AS value"
-        else:
-            if not aggregated_field:
-                raise ValueError(
-                    f"aggregated_field is required for {aggregation_function}"
-                )
-            field = cypher_name(aggregated_field, quoted=True)
-            if aggregation_function == AggregationType.MAX:
-                query += f" RETURN max(n.{field}) AS value"
-            elif aggregation_function == AggregationType.MIN:
-                query += f" RETURN min(n.{field}) AS value"
-            elif aggregation_function == AggregationType.AVERAGE:
-                query += f" RETURN avg(n.{field}) AS value"
-            elif aggregation_function == AggregationType.SORTED_UNIQUE:
-                query += f" RETURN DISTINCT n.{field} AS value ORDER BY n.{field}"
-            else:
-                raise ValueError(
-                    f"Unsupported aggregation type: {aggregation_function}"
-                )
-
+        value = (
+            f"n.{cypher_name(aggregated_field, quoted=True)}"
+            if aggregated_field
+            else None
+        )
+        key = f"n.{cypher_name(discriminant, quoted=True)}" if discriminant else None
+        query = f"MATCH (n:{label}){filter_clause} " + cypher_aggregation_return(
+            function, value, key
+        )
         rows = _read_rows(self, query, params.values, timeout_s)
-        if aggregation_function == AggregationType.SORTED_UNIQUE:
-            return [row["value"] for row in rows]
-        return rows[0]["value"] if rows else None
+        return aggregation_result(
+            function,
+            [(row.get(KEY), row[VALUE]) for row in rows],
+            grouped=discriminant is not None,
+        )
 
     def keep_absent_documents(
         self,

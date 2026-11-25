@@ -26,6 +26,7 @@ from graflo.architecture.evolution import (
     RenameVerticesOp,
     apply_evolution,
 )
+from graflo.architecture.refusal import OpRefusal
 
 
 def _sample_manifest_payload() -> dict:
@@ -582,3 +583,88 @@ def test_rename_edge_properties_refuses_a_fold_nobody_wrote_down() -> None:
     op = RenameEdgePropertiesOp(renames={"works_at": {"weight": "since"}})
     with pytest.raises(ValueError, match="fold two properties into one"):
         apply_evolution(_sample(), [op])
+
+
+def test_remove_edges_refuses_a_relation_no_edge_carries() -> None:
+    """A removal that removes nothing would still be recorded as a change."""
+    op = RemoveEdgesOp(relations=["owns", "works_at"])
+    with pytest.raises(
+        OpRefusal, match=r"remove_edges: unknown relations: \['owns'\]"
+    ) as info:
+        apply_evolution(_sample(), [op])
+    assert info.value.check == "unknown-relation"
+    assert info.value.subjects == ("owns",)
+
+
+def test_remove_edges_refuses_an_unknown_triple_as_an_unknown_edge() -> None:
+    op = RemoveEdgesOp(
+        edges=[{"source": "person", "target": "company", "relation": "ghost"}]
+    )
+    with pytest.raises(OpRefusal) as info:
+        apply_evolution(_sample(), [op])
+    assert info.value.check == "unknown-edge"
+    assert info.value.subjects == ('["person","company","ghost"]',)
+
+
+def test_rename_vertices_refuses_a_manifest_without_a_schema() -> None:
+    payload = _sample_manifest_payload()
+    del payload["schema"]
+    manifest = GraphManifest.from_dict(payload)
+    op = RenameVerticesOp(renames={"person": "human"})
+    with pytest.raises(
+        OpRefusal, match="rename_vertices requires graph_schema"
+    ) as info:
+        apply_evolution(manifest, [op])
+    assert info.value.check == "missing-block"
+    assert info.value.subjects == ("schema",)
+
+
+def test_rename_relations_refuses_a_manifest_without_a_schema() -> None:
+    payload = _sample_manifest_payload()
+    del payload["schema"]
+    manifest = GraphManifest.from_dict(payload)
+    op = RenameRelationsOp(renames={"works_at": "employed_by"})
+    with pytest.raises(
+        OpRefusal, match="rename_relations requires graph_schema"
+    ) as info:
+        apply_evolution(manifest, [op])
+    assert info.value.check == "missing-block"
+    assert info.value.subjects == ("schema",)
+
+
+def test_rename_vertices_refuses_an_unknown_vertex() -> None:
+    op = RenameVerticesOp(renames={"ghost": "spirit"})
+    with pytest.raises(OpRefusal, match=r"unknown vertices: \['ghost'\]") as info:
+        apply_evolution(_sample(), [op])
+    assert info.value.check == "unknown-vertex"
+    assert info.value.subjects == ("ghost",)
+
+
+def test_rename_resources_refuses_a_manifest_without_an_ingestion_model() -> None:
+    payload = _sample_manifest_payload()
+    del payload["ingestion_model"]
+    del payload["bindings"]
+    manifest = GraphManifest.from_dict(payload)
+    op = RenameResourcesOp(renames={"employees": "staff"})
+    with pytest.raises(
+        OpRefusal, match="rename_resources requires ingestion_model"
+    ) as info:
+        apply_evolution(manifest, [op])
+    assert info.value.check == "missing-block"
+    assert info.value.subjects == ("ingestion_model",)
+
+
+def test_rename_resources_refuses_an_unknown_resource() -> None:
+    op = RenameResourcesOp(renames={"ghosts": "spirits"})
+    with pytest.raises(OpRefusal, match=r"unknown resources: \['ghosts'\]") as info:
+        apply_evolution(_sample(), [op])
+    assert info.value.check == "unknown-resource"
+    assert info.value.subjects == ("ghosts",)
+
+
+def test_a_rename_onto_a_declared_property_names_it_as_the_subject() -> None:
+    op = RenameEdgePropertiesOp(renames={"works_at": {"weight": "since"}})
+    with pytest.raises(OpRefusal) as info:
+        apply_evolution(_sample(), [op])
+    assert info.value.check == "name-collision"
+    assert info.value.subjects == ('["person","company","works_at"].since',)

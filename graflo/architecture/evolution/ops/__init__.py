@@ -105,6 +105,7 @@ from .semantics import (
 from .validation import (
     validate_merge_sources,
     validate_rename_map_is_injective,
+    validate_rename_map_moves,
     validate_vocabulary_is_idempotent,
     validate_vocabulary_map,
     vocabulary_groups,
@@ -210,6 +211,7 @@ __all__ = [
     "ops_reaching_ingestion",
     "validate_merge_sources",
     "validate_rename_map_is_injective",
+    "validate_rename_map_moves",
     "validate_vocabulary_is_idempotent",
     "validate_vocabulary_map",
     "vocabulary_groups",

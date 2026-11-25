@@ -164,7 +164,7 @@ class ResourceRuntime:
             self._propagate_dynamic_edges(edge_config, vertex_config=vertex_config)
 
         logger.debug("total resource actor count (after init): %s", self._root.count())
-        self._init_extra_weights(vertex_config)
+        self._init_extra_weights()
 
     @property
     def name(self) -> str:
@@ -376,10 +376,11 @@ class ResourceRuntime:
                 edge.model_copy(deep=True), vertex_config=vertex_config
             )
 
-    def _init_extra_weights(self, vertex_config: VertexConfig) -> None:
+    def _init_extra_weights(self) -> None:
         reg = self._edge_derivation_registry
         for entry in self.config.extra_weights:
-            entry.edge.finish_init(vertex_config)
+            # Checked only: the config is normalized by its owner, never here.
+            entry.edge.validate()
             if reg is not None and entry.vertex_weights:
                 reg.merge_vertex_weights(entry.edge.edge_id, entry.vertex_weights)
 

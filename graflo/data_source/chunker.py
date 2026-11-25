@@ -35,7 +35,7 @@ import re
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from shutil import copyfileobj
-from typing import IO, Any, TextIO, TypeVar, cast
+from typing import IO, Any, Self, TextIO, TypeVar, cast
 from xml.etree import ElementTree as et
 
 import ijson
@@ -85,7 +85,7 @@ class AbstractChunker(abc.ABC):
         iteration_tried: Whether iteration has been attempted
     """
 
-    def __init__(self, batch_size=10, limit=None):
+    def __init__(self, batch_size: int = 10, limit: int | None = None) -> None:
         self.units_processed = 0
         self.batch_size = batch_size
         self.limit: int | None = limit
@@ -100,7 +100,7 @@ class AbstractChunker(abc.ABC):
         """
         return self.limit is not None and self.cnt >= self.limit
 
-    def __iter__(self):
+    def __iter__(self) -> Self:
         """Initialize iteration if not already done.
 
         Returns:
@@ -110,7 +110,7 @@ class AbstractChunker(abc.ABC):
             self._prepare_iteration()
         return self
 
-    def __next__(self):
+    def __next__(self) -> list[Any]:
         """Get the next batch of items.
 
         Returns:
@@ -164,11 +164,11 @@ class FileChunker(AbstractChunker):
 
     def __init__(
         self,
-        filename,
+        filename: Path,
         encoding: EncodingType = EncodingType.UTF_8,
-        mode="t",
-        **kwargs,
-    ):
+        mode: str = "t",
+        **kwargs: Any,
+    ) -> None:
         super().__init__(**kwargs)
         self.filename: Path = filename
         self.file_obj: TextIO | gzip.GzipFile | None = None
@@ -214,7 +214,7 @@ class FileChunker(AbstractChunker):
                 ),
             )
 
-    def __next__(self):
+    def __next__(self) -> list[Any]:
         """Get the next batch of lines.
 
         Returns:
@@ -255,7 +255,7 @@ class TableChunker(FileChunker):
             sep: Field separator (default: ',')
     """
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs: Any) -> None:
         self.sep = kwargs.pop("sep", ",")
         super().__init__(**kwargs)
         self.header: list[str]
@@ -303,7 +303,7 @@ class JsonlChunker(FileChunker):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
-    def __next__(self):
+    def __next__(self) -> list[Any]:
         """Get the next batch of JSON objects.
 
         Returns:
@@ -356,7 +356,7 @@ class TrivialChunker(AbstractChunker):
         **kwargs: Additional arguments for AbstractChunker
     """
 
-    def __init__(self, array: list[dict], **kwargs):
+    def __init__(self, array: list[dict], **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.array = array
 
@@ -368,7 +368,7 @@ class TrivialChunker(AbstractChunker):
         """
         return self.array[self.cnt : self.cnt + self.batch_size]
 
-    def __next__(self):
+    def __next__(self) -> list[Any]:
         """Get the next batch of items.
 
         Returns:
@@ -395,7 +395,7 @@ class ParquetChunker(FileChunker):
         **kwargs: Additional arguments for FileChunker
     """
 
-    def __init__(self, filename: Path, **kwargs):
+    def __init__(self, filename: Path, **kwargs: Any) -> None:
         super().__init__(filename=filename, **kwargs)
         self.df: pd.DataFrame | None = None
         self.columns: list[str] | None = None
@@ -445,7 +445,7 @@ class ChunkerDataFrame(AbstractChunker):
         **kwargs: Additional arguments for AbstractChunker
     """
 
-    def __init__(self, df: pd.DataFrame, **kwargs):
+    def __init__(self, df: pd.DataFrame, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.df = df
         self.columns = df.columns
@@ -518,7 +518,7 @@ class ChunkerFactory:
             )
 
     @classmethod
-    def create_chunker(cls, **kwargs) -> AbstractChunker:
+    def create_chunker(cls, **kwargs: Any) -> AbstractChunker:
         """Create an appropriate chunker for the given resource.
 
         Args:
@@ -568,10 +568,17 @@ class ChunkFlusherMono:
         target_prefix: Prefix for output files
         chunksize: Maximum number of items per file
         maxchunks: Maximum number of chunks to write
-        suffix: File suffix (default: '.json')
+        suffix: Tag in each file name, ``{target_prefix}#{suffix}#{n}.json.gz``
+            (default: 'good')
     """
 
-    def __init__(self, target_prefix, chunksize, maxchunks=None, suffix=None):
+    def __init__(
+        self,
+        target_prefix: str,
+        chunksize: int,
+        maxchunks: int | None = None,
+        suffix: str | None = None,
+    ) -> None:
         self.target_prefix = target_prefix
         self.acc = []
         self.chunk_count = 0
@@ -595,7 +602,7 @@ class ChunkFlusherMono:
                 self.iprocessed += len(self.acc)
                 self.acc = []
 
-    def push(self, item):
+    def push(self, item: Any) -> None:
         """Add an item to the current chunk.
 
         Args:
@@ -606,11 +613,15 @@ class ChunkFlusherMono:
             self.flush_chunk()
             gc.collect()
 
-    def stop(self):
-        """Flush any remaining items and close."""
+    def stop(self) -> bool:
+        """Whether the maximum number of chunks has been written.
+
+        Returns:
+            True once ``maxchunks`` is set and reached.
+        """
         return self.maxchunks is not None and (self.chunk_count >= self.maxchunks)
 
-    def items_processed(self):
+    def items_processed(self) -> int:
         """Get the total number of items processed.
 
         Returns:
@@ -632,26 +643,32 @@ class FPSmart:
         count: Maximum number of substitutions (0 for unlimited)
     """
 
-    def __init__(self, fp, pattern, substitute="", count=0):
+    def __init__(
+        self,
+        fp: IO[bytes] | gzip.GzipFile,
+        pattern: str,
+        substitute: str = "",
+        count: int = 0,
+    ) -> None:
         self.fp = fp
         self.pattern = pattern
         self.p = re.compile(self.pattern)
         self.count = count
         self.sub = substitute
 
-    def read(self, n):
+    def read(self, n: int) -> bytes:
         """Read and transform data from the file.
 
         Args:
             n: Number of bytes to read
 
         Returns:
-            str: Transformed data
+            bytes: Transformed data, UTF-8 encoded
         """
         s = self.fp.read(n).decode()
         return self.transform(s).encode()
 
-    def transform(self, s):
+    def transform(self, s: str) -> str:
         """Transform the data using the pattern.
 
         Args:
@@ -704,7 +721,7 @@ force_list_wos = (
 )
 
 
-def gunzip_file(fname_in, fname_out):
+def gunzip_file(fname_in: str | Path, fname_out: str | Path) -> None:
     """Decompress a gzipped file.
 
     Args:
@@ -715,20 +732,26 @@ def gunzip_file(fname_in, fname_out):
         copyfileobj(f_in, f_out)
 
 
-def parse_simple(fp, good_cf, force_list=None, root_tag=None):
+def parse_simple(
+    fp: gzip.GzipFile | FPSmart | IO[bytes],
+    good_cf: ChunkFlusherMono,
+    force_list: tuple[str, ...] | None = None,
+    root_tag: str | None = None,
+) -> None:
     """Parse XML file with simple structure.
+
+    Each matching element is converted to a dictionary and pushed to
+    ``good_cf``; parsing stops early once ``good_cf`` reports its chunk limit.
 
     Args:
         fp: File pointer to parse
-        good_cf: Function to check if an element is valid
+        good_cf: Chunk flusher that receives each parsed element
         force_list: List of tags that should always be lists
         root_tag: Root tag to start parsing from
-
-    Returns:
-        dict: Parsed XML data
     """
     events = ("start", "end")
-    tree = et.iterparse(fp, events)
+    # FPSmart.read takes a required size, which iterparse always passes.
+    tree = et.iterparse(cast(IO[bytes], fp), events)
     context = iter(tree)
     event, root = next(context)
     for event, pub in context:
@@ -749,11 +772,11 @@ def convert(
     source: pathlib.Path,
     target_root: str,
     chunk_size: int = 10000,
-    max_chunks=None,
+    max_chunks: int | None = None,
     pattern: str | None = None,
-    force_list=None,
-    root_tag=None,
-):
+    force_list: tuple[str, ...] | None = None,
+    root_tag: str | None = None,
+) -> None:
     """Convert XML file to JSON chunks.
 
     This function processes an XML file and converts it to a series of JSON files,

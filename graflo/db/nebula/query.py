@@ -11,6 +11,7 @@ from typing import Any, TypeVar
 
 from graflo.architecture.graph_types import EdgeDirection
 from graflo.architecture.schema.vertex import Field
+from graflo.db.aggregation import cypher_aggregation_return
 from graflo.db.nebula.util import (
     VID_SEPARATOR,
     escape_nebula_string,
@@ -18,6 +19,7 @@ from graflo.db.nebula.util import (
     nebula_type_for_field,
     serialize_nebula_value,
 )
+from graflo.onto import AggregationType
 
 _K = TypeVar("_K", bound=Hashable)
 
@@ -340,33 +342,36 @@ def fetch_edges_ngql(
 
 def aggregate_ngql(
     tag_name: str,
-    agg_func: str,
+    function: AggregationType,
     discriminant: str | None = None,
     aggregated_field: str | None = None,
     filter_clause: str = "",
 ) -> str:
-    """Build an aggregation query using MATCH."""
+    """An nGQL (v3) aggregation over *tag_name*, columns as in :mod:`graflo.db.aggregation`."""
+    return _aggregate(
+        tag_name,
+        f"v.`{tag_name}`.",
+        function,
+        discriminant,
+        aggregated_field,
+        filter_clause,
+    )
+
+
+def _aggregate(
+    tag_name: str,
+    prefix: str,
+    function: AggregationType,
+    discriminant: str | None,
+    aggregated_field: str | None,
+    filter_clause: str,
+) -> str:
     where = f" WHERE {filter_clause}" if filter_clause else ""
-    if agg_func == "COUNT":
-        if discriminant:
-            return (
-                f"MATCH (v:`{tag_name}`){where} "
-                f"RETURN v.`{tag_name}`.`{discriminant}` AS `key`, count(*) AS `count`"
-            )
-        return f"MATCH (v:`{tag_name}`){where} RETURN count(*) AS `count`"
-    elif agg_func in ("MAX", "MIN", "AVG"):
-        func = agg_func.lower()
-        return (
-            f"MATCH (v:`{tag_name}`){where} "
-            f"RETURN {func}(v.`{tag_name}`.`{aggregated_field}`) AS `val`"
-        )
-    elif agg_func == "SORTED_UNIQUE":
-        return (
-            f"MATCH (v:`{tag_name}`){where} "
-            f"RETURN DISTINCT v.`{tag_name}`.`{aggregated_field}` AS `val` "
-            f"ORDER BY `val`"
-        )
-    raise ValueError(f"Unsupported aggregation: {agg_func}")
+    value = f"{prefix}`{aggregated_field}`" if aggregated_field else None
+    key = f"{prefix}`{discriminant}`" if discriminant else None
+    return f"MATCH (v:`{tag_name}`){where} " + cypher_aggregation_return(
+        function, value, key
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -401,29 +406,12 @@ def upsert_vertex_gql(
 
 def aggregate_gql(
     tag_name: str,
-    agg_func: str,
+    function: AggregationType,
     discriminant: str | None = None,
     aggregated_field: str | None = None,
     filter_clause: str = "",
 ) -> str:
-    where = f" WHERE {filter_clause}" if filter_clause else ""
-    if agg_func == "COUNT":
-        if discriminant:
-            return (
-                f"MATCH (v:`{tag_name}`){where} "
-                f"RETURN v.`{discriminant}` AS `key`, count(*) AS `count`"
-            )
-        return f"MATCH (v:`{tag_name}`){where} RETURN count(*) AS `count`"
-    elif agg_func in ("MAX", "MIN", "AVG"):
-        func = agg_func.lower()
-        return (
-            f"MATCH (v:`{tag_name}`){where} "
-            f"RETURN {func}(v.`{aggregated_field}`) AS `val`"
-        )
-    elif agg_func == "SORTED_UNIQUE":
-        return (
-            f"MATCH (v:`{tag_name}`){where} "
-            f"RETURN DISTINCT v.`{aggregated_field}` AS `val` "
-            f"ORDER BY `val`"
-        )
-    raise ValueError(f"Unsupported aggregation: {agg_func}")
+    """A GQL (v5) aggregation over *tag_name*, columns as in :mod:`graflo.db.aggregation`."""
+    return _aggregate(
+        tag_name, "v.", function, discriminant, aggregated_field, filter_clause
+    )

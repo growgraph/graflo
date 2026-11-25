@@ -368,6 +368,13 @@ class ResourceExtraWeightEntry(ConfigBaseModel):
         edge = Edge.model_validate(d)
         return {"edge": edge, "vertex_weights": v_w}
 
+    @model_validator(mode="after")
+    def _normalize_edge(self) -> ResourceExtraWeightEntry:
+        # The edge is local to this entry, so it is kept in normal form from
+        # construction on (see :meth:`Edge.normalize`).
+        self.edge.normalize()
+        return self
+
 
 class ResourceConfig(ConfigBaseModel):
     """Declarative resource definition (serializable contract)."""

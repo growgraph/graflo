@@ -155,6 +155,40 @@ def test_aggregation_sorted_unique(conn_conf, test_graph_name, clean_db):
         assert unique_vals == ["A", "B", "C"]
 
 
+def test_aggregation_grouped_by_every_function(conn_conf, test_graph_name, clean_db):
+    """A discriminant groups every function: {group value: the ungrouped result}."""
+    _ = clean_db
+
+    with ConnectionManager(connection_config=conn_conf) as db_client:
+        docs = [
+            {"id": "1", "kind": "a", "score": 1},
+            {"id": "2", "kind": "a", "score": 3},
+            {"id": "3", "kind": "a", "score": 3},
+            {"id": "4", "kind": "b", "score": 5},
+            {"id": "5", "kind": "c"},
+        ]
+        db_client.upsert_docs_batch(docs, "Graded", match_keys=["id"])
+
+        def grouped(function):
+            return db_client.aggregate(
+                "Graded", function, discriminant="kind", aggregated_field="score"
+            )
+
+        assert grouped(AggregationType.COUNT) == {"a": 3, "b": 1, "c": 1}
+        assert grouped(AggregationType.MAX) == {"a": 3, "b": 5, "c": None}
+        assert grouped(AggregationType.MIN) == {"a": 1, "b": 5, "c": None}
+        assert grouped(AggregationType.AVERAGE) == {
+            "a": pytest.approx(7 / 3),
+            "b": 5.0,
+            "c": None,
+        }
+        assert grouped(AggregationType.SORTED_UNIQUE) == {
+            "a": [1, 3],
+            "b": [5],
+            "c": [],
+        }
+
+
 def test_keep_absent_documents(conn_conf, test_graph_name, clean_db):
     """Test keep_absent_documents functionality."""
     _ = clean_db

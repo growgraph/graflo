@@ -335,15 +335,23 @@ _MERGE3_EXPORTS = frozenset(
         "MergeResult",
         "build_merge_recipe",
         "build_recipe",
-        "describe_slot",
         "find_merge_base",
         "keep_both",
         "merge_three_way",
-        "op_slots",
         "re_merge",
         "resolve_clusters",
         "take_left",
         "take_right",
+    }
+)
+
+_FOOTPRINT_EXPORTS = frozenset(
+    {
+        "Slot",
+        "describe_slot",
+        "op_reads",
+        "op_slots",
+        "ops_independent",
     }
 )
 
@@ -492,6 +500,7 @@ __all__ = [
     "SharedKeySpace",
     "SideMaps",
     "SideRenames",
+    "Slot",
     "UnclassifiedListField",
     "VertexEquivalence",
     "VertexRow",
@@ -586,10 +595,12 @@ __all__ = [
     "merge_three_way",
     "naming_table",
     "op_from_dict",
+    "op_reads",
     "op_slots",
     "op_to_dict",
     "ops_from_dicts",
     "ops_from_yaml",
+    "ops_independent",
     "ops_reaching_ingestion",
     "ops_to_dicts",
     "ops_to_yaml_str",
@@ -702,6 +713,10 @@ def __getattr__(name: str) -> Any:
         from . import merge3 as merge3_mod
 
         return getattr(merge3_mod, name)
+    if name in _FOOTPRINT_EXPORTS:
+        from . import footprint as footprint_mod
+
+        return getattr(footprint_mod, name)
     if name in _COMPARE_EXPORTS:
         from . import compare as compare_mod
 

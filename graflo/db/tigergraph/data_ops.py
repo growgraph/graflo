@@ -13,6 +13,7 @@ from suthing import batched
 
 from graflo.architecture.graph_types import EdgeDirection
 from graflo.architecture.schema.vertex import FieldType
+from graflo.db.aggregation import check_aggregation
 from graflo.db.conn import (
     DEFAULT_DELETE_CHUNK_SIZE,
     consume_insert_edges_kwargs,
@@ -1282,29 +1283,25 @@ class TigerGraphDataOps:
 
     def aggregate(
         self,
-        class_name,
+        class_name: str,
         aggregation_function: AggregationType,
         discriminant: str | None = None,
         aggregated_field: str | None = None,
         filters: FilterExpression | list | dict | None = None,
-    ):
+    ) -> int:
+        """Count the vertices of *class_name*, the one aggregation TigerGraph serves.
+
+        Raises:
+            ValueError: If *aggregated_field* is missing where it is required.
+            NotImplementedError: For anything but an unfiltered, ungrouped COUNT,
+                which would need an installed GSQL query.
         """
-        Perform aggregation operations.
-        """
-        try:
-            if aggregation_function == AggregationType.COUNT and discriminant is None:
-                # Simple vertex count
-                count = self._conn._get_vertex_count(class_name)
-                return [{"_value": count}]
-            else:
-                # Complex aggregations require custom GSQL queries
-                logger.warning(
-                    f"Complex aggregation {aggregation_function} requires custom GSQL implementation"
-                )
-                return []
-        except Exception as e:
-            logger.error(f"Error in aggregation: {e}")
-            return []
+        function = check_aggregation(aggregation_function, aggregated_field)
+        if function != AggregationType.COUNT or discriminant or filters is not None:
+            raise NotImplementedError(
+                "TigerGraph aggregates only an unfiltered, ungrouped COUNT"
+            )
+        return int(self._conn._get_vertex_count(class_name))
 
     def keep_absent_documents(
         self,

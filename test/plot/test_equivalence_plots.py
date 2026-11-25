@@ -7,6 +7,7 @@ writer tests write ``.dot`` files, which need no layout run.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -233,11 +234,14 @@ def test_lookups_and_identity_rows_stay_out_of_the_attributes_view(preview):
 def test_raw_fields_feed_branches_that_feed_the_digest(preview):
     graph = _view(preview, "identity")
     sources = {
-        (tail.rsplit(".", 1)[-1], d["label"]) for tail, _, d in _edges(graph, "source")
+        (tail.rsplit(".", 1)[-1], d.get("label", ""))
+        for tail, _, d in _edges(graph, "source")
     }
     assert sources == {
         ("serial_number", "normalized_key(serial_number)"),
         ("serial", "normalized_key(serial)"),
+        ("asset_id", ""),
+        ("device_id", ""),
     }
     keys = [head for _, head, _ in _edges(graph, "key")]
     assert keys == ["merged:Machine.id"] * 3, "every branch, own keys too"
@@ -251,12 +255,27 @@ def test_branches_are_ordered_and_an_own_key_says_whose_it_is(preview):
         "#2 maintenance__asset_id\\nown key of left:Asset",
         "#3 sensors__device_id\\nown key of right:Device",
     ]
-    order = [(u, v) for u, v, d in graph.edges(data=True) if d["kind"] == "order"]
-    assert order == [(rank[0], rank[1]), (rank[1], rank[2])]
+
+
+def test_an_own_key_branch_reads_its_members_own_key(preview):
+    graph = _view(preview, "identity")
+    reads = {(t, h) for t, h, _ in _edges(graph, "source")}
+
+    assert (
+        "left:Asset.asset_id",
+        "vertex-cluster-0#branch:2:maintenance__asset_id",
+    ) in reads
+    assert (
+        "right:Device.device_id",
+        "vertex-cluster-0#branch:3:sensors__device_id",
+    ) in reads
 
 
 def test_a_member_keyed_source_names_its_member(vocabulary):
-    labels = {d["label"] for _, _, d in _edges(_view(vocabulary, "identity"), "source")}
+    labels = {
+        d.get("label", "")
+        for _, _, d in _edges(_view(vocabulary, "identity"), "source")
+    }
 
     assert "Machine: normalized_key(serial_number)" in labels
     assert "normalized_key(serial)" in labels, "an unkeyed source has no prefix"
@@ -271,6 +290,11 @@ def test_members_in_one_key_space_share_one_own_key_branch(vocabulary):
         "#2 maintenance__asset_id\\nown key of left:Machine",
         "#3 sensors__device_id\\nown key of right:Device",
     ]
+    shared = "vertex-cluster-0#branch:2:maintenance__asset_id"
+    assert {t for t, h, _ in _edges(graph, "source") if h == shared} == {
+        "left:Machine.asset_id",
+        "left:ProductionLine.asset_id",
+    }, "every member in the key space feeds the branch"
 
 
 def test_a_property_branch_reads_the_members_own_attribute(boundary):
@@ -364,8 +388,22 @@ def test_boxes_and_ranks_reach_the_dot_source(preview, tmp_path):
     )
     source = written["identity"].read_text()
     assert 'subgraph "cluster_resource_assets"' in source
-    assert '"rank"="same"' in source
     assert '"boxes"' not in source and '"ranks"' not in source
+
+
+def test_the_branches_are_drawn_as_one_column_in_order(preview, tmp_path):
+    """Graphviz reorders nodes of one rank among clusters; a record's fields hold."""
+    written = plot_equivalence(
+        preview, 0, tmp_path, views=("identity",), output_format="dot"
+    )
+    source = written["identity"].read_text()
+    (column,) = re.findall(r'"label"="(<f0>[^"]*)"', source)
+    assert column.split("|") == [
+        "<f0> #1 match_key",
+        "<f1> #2 maintenance__asset_id\\nown key of left:Asset",
+        "<f2> #3 sensors__device_id\\nown key of right:Device",
+    ]
+    assert '"tailport"="f0:e"' in source and '"headport"="f1:w"' in source
 
 
 def test_select_by_name_position_or_cluster_id(preview):

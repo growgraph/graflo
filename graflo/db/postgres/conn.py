@@ -22,7 +22,8 @@ Example:
 import logging
 import math
 from collections.abc import Collection
-from typing import Any
+from types import TracebackType
+from typing import Any, Literal, Self
 
 import psycopg2
 from psycopg2 import sql
@@ -169,7 +170,7 @@ class PostgresConnection(PostgresBulkMixin, Connection):
 
             return results
 
-    def __enter__(self):
+    def __enter__(self) -> Self:
         """Enter the context manager.
 
         Returns:
@@ -177,7 +178,12 @@ class PostgresConnection(PostgresBulkMixin, Connection):
         """
         return self
 
-    def __exit__(self, exc_type, exc_value, exc_traceback):
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        exc_traceback: TracebackType | None,
+    ) -> Literal[False]:
         """Exit the context manager.
 
         Ensures the connection is properly closed when exiting the context.

@@ -14,22 +14,24 @@ import typing
 import pytest
 
 from graflo.architecture.contract.manifest import GraphManifest
-from graflo.architecture.evolution import merge3
+from graflo.architecture.evolution import footprint, merge3
 from graflo.architecture.evolution import ops as ops_module
 from graflo.architecture.evolution.commit import build_commit
+from graflo.architecture.evolution.footprint import (
+    describe_slot,
+    op_reads,
+    op_slots,
+    ops_independent,
+)
 from graflo.architecture.evolution.history import History
 from graflo.architecture.evolution.merge3 import (
     ConflictResolution,
     MergeError,
     MergeRecipe,
     build_recipe,
-    describe_slot,
     find_merge_base,
     keep_both,
     merge_three_way,
-    op_reads,
-    op_slots,
-    ops_independent,
     re_merge,
     take_left,
     take_right,
@@ -77,34 +79,107 @@ def _core(manifest):
 # ── the slot map ────────────────────────────────────────────────────────────
 
 
-def test_every_op_in_the_vocabulary_has_an_explicit_slot_mapping() -> None:
-    """No op may reach the catch-all by accident.
+def test_every_op_in_the_vocabulary_has_an_explicit_footprint() -> None:
+    """Both footprint tables cover the op union, exactly.
 
-    An unmapped op is treated as touching the whole manifest, so it conflicts
-    with everything: it does not corrupt a schema, it makes that op unmergeable
-    -- quietly, and only for whoever happens to use it. Checking the dispatch
-    source for every member of the union is what makes adding op 32 without a
-    slot a failing test rather than a latent one.
+    An op with no entry is refused rather than given a footprint by guess, so
+    a missing entry makes that op unmergeable -- quietly, and only for whoever
+    happens to use it. Comparing each table with the union is what makes adding
+    an op without a footprint a failing test rather than a latent one; an entry
+    for a model outside the union is one the dispatch never reaches.
     """
-    source = inspect.getsource(merge3.op_slots)
-    union = typing.get_args(typing.get_args(ManifestOp)[0])
-    missing = sorted(
-        model.__name__ for model in union if f"ops.{model.__name__}" not in source
-    )
-    assert not missing, (
-        f"these ops have no slot mapping in op_slots: {missing}. Map each to "
-        "the location it touches, or add it to the whole-manifest branch if it "
+    union = set(typing.get_args(typing.get_args(ManifestOp)[0]))
+    write_advice = (
+        "Map each to the location it writes, or to the whole manifest if it "
         "genuinely rewrites everything."
     )
+    read_advice = (
+        "Map each to what it reads, or register it with `_reads_nothing` if "
+        "it reads nothing beyond what it writes."
+    )
+    for table, advice in (
+        (footprint.WRITES, write_advice),
+        (footprint.READS, read_advice),
+    ):
+        missing = sorted(model.__name__ for model in union - set(table))
+        extra = sorted(model.__name__ for model in set(table) - union)
+        assert not missing, f"these ops have no footprint: {missing}. {advice}"
+        assert not extra, f"these footprints are for no op in the union: {extra}"
+
+
+def test_an_op_with_no_footprint_is_refused() -> None:
+    """There is no catch-all: an unmapped op raises rather than merging."""
+    stranger = typing.cast(ManifestOp, object())
+
+    with pytest.raises(TypeError, match="no footprint for op object"):
+        op_slots(stranger)
+    with pytest.raises(TypeError, match="no footprint for op object"):
+        op_reads(stranger)
 
 
 def test_the_whole_manifest_ops_are_the_only_ones_that_conflict_with_everything() -> (
     None
 ):
-    """`("manifest",)` is a deliberate answer for two ops, not a default."""
+    """`("manifest",)` is a deliberate answer for a few ops, not a default.
+
+    Two ops rewrite everything, and realizing every declared inverse reaches
+    whatever is paired when it runs. No other write footprint names it.
+    """
     assert op_slots(ops_module.ProjectManifestOp(keep_vertices=["person"])) == {
         ("manifest",)
     }
+    assert op_slots(ops_module.MergeManifestsOp()) == {("manifest",)}
+    whole = {
+        model
+        for model, write in footprint.WRITES.items()
+        if "WHOLE_MANIFEST" in inspect.getsource(write)
+    }
+    assert whole == {
+        ops_module.ProjectManifestOp,
+        ops_module.MergeManifestsOp,
+        ops_module.AddInverseEdgesOp,
+    }
+
+
+def test_a_whole_manifest_op_is_independent_of_nothing() -> None:
+    """Keeping only ``person`` and adding a field to ``company``: one order refuses."""
+    base = _people_and_companies([KNOWS])
+    project = ops_module.ProjectManifestOp(keep_vertices=["person"])
+
+    assert not ops_independent(
+        project, AddVertexPropertiesOp(additions={"company": ["name"]}), base
+    )
+    assert not ops_independent(project, ops_module.AddEdgesOp(edges=[SELF_KNOWS]), base)
+
+
+def _with_inverse(edges: list[dict]) -> GraphManifest:
+    manifest = _people_and_companies(edges)
+    _core(manifest).edge_config.inverses = [
+        {"relation": "knows", "inverse": "known_by"}  # type: ignore[list-item]
+    ]
+    return GraphManifest.from_dict(manifest.to_dict())
+
+
+def test_realizing_every_declared_inverse_depends_on_the_whole_manifest() -> None:
+    """With no relations named, its reach is whatever is paired when it runs."""
+    realize_all = ops_module.AddInverseEdgesOp()
+
+    assert op_slots(realize_all) == {("manifest",)}
+    assert not ops_independent(
+        realize_all,
+        ops_module.AddEdgesOp(edges=[SELF_KNOWS]),
+        _with_inverse([KNOWS]),
+    )
+
+
+def test_realizing_an_inverse_depends_on_the_inverse_relation_s_edges() -> None:
+    """The op adds ``known_by`` edges; one added by the other side collides."""
+    realize = ops_module.AddInverseEdgesOp(relations=["knows"])
+    known_by = {"source": "company", "target": "person", "relation": "known_by"}
+    base = _with_inverse([KNOWS])
+
+    assert (*footprint.relation_slot("known_by"), "edges") in op_reads(realize, base)
+    assert not ops_independent(realize, ops_module.AddEdgesOp(edges=[known_by]), base)
 
 
 def test_sanitize_touches_only_the_profile() -> None:
@@ -213,7 +288,7 @@ def _people_and_companies(edges: list[dict]) -> GraphManifest:
 
 def test_an_edge_slot_nests_under_its_relation() -> None:
     """Relation-addressed and triple-addressed ops must see each other."""
-    relation = merge3._relation_slot("knows")
+    relation = footprint.relation_slot("knows")
     edge = op_slots(ops_module.SetEdgeDirectedOp(edges=[KNOWS], directed=False))
     assert edge == {(*relation, "edge", "person", "company", "directed")}
     assert op_slots(ops_module.RemoveEdgesOp(relations=["knows"])) == {relation}
@@ -248,7 +323,9 @@ def test_removing_a_relation_conflicts_with_flipping_an_edge_on_it() -> None:
     merged, result = merge_three_way(base, removed, flipped)
 
     assert merged is None
-    assert [tuple(c.slot) for c in result.conflicts] == [merge3._relation_slot("knows")]
+    assert [tuple(c.slot) for c in result.conflicts] == [
+        footprint.relation_slot("knows")
+    ]
     assert result.conflicts[0].base_excerpt["edges"][0]["relation"] == "knows"
 
 
@@ -264,6 +341,72 @@ def test_a_relation_wide_property_add_merges_with_an_edge_flip() -> None:
     edge = _core(merged).edge_config.edges[0]
     assert [f.name for f in edge.properties] == ["since"]
     assert edge.directed is False
+
+
+SELF_KNOWS = {"source": "company", "target": "company", "relation": "knows"}
+
+
+@pytest.mark.parametrize("adder", ["left", "right"])
+def test_a_relation_wide_property_add_conflicts_with_an_edge_added_to_the_relation(
+    adder: str,
+) -> None:
+    """A relation-wide op reaches whatever edges the relation has when it runs.
+
+    Applied after the new edge, the property lands on it too; applied before,
+    it does not. Neither order is the merge, so the two sides conflict, on the
+    edge the other side added.
+    """
+    base = _people_and_companies([KNOWS])
+    widened = _people_and_companies([{**KNOWS, "properties": ["weight"]}])
+    grown = _people_and_companies([KNOWS, SELF_KNOWS])
+    left, right = (grown, widened) if adder == "left" else (widened, grown)
+
+    merged, result = merge_three_way(base, left, right)
+
+    assert merged is None
+    (conflict,) = result.conflicts
+    assert tuple(conflict.slot) == footprint.edge_slot("company", "company", "knows")
+    ops_by_side = {
+        "left": [op.op for op in conflict.left_ops],
+        "right": [op.op for op in conflict.right_ops],
+    }
+    other = "right" if adder == "left" else "left"
+    assert ops_by_side[adder] == ["add_edges"]
+    assert ops_by_side[other] == ["add_edge_properties"]
+
+
+def test_a_relation_wide_edge_op_depends_on_the_relation_s_edge_set() -> None:
+    widen = ops_module.AddEdgePropertiesOp(additions={"knows": ["weight"]})
+    grow = ops_module.AddEdgesOp(edges=[SELF_KNOWS])
+    base = _people_and_companies([KNOWS])
+
+    assert (*footprint.relation_slot("knows"), "edges") in op_reads(widen, base)
+    assert not ops_independent(widen, grow, base)
+
+
+def test_a_per_edge_property_add_merges_with_an_edge_added_to_the_relation() -> None:
+    """A per-edge op names its edges, so a new sibling is out of its reach."""
+    per_edge = ops_module.AddEdgePropertiesOp(
+        per_edge=[{**KNOWS, "properties": ["weight"]}]
+    )
+    grow = ops_module.AddEdgesOp(edges=[SELF_KNOWS])
+
+    assert ops_independent(per_edge, grow, _people_and_companies([KNOWS]))
+
+
+def test_two_sides_adding_different_edges_to_one_relation_merge() -> None:
+    """Growing a relation on both sides is not a conflict; only reach is."""
+    base = _people_and_companies([KNOWS])
+    person_knows = {"source": "person", "target": "person", "relation": "knows"}
+
+    merged, result = merge_three_way(
+        base,
+        _people_and_companies([KNOWS, person_knows]),
+        _people_and_companies([KNOWS, SELF_KNOWS]),
+    )
+
+    assert merged is not None and not result.conflicts
+    assert len(_core(merged).edge_config.edges) == 3
 
 
 @pytest.mark.parametrize("remover", ["left", "right"])
@@ -282,7 +425,9 @@ def test_removing_a_vertex_conflicts_with_adding_an_edge_onto_it(remover: str) -
     merged, result = merge_three_way(base, left, right)
 
     assert merged is None
-    assert [tuple(c.slot) for c in result.conflicts] == [merge3._vertex_slot("company")]
+    assert [tuple(c.slot) for c in result.conflicts] == [
+        footprint.vertex_slot("company")
+    ]
 
 
 def test_the_dependent_op_is_reported_with_the_conflict() -> None:
@@ -327,7 +472,7 @@ def test_flipping_an_edge_conflicts_with_removing_its_endpoint() -> None:
     merged, result = merge_three_way(base, flipped, removed)
 
     assert merged is None
-    assert merge3._vertex_slot("company") in {tuple(c.slot) for c in result.conflicts}
+    assert footprint.vertex_slot("company") in {tuple(c.slot) for c in result.conflicts}
 
 
 def test_a_relation_wide_edit_conflicts_with_removing_a_vertex_it_connects() -> None:
@@ -339,7 +484,7 @@ def test_a_relation_wide_edit_conflicts_with_removing_a_vertex_it_connects() -> 
     merged, result = merge_three_way(base, widened, removed)
 
     assert merged is None
-    assert merge3._vertex_slot("company") in {tuple(c.slot) for c in result.conflicts}
+    assert footprint.vertex_slot("company") in {tuple(c.slot) for c in result.conflicts}
 
 
 def test_re_keying_onto_a_field_conflicts_with_removing_it() -> None:
@@ -350,7 +495,7 @@ def test_re_keying_onto_a_field_conflicts_with_removing_it() -> None:
     merged, result = merge_three_way(base, rekeyed, trimmed)
 
     assert merged is None
-    assert merge3._field_slot("person", "email") in {
+    assert footprint.field_slot("person", "email") in {
         tuple(c.slot) for c in result.conflicts
     }
 
@@ -472,14 +617,26 @@ def test_a_grounding_only_change_survives_a_merge() -> None:
     assert [f.name for f in person.properties] == ["id", "age"]
 
 
+def test_retargeting_onto_an_edge_the_other_side_adds_is_not_independent() -> None:
+    """The retarget creates the edge it moves to; adding that edge too collides."""
+    person_knows = {"source": "person", "target": "person", "relation": "knows"}
+    retarget = ops_module.RetargetEdgesOp(edges=[{**KNOWS, "new_target": "person"}])
+
+    assert not ops_independent(
+        retarget,
+        ops_module.AddEdgesOp(edges=[person_knows]),
+        _people_and_companies([KNOWS]),
+    )
+
+
 def test_slot_values_for_the_edge_addressed_ops() -> None:
     """29 of 35 ops had only the source-text meta-check; pin the edge family."""
-    relation = merge3._relation_slot("knows")
+    relation = footprint.relation_slot("knows")
     edge = (*relation, "edge", "person", "company")
     assert op_slots(ops_module.AddEdgesOp(edges=[KNOWS])) == {edge}
     assert op_slots(
         ops_module.RetargetEdgesOp(edges=[{**KNOWS, "new_target": "person"}])
-    ) == {edge}
+    ) == {edge, (*relation, "edge", "person", "person")}
     assert op_slots(
         ops_module.ReplaceEdgeIdentitiesOp(edges=[{**KNOWS, "identities": [["x"]]}])
     ) == {edge}
@@ -931,13 +1088,13 @@ def test_a_resource_reads_the_vertices_and_relations_its_pipeline_names() -> Non
     replace = ops_module.ReplaceResourcesOp(resources=op.resources)
 
     expected = {
-        merge3._vertex_slot("person"),
-        merge3._vertex_slot("company"),
-        merge3._relation_slot("knows"),
+        footprint.vertex_slot("person"),
+        footprint.vertex_slot("company"),
+        footprint.relation_slot("knows"),
     }
     assert op_reads(op) == expected
     assert op_reads(replace) == expected
-    assert op_slots(replace) == {merge3._resource_slot("links")}
+    assert op_slots(replace) == {footprint.resource_slot("links")}
 
 
 def test_adding_a_resource_conflicts_with_removing_a_vertex_it_casts() -> None:
@@ -956,7 +1113,7 @@ def test_adding_a_resource_conflicts_with_removing_a_vertex_it_casts() -> None:
     merged, result = merge_three_way(base, added, removed)
 
     assert merged is None
-    assert merge3._vertex_slot("company") in {tuple(c.slot) for c in result.conflicts}
+    assert footprint.vertex_slot("company") in {tuple(c.slot) for c in result.conflicts}
 
 
 def test_editing_a_pipeline_conflicts_with_removing_a_vertex_it_now_casts() -> None:
@@ -979,7 +1136,7 @@ def test_editing_a_pipeline_conflicts_with_removing_a_vertex_it_now_casts() -> N
     merged, result = merge_three_way(base, edited, removed)
 
     assert merged is None
-    assert merge3._vertex_slot("company") in {tuple(c.slot) for c in result.conflicts}
+    assert footprint.vertex_slot("company") in {tuple(c.slot) for c in result.conflicts}
 
 
 def test_an_edit_to_a_relation_this_side_renamed_reads_its_endpoints() -> None:
@@ -1008,7 +1165,7 @@ def test_a_resource_reads_the_fields_it_maps() -> None:
         ]
     )
 
-    assert merge3._field_slot("person", "email") in op_reads(op)
+    assert footprint.field_slot("person", "email") in op_reads(op)
 
 
 def test_adding_a_resource_conflicts_with_removing_a_field_it_maps() -> None:
@@ -1025,7 +1182,7 @@ def test_adding_a_resource_conflicts_with_removing_a_field_it_maps() -> None:
     merged, result = merge_three_way(base, added, trimmed)
 
     assert merged is None
-    assert merge3._field_slot("person", "email") in {
+    assert footprint.field_slot("person", "email") in {
         tuple(c.slot) for c in result.conflicts
     }
 
@@ -1320,3 +1477,334 @@ def test_a_swap_is_not_split() -> None:
     """``{a: b, b: a}`` only means a swap as one op; split, it collides with itself."""
     swap = RenameVerticesOp(renames={"a": "b", "b": "a"})
     assert merge3.split_by_slot(swap) == [swap]
+
+
+# ── cascades, splits and decisions ──────────────────────────────────────────
+
+
+def _fed(
+    resources: dict[str, list[str]], bindings: list[str] | None = None
+) -> GraphManifest:
+    """``person`` and ``company``, with one resource per entry producing its types."""
+    payload: dict = {
+        "schema": {
+            "metadata": {"name": "t"},
+            "graph": {
+                "vertex_config": {
+                    "vertices": [
+                        _vertex("person", ["id"], ["id"]),
+                        _vertex("company", ["id"], ["id"]),
+                    ]
+                },
+                "edge_config": {"edges": []},
+            },
+        },
+        "ingestion_model": {
+            "resources": [
+                {"name": name, "pipeline": [{"vertex": v} for v in types]}
+                for name, types in resources.items()
+            ]
+        },
+    }
+    if bindings:
+        payload["bindings"] = {
+            "connectors": [
+                {"name": f"{name}_files", "regex": f"{name}.*", "resource_name": name}
+                for name in bindings
+            ],
+            "resource_connector": [
+                {"resource": name, "connector": f"{name}_files"} for name in bindings
+            ],
+        }
+    return GraphManifest.from_dict(payload)
+
+
+def test_a_removal_writes_the_resources_its_cascade_trims_given_the_base() -> None:
+    base = _fed({"rows": ["person"], "feed": ["person", "company"]}, ["feed"])
+    remove = ops_module.RemoveVerticesOp(names=["company"])
+
+    assert op_slots(remove) == {("vertex", "company")}
+    assert op_slots(remove, base) == {
+        ("vertex", "company"),
+        ("resource", "feed"),
+        ("bindings",),
+    }
+
+
+def test_two_removals_trimming_one_pipeline_conflict() -> None:
+    """Together they would leave ``feed`` empty: a conflict, not a MergeError."""
+    base = _fed({"rows": ["person"], "feed": ["person", "company"]})
+    left = _applied(base, ops_module.RemoveVerticesOp(names=["company"]))
+    right = _applied(base, ops_module.RemoveVerticesOp(names=["person"]))
+
+    merged, result = merge_three_way(base, left, right)
+    assert merged is None
+    feed = next(c for c in result.conflicts if c.slot_key == ("resource", "feed"))
+    assert sorted(
+        op.names[0]
+        for op in feed.cascaded
+        if isinstance(op, ops_module.RemoveVerticesOp)
+    ) == ["company", "person"]
+    assert len(feed.cascaded) == 2
+    assert feed.reason == _CASCADE_REASON
+
+
+_CASCADE_REASON = (
+    "one side's change reaches this slot only through what it removes or renames"
+)
+
+
+def test_a_removal_held_by_an_edited_pipeline_is_marked_cascaded() -> None:
+    """The conflict on ``feed`` shows the removal as held through its cascade."""
+    base = _fed({"rows": ["person"], "feed": ["person", "company"]})
+    left = _applied(base, ops_module.RemoveVerticesOp(names=["company"]))
+    right = _applied(
+        base,
+        ops_module.ReplaceResourcesOp(
+            resources=[
+                {
+                    "name": "feed",
+                    "pipeline": [{"vertex": "company"}, {"vertex": "person"}],
+                }
+            ]
+        ),
+    )
+
+    _merged, result = merge_three_way(base, left, right)
+    feed = next(c for c in result.conflicts if c.slot_key == ("resource", "feed"))
+    assert [op.op for op in feed.cascaded] == ["remove_vertices"]
+    assert [op.op for op in feed.right_ops] == ["replace_resources"]
+    assert feed.reason == _CASCADE_REASON
+
+
+def test_a_conflict_on_a_named_slot_marks_nothing_cascaded() -> None:
+    base = _person(["id", "name"])
+    left = _applied(
+        base, ops_module.RemoveVertexPropertiesOp(removals={"person": ["name"]})
+    )
+    right = _applied(
+        base,
+        ops_module.ChangeFieldTypesOp(vertices={"person": {"name": {"type": "INT"}}}),
+    )
+
+    _merged, result = merge_three_way(base, left, right)
+    assert result.conflicts
+    assert all(conflict.cascaded == [] for conflict in result.conflicts)
+    assert all(conflict.reason != _CASCADE_REASON for conflict in result.conflicts)
+
+
+def _applied(base: GraphManifest, *ops: ManifestOp) -> GraphManifest:
+    from graflo.architecture.evolution.apply import apply_evolution
+
+    return apply_evolution(base, list(ops), bump_version=False, finish_init=False)
+
+
+def test_set_edge_directed_splits_by_relation() -> None:
+    """Every edge of a relation agrees on ``directed``, so a piece holds them all."""
+    op = ops_module.SetEdgeDirectedOp(
+        edges=[
+            {"source": "person", "target": "person", "relation": "knows"},
+            {"source": "person", "target": "company", "relation": "employs"},
+            {"source": "person", "target": "company", "relation": "knows"},
+        ],
+        directed=False,
+    )
+
+    pieces = merge3.split_by_slot(op)
+    assert all(isinstance(piece, ops_module.SetEdgeDirectedOp) for piece in pieces)
+    assert [
+        [
+            edge.edge_id()
+            for edge in typing.cast(ops_module.SetEdgeDirectedOp, piece).edges
+        ]
+        for piece in pieces
+    ] == [
+        [("person", "person", "knows"), ("person", "company", "knows")],
+        [("person", "company", "employs")],
+    ]
+
+
+def test_set_edge_directed_depends_on_the_edges_of_its_relation() -> None:
+    """An edge added to the relation would be left out in one order only."""
+    self_knows = {"source": "person", "target": "person", "relation": "knows"}
+    base = _people_and_companies([self_knows])
+    undirect = ops_module.SetEdgeDirectedOp(edges=[self_knows], directed=False)
+
+    assert not ops_independent(undirect, ops_module.AddEdgesOp(edges=[KNOWS]), base)
+
+
+def test_resource_ops_split_per_resource() -> None:
+    op = ops_module.ReplaceResourcesOp(
+        resources=[
+            {"name": "rows", "pipeline": [{"vertex": "person"}]},
+            {"name": "feed", "pipeline": [{"vertex": "company"}]},
+        ]
+    )
+
+    pieces = merge3.split_by_slot(op)
+    assert [op_slots(piece) for piece in pieces] == [
+        {("resource", "rows")},
+        {("resource", "feed")},
+    ]
+    swap = ops_module.RenameResourcesOp(renames={"rows": "feed", "feed": "rows"})
+    assert merge3.split_by_slot(swap) == [swap]
+
+
+def test_an_op_held_by_two_conflicts_follows_both_decisions() -> None:
+    """Taking a side's op in one of two conflicts holding it does not apply it."""
+    base = _manifest(
+        [
+            _vertex("order", ["id", "name"], ["id"]),
+            _vertex("city", ["id", "name"], ["id"]),
+            {**_vertex("company", ["id"], ["id"]), "subclass_of": [{"vertex": "city"}]},
+        ]
+    )
+    left = _applied(
+        base,
+        ops_module.ChangeFieldTypesOp(vertices={"order": {"name": {"type": "STRING"}}}),
+        ops_module.RemoveVerticesOp(names=["city"]),
+    )
+    right = _applied(
+        base,
+        ops_module.ChangeFieldTypesOp(
+            vertices={
+                "order": {"name": {"type": "INT"}},
+                "city": {"name": {"type": "INT"}},
+            }
+        ),
+        ops_module.SetVertexSubclassOfOp(
+            subclass_of={"order": [{"vertex": "company"}]}
+        ),
+    )
+    _none, result = merge_three_way(base, left, right)
+    holding = [
+        conflict
+        for conflict in result.conflicts
+        if any(op.op == "set_vertex_subclass_of" for op in conflict.right_ops)
+    ]
+    assert len(holding) >= 2
+
+    for flipped in holding:
+        decisions = [
+            take_right(c) if c is flipped else take_left(c) for c in result.conflicts
+        ]
+        merged, _resolved = merge_three_way(base, left, right, resolutions=decisions)
+        assert merged is not None
+        (order,) = [
+            v for v in _core(merged).vertex_config.vertices if v.name == "order"
+        ]
+        assert order.subclass_of == []
+
+
+def test_sanitize_depends_on_every_name() -> None:
+    """The names it records depend on every type present, a new one included."""
+    base = _people_and_companies([])
+    sanitize = ops_module.SanitizeOp(db_flavor="tigergraph")
+    order = ops_module.AddVerticesOp(vertices=[_vertex("order", ["id"], ["id"])])
+
+    assert not ops_independent(sanitize, order, base)
+
+
+def test_a_whole_profile_conflicts_with_an_index_added_beside_it() -> None:
+    """A whole profile drops an index added beside it in one order only."""
+    base = _person(["id", "name"])
+    reset = ops_module.SetDbProfileOp(profile={"db_flavor": "arango"})
+    index = ops_module.AddVertexIndexesOp(indexes={"person": [{"fields": ["id"]}]})
+
+    assert not ops_independent(reset, index, base)
+
+
+def test_bindings_depend_on_the_resources_they_wire() -> None:
+    """A binding of a resource removed on the other side applies in one order only."""
+    base = _fed({"rows": ["person"], "feed": ["company"]})
+    remove = ops_module.RemoveResourcesOp(names=["feed"])
+    wire = ops_module.SetBindingsOp(
+        bindings={
+            "connectors": [
+                {"name": "feed_files", "regex": "feed.*", "resource_name": "feed"}
+            ],
+            "resource_connector": [{"resource": "feed", "connector": "feed_files"}],
+        }
+    )
+
+    assert not ops_independent(remove, wire, base)
+
+
+def test_a_new_pipeline_depends_on_the_properties_of_what_it_produces() -> None:
+    """A property rename rewrites every pipeline producing the vertex, a new one too."""
+    base = _fed({"rows": ["person"]})
+    rename = ops_module.CanonicalizeOp(properties={"person": {"id": "name"}})
+    add = ops_module.AddResourcesOp(
+        resources=[{"name": "feed", "pipeline": [{"vertex": "person"}]}]
+    )
+
+    assert not ops_independent(rename, add, base)
+
+
+def test_creating_the_ingestion_block_depends_on_the_bindings() -> None:
+    """The block is refused while bindings wire a resource it lacks."""
+    base = _person(["id"])
+    create = ops_module.AddResourcesOp(
+        resources=[{"name": "rows", "pipeline": [{"vertex": "person"}]}]
+    )
+    wire = ops_module.SetBindingsOp(
+        bindings={
+            "connectors": [
+                {"name": "feed_files", "regex": "feed.*", "resource_name": "feed"}
+            ]
+        }
+    )
+
+    assert ("bindings",) in op_reads(create, base)
+    assert not ops_independent(create, wire, base)
+
+
+def _profiled(vertices: list[dict], profile: dict) -> GraphManifest:
+    return GraphManifest.from_dict(
+        {
+            "schema": {
+                "metadata": {"name": "t"},
+                "graph": {
+                    "vertex_config": {"vertices": vertices},
+                    "edge_config": {"edges": []},
+                },
+                "db_profile": profile,
+            }
+        }
+    )
+
+
+_PERSON = _vertex("person", ["id", "name"], ["id"])
+_ORDER = _vertex("order", ["id", "total"], ["id"])
+_ORDER_INDEXED = {
+    "db_flavor": "neo4j",
+    "vertex_indexes": {"order": [{"fields": ["total"]}]},
+}
+
+
+def test_a_profile_replaced_beside_a_new_indexed_type_conflicts_either_way() -> None:
+    """An index op reads the profile, so a whole-profile change on the other side meets it."""
+    base = _profiled([_PERSON], {"db_flavor": "neo4j"})
+    indexed = _profiled([_PERSON, _ORDER], _ORDER_INDEXED)
+    replaced = _profiled([_PERSON], {"db_flavor": "arango"})
+
+    for left, right in ((indexed, replaced), (replaced, indexed)):
+        merged, result = merge_three_way(base, left, right)
+        assert merged is None
+        assert [c.slot for c in result.conflicts] == [["db_profile"]]
+
+
+def test_index_additions_on_both_sides_merge_the_same_in_either_order() -> None:
+    from graflo.architecture.evolution.hashing import manifest_hash
+
+    base = _profiled([_PERSON], {"db_flavor": "neo4j"})
+    indexed = _profiled([_PERSON, _ORDER], _ORDER_INDEXED)
+    person_indexed = _profiled(
+        [_PERSON],
+        {"db_flavor": "neo4j", "vertex_indexes": {"person": [{"fields": ["name"]}]}},
+    )
+
+    first, _ = merge_three_way(base, indexed, person_indexed)
+    second, _ = merge_three_way(base, person_indexed, indexed)
+    assert first is not None and second is not None
+    assert manifest_hash(first) == manifest_hash(second)

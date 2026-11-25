@@ -55,12 +55,13 @@ repos:
     -   id: pretty-format-yaml
         args: [--autofix, --indent, '4', --preserve-quotes]
 
-  # TOML formatting and sorting. One tool only: pretty-format-toml is built on the
-  # toml-sort library, and its hook environment pins whatever toml-sort was current
-  # when it was installed. Once that differs from the rev below, the two rewrite
-  # inline tables back and forth ({a = 1} vs { a = 1 }) on every run.
+  # TOML formatting. uv.lock is excluded: `uv lock` owns its format.
+  # tomlrt (toml-sort's engine) is pinned because `rev` does not pin a hook's
+  # dependencies, so a fresh environment could format differently from a cached one.
 -   repo: https://github.com/pappasam/toml-sort
     rev: v0.25.0
     hooks:
     -   id: toml-sort
         args: [-ia]
+        exclude: ^uv\.lock$
+        additional_dependencies: [tomlrt==2.3.4]

@@ -14,7 +14,7 @@ from graflo.architecture.evolution import apply_evolution
 from graflo.architecture.evolution.codec import op_from_dict
 from graflo.architecture.evolution.hashing import manifest_hash
 from graflo.architecture.evolution.inverse import (
-    _HANDLERS,
+    INVERTERS,
     IRREVERSIBLE,
     inverse_per_op,
     invert_op,
@@ -555,7 +555,7 @@ class TestIrreversible:
     def test_every_revision_op_is_either_invertible_or_declared_lossy(self) -> None:
         """An op in neither table fails with a generic message instead of a reason."""
         declared = {cls.model_fields["op"].default for cls in _union_members()}
-        unclassified = sorted(declared - set(_HANDLERS) - set(IRREVERSIBLE))
+        unclassified = sorted(declared - set(INVERTERS) - set(IRREVERSIBLE))
         assert not unclassified, (
             f"ops with neither an inverse handler nor an IRREVERSIBLE reason: "
             f"{unclassified}"

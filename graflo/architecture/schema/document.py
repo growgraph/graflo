@@ -43,29 +43,40 @@ class Schema(ConfigBaseModel):
 
     @model_validator(mode="after")
     def _init_schema(self) -> Schema:
-        self.finish_init()
+        self.normalize()
+        self.validate()
         return self
 
     def finish_init(self) -> None:
-        from .db_aware import compile_secondary_identity_indexes
-        from .hierarchy import check_hierarchy_iris
+        """Normalize, then validate."""
+        self.normalize()
+        self.validate()
 
-        self.core_schema.finish_init()
-        check_hierarchy_iris(self.metadata, self.core_schema)
-        self._check_reserved_names()
-        compile_secondary_identity_indexes(
-            self.core_schema.vertex_config, self.db_profile
-        )
-        # Normalize away empty index entries left by index or identity removals:
-        # they mean the same as no entry but hash differently, which would make
-        # a replayed manifest compare unequal to an identically-authored one.
-        self.db_profile.prune_empty_vertex_indexes()
-        self.db_profile.validate_against_schema(self.core_schema.edge_config)
-        self.db_profile.reconcile_property_names(
+    def normalize(self) -> None:
+        """Bring the core schema, then the profile against it, to normal form.
+
+        The only mutator of the schema half; idempotent.
+        """
+        self.core_schema.normalize()
+        self.db_profile.normalize(
             self.core_schema.vertex_config, self.core_schema.edge_config
         )
-        self.db_profile.validate_native_inverses(
-            self.core_schema.edge_config, self.core_schema.vertex_config.vertex_set
+
+    def validate(self) -> None:  # ty: ignore[incompatible-method-override]
+        """Check the core schema, hierarchy IRIs, reserved names and the profile.
+
+        Pure: reads a normalized schema and never changes it.
+
+        Raises:
+            ValueError: The first check that fails.
+        """
+        from .hierarchy import check_hierarchy_iris
+
+        self.core_schema.validate()
+        check_hierarchy_iris(self.metadata, self.core_schema)
+        self._check_reserved_names()
+        self.db_profile.validate(
+            self.core_schema.vertex_config, self.core_schema.edge_config
         )
 
     def effective_namespace(

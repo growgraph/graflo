@@ -29,16 +29,16 @@ logger = logging.getLogger(__name__)
 
 
 def basic_query(
-    query,
-    port=8529,
-    hostname="127.0.0.1",
-    cred_name="root",
-    cred_pass="123",
-    db_name="_system",
-    profile=False,
-    batch_size=10000,
-    bind_vars=None,
-):
+    query: str,
+    port: int = 8529,
+    hostname: str = "127.0.0.1",
+    cred_name: str = "root",
+    cred_pass: str = "123",
+    db_name: str = "_system",
+    profile: bool = False,
+    batch_size: int = 10000,
+    bind_vars: dict[str, Any] | None = None,
+) -> Any:
     """Execute a basic AQL query in ArangoDB.
 
     This function provides a simple interface for executing AQL queries with
@@ -72,7 +72,14 @@ def basic_query(
     return cursor
 
 
-def profile_query(query, nq, profile_times, fpath, limit=None, **kwargs):
+def profile_query(
+    query: str,
+    nq: int,
+    profile_times: int,
+    fpath: str,
+    limit: int | None = None,
+    **kwargs: Any,
+) -> None:
     """Profile AQL query execution and save results.
 
     This function executes a query multiple times with profiling enabled and
@@ -126,10 +133,10 @@ def profile_query(query, nq, profile_times, fpath, limit=None, **kwargs):
 
 
 def fetch_fields_query(
-    collection_name,
-    docs,
-    match_keys,
-    keep_keys,
+    collection_name: str,
+    docs: list[dict[str, Any]],
+    match_keys: list[str] | tuple[str, ...],
+    keep_keys: list[str] | tuple[str, ...] | None,
     filters: list | dict | FilterExpression | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Generate a field-fetching AQL query and its bind variables.

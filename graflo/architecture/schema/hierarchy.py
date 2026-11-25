@@ -6,7 +6,7 @@ this module checks that a schema's hierarchy is consistent and answers what it
 entails. Nothing is inherited — a subclass gets no property, identity or storage
 from its parent — and nothing at ingestion or query time reads either list.
 
-Consistency (:func:`check_hierarchy`, run by ``CoreSchema.finish_init``):
+Consistency (:func:`check_hierarchy`, run by ``CoreSchema.validate``):
 
 - a local parent is declared, is not the element itself, and the local
   hierarchy is acyclic;
@@ -15,7 +15,7 @@ Consistency (:func:`check_hierarchy`, run by ``CoreSchema.finish_init``):
   pairs its parent relates;
 - an undirected edge has an undirected parent, for the same reason.
 
-:func:`check_hierarchy_iris` (run by ``Schema.finish_init``, which holds the
+:func:`check_hierarchy_iris` (run by ``Schema.validate``, which holds the
 metadata) refuses a local element named by IRI — one fact must have one form —
 and an IRI written with a declared namespace prefix as its scheme.
 """

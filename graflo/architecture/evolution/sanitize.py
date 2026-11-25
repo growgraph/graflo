@@ -307,6 +307,9 @@ def with_physical_names(
         profile.reconcile_property_names(
             schema.core_schema.vertex_config, schema.core_schema.edge_config
         )
+        profile.validate_property_names(
+            schema.core_schema.vertex_config, schema.core_schema.edge_config
+        )
     return schema.model_copy(update={"db_profile": profile})
 
 

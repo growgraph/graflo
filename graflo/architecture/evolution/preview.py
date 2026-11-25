@@ -51,7 +51,12 @@ from pydantic import Field as PydanticField
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.contract.manifest import GraphManifest
-from graflo.architecture.refusal import Refusal, RefusalKind, is_refusal_kind
+from graflo.architecture.refusal import (
+    OpRefusal,
+    Refusal,
+    RefusalKind,
+    is_refusal_kind,
+)
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.identity_funnel import IdentityFunnel
 from graflo.architecture.schema.vertex import FieldMergeError, Vertex
@@ -712,6 +717,10 @@ def expected_kinds(outcome: MergeOutcome) -> frozenset[FindingKind]:
         return frozenset()
     if outcome.kinds:
         return frozenset(outcome.kinds)
+    if outcome.error_type == OpRefusal.__name__ and outcome.check not in _KIND_BY_CHECK:
+        # An op precondition that failed inside the merge: no structural
+        # finding is its counterpart.
+        return frozenset()
     if outcome.check:
         return frozenset({kind_for_check(outcome.check, outcome.error_type)})
     by_type = _KINDS_BY_TYPE_NAME.get(outcome.error_type or "")
@@ -1923,7 +1932,7 @@ def build_merge3_preview(
         A :class:`Merge3Preview`. Never raises: a merge that could not complete
         is exactly the case worth drawing.
     """
-    from .merge3 import describe_slot, op_slots
+    from .footprint import describe_slot, op_slots
 
     del base  # excerpts travel on the conflicts themselves
 

@@ -19,7 +19,7 @@ The merge goes through.
 
 ![identity](vertex-Machine.identity.svg)
 
-*Identity. The raw fields each branch reads, labelled with the transform or the tag; a record tries the branches in order, #1 first, and the first it completes keys it.*
+*Identity. The raw fields each branch reads, labelled with the transform or the tag, and the member key each own-key branch reads; a record tries the branches in order, #1 on top, and the first it completes keys it.*
 
 ![lookups](vertex-Machine.lookups.svg)
 

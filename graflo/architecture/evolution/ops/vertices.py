@@ -13,7 +13,11 @@ from graflo.architecture.schema.vertex import (
     Vertex,
 )
 
-from .validation import validate_merge_sources, validate_rename_map_is_injective
+from .validation import (
+    validate_merge_sources,
+    validate_rename_map_is_injective,
+    validate_rename_map_moves,
+)
 
 
 class RemoveVerticesOp(ConfigBaseModel):
@@ -95,6 +99,14 @@ class RenameVertexPropertiesOp(ConfigBaseModel):
         min_length=1,
     )
 
+    @model_validator(mode="after")
+    def _reject_identity_entries(self) -> RenameVertexPropertiesOp:
+        for vertex, renames in self.renames.items():
+            validate_rename_map_moves(
+                renames, kind=f"rename_vertex_properties[{vertex!r}]"
+            )
+        return self
+
 
 class RemoveVertexPropertiesOp(ConfigBaseModel):
     """Remove vertex properties and propagate pruning to ingestion/db profile references."""
@@ -157,6 +169,7 @@ class RenameVerticesOp(ConfigBaseModel):
             kind="rename_vertices",
             merge_hint="MergeVerticesOp(sources=[...], into=...)",
         )
+        validate_rename_map_moves(self.renames, kind="rename_vertices")
         return self
 
 

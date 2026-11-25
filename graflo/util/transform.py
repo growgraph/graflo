@@ -140,7 +140,7 @@ def parse_date_yahoo(date0: str) -> str:
     return full_datetime
 
 
-def round_str(x: str, **kwargs) -> float:
+def round_str(x: str, **kwargs: Any) -> float:
     """Round a string number to specified precision.
 
     Args:
@@ -281,7 +281,7 @@ def _parse_date_reference(input_str: str) -> dict[str, int | str]:
             return {"year": input_str}
 
 
-def try_int(x):
+def try_int(x: Any) -> Any:
     """Attempt to convert a value to integer.
 
     Args:

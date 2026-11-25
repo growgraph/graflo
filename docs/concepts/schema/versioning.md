@@ -170,7 +170,8 @@ passed as `before=`; `checkout_parent(base, history, commit_id)` rebuilds it
 from the base. The inverses are then applied to the head. Inversion is exact
 or it fails: a commit holding an op with no inverse is refused, and so is one
 whose inverses no longer apply to the head because a later commit changed what
-they touch. Checking out the parent commit is always exact.
+they touch. Both raise `CommitError`, which `graflo revert` reports with the
+reason. Checking out the parent commit is always exact.
 
 | Reversible | Irreversible |
 |---|---|
@@ -237,7 +238,10 @@ Three rules make the slot the right unit:
   other side adds a property to `machine` is a real collision, visible only if
   the rename counts as touching the old slot too.
 - **An op touching several slots is atomic.** If any of them is contested, the
-  whole op is held back. Applying half an op is not a merge.
+  whole op is held back. Applying half an op is not a merge. Each side's ops
+  are first split one per slot where the op allows it: per type, per relation,
+  per resource. `set_edge_directed` splits per relation, since every edge of a
+  relation agrees on its direction.
 
 Slots nest, so `vertex/machine` contains `vertex/machine/field/serial_number`,
 and they are keyed on the canonical name: `work_order` and `WorkOrder` occupy
@@ -249,15 +253,34 @@ Edges nest under their relation: `relation/feeds` contains
 name (`remove_edges`, `rename_relations`, `merge_edges`) and by triple
 (`set_edge_directed`, `retarget_edges`, the index and identity ops), and
 nesting is what lets the two see each other: removing a relation on one side
-conflicts with flipping one of its edges on the other. A relation-wide property
-edit (`relation/feeds/field`) and a per-edge edit do not collide, and merge. An
+conflicts with flipping one of its edges on the other. Property edits on a
+relation's edges, relation-wide or per edge, share one slot
+(`relation/feeds/field`), so two different ones conflict. A property edit and a
+flip of an edge's direction write different slots, and merge. An
 edge with no relation has its own root (`edge/machine/line`), since no op
 addressed by relation can reach it. A declared inverse sits under both of its
 relations (`relation/feeds/inverse`), so renaming or removing a relation
 conflicts with declaring or retracting its inverse on the other side; a
 symmetric declaration sits under its one relation. A native inverse is a slot
 of its relation (`relation/feeds/native_inverse`), as on TigerGraph, where the
-reverse type belongs to the relation's edge type.
+reverse type belongs to the relation's edge type. An op whose reach is not
+named in it occupies the whole manifest (`manifest`), the slot that contains
+every other: `project_manifest`, and `add_inverse_edges` with no relations
+named, which realizes whatever is paired when it runs. Such an op conflicts
+with any change on the other side. With relations named, `add_inverse_edges`
+also writes the inverse relation, which it adds edges to.
+
+What an op writes is taken against the base it applies to (`op_slots(op,
+base)`). An op whose cascade rewrites ingestion also writes what it rewrites
+there: removing, renaming or merging a type or relation, retargeting an edge,
+`canonicalize` and `rename_vertex_properties` write each resource whose pipeline
+names what they touch, and the bindings when those wire such a resource;
+`remove_resources` and `rename_resources` write the bindings that wire them. So
+two removals that each trim one pipeline conflict there, even when the merged
+result would load. A secondary identity writes the vertex's indexes, which hold
+its derived index; registering a transform the base lacks writes the transform
+registry (`ingestion`); `set_db_profile` writes the indexes, edge specs
+(`relation/feeds/edge/machine/line/spec`) and native inverses it sets or drops.
 
 #### What an op reads
 
@@ -272,16 +295,38 @@ apply. So an op also has a read set (`op_reads`):
 |---|---|
 | `add_edges`, `retarget_edges`, and every op addressed by edge triple | the endpoint types (old and new, for a retarget) |
 | ops addressed by relation: edge properties, `remove_edges`, `rename_relations`, `merge_edges`, the inverse ops | the types that relation connects in the base, or, after a rename on the op's own side, the types the renamed relation connects; the op names only the relation |
+| the relation-wide forms of the edge property ops and of `change_field_types` | also the relation's edge set (`relation/feeds/edges`): they reach every edge the relation has when they run |
 | `replace_identity`, `add_secondary_identities` | the fields they key on, and those fields' types |
 | `add_vertex_indexes`; edge index and identity ops | the fields they index or key on |
 | `add_resources`, `replace_resources` | the types the pipeline names, the relations its edge steps write, and the properties it maps from a named column (a vertex step's `from`, a router's `vertex_from_map`); not a property a step fills under its own name |
+| `set_edge_directed`, `declare_edge_inverses` | also the edge set of each relation they name |
+| `set_field_semantics` on an edge property | the property it grounds |
+| `set_db_profile` | every type, property, edge and relation its profile names |
+| the index ops, `set_native_inverses`, the identity ops | also the database profile (`db_profile`), which `set_db_profile` and `sanitize` replace or rewrite whole |
+| `set_bindings` | the resources it wires |
+| `add_resources`, `replace_resources` | also the properties of each type the pipeline produces, which a property rename rewrites it for; an `add_resources` creating the ingestion block also reads the bindings |
+| `sanitize` | every name in the schema (`vertex`, `relation`, `edge`): any type, relation or property added, renamed or removed can change the stored names it records |
 
 A read is disturbed by a write at or above it, never below: an edge onto `line`
 conflicts with removing or renaming `line`, and merges with a new property on
-it. Two ops reading the same thing are independent, like two edges onto one
+it. There are two exceptions: any edge written directly under a relation
+disturbs the relation's edge set, and any write in a name space disturbs a read
+of the whole name space. So adding a property to every `feeds` edge conflicts
+with the other side adding a `feeds` edge, which the property would reach in
+one order and not in the other; two sides adding different `feeds` edges still
+merge. Two ops reading the same thing are independent, like two edges onto one
 type. An op both sides made is agreement, not a dependency. The conflict is
 reported at the written slot with both ops attached, and is resolved like any
 other. `ops_independent(a, b, base)` is the test the merge and its tests share.
+
+Each op's apply function, writes, reads and inverse are joined in one record,
+`op_laws()` in `graflo.architecture.evolution.op_laws`, and the laws are tested
+against every record. One of them is write soundness: applied to a manifest, an op
+changes no slot its writes against that manifest do not cover, except slots
+whose content names one it writes (`slot_projection.changes_outside`): an edge
+names its types, a resource what its pipeline names, the bindings the resources
+they wire, an index its fields, a declared pair its relations' edges, and each
+part of the database profile the profile.
 
 A change that no op expresses, such as one of a relation's edges gaining a
 property its siblings lack, cannot be merged at all: the
@@ -297,6 +342,17 @@ replaces rather than being appended, because op order is a precondition:
 `diff_manifests` emits an identity change before the secondary-identity
 addition that depends on it.
 
+A side's op can reach several contested slots, and then sits in each of their
+conflicts. It is applied only when every one of those decisions takes it, so a
+decision on one conflict cannot carry it past another that left it out. A
+resolution op that is not one of the sides' ops is applied as given.
+
+An op can sit in a conflict only through its cascade: removing `city` trims the
+pipeline of `feed`, so the removal is held by a conflict on `feed` though it
+never names it. `MergeConflict.cascaded` lists those ops, and when one side
+reaches the slot only that way, `reason` says so. Deciding such a conflict
+against the removal keeps the removed type.
+
 ### Union and three-way merge
 
 | | Three-way merge | Union |
@@ -304,7 +360,7 @@ addition that depends on it.
 | Inputs | two descendants of a common ancestor | two unrelated manifests |
 | Names | expected to agree; a disagreement is a conflict | expected to differ; declared equivalences reconcile them |
 | Function and command | `merge_three_way`, `graflo merge3` | `merge_manifests`, `graflo merge` |
-| Order of the sides | significant: the commit's ops are the diff from the first parent | significant in six fields only; see below |
+| Order of the sides | significant: the commit's ops are the diff from the first parent | significant in five fields only; see below |
 
 Both produce commits with several parents. The stored commit `kind` and the
 CLI verb spell the three-way merge `merge3` so that the two stay apart.
@@ -435,11 +491,18 @@ know what to compare against.
   2003, and *Associativity and Commutativity in Generic Merge*, LNCS 5600, 2009.
   Their Merge is the operator this page calls a union, and those papers study
   its commutativity. GraFlo's union is commutative except in the five preserved
-  fields above. The three-way merge is symmetric in its two sides (the same
-  conflicts, or the same content hash), and a clean result is each side's
-  change applied on top of the other; both properties are checked over
-  generated inputs for the structural ops. Associativity across three branches
-  is not claimed.
+  fields above: with the sides swapped, and the sides of every equivalence and
+  canonical map with them, it is refused in both orders or neither, and
+  otherwise has the same content hash once those five fields are put in one
+  order. That is checked over generated inputs under `name_conflict` `error`
+  and `union_right`; `prefix_right` renames only the right side, so it depends
+  on the order by definition. The three-way merge is symmetric in its two
+  sides (the same conflicts, or the same content hash), and a clean result is
+  each side's change applied on top of the other. Three branches off one base
+  also associate: merging the first two and then the third is clean exactly
+  when merging the last two into the first is, and the two clean results have
+  the same content hash. These properties are checked over generated inputs
+  for the structural ops, not proved.
 - Edwards, Petricek: *Baseline: Operation-Based Evolution and Versioning of
   Data*, 2025; Deshpande: *Living Databases*, 2026. Operation-based versioning of
   data, where the operations are the diff: the same design, applied to data

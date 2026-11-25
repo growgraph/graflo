@@ -3,6 +3,7 @@
 from test.db.cypher_cases.lifecycle import (
     modes,
     test_aggregation_count,
+    test_aggregation_grouped_by_every_function,
     test_aggregation_min_max_avg,
     test_aggregation_sorted_unique,
     test_ingest,
@@ -12,6 +13,7 @@ from test.db.cypher_cases.lifecycle import (
 __all__ = [
     "modes",
     "test_aggregation_count",
+    "test_aggregation_grouped_by_every_function",
     "test_aggregation_min_max_avg",
     "test_aggregation_sorted_unique",
     "test_ingest",

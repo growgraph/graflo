@@ -557,6 +557,10 @@ class BindingsConfig(ConfigBaseModel):
         """Resolve connector names or hashes to canonical connector hashes."""
         return {self._resolve_connector_ref_to_hash(ref) for ref in connector_refs}
 
+    def bound_resource_names(self) -> set[str]:
+        """Every resource a ``resource_connector`` row or a connector's ``resource_name`` names."""
+        return set(self._resource_to_connector_hashes)
+
     def get_connectors_for_resource(self, resource_name: str) -> list[AnyConnector]:
         """Return connectors bound to *resource_name*, in binding order (unique by hash)."""
         result: list[AnyConnector] = []

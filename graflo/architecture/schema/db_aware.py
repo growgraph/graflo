@@ -46,7 +46,7 @@ def compile_secondary_identity_indexes(
     the database to enforce uniqueness would reject exactly the duplicate data
     the ambiguity policy exists to handle.
 
-    Called from :meth:`Schema.finish_init` so the profile is populated for every
+    Called from :meth:`DatabaseProfile.normalize` so the profile is populated for every
     backend, including those whose index definition does not go through
     :meth:`Schema.resolve_db_aware`.
     """

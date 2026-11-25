@@ -140,7 +140,7 @@ class AbstractDataSource(ConfigBaseModel, abc.ABC):
     def close(self) -> None:
         """Release what :meth:`iter_batches` opened. Safe to call more than once."""
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[dict[str, Any]]:  # ty: ignore[incompatible-method-override]
         """Make data source iterable, yielding individual items.
 
         Yields:

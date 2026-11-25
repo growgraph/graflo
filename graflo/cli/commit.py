@@ -38,6 +38,7 @@ from graflo.architecture.evolution.commit import (
     build_revert_commit,
     compute_commit_id,
 )
+from graflo.architecture.evolution.footprint import describe_slot
 from graflo.architecture.evolution.hashing import manifest_hash
 from graflo.architecture.evolution.history import (
     FileCommitStore,
@@ -49,7 +50,6 @@ from graflo.architecture.evolution.history import (
 )
 from graflo.architecture.evolution.merge3 import (
     build_recipe,
-    describe_slot,
     find_merge_base,
     merge_three_way,
     take_left,

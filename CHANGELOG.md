@@ -5,6 +5,89 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `graflo.architecture.evolution.op_laws`: one `OpLaws` record per op (apply, writes, reads,
+  inverse or irreversible reason); `inverse._HANDLERS` is public as `INVERTERS`.
+- `graflo.architecture.evolution.slot_projection`: `slot_contents` (a manifest as slots) and
+  `changes_outside` (the changes an op's declared writes do not account for).
+- `normalize()` and `validate()` on `GraphManifest`, `Schema`, `CoreSchema`, `VertexConfig`,
+  `EdgeConfig`, `Edge`, `DatabaseProfile` and `IngestionModel`: `normalize` is the only mutator
+  and is idempotent, `validate` is a pure check; `finish_init` runs both, then builds runtimes.
+
+### Changed
+
+- A refused evolution op raises `OpRefusal` (still a `ValueError`) with a stable `check` kind
+  and the `subjects` it is about; a manifest that fails validation while an op is applied is
+  refused as `invalid-result`. New kind: `unknown-step`.
+- Op footprints live in `graflo.architecture.evolution.footprint`: `op_slots`, `op_reads`,
+  `ops_independent`, `describe_slot` and `Slot` move there from `merge3`. An op with no
+  footprint raises `TypeError` instead of being treated as touching the whole manifest.
+- An `extra_weights` edge declares its identity tokens as properties when the manifest is loaded,
+  not when ingestion runtimes are built, so a loaded manifest is already in normal form and
+  `finish_init` no longer moves its hash.
+- **Breaking:** with an ingestion block, `GraphManifest.validate()` and `finish_init()` refuse
+  bindings (a `resource_connector` row or a connector's `resource_name`) that name a resource the
+  ingestion model does not declare; `set_bindings`, and `add_resources` creating the ingestion
+  block, refuse them as `unknown-resource`.
+- Removing resources or vertex types prunes only the bindings of the resources removed.
+- The rename ops and `RenameHints` refuse an entry that renames a name onto itself, unless
+  another entry folds into it.
+- `op_slots(op, base)` takes the manifest the op applies to: a type, relation or property
+  removal, rename or merge also writes the resources its cascade rewrites and their bindings.
+- **Breaking:** `Connection.aggregate` returns one shape on every backend (`graflo.db.aggregation`):
+  COUNT an `int`, MAX/MIN a value or `None`, AVERAGE a `float` or `None`, SORTED_UNIQUE a sorted
+  list; with a `discriminant`, `{group value: that result}` for every function. ArangoDB,
+  PostgreSQL and TigerGraph no longer return `[{"_value": ...}]` rows; TigerGraph raises
+  `NotImplementedError` for anything but an unfiltered, ungrouped COUNT instead of returning `[]`.
+- A three-way merge now reports as conflicts what it used to merge into a result that did not
+  apply or depended on the side order: two cascades trimming one pipeline, a database profile or
+  `sanitize` beside a change to what they name or an index added, `set_bindings` beside the
+  removal of a resource it wires, a new pipeline beside a property rename of what it produces,
+  `set_edge_directed` or `declare_edge_inverses` beside an edge added to their relation, an edge
+  property grounded beside its creation.
+- The merge splits the resource ops per resource and `set_edge_directed` per relation.
+- A side's op held by several merge conflicts is applied only when every one of their decisions
+  takes it.
+- `MergeConflict.cascaded` lists the ops a conflict holds only through their cascade (a removal
+  or rename that rewrites the slot without naming it); such a conflict says so in `reason`.
+- `add_edge_indexes` creates an edge's physical spec when it has none, and `remove_edge_indexes`
+  drops a spec it leaves empty.
+- `diff_manifests` emits its ops in phases, each derived from the manifest the earlier phases
+  produce: removals before additions, indexes and the profile last.
+
+### Fixed
+
+- The equivalence identity figure draws its branches as one column in funnel order, `#1` on
+  top, and draws the member key each own-key branch reads.
+- A commit that clears a field's declared type records: the op payload keeps `type: null`.
+- `build_revert_commit` raises `CommitError` when the inverses are refused at the head, so
+  `graflo revert` reports it instead of a traceback.
+- `remove_edges` by relation clears `emit_inverse` on steps that mirrored into a removed relation.
+- `diff_manifests` output replays where it was refused partway: a property a lookup key names, an
+  index the property removal pruned, a relation changing direction or endpoints, an edge parent
+  dropped beside a direction change, an `emit_inverse` flag on a resource the target drops or
+  edits beside a retracted inverse pair.
+- `remove_edges` refuses a relation the manifest does not declare instead of ignoring it.
+- `ops_independent` no longer calls `project_manifest`, or `add_inverse_edges` with no relations
+  named, independent of other ops; `add_inverse_edges` with relations named depends on the
+  inverse relation's edges.
+- `retarget_edges` declares the edge it creates as well as the one it moves, so `ops_independent`
+  sees it collide with the same edge added elsewhere.
+- Three-way merge reports a conflict when one side edits a property on every edge of a
+  relation and the other side adds an edge to it; the result no longer depends on which side
+  is left.
+- A vertex without an explicit identity takes its declared properties as identity; secondary
+  identity fields no longer join it. A secondary identity equal to the implied primary, or with no
+  primary at all, is refused on a standalone `Vertex` and in a `VertexConfig` alike.
+- `aggregate` with a `discriminant` groups MAX, MIN, AVERAGE and SORTED_UNIQUE on Neo4j,
+  Memgraph, FalkorDB and NebulaGraph instead of ignoring the grouping; PostgreSQL serves
+  SORTED_UNIQUE.
+- `graph_time` reads the newest value as a scalar on ArangoDB and PostgreSQL.
+- `sorted_dicts` returns a list that is not made of flat dicts unchanged instead of raising.
+
 ## [1.27.5]
 
 ### Added

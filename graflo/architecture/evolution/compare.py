@@ -28,14 +28,14 @@ from graflo.architecture.schema.vertex import Field, Vertex
 
 from .autogenerate import RenameHints, _edges, _identity_target, _vertices
 from .canonicalize import canonical_payload
-from .merge3 import (
+from .footprint import (
     Slot,
-    _covers,
-    _edge_slot,
-    _field_slot,
-    _relation_slot,
-    _vertex_slot,
+    covers,
     describe_slot,
+    edge_slot,
+    field_slot,
+    relation_slot,
+    vertex_slot,
 )
 
 CompareStatus = Literal["unchanged", "added", "removed", "renamed", "changed"]
@@ -178,7 +178,7 @@ class SchemaComparison(ConfigBaseModel):
             nonlocal best
             for candidate in slots:
                 outer = tuple(candidate)
-                if not _covers(outer, target):
+                if not covers(outer, target):
                     continue
                 if best is not None and len(outer) <= best[0]:
                     continue
@@ -559,7 +559,7 @@ def _vertex_rows(ctx: _Context) -> list[VertexRow]:
         right_renames=rh.vertices,
         cross_renames=ctx.cross.vertices,
     )
-    anchor_slots = [_vertex_slot(p.anchor) for p in pairs]
+    anchor_slots = [vertex_slot(p.anchor) for p in pairs]
     ids = _row_ids(anchor_slots)
 
     rows: list[VertexRow] = []
@@ -576,7 +576,7 @@ def _vertex_rows(ctx: _Context) -> list[VertexRow]:
         right_renames = rh.vertex_properties.get(pair.right or "", {})
 
         def slot_for(side: str, field: str, names: dict = names) -> Slot | None:
-            return _field_slot(names[side], field) if names[side] else None
+            return field_slot(names[side], field) if names[side] else None
 
         fields = _field_rows(
             base=_vertex_owner(b, {}),
@@ -615,7 +615,7 @@ def _vertex_rows(ctx: _Context) -> list[VertexRow]:
                 aspects=aspects,
                 fields=fields,
                 changed_on=changed_on,
-                slots=_slot_lists({_vertex_slot(n) for n in names.values() if n}),
+                slots=_slot_lists({vertex_slot(n) for n in names.values() if n}),
             )
         )
     return rows
@@ -705,7 +705,7 @@ def _relation_rows(ctx: _Context) -> list[RelationRow]:
         named = triples.get("base") or triples.get("left") or triples.get("right")
         assert named is not None
         anchor_slots.append(
-            _edge_slot(
+            edge_slot(
                 ctx.anchor_of.get(source_row, source_row),
                 ctx.anchor_of.get(target_row, target_row),
                 named[2],
@@ -755,9 +755,9 @@ def _relation_rows(ctx: _Context) -> list[RelationRow]:
 
         slots: set[Slot] = set()
         for e in edge.values():
-            slots.add(_edge_slot(e.source, e.target, e.relation))
+            slots.add(edge_slot(e.source, e.target, e.relation))
             if e.relation is not None:
-                slots.add(_relation_slot(e.relation))
+                slots.add(relation_slot(e.relation))
 
         def side_of(side: str, e: Edge | None) -> RelationSide | None:
             if e is None:

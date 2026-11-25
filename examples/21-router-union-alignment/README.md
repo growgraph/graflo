@@ -243,7 +243,7 @@ equivalence names only `Machine` and `Device`:
 The register's sources are keyed by type. Machines derive `match_key`;
 every record can also fall back on its own key, one branch per key space:
 
-![Raw fields of register and devices feeding the two branches, labelled with the type each is for](figs/vertex-Equipment.identity.svg)
+![Raw fields of register and devices feeding #1 match_key, labelled with the type each is for, and each member's own key feeding the branch of its key space](figs/vertex-Equipment.identity.svg)
 
 See [a vocabulary that merges several types](../../docs/concepts/schema/merging_manifests.md#a-vocabulary-that-merges-several-types).
 

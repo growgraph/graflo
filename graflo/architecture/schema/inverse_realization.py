@@ -34,6 +34,7 @@ from pydantic import Field as PydanticField
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.graph_types import EdgeId
+from graflo.architecture.refusal import RefusalKind
 from graflo.architecture.schema.edge import Edge, EdgeConfig, inverse_map
 from graflo.architecture.schema.edge_direction import (
     REVERSE_TRAVERSAL_COST,
@@ -671,36 +672,51 @@ def materialized_inverse_id(edge_config: EdgeConfig, edge_id: EdgeId) -> EdgeId 
     return None
 
 
-def inverse_emission_refusal(edge_config: EdgeConfig, edge_id: EdgeId) -> str | None:
+def inverse_emission_refusal(
+    edge_config: EdgeConfig, edge_id: EdgeId
+) -> tuple[RefusalKind, str] | None:
     """Why an edge step writing exactly ``edge_id`` cannot set ``emit_inverse``, or None.
 
     Applies to a step whose endpoints and relation are all fixed, so it names one
     edge and everything can be decided from the schema: the relation needs a
     declared pair (a symmetric relation has no inverse edge -- its edges are
-    undirected), and the inverse must be materialized.
+    undirected), and the inverse must be materialized. The reason comes with its
+    refusal kind, so a caller that refuses can classify it.
     """
     source, target, relation = edge_id
     if relation is None:
-        return "the step names no relation, so there is no inverse to write"
+        return (
+            "unknown-relation",
+            "the step names no relation, so there is no inverse to write",
+        )
     if edge_config.is_symmetric(relation):
         return (
-            f"relation {relation!r} is symmetric; it has no inverse edge, its "
-            "edges are undirected"
+            "not-applicable",
+            (
+                f"relation {relation!r} is symmetric; it has no inverse edge, its "
+                "edges are undirected"
+            ),
         )
     inverse = edge_config.inverse_of(relation)
     if inverse is None:
         return (
-            f"relation {relation!r} has no declared inverse; add "
-            f"{{relation: {relation}, inverse: <name>}} to edge_config.inverses "
-            "(declare_edge_inverses)"
+            "unknown-inverse",
+            (
+                f"relation {relation!r} has no declared inverse; add "
+                f"{{relation: {relation}, inverse: <name>}} to edge_config.inverses "
+                "(declare_edge_inverses)"
+            ),
         )
     if materialized_inverse_id(edge_config, edge_id) is None:
         return (
-            f"the inverse edge {(target, source, inverse)} is not declared, so "
-            "there is nothing to write into. Declare it (add_inverse_edges), or "
-            "drop the flag and keep the inverse unstored -- it is still readable "
-            f"as the reverse of {relation!r}, and on TigerGraph the database can "
-            "maintain it (set_native_inverses)"
+            "unknown-edge",
+            (
+                f"the inverse edge {(target, source, inverse)} is not declared, so "
+                "there is nothing to write into. Declare it (add_inverse_edges), or "
+                "drop the flag and keep the inverse unstored -- it is still readable "
+                f"as the reverse of {relation!r}, and on TigerGraph the database can "
+                "maintain it (set_native_inverses)"
+            ),
         )
     return None
 

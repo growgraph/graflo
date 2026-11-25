@@ -153,7 +153,7 @@ for an asset or `#3 sensors__device_id` for a device. The first it completes
 is digested into `id`, so a record that falls back never fuses with the other
 source's.
 
-![Raw fields of assets and devices feeding the two branches, which feed Machine.id](figs/vertex-Machine.identity.svg)
+![Raw fields of assets and devices feeding #1 match_key, and each side's own key feeding its own branch, all three feeding Machine.id](figs/vertex-Machine.identity.svg)
 
 Each side's own key stays on `Machine` as a lookup, named after its manifest:
 

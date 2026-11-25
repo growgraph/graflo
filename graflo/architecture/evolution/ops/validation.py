@@ -36,6 +36,22 @@ def validate_rename_map_is_injective(
         )
 
 
+def validate_rename_map_moves(renames: Mapping[str, str], *, kind: str) -> None:
+    """Reject an entry that renames a name onto itself and nothing onto it.
+
+    Such an entry changes nothing, yet an op carrying it still claims the name
+    and may rewrite what refers to it, so it must not reach a history. A self
+    entry another entry folds into (``{a: b, b: b}``) is kept: it says the fold
+    onto an existing name is intended.
+    """
+    folded = {new for old, new in renames.items() if old != new}
+    unmoved = sorted(
+        old for old, new in renames.items() if old == new and old not in folded
+    )
+    if unmoved:
+        raise ValueError(f"{kind}: {unmoved} rename onto itself")
+
+
 def validate_merge_sources(sources: Sequence[str], into: str, *, kind: str) -> None:
     """Reject a merge whose sources repeat or include the target.
 

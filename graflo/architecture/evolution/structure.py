@@ -11,9 +11,11 @@ import logging
 
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.graph_types import EdgeId
+from graflo.architecture.refusal import OpRefusal
 from graflo.architecture.schema.hierarchy import rewrite_edge_refs
 
 from .ops import AddEdgesOp, AddVerticesOp, RetargetEdgesOp
+from .refusal_subjects import edges, names
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +24,11 @@ def apply_add_vertices(manifest: GraphManifest, op: AddVerticesOp) -> None:
     """Add new logical vertex types to the schema."""
     schema = manifest.graph_schema
     if schema is None:
-        raise ValueError("add_vertices requires graph_schema")
+        raise OpRefusal(
+            "add_vertices requires graph_schema",
+            check="missing-block",
+            subjects=("schema",),
+        )
 
     vertex_config = schema.core_schema.vertex_config
     existing = vertex_config.vertex_set
@@ -30,9 +36,11 @@ def apply_add_vertices(manifest: GraphManifest, op: AddVerticesOp) -> None:
         vertex.name for vertex in op.vertices if vertex.name in existing
     )
     if collisions:
-        raise ValueError(
+        raise OpRefusal(
             f"add_vertices: vertices already exist: {collisions}; use "
-            "RenameVerticesOp or MergeVerticesOp instead"
+            "RenameVerticesOp or MergeVerticesOp instead",
+            check="already-exists",
+            subjects=names(collisions),
         )
 
     vertex_config.vertices = [
@@ -46,19 +54,28 @@ def apply_add_edges(manifest: GraphManifest, op: AddEdgesOp) -> None:
     """Add new logical edge relations between existing vertex types."""
     schema = manifest.graph_schema
     if schema is None:
-        raise ValueError("add_edges requires graph_schema")
+        raise OpRefusal(
+            "add_edges requires graph_schema",
+            check="missing-block",
+            subjects=("schema",),
+        )
 
     edge_config = schema.core_schema.edge_config
     known_vertices = schema.core_schema.vertex_config.vertex_set
     existing_ids = {edge.edge_id for edge in edge_config.edges}
 
-    collisions = sorted(
-        str((edge.source, edge.target, edge.relation))
+    colliding_ids = [
+        (edge.source, edge.target, edge.relation)
         for edge in op.edges
         if (edge.source, edge.target, edge.relation) in existing_ids
-    )
+    ]
+    collisions = sorted(str(edge_id) for edge_id in colliding_ids)
     if collisions:
-        raise ValueError(f"add_edges: edges already exist: {collisions}")
+        raise OpRefusal(
+            f"add_edges: edges already exist: {collisions}",
+            check="already-exists",
+            subjects=edges(colliding_ids),
+        )
 
     unknown = sorted(
         {
@@ -69,9 +86,11 @@ def apply_add_edges(manifest: GraphManifest, op: AddEdgesOp) -> None:
         }
     )
     if unknown:
-        raise ValueError(
+        raise OpRefusal(
             f"add_edges: unknown endpoint vertex types: {unknown}; add them with "
-            "AddVerticesOp first"
+            "AddVerticesOp first",
+            check="unknown-vertex",
+            subjects=names(unknown),
         )
 
     edge_config.edges = [
@@ -90,17 +109,26 @@ def apply_retarget_edges(manifest: GraphManifest, op: RetargetEdgesOp) -> None:
     """
     schema = manifest.graph_schema
     if schema is None:
-        raise ValueError("retarget_edges requires graph_schema")
+        raise OpRefusal(
+            "retarget_edges requires graph_schema",
+            check="missing-block",
+            subjects=("schema",),
+        )
 
     edge_config = schema.core_schema.edge_config
     by_edge_id = {edge.edge_id: edge for edge in edge_config.edges}
     known_vertices = schema.core_schema.vertex_config.vertex_set
 
-    unknown_edges = sorted(
-        str(entry.edge_id()) for entry in op.edges if entry.edge_id() not in by_edge_id
-    )
+    unknown_ids = [
+        entry.edge_id() for entry in op.edges if entry.edge_id() not in by_edge_id
+    ]
+    unknown_edges = sorted(str(edge_id) for edge_id in unknown_ids)
     if unknown_edges:
-        raise ValueError(f"retarget_edges: unknown edges: {unknown_edges}")
+        raise OpRefusal(
+            f"retarget_edges: unknown edges: {unknown_edges}",
+            check="unknown-edge",
+            subjects=edges(unknown_ids),
+        )
 
     unknown_vertices = sorted(
         {
@@ -111,19 +139,24 @@ def apply_retarget_edges(manifest: GraphManifest, op: RetargetEdgesOp) -> None:
         }
     )
     if unknown_vertices:
-        raise ValueError(
-            f"retarget_edges: unknown endpoint vertex types: {unknown_vertices}"
+        raise OpRefusal(
+            f"retarget_edges: unknown endpoint vertex types: {unknown_vertices}",
+            check="unknown-vertex",
+            subjects=names(unknown_vertices),
         )
 
-    collisions = sorted(
-        str(entry.retargeted_edge_id())
+    colliding_ids = [
+        entry.retargeted_edge_id()
         for entry in op.edges
         if entry.retargeted_edge_id() in by_edge_id
-    )
+    ]
+    collisions = sorted(str(edge_id) for edge_id in colliding_ids)
     if collisions:
-        raise ValueError(
+        raise OpRefusal(
             f"retarget_edges: retargeted edges collide with existing ones: "
-            f"{collisions}; use MergeEdgesOp to combine them"
+            f"{collisions}; use MergeEdgesOp to combine them",
+            check="name-collision",
+            subjects=edges(colliding_ids),
         )
 
     mapping: dict[EdgeId, tuple[str, str]] = {}
@@ -148,13 +181,23 @@ def apply_retarget_edges(manifest: GraphManifest, op: RetargetEdgesOp) -> None:
     # pre-retarget id, which the Schema-level spec check then reads as a dangling
     # reference. Reassigning the list re-runs the validator and rebuilds the index.
     # A superproperty names its edge by id, so it follows the retarget too.
-    edge_config.edges = rewrite_edge_refs(
-        edge_config.edges,
-        edge_map={entry.edge_id(): entry.retargeted_edge_id() for entry in op.edges},
-    )
-
-    schema.db_profile = _revalidated_profile(schema)
-    schema.finish_init()
+    try:
+        edge_config.edges = rewrite_edge_refs(
+            edge_config.edges,
+            edge_map={
+                entry.edge_id(): entry.retargeted_edge_id() for entry in op.edges
+            },
+        )
+        schema.db_profile = _revalidated_profile(schema)
+        schema.finish_init()
+    except ValueError as exc:
+        # A retargeted subproperty whose endpoints no longer sit under its
+        # parent's is only visible on the whole hierarchy.
+        raise OpRefusal(
+            str(exc),
+            check="invalid-result",
+            subjects=edges(entry.edge_id() for entry in op.edges),
+        ) from exc
 
     if manifest.ingestion_model is not None:
         from .apply import _rebuild_ingestion_with_pipeline_rewrite

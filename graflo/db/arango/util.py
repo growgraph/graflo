@@ -22,7 +22,7 @@ from graflo.onto import ExpressionFlavor
 logger = logging.getLogger(__name__)
 
 
-def define_extra_edges(g: Edge):
+def define_extra_edges(g: Edge) -> str:
     """Generate AQL query for creating derived edges.
 
     This function creates a query to generate edges from source to target
@@ -61,7 +61,7 @@ def define_extra_edges(g: Edge):
 
 def render_filters(
     filters: None | list | dict | FilterExpression = None,
-    doc_name="d",
+    doc_name: str = "d",
     params: BoundParams | None = None,
 ) -> str:
     """Convert filter expressions to AQL filter clauses.

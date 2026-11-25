@@ -21,6 +21,7 @@ from graflo.db.nebula.query import (
     insert_vertices_ngql,
     upsert_vertex_gql,
 )
+from graflo.onto import AggregationType
 
 # ── DDL: space management ────────────────────────────────────────────────
 
@@ -218,45 +219,51 @@ def test_fetch_docs_gql_with_return_keys():
 
 
 def test_aggregate_count():
-    q = aggregate_ngql("Person", "COUNT")
-    assert "count(*)" in q
+    q = aggregate_ngql("Person", AggregationType.COUNT)
+    assert q == "MATCH (v:`Person`) RETURN count(*) AS agg_value"
 
 
 def test_aggregate_count_with_discriminant():
-    q = aggregate_ngql("Person", "COUNT", discriminant="age")
-    assert "v.`Person`.`age`" in q
-    assert "count(*)" in q
+    q = aggregate_ngql("Person", AggregationType.COUNT, discriminant="age")
+    assert "v.`Person`.`age` AS group_key" in q
+    assert "count(*) AS agg_value" in q
 
 
 def test_aggregate_max():
-    q = aggregate_ngql("Person", "MAX", aggregated_field="age")
+    q = aggregate_ngql("Person", AggregationType.MAX, aggregated_field="age")
     assert "max(v.`Person`.`age`)" in q
 
 
 def test_aggregate_avg():
-    q = aggregate_ngql("Person", "AVG", aggregated_field="age")
+    q = aggregate_ngql("Person", AggregationType.AVERAGE, aggregated_field="age")
     assert "avg(v.`Person`.`age`)" in q
 
 
 def test_aggregate_sorted_unique():
-    q = aggregate_ngql("Person", "SORTED_UNIQUE", aggregated_field="name")
-    assert "DISTINCT" in q
-    assert "ORDER BY" in q
+    q = aggregate_ngql("Person", AggregationType.SORTED_UNIQUE, aggregated_field="name")
+    assert "collect(DISTINCT v.`Person`.`name`)" in q
+
+
+def test_aggregate_grouped_max():
+    q = aggregate_ngql(
+        "Person", AggregationType.MAX, discriminant="city", aggregated_field="age"
+    )
+    assert "v.`Person`.`city` AS group_key, max(v.`Person`.`age`)" in q
 
 
 # ── DQL: aggregation (GQL v5) ────────────────────────────────────────────
 
 
 def test_aggregate_gql_count():
-    q = aggregate_gql("Person", "COUNT")
+    q = aggregate_gql("Person", AggregationType.COUNT)
     assert "count(*)" in q
 
 
 def test_aggregate_gql_max():
-    q = aggregate_gql("Person", "MAX", aggregated_field="age")
+    q = aggregate_gql("Person", AggregationType.MAX, aggregated_field="age")
     assert "max(v.`age`)" in q
 
 
 def test_aggregate_gql_count_discriminant():
-    q = aggregate_gql("Person", "COUNT", discriminant="age")
-    assert "v.`age`" in q
+    q = aggregate_gql("Person", AggregationType.COUNT, discriminant="age")
+    assert "v.`age` AS group_key" in q

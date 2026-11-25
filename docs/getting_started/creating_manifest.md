@@ -146,6 +146,9 @@ resource that reads its records.
   `{resource: <resource name>, connector: <connector name>}` rows. One
   resource may appear on several rows when its records come from several
   places. A connector that a row refers to needs a `name`.
+- When the manifest has an `ingestion_model`, every resource that
+  `resource_name` or a `resource_connector` row names must be one of its
+  resources; validation refuses one that is not.
 - `connector_connection`: for sources that need credentials, a list of
   `{connector: <connector name>, conn_proxy: <label>}` rows. The manifest
   holds only the label; at run time you supply the connection settings for
@@ -200,6 +203,11 @@ schema declares:
 
 A step that breaks one of these is refused when the manifest loads. An edge
 found in the data that no edge declares is skipped, with a warning.
+
+`finish_init` is `normalize()`, then `validate()`, then the runtime build. To
+check a manifest without building anything, call
+`manifest.validate(strict_references=True)`: it refuses what `finish_init`
+refuses and leaves the manifest as it was.
 
 ```python
 from graflo import GraphEngine, GraphManifest

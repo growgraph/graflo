@@ -519,15 +519,15 @@ class TestUnionCoverage:
 
     def test_every_op_is_reversible_or_says_why_not(self) -> None:
         """The split quoted wherever the vocabulary is described; update both."""
-        from graflo.architecture.evolution.inverse import _HANDLERS, IRREVERSIBLE
+        from graflo.architecture.evolution.inverse import INVERTERS, IRREVERSIBLE
 
         names = {
             model.model_fields["op"].default
             for model in typing.get_args(typing.get_args(ManifestOp)[0])
         }
-        assert set(_HANDLERS) | set(IRREVERSIBLE) == names
-        assert not set(_HANDLERS) & set(IRREVERSIBLE)
-        assert (len(_HANDLERS), len(IRREVERSIBLE)) == (41, 8)
+        assert set(INVERTERS) | set(IRREVERSIBLE) == names
+        assert not set(INVERTERS) & set(IRREVERSIBLE)
+        assert (len(INVERTERS), len(IRREVERSIBLE)) == (41, 8)
 
 
 class TestRoundTrip:
@@ -602,6 +602,17 @@ class TestRoundTrip:
 
         assert restored == original
         assert restored.replacements["party"].to.funnel.branch_ids == ["email", "phone"]
+
+    def test_a_cleared_field_type_round_trips(self) -> None:
+        """``type: null`` clears a declared type; the payload must keep it."""
+        original = op_from_dict(
+            {"op": "change_field_types", "vertices": {"city": {"name": {"type": None}}}}
+        )
+
+        restored = ops_from_yaml(ops_to_yaml_str([original]))[0]
+
+        assert restored == original
+        assert restored.vertices["city"]["name"].type is None
 
     def test_ops_from_yaml_accepts_a_mapping_with_an_ops_key(self) -> None:
         body = "ops:\n" + "".join(

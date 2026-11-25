@@ -29,7 +29,7 @@ import json
 import logging
 from functools import cache, lru_cache
 from pathlib import Path
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 from arango.exceptions import CursorNextError
 
@@ -47,7 +47,7 @@ class TigerGraphIdentifierRules(NamedTuple):
     invalid_characters: tuple[str, ...]
 
 
-def get_data_from_cursor(cursor, limit=None):
+def get_data_from_cursor(cursor: Any, limit: int | None = None) -> list[Any]:
     """Retrieve data from a cursor with optional limit.
 
     This function iterates over a database cursor and collects the results
@@ -82,7 +82,7 @@ def get_data_from_cursor(cursor, limit=None):
             return batch
 
 
-def serialize_value(value):
+def serialize_value(value: Any) -> Any:
     """Serialize non-serializable values for database operations.
 
     Converts datetime, date, time, and Decimal objects to JSON-serializable types.
@@ -97,9 +97,6 @@ def serialize_value(value):
         - datetime/date/time objects become ISO format strings
         - Decimal objects become floats
         - Other values are returned unchanged
-
-    Raises:
-        TypeError: If the value type is not serializable and not handled
 
     Example:
         >>> from datetime import datetime
@@ -158,7 +155,7 @@ def serialize_document(doc: dict) -> dict:
     return serialized
 
 
-def json_serializer(obj):
+def json_serializer(obj: Any) -> Any:
     """JSON serializer for objects not serializable by default json code.
 
     This function is designed to be used as the `default` parameter for json.dumps().

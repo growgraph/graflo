@@ -13,7 +13,10 @@ from graflo.architecture.evolution import (
     RemoveVertexIndexesOp,
     SetEdgeDirectedOp,
     apply_evolution,
+    invert_op,
+    invert_ops,
 )
+from graflo.architecture.evolution.hashing import manifest_hash
 
 
 def _manifest(
@@ -264,6 +267,10 @@ class TestVertexIndexes:
             )
 
 
+HOLDS = {"source": "party", "target": "asset", "relation": "holds"}
+SINCE = {"fields": ["since"]}
+
+
 class TestEdgeIndexes:
     @staticmethod
     def _with_spec(indexes: list[dict] | None = None) -> GraphManifest:
@@ -321,7 +328,7 @@ class TestEdgeIndexes:
 
     def test_removes_an_index(self):
         out = apply_evolution(
-            self._with_spec([{"fields": ["since"]}]),
+            self._with_spec([{"fields": ["since"]}, {"fields": ["qty"]}]),
             [
                 RemoveEdgeIndexesOp(
                     edges=[
@@ -339,6 +346,59 @@ class TestEdgeIndexes:
         assert out.graph_schema is not None
         spec = out.graph_schema.db_profile.edge_specs[0]
         assert all(index.fields != ["since"] for index in spec.indexes)
+        assert [index.fields for index in spec.indexes] == [["qty"]]
+
+    def test_the_first_index_creates_the_spec(self):
+        out = apply_evolution(
+            _manifest(), [AddEdgeIndexesOp(edges=[{**HOLDS, "indexes": [SINCE]}])]
+        )
+
+        assert out.graph_schema is not None
+        (spec,) = out.graph_schema.db_profile.edge_specs
+        assert spec.physical_key == ("party", "asset", "holds", None)
+        assert [index.fields for index in spec.indexes] == [["since"]]
+
+    def test_removing_the_last_index_drops_the_spec(self):
+        out = apply_evolution(
+            self._with_spec([SINCE]),
+            [RemoveEdgeIndexesOp(edges=[{**HOLDS, "fields": [["since"]]}])],
+        )
+
+        assert out.graph_schema is not None
+        assert out.graph_schema.db_profile.edge_specs == []
+        assert manifest_hash(out) == manifest_hash(_manifest())
+
+    def test_a_spec_that_carries_more_than_indexes_is_kept(self):
+        manifest = _manifest(
+            db_profile={
+                "edge_specs": [{**HOLDS, "relation_name": "HOLDS", "indexes": [SINCE]}]
+            }
+        )
+        out = apply_evolution(
+            manifest, [RemoveEdgeIndexesOp(edges=[{**HOLDS, "fields": [["since"]]}])]
+        )
+
+        assert out.graph_schema is not None
+        (spec,) = out.graph_schema.db_profile.edge_specs
+        assert spec.relation_name == "HOLDS"
+        assert spec.indexes == []
+
+    def test_the_inverse_of_a_created_spec_removes_it_again(self):
+        manifest = _manifest()
+        op = AddEdgeIndexesOp(edges=[{**HOLDS, "indexes": [SINCE]}])
+        (undo,), blockers = invert_ops([op], manifest=manifest)
+        assert blockers == []
+
+        out = apply_evolution(manifest, [op, undo], bump_version=False)
+
+        assert manifest_hash(out) == manifest_hash(manifest)
+
+    def test_no_inverse_is_offered_over_a_spec_with_nothing_in_it(self):
+        """Removing the index would drop the spec the pre-state declared."""
+        manifest = self._with_spec()
+        op = AddEdgeIndexesOp(edges=[{**HOLDS, "indexes": [SINCE]}])
+
+        assert invert_op(op, manifest=manifest) is None
 
     def test_unknown_edge_is_rejected(self):
         with pytest.raises(ValueError, match="unknown edge"):

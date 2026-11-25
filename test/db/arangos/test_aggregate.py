@@ -23,10 +23,20 @@ def test_average(create_db, conn_conf, test_db_name):
             discriminant="class",
             aggregated_field="value",
         )
-        assert r == [
-            {"class": "a", "_value": 2},
-            {"class": "b", "_value": 4.5},
-        ]
+        assert r == {"a": 2.0, "b": 4.5}
 
         r = db_client.aggregate("samples", AggregationType.COUNT)
-        assert r == [{"_value": 5}]
+        assert r == 5
+
+        r = db_client.aggregate(
+            "samples",
+            AggregationType.SORTED_UNIQUE,
+            discriminant="class",
+            aggregated_field="value",
+        )
+        assert r == {"a": [1, 2, 3], "b": [4, 5]}
+
+        r = db_client.aggregate(
+            "samples", AggregationType.MAX, aggregated_field="value"
+        )
+        assert r == 5

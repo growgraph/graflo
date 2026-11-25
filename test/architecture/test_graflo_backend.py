@@ -438,6 +438,21 @@ class TestAggregate:
             "item", AggregationType.SORTED_UNIQUE, aggregated_field="kind"
         ) == ["food", "tool"]
 
+    def test_every_function_groups_by_a_field(self, conn) -> None:
+        from graflo.onto import AggregationType
+
+        def grouped(function: AggregationType) -> dict:
+            return conn.aggregate(
+                "item", function, discriminant="kind", aggregated_field="price"
+            )
+
+        assert grouped(AggregationType.MAX) == {"tool": 4, "food": 3}
+        assert grouped(AggregationType.AVERAGE) == {"tool": 3.0, "food": 3.0}
+        assert grouped(AggregationType.SORTED_UNIQUE) == {
+            "tool": [2, 4],
+            "food": [3],
+        }
+
     def test_nothing_to_aggregate_is_none(self, conn) -> None:
         from graflo.onto import AggregationType
 

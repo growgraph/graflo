@@ -1028,7 +1028,7 @@ graflo merge manifest_maintenance.yaml manifest_sensors.yaml \
 |---|---|---|
 | members | `vertex-Machine.members.png` | The types that become the merged type. A dashed edge marks a member a vocabulary joins rather than one the equivalence names. |
 | attributes | `vertex-Machine.attributes.png` | Where each member property lands on the merged type: a dark edge for a declared equivalence, blue for a vocabulary rename, thin grey for a name kept as it is, dotted for a mapping a later declaration overrode. |
-| identity | `vertex-Machine.identity.png` | The raw fields each derived branch reads, labelled with the transform, the branches in the order a record tries them (an own-key branch names its member), and the key they feed. |
+| identity | `vertex-Machine.identity.png` | The raw fields each derived branch reads, labelled with the transform; the member key each own-key branch reads; the branches as one column in the order a record tries them, `#1` on top; and the key they feed. |
 | lookups | `vertex-Machine.lookups.png` | Each member's own key, kept on the merged type as a lookup; the edge names the key space. |
 
 ![The identity of example 20: raw fields of two resources feeding two branches, which feed the digest](../../examples/manifest-union/figs/vertex-Machine.identity.svg)

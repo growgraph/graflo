@@ -22,8 +22,8 @@ from graflo.architecture.contract.ingestion.steps.ref import (
 )
 from graflo.architecture.evolution import apply_evolution, invert_ops
 from graflo.architecture.evolution.codec import op_from_dict
+from graflo.architecture.evolution.footprint import op_slots
 from graflo.architecture.evolution.hashing import manifest_hash
-from graflo.architecture.evolution.merge3 import op_slots
 from graflo.architecture.evolution.ops import (
     INGESTION_REWRITING_OPS,
     SetInverseEmissionOp,
@@ -186,6 +186,17 @@ class TestTheFlagsFollowTheSchema:
         out = _apply(
             _manifest([*VERTICES, flagged]),
             {"op": "remove_edges", "edges": [INVERSE]},
+        )
+        assert _flags(out) == {"2": False}
+        out.finish_init()
+
+    def test_removing_the_inverse_relation_clears_the_flags_that_fed_it(
+        self,
+    ) -> None:
+        flagged = {"edge": {**STEP["edge"], "emit_inverse": True}}
+        out = _apply(
+            _manifest([*VERTICES, flagged]),
+            {"op": "remove_edges", "relations": ["employs"]},
         )
         assert _flags(out) == {"2": False}
         out.finish_init()

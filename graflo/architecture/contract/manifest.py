@@ -63,21 +63,79 @@ class GraphManifest(ConfigBaseModel):
             )
         return self
 
+    def normalize(self) -> None:
+        """Bring the schema, then the ingestion model against it, to normal form.
+
+        The only mutator of the contract; idempotent. A constructed manifest is
+        already in normal form unless it was changed in place since.
+        """
+        if self.graph_schema is None:
+            return
+        self.graph_schema.normalize()
+        if self.ingestion_model is not None:
+            self.ingestion_model.normalize(self.graph_schema.core_schema)
+
+    def validate(self, *, strict_references: bool = False) -> None:  # ty: ignore[incompatible-method-override]
+        """Check the schema, then every resource against it.
+
+        Pure: reads a normalized manifest and never changes it. Refuses exactly
+        what :meth:`finish_init` refuses (without ``dynamic_edge_feedback``).
+
+        Raises:
+            ValueError: The first check that fails.
+        """
+        self._validate_bound_resources()
+        if self.graph_schema is None:
+            return
+        self.graph_schema.validate()
+        if self.ingestion_model is not None:
+            self.ingestion_model.validate(
+                self.graph_schema.core_schema,
+                strict_references=strict_references,
+                target_db_flavor=self.graph_schema.db_profile.db_flavor,
+            )
+
     def finish_init(
         self,
         *,
         strict_references: bool = False,
         dynamic_edge_feedback: bool = False,
     ) -> None:
-        """Initialize model internals and cross-block runtime links."""
-        if self.graph_schema is not None:
-            self.graph_schema.finish_init()
-        if self.graph_schema is not None and self.ingestion_model is not None:
+        """Normalize, validate, and build the ingestion runtimes.
+
+        ``dynamic_edge_feedback`` writes the edges each resource's pipeline
+        registers into the schema's edge config; it is the one step here that
+        changes the schema after :meth:`normalize`.
+        """
+        self._validate_bound_resources()
+        if self.graph_schema is None:
+            return
+        self.graph_schema.normalize()
+        self.graph_schema.validate()
+        if self.ingestion_model is not None:
+            # Normalizes, then builds the runtimes once, which validates them.
             self.ingestion_model.finish_init(
                 self.graph_schema.core_schema,
                 strict_references=strict_references,
                 dynamic_edge_feedback=dynamic_edge_feedback,
                 target_db_flavor=self.graph_schema.db_profile.db_flavor,
+            )
+
+    def dangling_bound_resources(self) -> list[str]:
+        """Resources the bindings name that the ingestion model does not declare.
+
+        Empty without an ingestion block: bindings alone may name any resource.
+        """
+        if self.bindings is None or self.ingestion_model is None:
+            return []
+        declared = {resource.name for resource in self.ingestion_model.resources}
+        return sorted(self.bindings.bound_resource_names() - declared)
+
+    def _validate_bound_resources(self) -> None:
+        if dangling := self.dangling_bound_resources():
+            raise ValueError(
+                f"bindings name resources the ingestion model does not declare: "
+                f"{dangling}"
             )
 
     def require_schema(self) -> Schema:

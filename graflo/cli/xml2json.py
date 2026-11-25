@@ -39,7 +39,12 @@ logger = logging.getLogger(__name__)
 @click.option("-c", "--chunk-size", type=int, default=1000)
 @click.option("-m", "--max-chunks", type=int, default=None)
 @click.option("--mode", type=str)
-def do(source_path, chunk_size, max_chunks, mode):
+def do(
+    source_path: pathlib.Path,
+    chunk_size: int,
+    max_chunks: int | None,
+    mode: str | None,
+) -> None:
     """Convert XML files to JSON format.
 
     This command processes XML files and converts them to JSON format, with support
