@@ -3,30 +3,39 @@
 This module provides various utility functions for data manipulation and processing.
 
 Key Functions:
-    - sorted_dicts: Recursively sort dictionaries and lists for consistent ordering
+    - sorted_dicts: Sort lists of flat dictionaries for consistent ordering
 """
 
+from typing import Any
 
-def sorted_dicts(d):
-    """Recursively sort dictionaries and lists for consistent ordering.
 
-    This function recursively sorts dictionaries and lists to ensure consistent
-    ordering of data structures. It handles nested structures and preserves
-    non-collection values.
+def _is_flat_dict(value: Any) -> bool:
+    return isinstance(value, dict) and not any(
+        isinstance(v, (list, tuple, dict)) for v in value.values()
+    )
+
+
+def sorted_dicts(d: Any) -> Any:
+    """Sort lists of flat dictionaries for consistent ordering.
+
+    A non-empty list or tuple whose elements are all dictionaries of scalar
+    values is returned as a list sorted by the items of each dictionary. A
+    dictionary is rebuilt with its nested lists, tuples and dictionaries
+    processed the same way; its keys keep their order. Any other value,
+    including any other list, is returned unchanged.
 
     Args:
-        d: Data structure to sort (dict, list, tuple, or other)
+        d: Data structure to sort
 
     Returns:
-        The sorted data structure with consistent ordering
+        The data structure with its lists of flat dictionaries sorted
 
     Example:
-        >>> data = {"b": 2, "a": 1, "c": [3, 1, 2]}
-        >>> sorted_dicts(data)
-        {"a": 1, "b": 2, "c": [1, 2, 3]}
+        >>> sorted_dicts({"b": 2, "c": [{"y": 2}, {"x": 1}], "d": [3, 1]})
+        {'b': 2, 'c': [{'x': 1}, {'y': 2}], 'd': [3, 1]}
     """
     if isinstance(d, (tuple, list)):
-        if d and all(not isinstance(dd, (list, tuple, dict)) for dd in d[0].values()):
+        if d and all(_is_flat_dict(dd) for dd in d):
             return sorted(d, key=lambda x: tuple(x.items()))
     elif isinstance(d, dict):
         return {

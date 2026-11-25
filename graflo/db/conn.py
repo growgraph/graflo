@@ -1033,14 +1033,14 @@ class Connection(abc.ABC):
         filters: "FilterExpression | list[Any] | dict[str, Any] | None" = None,
         *,
         timeout_s: float | None = None,
-    ) -> int | float | list[dict[str, Any]] | dict[str, int | float] | None:
+    ) -> Any:
         """Perform aggregation on a collection.
 
         Args:
             class_name: Name of the collection
             aggregation_function: Type of aggregation to perform
             discriminant: Field to group by
-            aggregated_field: Field to aggregate
+            aggregated_field: Field to aggregate; required for everything but COUNT
             filters: Query filters. Accepts a built ``FilterExpression`` as well
                 as the shorthand dict/list forms, matching ``fetch_edges`` —
                 callers holding a typed query model should not have to round-trip
@@ -1048,9 +1048,13 @@ class Connection(abc.ABC):
             timeout_s: As for :meth:`fetch_docs`.
 
         Returns:
-            Aggregation results (type depends on aggregation function)
+            Ungrouped, COUNT an ``int``, MAX / MIN a value or ``None``, AVERAGE a
+            ``float`` or ``None``, SORTED_UNIQUE a sorted list of distinct values.
+            Grouped by *discriminant*, ``{group value: that result for the
+            group}``. The full contract is :mod:`graflo.db.aggregation`.
 
         Raises:
+            ValueError: *aggregated_field* is missing for anything but COUNT.
             QueryTimeoutError: The database stopped the read at *timeout_s*.
         """
 

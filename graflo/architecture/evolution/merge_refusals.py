@@ -469,6 +469,8 @@ def key_space_refusals(
                 if member not in vertex_config.vertex_set:
                     continue
                 for entry in vertex_config[member].secondary_identities:
+                    if entry.name is None:  # unnamed until finish_init
+                        continue
                     authored.setdefault(cluster.into, {}).setdefault(
                         entry.name, []
                     ).append(f"{member_side}:{member}")

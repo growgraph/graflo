@@ -375,7 +375,7 @@ class Edge(ConfigBaseModel):
             )
 
     @property
-    def edge_name_dyad(self):
+    def edge_name_dyad(self) -> tuple[str, str]:
         """Get the edge name as a dyad (source, target).
 
         Returns:
@@ -831,7 +831,7 @@ class EdgeConfig(ConfigBaseModel):
         """Iterate over ``(edge_id, edge)`` pairs."""
         return iter(self._edges_map.items())
 
-    def __contains__(self, item: EdgeId | Edge):
+    def __contains__(self, item: EdgeId | Edge) -> bool:
         """Check if edge exists in configuration.
 
         Args:
@@ -910,7 +910,7 @@ class EdgeConfig(ConfigBaseModel):
         return self._edges_map[edge_id]
 
     @property
-    def vertices(self):
+    def vertices(self) -> set[str]:
         """Get set of vertex names involved in edges.
 
         Returns:

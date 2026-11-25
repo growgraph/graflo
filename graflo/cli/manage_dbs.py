@@ -38,7 +38,7 @@ def act_db(
     restore: bool,
     docker_version: str,
     use_docker: bool,
-):
+) -> None:
     """Execute database backup or restore operation.
 
     This function performs either a backup (arangodump) or restore (arangorestore)
@@ -114,16 +114,16 @@ def act_db(
 @click.option("--restore", type=bool, default=False, is_flag=True)
 @click.option("--use-docker", type=bool, default=True)
 def manage_dbs(
-    db_config_path,
-    db_host,
-    db_password,
-    db_user,
-    db,
-    store_directory_path,
-    restore,
-    docker_version,
-    use_docker=True,
-):
+    db_config_path: pathlib.Path | None,
+    db_host: str | None,
+    db_password: str | None,
+    db_user: str,
+    db: tuple[str, ...],
+    store_directory_path: pathlib.Path,
+    restore: bool,
+    docker_version: str,
+    use_docker: bool = True,
+) -> None:
     """Manage ArangoDB database backups and restores.
 
     This command provides functionality to backup and restore ArangoDB databases.

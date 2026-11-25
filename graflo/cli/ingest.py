@@ -19,6 +19,7 @@ Example:
 
 import logging
 import pathlib
+from typing import Literal
 
 import click
 from suthing import FileHandle
@@ -119,22 +120,22 @@ logger = logging.getLogger(__name__)
     "FalkorDB; needs the `bulk` extra and --staging-dir).",
 )
 def ingest(
-    db_config_path,
-    schema_path,
-    limit_files,
-    batch_size,
-    n_cores,
-    fresh_start,
-    init_only,
-    resource_connector_config_path,
-    data_source_config_path,
-    on_doc_error,
-    doc_error_sink,
-    no_create_namespace,
-    bulk,
-    staging_dir,
-    sync,
-):
+    db_config_path: pathlib.Path,
+    schema_path: pathlib.Path,
+    limit_files: int | None,
+    batch_size: int,
+    n_cores: int,
+    fresh_start: bool | None,
+    init_only: bool,
+    resource_connector_config_path: pathlib.Path | None,
+    data_source_config_path: pathlib.Path | None,
+    on_doc_error: Literal["skip", "fail"],
+    doc_error_sink: pathlib.Path | None,
+    no_create_namespace: bool,
+    bulk: bool,
+    staging_dir: pathlib.Path | None,
+    sync: bool,
+) -> None:
     """Ingest data into a graph database.
 
     This command processes data files and ingests them into a graph database according

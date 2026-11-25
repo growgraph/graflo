@@ -17,6 +17,12 @@ from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import Field, FieldType, VertexConfig
 from graflo.connections.bulk import BulkConfig
 from graflo.connections.onto import NebulaConfig
+from graflo.db.aggregation import (
+    KEY,
+    VALUE,
+    aggregation_result,
+    check_aggregation,
+)
 from graflo.db.bulk import (
     BulkCounts,
     BulkEdgeChunk,
@@ -1432,32 +1438,23 @@ class NebulaConnection(Connection):
         filters: FilterExpression | list[Any] | dict[str, Any] | None = None,
         *,
         timeout_s: float | None = None,
-    ) -> int | float | list[dict[str, Any]] | dict[str, int | float] | None:
-        agg_name = (
-            aggregation_function.value
-            if isinstance(aggregation_function, AggregationType)
-            else str(aggregation_function)
-        )
-        if agg_name == "AVERAGE":
-            agg_name = "AVG"
+    ) -> Any:
+        """Aggregate over vertices of a tag; the result is shaped as in :mod:`graflo.db.aggregation`.
 
+        Raises:
+            ValueError: If *aggregated_field* is missing where it is required.
+        """
+        function = check_aggregation(aggregation_function, aggregated_field)
         if self.config.is_v3:
-            doc_name = f"v.`{class_name}`"
-            fc = self._render_filter(filters, doc_name)
-            q = aggregate_ngql(class_name, agg_name, discriminant, aggregated_field, fc)
+            fc = self._render_filter(filters, f"v.`{class_name}`")
+            q = aggregate_ngql(class_name, function, discriminant, aggregated_field, fc)
         else:
             fc = self._render_filter(filters, "v")
-            q = aggregate_gql(class_name, agg_name, discriminant, aggregated_field, fc)
+            q = aggregate_gql(class_name, function, discriminant, aggregated_field, fc)
 
-        rs = self._execute(q)
-        rows = rs.rows_as_dicts()
-
-        if agg_name == "COUNT" and discriminant:
-            return {row["key"]: row["count"] for row in rows}
-        if agg_name == "COUNT":
-            return rows[0]["count"] if rows else 0
-        if agg_name == "SORTED_UNIQUE":
-            return [row["val"] for row in rows]
-        if rows:
-            return rows[0].get("val")
-        return None
+        rows = self._execute(q).rows_as_dicts()
+        return aggregation_result(
+            function,
+            [(row.get(KEY), row[VALUE]) for row in rows],
+            grouped=discriminant is not None,
+        )

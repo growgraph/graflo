@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import shutil
-from collections import Counter
 from collections.abc import Callable, Sequence
 from typing import Any, cast
 
@@ -21,6 +20,11 @@ from graflo.architecture.schema.physical_keys import PhysicalKeys
 from graflo.architecture.schema.vertex import VertexConfig
 from graflo.connections.bulk import BulkConfig
 from graflo.connections.graflo_backend import GraFloBackendConfig
+from graflo.db.aggregation import (
+    aggregation_result,
+    check_aggregation,
+    hashable_key,
+)
 from graflo.db.bulk import (
     BulkCounts,
     BulkEdgeChunk,
@@ -84,6 +88,28 @@ def _key_of(doc: Any, fields: Sequence[str]) -> tuple[str, ...] | None:
 
 #: Index-only keys: each edge row's stored endpoint types, never returned.
 _FROM_TYPE, _TO_TYPE = "_from_type", "_to_type"
+
+
+def _aggregate(
+    function: AggregationType, docs: list[dict[str, Any]], field: str | None
+) -> Any:
+    """The raw aggregate of *docs*, before :func:`aggregation_result` shapes it."""
+    if function == AggregationType.COUNT:
+        return len(docs)
+    values = [doc[field] for doc in docs if field and doc.get(field) is not None]
+    if function == AggregationType.SORTED_UNIQUE:
+        distinct: list[Any] = []
+        for value in values:
+            if value not in distinct:
+                distinct.append(value)
+        return distinct
+    if not values:
+        return None
+    if function == AggregationType.MAX:
+        return max(values)
+    if function == AggregationType.MIN:
+        return min(values)
+    return sum(values) / len(values)
 
 
 class GraFloBackendConnection(Connection):
@@ -508,43 +534,33 @@ class GraFloBackendConnection(Connection):
         filters: FilterExpression | list[Any] | dict[str, Any] | None = None,
         *,
         timeout_s: float | None = None,
-    ) -> int | float | list[dict[str, Any]] | dict[str, int | float] | None:
+    ) -> Any:
         """Aggregate over the documents of a vertex type, read in full.
 
-        Returns what the Cypher backends return: an ungrouped COUNT an int, a
-        COUNT grouped by *discriminant* ``{value: count}``, MAX / MIN / AVERAGE
-        a scalar or ``None``, SORTED_UNIQUE a list. Documents without
-        *aggregated_field* are left out.
+        The result is shaped as in :mod:`graflo.db.aggregation`.
 
         Raises:
             ValueError: If *aggregated_field* is missing where it is required.
         """
+        function = check_aggregation(aggregation_function, aggregated_field)
         docs = self.fetch_docs(class_name, filters=cast(Any, filters))
-        if aggregation_function == AggregationType.COUNT:
-            if discriminant:
-                return cast(
-                    dict[str, int | float],
-                    dict(Counter(doc.get(discriminant) for doc in docs)),
-                )
-            return len(docs)
-        if not aggregated_field:
-            raise ValueError(f"aggregated_field is required for {aggregation_function}")
-        values = [
-            doc[aggregated_field]
-            for doc in docs
-            if doc.get(aggregated_field) is not None
-        ]
-        if aggregation_function == AggregationType.SORTED_UNIQUE:
-            return sorted(set(values))
-        if not values:
-            return None
-        if aggregation_function == AggregationType.MAX:
-            return max(values)
-        if aggregation_function == AggregationType.MIN:
-            return min(values)
-        if aggregation_function == AggregationType.AVERAGE:
-            return sum(values) / len(values)
-        raise ValueError(f"Unsupported aggregation type: {aggregation_function}")
+        if discriminant is None:
+            return aggregation_result(
+                function,
+                [(None, _aggregate(function, docs, aggregated_field))],
+                grouped=False,
+            )
+        groups: dict[Any, list[dict[str, Any]]] = {}
+        for doc in docs:
+            groups.setdefault(hashable_key(doc.get(discriminant)), []).append(doc)
+        return aggregation_result(
+            function,
+            [
+                (key, _aggregate(function, members, aggregated_field))
+                for key, members in groups.items()
+            ],
+            grouped=True,
+        )
 
     def keep_absent_documents(
         self,

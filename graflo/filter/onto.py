@@ -24,7 +24,7 @@ from __future__ import annotations
 import logging
 import math
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import date, datetime, time
 from types import MappingProxyType
 from typing import Any, Literal, Self, cast
@@ -53,7 +53,7 @@ class LogicalOperator(BaseEnum):
     IMPLICATION = "IF_THEN"
 
 
-def implication(ops):
+def implication(ops: Sequence[bool]) -> bool:
     """Evaluate logical implication (IF-THEN).
 
     Args:

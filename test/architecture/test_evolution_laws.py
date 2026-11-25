@@ -24,14 +24,24 @@ hide another behind it.
 
 from __future__ import annotations
 
+import json
+import re
+import tempfile
 from collections.abc import Collection
 from typing import Any
 
 import pytest
-from hypothesis import HealthCheck, assume, event, given, settings
+from hypothesis import HealthCheck, Phase, assume, event, given, settings
 from hypothesis import strategies as st
 from hypothesis.control import currently_in_test_context
 from hypothesis.errors import UnsatisfiedAssumption
+from hypothesis.stateful import (
+    RuleBasedStateMachine,
+    initialize,
+    invariant,
+    precondition,
+    rule,
+)
 
 from graflo.architecture.contract.bindings import FileConnector
 from graflo.architecture.contract.ingestion.steps.models import DescendActorConfig
@@ -43,19 +53,42 @@ from graflo.architecture.evolution.autogenerate import (
     diff_manifests,
     diff_manifests_verified,
 )
-from graflo.architecture.evolution.codec import op_from_dict, ops_to_dicts
+from graflo.architecture.evolution.canonicalize import canonical_payload
+from graflo.architecture.evolution.codec import op_from_dict, op_to_dict, ops_to_dicts
+from graflo.architecture.evolution.commit import (
+    Commit,
+    CommitError,
+    RecipeRef,
+    build_commit,
+    build_multi_parent_commit,
+    build_revert_commit,
+    build_root_commit,
+)
 from graflo.architecture.evolution.footprint import op_reads, op_slots, ops_independent
-from graflo.architecture.evolution.hashing import manifest_hash
+from graflo.architecture.evolution.hashing import manifest_hash, stable_hash
+from graflo.architecture.evolution.history import (
+    FileCommitStore,
+    History,
+    checkout,
+    checkout_parent,
+    verify_history,
+)
 from graflo.architecture.evolution.inverse import IRREVERSIBLE, invert_op, invert_ops
+from graflo.architecture.evolution.merge import merge_manifests
 from graflo.architecture.evolution.merge3 import (
+    ConflictResolution,
     MergeError,
+    MergeRecipe,
+    build_recipe,
+    find_merge_base,
     merge_three_way,
+    re_merge,
     split_by_slot,
     take_left,
     take_right,
 )
 from graflo.architecture.evolution.ops import ManifestOp, MergeManifestsOp
-from graflo.architecture.refusal import OpRefusal
+from graflo.architecture.refusal import OpRefusal, Refusal
 from test.hypothesis_budget import examples
 
 # Derandomized and database-free: a law suite that passes or fails depending on
@@ -1297,10 +1330,12 @@ def _apply(manifest: GraphManifest, ops: list[ManifestOp]) -> GraphManifest | No
     """The manifest *ops* produce, or ``None`` when one of them is refused.
 
     Only a refusal counts: any other exception is a crash, and fails the law.
+    ``apply_evolution`` raises an op's own preconditions as ``OpRefusal`` and
+    passes other refusals through as they are.
     """
     try:
         return apply_evolution(manifest, ops, bump_version=False, finish_init=False)
-    except OpRefusal:
+    except Refusal:
         return None
 
 
@@ -1925,6 +1960,18 @@ def test_an_op_split_by_slot_is_the_op(kind, data) -> None:
     _split_is_the_op(*data.draw(manifest_and_op(kind)))
 
 
+@pytest.mark.parametrize("kind", [k for k in KINDS if k not in REFUSED_BY_APPLY])
+@PER_KIND
+@given(data=st.data())
+def test_an_op_serializes_to_a_payload_that_loads_back(kind, data) -> None:
+    """A change set is stored as payloads; each must load back as the same op.
+
+    ``merge_manifests`` is not a stored op: the codec refuses it by design.
+    """
+    _manifest, op = data.draw(manifest_and_op(kind))
+    assert op_from_dict(op_to_dict(op)) == op
+
+
 def _describe_vertex(vertex: str, text: str) -> dict[str, Any]:
     return {"op": "set_vertex_descriptions", "descriptions": {vertex: text}}
 
@@ -2303,3 +2350,770 @@ def _decision_is_local(
             assert {slot[:2] for slot in op_slots(op, all_left)} <= reach, (
                 f"flipping {conflict.slot} moved {op.op} outside it"
             )
+
+
+# ── a union does not depend on which side is left ──────────────────────────
+
+
+#: The policies the side-swap law is drawn under. ``prefix_right`` is left out:
+#: it renames the right side's clashing names, so it is asymmetric by definition.
+SWAP_POLICIES = ["error", "union_right"]
+
+_OTHER_SIDE = {"left": "right", "right": "left"}
+
+
+def _flip(entry: dict[str, Any]) -> dict[str, Any]:
+    return {_OTHER_SIDE.get(key, key): value for key, value in entry.items()}
+
+
+def _swapped(op: MergeManifestsOp) -> MergeManifestsOp:
+    """*op* with its sides exchanged: members, property alignments, maps, names."""
+    payload = op.to_dict()
+    for key in ("vertex_equivalences", "relation_equivalences"):
+        flipped = []
+        for equivalence in payload.get(key, []):
+            equivalence = _flip(equivalence)
+            if "properties" in equivalence:
+                equivalence["properties"] = [
+                    _flip(p) for p in equivalence["properties"]
+                ]
+            if "key_spaces" in equivalence:
+                equivalence["key_spaces"] = _flip(equivalence["key_spaces"])
+            flipped.append(equivalence)
+        payload[key] = flipped
+    for key in ("renames", "canonical_maps", "origins"):
+        if payload.get(key):
+            payload[key] = _flip(payload[key])
+    return MergeManifestsOp.model_validate(payload)
+
+
+@st.composite
+def _with_side_ordered_fields(
+    draw: st.DrawFn, manifest: GraphManifest, composite: set[str]
+) -> GraphManifest:
+    """*manifest* with some of the fields a union folds in side order set.
+
+    Descriptions on types, edges and properties; unnamed lookup keys, which
+    take positional names; and the types named in *composite* keyed on
+    ``id`` and ``name``, in either column order.
+    """
+    payload = manifest.to_dict()
+    core = payload["schema"]["core_schema"]
+    text = st.sampled_from(["a", "b"])
+    for vertex in core["vertex_config"]["vertices"]:
+        if draw(st.booleans()):
+            vertex["description"] = draw(text)
+        fields = [p["name"] for p in vertex["properties"]]
+        for prop in vertex["properties"]:
+            if draw(st.integers(0, 3)) == 0:
+                prop["description"] = draw(text)
+        if "name" in fields and vertex["name"] in composite:
+            vertex["identity"] = draw(st.permutations(["id", "name"]))
+        unnamed = [f for f in ("email", "since") if f in fields]
+        if unnamed and not vertex["secondary_identities"]:
+            vertex["secondary_identities"] = [
+                {"fields": [f]} for f in draw(_subset(unnamed))
+            ]
+    for edge in core["edge_config"]["edges"]:
+        if draw(st.booleans()):
+            edge["description"] = draw(text)
+    try:
+        return GraphManifest.from_dict(payload)
+    except ValueError:
+        assume(False)
+        raise
+
+
+def _sorted_parts(entry: dict[str, Any], separator: str) -> None:
+    if "description" in entry:
+        parts = entry["description"].split(separator)
+        entry["description"] = separator.join(sorted(parts))
+
+
+def _canonical_json(value: Any) -> str:
+    return json.dumps(value, sort_keys=True)
+
+
+_POSITIONAL_SECONDARY = re.compile(r"secondary_\d+")
+
+
+def _union_hash(manifest: GraphManifest) -> str:
+    """The content hash with the union's side-ordered fields put in one order.
+
+    Exactly the fields the canonical form preserves that a union sets in side
+    order: ``Vertex.identity``, ``Vertex.filters``, ``IdentityFunnel.branches``,
+    positional secondary-identity names, and type, edge and property
+    descriptions (joined by `` / ``, properties by a blank line).
+    """
+    schema = manifest.graph_schema
+    core = canonical_payload(schema.core_schema) if schema is not None else None
+    vertices = (core or {}).get("vertex_config", {}).get("vertices", [])
+    edges = (core or {}).get("edge_config", {}).get("edges", [])
+    for vertex in vertices:
+        if "identity" in vertex:
+            vertex["identity"] = sorted(vertex["identity"])
+        if "filters" in vertex:
+            vertex["filters"] = sorted(vertex["filters"], key=_canonical_json)
+        funnel = vertex.get("identity_funnel")
+        if funnel and "branches" in funnel:
+            funnel["branches"] = sorted(funnel["branches"], key=_canonical_json)
+        if "secondary_identities" in vertex:
+            vertex["secondary_identities"] = sorted(
+                (
+                    {**s, "name": "secondary_n"}
+                    if _POSITIONAL_SECONDARY.fullmatch(s.get("name") or "")
+                    else s
+                    for s in vertex["secondary_identities"]
+                ),
+                key=_canonical_json,
+            )
+        _sorted_parts(vertex, " / ")
+        for prop in vertex.get("properties", []):
+            _sorted_parts(prop, "\n\n")
+        if "properties" in vertex:
+            vertex["properties"].sort(key=_canonical_json)
+    for edge in edges:
+        _sorted_parts(edge, " / ")
+        for prop in edge.get("properties", []):
+            _sorted_parts(prop, "\n\n")
+        if "properties" in edge:
+            edge["properties"].sort(key=_canonical_json)
+    # The lists holding them are sorted by content, which the above changed.
+    vertices.sort(key=_canonical_json)
+    edges.sort(key=_canonical_json)
+    return stable_hash(
+        {
+            "core_schema": core,
+            "db_profile": (
+                canonical_payload(schema.db_profile) if schema is not None else None
+            ),
+            "ingestion_model": (
+                canonical_payload(manifest.ingestion_model)
+                if manifest.ingestion_model is not None
+                else None
+            ),
+            "bindings": (
+                canonical_payload(manifest.bindings)
+                if manifest.bindings is not None
+                else None
+            ),
+        }
+    )
+
+
+def _names(manifest: GraphManifest) -> tuple[list[str], list[str]]:
+    core = _core(manifest)
+    vertices = sorted(core.vertex_config.vertex_set)
+    relations = sorted({e.relation for e in core.edge_config.edges if e.relation})
+    return vertices, relations
+
+
+@st.composite
+def _equivalences(
+    draw: st.DrawFn,
+    left: list[str],
+    right: list[str],
+    fields: dict[str, dict[str, list[str]]] | None = None,
+) -> list[dict[str, Any]]:
+    """Equivalences over two name lists: shared names, and one cross pair.
+
+    Each shared name is mostly declared one to one. A cross pair joins a name
+    only the left has with one only the right has, named after either, and,
+    given *fields*, sometimes aligns one property of each onto one name.
+    """
+    out: list[dict[str, Any]] = [
+        {"left": name, "right": name}
+        for name in sorted(set(left) & set(right))
+        if draw(st.integers(0, 15))
+    ]
+    left_only = [n for n in left if n not in right]
+    right_only = [n for n in right if n not in left]
+    if left_only and right_only and draw(st.booleans()):
+        a, b = draw(st.sampled_from(left_only)), draw(st.sampled_from(right_only))
+        pair: dict[str, Any] = {
+            "left": a,
+            "right": b,
+            "into": draw(st.sampled_from([a, b])),
+        }
+        if fields is not None:
+            own_a = [f for f in fields["left"][a] if f != "id"]
+            own_b = [f for f in fields["right"][b] if f != "id"]
+            aligned = [
+                (f, g)
+                for f in own_a
+                for g in own_b
+                if f != g and f not in own_b and g not in own_a
+            ]
+            if aligned and draw(st.booleans()):
+                f, g = draw(st.sampled_from(aligned))
+                pair["properties"] = [
+                    {"left": f, "right": g, "into": draw(st.sampled_from([f, g]))}
+                ]
+        out.append(pair)
+    return out
+
+
+@st.composite
+def _union_ops(
+    draw: st.DrawFn, left: GraphManifest, right: GraphManifest, name_conflict: str
+) -> MergeManifestsOp:
+    """An empty declaration, or equivalences and a canonical map over both sides."""
+    if not draw(st.booleans()):
+        return MergeManifestsOp.model_validate({"name_conflict": name_conflict})
+    lv, lr = _names(left)
+    rv, rr = _names(right)
+    fields = {
+        side: {
+            v.name: [f.name for f in v.properties]
+            for v in _core(manifest).vertex_config.vertices
+        }
+        for side, manifest in (("left", left), ("right", right))
+    }
+    vertex_equivalences = draw(_equivalences(lv, rv, fields))
+    relation_equivalences = draw(_equivalences(lr, rr))
+    payload: dict[str, Any] = {
+        "name_conflict": name_conflict,
+        "vertex_equivalences": vertex_equivalences,
+        "relation_equivalences": relation_equivalences,
+    }
+    # A vocabulary renaming one undeclared name onto one neither side uses.
+    declared = {
+        side: {e[side] for e in vertex_equivalences} for side in ("left", "right")
+    }
+    undeclared = [
+        (side, name)
+        for side, names in (("left", lv), ("right", rv))
+        for name in names
+        if name not in declared[side]
+    ]
+    fresh = [n for n in VERTEX_POOL if n not in lv and n not in rv]
+    if undeclared and fresh and draw(st.booleans()):
+        side, name = draw(st.sampled_from(undeclared))
+        scope = draw(st.sampled_from([side, "both"]))
+        payload["canonical_maps"] = {
+            scope: {"vertices": {name: draw(st.sampled_from(fresh))}}
+        }
+    # Resources and connectors are addresses, never unioned: the right side's
+    # clashing ones are renamed apart.
+    resources = {
+        side: {r.name for r in m.ingestion_model.resources}
+        if m.ingestion_model
+        else set()
+        for side, m in (("left", left), ("right", right))
+    }
+    connectors = {
+        side: {c.name for c in m.bindings.connectors if c.name} if m.bindings else set()
+        for side, m in (("left", left), ("right", right))
+    }
+    clashing = sorted(resources["left"] & resources["right"])
+    if clashing:
+        payload["renames"] = {
+            "right": {
+                "resources": {name: f"{name}_right" for name in clashing},
+                "connectors": {
+                    name: f"{name}_right"
+                    for name in sorted(connectors["left"] & connectors["right"])
+                },
+            }
+        }
+    try:
+        return MergeManifestsOp.model_validate(payload)
+    except ValueError:
+        assume(False)
+        raise
+
+
+@st.composite
+def two_manifests_and_a_union(
+    draw: st.DrawFn, scope: str, name_conflict: str
+) -> tuple[GraphManifest, GraphManifest, MergeManifestsOp]:
+    """Two unrelated manifests and a union declaration over them.
+
+    A type keyed on a composite is keyed so on both sides, which may write its
+    columns in different orders.
+    """
+    composite = set(draw(_subset(VERTEX_POOL)))
+    left = draw(_with_side_ordered_fields(draw(manifests(**SCOPES[scope])), composite))
+    right = draw(_with_side_ordered_fields(draw(manifests(**SCOPES[scope])), composite))
+    return left, right, draw(_union_ops(left, right, name_conflict))
+
+
+def _union(
+    left: GraphManifest, right: GraphManifest, op: MergeManifestsOp
+) -> GraphManifest | None:
+    """The union, or ``None`` when it is refused."""
+    try:
+        return merge_manifests(left, right, op)
+    except ValueError as refusal:
+        if currently_in_test_context():
+            event(f"refused: {type(refusal).__name__}")
+        return None
+
+
+def _union_ignores_side_order(
+    case: tuple[GraphManifest, GraphManifest, MergeManifestsOp],
+) -> None:
+    left, right, op = case
+    forward = _union(left, right, op)
+    backward = _union(right, left, _swapped(op))
+    if currently_in_test_context():
+        declared = bool(op.vertex_equivalences or op.relation_equivalences)
+        event(f"declared={declared} refused={forward is None}")
+        if forward is not None and backward is not None:
+            moved = manifest_hash(forward) != manifest_hash(backward)
+            event(f"side-ordered fields differ={moved}")
+
+    assert (forward is None) == (backward is None), "refused in one order only"
+    if forward is not None and backward is not None:
+        assert _union_hash(forward) == _union_hash(backward)
+
+
+@pytest.mark.parametrize("name_conflict", SWAP_POLICIES)
+@pytest.mark.parametrize("scope", MERGE_SCOPES)
+@LAWS
+@given(data=st.data())
+def test_a_union_does_not_depend_on_which_side_is_left(
+    scope, name_conflict, data
+) -> None:
+    """``merge(A, B, op)`` is ``merge(B, A, op')`` up to the side-ordered fields.
+
+    ``op'`` is ``op`` with its sides exchanged; the two are refused together or
+    not at all.
+    """
+    _union_ignores_side_order(
+        data.draw(two_manifests_and_a_union(scope, name_conflict))
+    )
+
+
+# ── three-way merges associate ─────────────────────────────────────────────
+
+
+def _branch(draw: st.DrawFn, base: GraphManifest) -> GraphManifest:
+    """*base* after zero to two drawn ops, each against the state before it."""
+    current = base
+    for _ in range(draw(st.integers(0, 2))):
+        payloads = [
+            s for k, s in _payloads(current).items() if k not in REFUSED_BY_APPLY
+        ]
+        if not payloads:
+            break
+        current = _step(current, draw(st.one_of(payloads)))
+    return current
+
+
+@st.composite
+def manifest_and_three_branches(
+    draw: st.DrawFn, blocks: bool = True, extras: bool = True
+) -> tuple[GraphManifest, GraphManifest, GraphManifest, GraphManifest]:
+    """A base and three descendants, each its own short sequence of ops."""
+    base = draw(manifests(blocks=blocks, extras=extras))
+    return base, _branch(draw, base), _branch(draw, base), _branch(draw, base)
+
+
+@st.composite
+def manifest_and_three_contending_branches(
+    draw: st.DrawFn, blocks: bool = True, extras: bool = True
+) -> tuple[GraphManifest, GraphManifest, GraphManifest, GraphManifest]:
+    """A base and three descendants meeting on built collisions and disjoint edits.
+
+    Two of the three collide on two or three elements, as the decision law's
+    branches do, in any position; the third is a short sequence of ops.
+    """
+    base, left, right = draw(
+        manifest_and_two_contending_branches(blocks=blocks, extras=extras)
+    )
+    third = _branch(draw, base)
+    order = draw(st.permutations([left, right, third]))
+    return base, order[0], order[1], order[2]
+
+
+def _merged(
+    base: GraphManifest, left: GraphManifest | str, right: GraphManifest | str
+) -> GraphManifest | str:
+    """``merge3(base, left, right)``, or why it is not clean.
+
+    The reason is an input's own (a grouping's inner merge), ``conflict``, or
+    ``error`` for a ``MergeError``.
+    """
+    if isinstance(left, str):
+        return left
+    if isinstance(right, str):
+        return right
+    try:
+        merged, _result = merge_three_way(base, left, right)
+    except MergeError:
+        return "error"
+    return "conflict" if merged is None else merged
+
+
+def _merges_associate(
+    case: tuple[GraphManifest, GraphManifest, GraphManifest, GraphManifest],
+) -> None:
+    base, left, middle, right = case
+    inner_first = _merged(base, left, middle)
+    inner_last = _merged(base, middle, right)
+    first = _merged(base, inner_first, right)
+    last = _merged(base, left, inner_last)
+
+    def status(inner: GraphManifest | str, outer: GraphManifest | str) -> str:
+        if isinstance(inner, str):
+            return f"inner {inner}"
+        return "clean" if not isinstance(outer, str) else f"outer {outer}"
+
+    s1, s2 = status(inner_first, first), status(inner_last, last)
+    if currently_in_test_context():
+        base_hash = manifest_hash(base)
+        changed = sum(manifest_hash(b) != base_hash for b in (left, middle, right))
+        event(f"branches changed={changed}")
+        event(f"(L+M)+R {s1}")
+        event(f"L+(M+R) {s2}")
+        if "error" in s1 or "error" in s2:
+            event("MergeError in a grouping")
+        event(f"both clean={s1 == s2 == 'clean'}")
+
+    assert (s1 == "clean") == (s2 == "clean"), f"(L+M)+R is {s1}, L+(M+R) is {s2}"
+    if not isinstance(first, str) and not isinstance(last, str):
+        assert manifest_hash(first) == manifest_hash(last)
+
+
+@pytest.mark.parametrize("scope", MERGE_SCOPES)
+@LAWS
+@given(data=st.data())
+def test_three_way_merges_associate(scope, data) -> None:
+    """``(L+M)+R`` and ``L+(M+R)`` over one base: both clean and equal, or neither."""
+    _merges_associate(data.draw(manifest_and_three_branches(**SCOPES[scope])))
+
+
+@pytest.mark.parametrize("scope", MERGE_SCOPES)
+@LAWS
+@given(data=st.data())
+def test_contending_three_way_merges_associate(scope, data) -> None:
+    """The same law over branches built to collide, so conflicts are common."""
+    _merges_associate(
+        data.draw(manifest_and_three_contending_branches(**SCOPES[scope]))
+    )
+
+
+# ── a history stays replayable ─────────────────────────────────────────────
+
+
+#: The machine's budget: each run is a sequence of steps that replays and
+#: stores the whole history after every one. No explain phase: its tracing
+#: makes shrinking a failing run outlast the test timeout.
+HISTORY = settings(
+    LAWS,
+    max_examples=examples(400),
+    stateful_step_count=20,
+    phases=[Phase.explicit, Phase.reuse, Phase.generate, Phase.shrink],
+)
+
+#: Kinds the machine does not draw, with the mechanism.
+HISTORY_WITHOUT: dict[str, str] = {}
+
+
+def test_a_merge_of_types_keyed_apart_is_refused() -> None:
+    """A type re-keyed earlier in a history, then merged with one keyed apart."""
+    manifest = GraphManifest.from_dict(
+        _doc(vertices=[_type("person", "name"), _type("company")])
+    )
+    rekeyed = _apply(
+        manifest,
+        [
+            _op(
+                {
+                    "op": "replace_identity",
+                    "replacements": {
+                        "person": {"to": {"mode": "natural", "identity": ["name"]}}
+                    },
+                }
+            )
+        ],
+    )
+    assert rekeyed is not None
+    merge = _op({"op": "merge_vertices", "sources": ["company"], "into": "person"})
+
+    assert _apply(rekeyed, [merge]) is None
+
+
+def test_a_diff_that_clears_a_type_is_recorded() -> None:
+    """The diff from a typed property to an untyped one records as a commit."""
+    typed, untyped = (
+        GraphManifest.from_dict(
+            _doc(vertices=[{**_type("city"), "properties": ["id", prop]}])
+        )
+        for prop in ({"name": "name", "type": "STRING"}, "name")
+    )
+    ops, residue = diff_manifests_verified(typed, untyped)
+    assert not residue
+    try:
+        commit = build_commit(typed, ops)
+    except ValueError as refused:
+        raise AssertionError(f"the diff does not record: {refused}") from refused
+    assert commit.tree == manifest_hash(untyped)
+
+
+class HistoryMachine(RuleBasedStateMachine):
+    """Commits, forks, three-way merges, re-merges and reverts over one base.
+
+    The machine keeps its own record of the manifest each commit must check out
+    to -- the drawn op applied, the merge result, the inverses applied -- and
+    after every step checks that the history, replayed and stored, agrees.
+    Merges and reverts are recorded the way ``graflo merge3`` and ``graflo
+    revert`` record them.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.base: GraphManifest | None = None
+        self.history = History()
+        #: The manifest each commit must check out to.
+        self.trees: dict[str, GraphManifest] = {}
+        #: Branch name -> tip commit id.
+        self.branches: dict[str, str] = {}
+        #: Each recorded merge commit -> its merge base.
+        self.merge_bases: dict[str, str] = {}
+        #: Merges whose recipe was replayed; their inputs never change after.
+        self.replayed: set[str] = set()
+        self.store = tempfile.TemporaryDirectory()
+
+    def teardown(self) -> None:
+        merges = len(self.merge_bases)
+        event(f"history: commits={min(len(self.history.commits), 10)}")
+        event(f"history: merges={min(merges, 3)}")
+        self.store.cleanup()
+
+    def _base(self) -> GraphManifest:
+        assert self.base is not None
+        return self.base
+
+    @initialize(base=manifests())
+    def start(self, base: GraphManifest) -> None:
+        root = build_root_commit(base)
+        self.base = base
+        self.history = History(commits=[root])
+        self.trees[root.id] = base
+        self.branches["main"] = root.id
+
+    def _record(self, branch: str, commit: Commit, manifest: GraphManifest) -> None:
+        if commit.id in self.trees:
+            # The same ops on the same parents: the same commit, already held.
+            event("recorded twice")
+        else:
+            self.history = self.history.extend(commit)
+            self.trees[commit.id] = manifest
+        self.branches[branch] = commit.id
+
+    def _commit_on(
+        self, data: st.DataObject, tip: str
+    ) -> tuple[Commit, GraphManifest] | None:
+        """A drawn op committed on *tip*: the first of three draws that changes it.
+
+        Drawn without a filter, so a payload that is no op costs a try rather
+        than the whole run.
+        """
+        manifest = self.trees[tip]
+        payloads = [
+            s
+            for k, s in _payloads(manifest).items()
+            if k not in REFUSED_BY_APPLY and k not in HISTORY_WITHOUT
+        ]
+        for _ in range(3):
+            payload = data.draw(st.one_of(payloads), label="op")
+            if not _is_an_op(payload):
+                continue
+            op = _op(payload)
+            after = _apply(manifest, [op])
+            if after is None:
+                event("commit: an op refused")
+                continue
+            try:
+                commit = build_commit(manifest, [op], parents=[tip], label=op.op)
+            except CommitError:
+                event("commit: an op that changes nothing")
+                continue
+            return commit, after
+        return None
+
+    def _branch(self, data: st.DataObject) -> str:
+        return data.draw(st.sampled_from(sorted(self.branches)), label="branch")
+
+    @rule(data=st.data())
+    def commit(self, data: st.DataObject) -> None:
+        branch = self._branch(data)
+        made = self._commit_on(data, self.branches[branch])
+        if made is not None:
+            self._record(branch, *made)
+            event("recorded: commit")
+
+    @precondition(lambda self: len(self.branches) < 4)
+    @rule(data=st.data())
+    def fork(self, data: st.DataObject) -> None:
+        tip = self.branches[self._branch(data)]
+        self.branches[f"b{len(self.branches)}"] = tip
+
+    def _merge(
+        self,
+        data: st.DataObject,
+        branch: str,
+        parents: tuple[str, str],
+        recorded: MergeRecipe | None,
+    ) -> None:
+        """Merge *parents* onto *branch*, deciding each conflict left or right."""
+        ancestor = find_merge_base(self.history, *parents)
+        assert ancestor is not None, "one root: every two commits share an ancestor"
+        states = (
+            self.trees[ancestor],
+            self.trees[parents[0]],
+            self.trees[parents[1]],
+        )
+        prior: list[ConflictResolution] = []
+        decisions: list[ConflictResolution] = []
+        try:
+            if recorded is None:
+                merged, result = merge_three_way(*states)
+            else:
+                merged, result = re_merge(recorded, *states)
+                prior = list(recorded.resolutions)
+            choose = st.sampled_from([take_left, take_right])
+            decisions = [data.draw(choose)(c) for c in result.conflicts]
+            if decisions:
+                merged, result = merge_three_way(
+                    *states, resolutions=[*prior, *decisions]
+                )
+        except MergeError:
+            event("merge: MergeError")
+            return
+        if merged is None:
+            event("merge: conflicts left after deciding each")
+            return
+        event(f"merge: conflicts decided={min(len(decisions), 3)}")
+        recipe = build_recipe(*states, resolutions=[*prior, *decisions])
+        try:
+            commit = build_multi_parent_commit(
+                states[1],
+                merged,
+                parents=list(parents),
+                label="merge",
+                recipe=RecipeRef(
+                    hash=recipe.content_hash(),
+                    kind=recipe.kind,
+                    payload=recipe.to_dict(),
+                ),
+            )
+        except CommitError as refused:
+            event(f"merge: not recorded, {str(refused)[:40]}")
+            return
+        self._record(branch, commit, merged)
+        self.merge_bases[commit.id] = ancestor
+        event(f"recorded: {'re-merge' if recorded else 'merge'}")
+
+    @precondition(lambda self: len(set(self.branches.values())) > 1)
+    @rule(data=st.data())
+    def merge(self, data: st.DataObject) -> None:
+        """Merge another head into a branch; one already in it adds nothing."""
+        branch = self._branch(data)
+        tip = self.branches[branch]
+        merged_in = self.history.ancestors(tip, include_self=True)
+        others = sorted({t for t in self.branches.values() if t not in merged_in})
+        if not others:
+            event("merge: every other head is already in this one")
+            return
+        other = data.draw(st.sampled_from(others), label="other")
+        self._merge(data, branch, (tip, other), None)
+
+    @precondition(lambda self: bool(self.merge_bases))
+    @rule(data=st.data())
+    def advance_and_remerge(self, data: st.DataObject) -> None:
+        """Commit on one parent of a recorded merge, and merge again by its recipe."""
+        recorded = self.history.require(
+            data.draw(st.sampled_from(sorted(self.merge_bases)), label="merge")
+        )
+        assert recorded.recipe is not None
+        parents = [recorded.parents[0], recorded.parents[1]]
+        side = data.draw(st.sampled_from([0, 1]), label="side")
+        made = self._commit_on(data, parents[side])
+        if made is None:
+            return
+        branch = f"b{len(self.branches)}"
+        self._record(branch, *made)
+        parents[side] = made[0].id
+        self._merge(
+            data,
+            branch,
+            (parents[0], parents[1]),
+            MergeRecipe.model_validate(recorded.recipe.payload),
+        )
+
+    @precondition(lambda self: len(self.history.commits) > 1)
+    @rule(data=st.data())
+    def revert(self, data: st.DataObject) -> None:
+        branch = self._branch(data)
+        tip = self.branches[branch]
+        undoable = [c for c in self.history.first_parent_path(tip) if c.ops]
+        if not undoable:
+            event("revert: nothing on this branch")
+            return
+        target = data.draw(st.sampled_from(undoable), label="target")
+        try:
+            commit = build_revert_commit(
+                self.trees[tip],
+                target,
+                before=checkout_parent(self._base(), self.history, target.id),
+                parents=[tip],
+            )
+        except CommitError:
+            event("revert: refused (CommitError)")
+            return
+        assert target.first_parent is not None
+        inverses, blockers = invert_ops(
+            list(target.ops), manifest=self.trees[target.first_parent]
+        )
+        assert not blockers
+        reverted = _apply(self.trees[tip], inverses)
+        assert reverted is not None
+        if target.id == tip:
+            assert manifest_hash(reverted) == target.tree_before
+        event(f"recorded: revert, of the tip={target.id == tip}")
+        self._record(branch, commit, reverted)
+
+    @invariant()
+    def the_history_verifies(self) -> None:
+        if self.base is not None:
+            assert verify_history(self.base, self.history) == []
+
+    @invariant()
+    def each_head_checks_out_to_what_was_made(self) -> None:
+        for tip in set(self.branches.values()):
+            replayed = checkout(self._base(), self.history, tip)
+            assert manifest_hash(replayed) == manifest_hash(self.trees[tip])
+
+    @invariant()
+    def a_recorded_merge_replays_unchanged(self) -> None:
+        """Re-merged by its recipe on the same inputs: no conflict, the same tree."""
+        for merge_id, ancestor in sorted(self.merge_bases.items()):
+            if merge_id in self.replayed:
+                continue
+            commit = self.history.require(merge_id)
+            assert commit.recipe is not None
+            left, right = commit.parents
+            merged, result = re_merge(
+                MergeRecipe.model_validate(commit.recipe.payload),
+                self.trees[ancestor],
+                self.trees[left],
+                self.trees[right],
+            )
+            assert not result.conflicts
+            assert not [w for w in result.warnings if "new since" in w]
+            assert merged is not None and manifest_hash(merged) == commit.tree
+            self.replayed.add(merge_id)
+
+    @invariant()
+    def the_store_round_trips(self) -> None:
+        store = FileCommitStore(self.store.name)
+        store.save(self.history)
+        loaded = {c.id: c for c in store.load().commits}
+        assert loaded == {c.id: c for c in self.history.commits}
+
+
+HistoryMachine.TestCase.settings = HISTORY
+TestHistoryMachine = HistoryMachine.TestCase

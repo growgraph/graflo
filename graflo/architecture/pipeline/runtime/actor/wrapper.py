@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from graflo.architecture.contract.ingestion.steps import (
     ActorConfig,
@@ -45,6 +45,9 @@ from .edge_render import add_blank_collections
 from .transform import TransformActor
 from .vertex import VertexActor
 from .vertex_router import VertexRouterActor
+
+if TYPE_CHECKING:
+    import networkx as nx
 
 
 class ActorWrapper:
@@ -252,7 +255,7 @@ class ActorWrapper:
         fig_path: Path | str | None = None,
         output_format: str = "pdf",
         output_dpi: int | None = None,
-    ):
+    ) -> nx.MultiDiGraph | None:
         """Draw this pipeline's actor tree, or return it as a graph.
 
         Delegates to :func:`graflo.plot.plotter.assemble_tree`, which is the

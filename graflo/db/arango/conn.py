@@ -45,6 +45,7 @@ from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import VertexConfig
 from graflo.connections.bulk import BulkConfig
 from graflo.connections.onto import ArangoConfig
+from graflo.db.aggregation import aggregation_result, check_aggregation
 from graflo.db.arango.bulk import (
     ArangoImportError,
     check_import,
@@ -1551,55 +1552,45 @@ class ArangoConnection(Connection):
         filters: None | FilterExpression | list[Any] | dict[str, Any] = None,
         *,
         timeout_s: float | None = None,
-    ) -> list[dict[str, Any]]:
-        """Perform aggregation on a collection.
+    ) -> Any:
+        """Aggregate over a collection; the result is shaped as in :mod:`graflo.db.aggregation`.
 
         Args:
             class_name: Collection to aggregate
             aggregation_function: Type of aggregation to perform
             discriminant: Field to group by
-            aggregated_field: Field to aggregate
+            aggregated_field: Field to aggregate. Required for everything but COUNT.
             filters: Query filters
             timeout_s: ``maxRuntime`` of the query; ``None`` for none.
 
-        Returns:
-            list: Aggregation results
+        Raises:
+            ValueError: If *aggregated_field* is missing where it is required.
         """
+        function = check_aggregation(aggregation_function, aggregated_field)
         params = BoundParams(ExpressionFlavor.AQL)
         filter_clause = render_filters(filters, doc_name="doc", params=params)
 
-        if (
-            aggregated_field is not None
-            and aggregation_function != AggregationType.COUNT
-        ):
-            group_unit = f"g[*].doc.{aggregated_field}"
-        else:
-            group_unit = "g"
-
+        collect = "COLLECT"
         if discriminant is not None:
-            collect_clause = f"COLLECT value = doc['{discriminant}'] INTO g"
-            return_clause = f"""{{ '{discriminant}' : value, '_value': {aggregation_function}({group_unit})}}"""
+            collect += f" group_key = doc[{params.bind(discriminant)}]"
+        if function == AggregationType.COUNT:
+            collect += " WITH COUNT INTO agg_value"
         else:
-            if (
-                aggregated_field is None
-                and aggregation_function == AggregationType.COUNT
-            ):
-                collect_clause = (
-                    f"COLLECT AGGREGATE value =  {aggregation_function} (doc)"
-                )
-            else:
-                collect_clause = (
-                    "COLLECT AGGREGATE value ="
-                    f" {aggregation_function}(doc['{aggregated_field}'])"
-                )
-            return_clause = """{ '_value' : value }"""
+            field = params.bind(aggregated_field)
+            collect += f" AGGREGATE agg_value = {function.value}(doc[{field}])"
+        key = "group_key" if discriminant is not None else "null"
 
         q = f"""FOR doc IN {class_name}
                     {filter_clause}
-                    {collect_clause}
-                    RETURN {return_clause}"""
+                    {collect}
+                    RETURN [{key}, agg_value]"""
 
-        return _aql_rows(self, q, params.values, timeout_s)
+        rows = _aql_rows(self, q, params.values, timeout_s)
+        return aggregation_result(
+            function,
+            [(row[0], row[1]) for row in rows],
+            grouped=discriminant is not None,
+        )
 
     def keep_absent_documents(
         self,

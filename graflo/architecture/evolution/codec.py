@@ -160,7 +160,12 @@ def op_to_dict(op: Any) -> dict[str, Any]:
     except Exception:
         # Any validation failure means the compact form is not loadable.
         pass
-    return op.to_dict(skip_defaults=False) | {"op": op.op}
+    # The full form keeps ``None``: a required nullable field carries meaning
+    # there (``FieldTypeSpec.type=None`` clears a declared type).
+    full = op.model_dump(mode="json", by_alias=True) | {"op": op.op}
+    if _op_adapter.validate_python(full) != op:
+        raise ValueError(f"{op.op} does not serialize to a payload that loads back")
+    return full
 
 
 def ops_to_dicts(ops: list[Any]) -> list[dict[str, Any]]:

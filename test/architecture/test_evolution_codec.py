@@ -603,6 +603,17 @@ class TestRoundTrip:
         assert restored == original
         assert restored.replacements["party"].to.funnel.branch_ids == ["email", "phone"]
 
+    def test_a_cleared_field_type_round_trips(self) -> None:
+        """``type: null`` clears a declared type; the payload must keep it."""
+        original = op_from_dict(
+            {"op": "change_field_types", "vertices": {"city": {"name": {"type": None}}}}
+        )
+
+        restored = ops_from_yaml(ops_to_yaml_str([original]))[0]
+
+        assert restored == original
+        assert restored.vertices["city"]["name"].type is None
+
     def test_ops_from_yaml_accepts_a_mapping_with_an_ops_key(self) -> None:
         body = "ops:\n" + "".join(
             f"  {line}\n" for line in ops_to_yaml_str(_all_ops()[:2]).splitlines()

@@ -1495,7 +1495,7 @@ class VertexConfig(ConfigBaseModel):
         return self._vertices_map
 
     @property
-    def vertex_set(self):
+    def vertex_set(self) -> set[VertexName]:
         """Get set of vertex names.
 
         Returns:
@@ -1504,7 +1504,7 @@ class VertexConfig(ConfigBaseModel):
         return set(self._get_vertices_map().keys())
 
     @property
-    def vertex_list(self):
+    def vertex_list(self) -> list[Vertex]:
         """Get list of vertex configurations.
 
         Returns:
@@ -1580,7 +1580,7 @@ class VertexConfig(ConfigBaseModel):
         vertex = self._get_vertex_by_name(vertex_name)
         return vertex.property_names
 
-    def numeric_fields_list(self, vertex_name):
+    def numeric_fields_list(self, vertex_name: VertexName) -> Any:
         """Get list of numeric fields for a vertex.
 
         Args:
@@ -1604,7 +1604,7 @@ class VertexConfig(ConfigBaseModel):
                 f" {vertex_name} was not defined in config"
             )
 
-    def filters(self, vertex_name) -> list[FilterExpression]:
+    def filters(self, vertex_name: VertexName) -> list[FilterExpression]:
         """Get filter clauses for a vertex.
 
         Args:
@@ -1642,7 +1642,7 @@ class VertexConfig(ConfigBaseModel):
         """
         self._get_vertices_map()[v.name] = v
 
-    def __getitem__(self, key: str):
+    def __getitem__(self, key: str) -> Vertex:
         """Get vertex configuration by name.
 
         Args:

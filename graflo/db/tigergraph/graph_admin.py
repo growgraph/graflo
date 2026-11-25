@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from graflo.architecture.graph_types import Index
 from graflo.architecture.schema import Schema
@@ -998,7 +999,9 @@ class GraphAdmin:
         except Exception as e:
             logger.error(f"Error defining indexes: {e}")
 
-    def fetch_indexes(self, vertex_type: str | None = None):
+    def fetch_indexes(
+        self, vertex_type: str | None = None
+    ) -> dict[str, list[dict[str, Any]]]:
         """
         Fetch indexes for vertex types using GSQL.
 
@@ -1010,8 +1013,10 @@ class GraphAdmin:
                         If None, fetches indexes for all vertex types.
 
         Returns:
-            dict: Mapping of vertex type names to their indexes.
-                  Format: {vertex_type: [{"name": "index_name", "fields": ["field1", ...]}, ...]}
+            dict: Mapping of vertex type names to their indexes. Each vertex
+                type currently gets one placeholder entry,
+                ``{"name": "stat_index", "source": "show_stat"}``; an empty
+                mapping if the graph cannot be read.
         """
         try:
             with self._conn._ensure_graph_context():

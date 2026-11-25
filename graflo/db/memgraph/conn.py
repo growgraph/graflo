@@ -92,6 +92,11 @@ from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import VertexConfig
 from graflo.connections.bulk import BulkConfig
 from graflo.connections.onto import MemgraphConfig
+from graflo.db.aggregation import (
+    aggregation_result,
+    check_aggregation,
+    cypher_aggregation_return,
+)
 from graflo.db.bulk import BulkCounts, BulkEdgeChunk, BulkPlan, BulkVertexChunk
 from graflo.db.conn import (
     DEFAULT_DELETE_CHUNK_SIZE,
@@ -1512,88 +1517,16 @@ class MemgraphConnection(Connection):
         filters: FilterExpression | list[Any] | dict[str, Any] | None = None,
         *,
         timeout_s: float | None = None,
-    ) -> int | float | list[dict[str, Any]] | dict[str, int | float] | None:
-        """Perform aggregation operations on nodes.
+    ) -> Any:
+        """Aggregate over nodes of a label; the result is shaped as in :mod:`graflo.db.aggregation`.
 
-        Computes aggregate statistics over nodes matching the specified label
-        and optional filters. Supports counting, min/max, average, and distinct
-        value extraction.
+        *timeout_s* is accepted and ignored: Memgraph's execution timeout is
+        instance-wide.
 
-        Parameters
-        ----------
-        class_name : str
-            Node label to aggregate (e.g., "Person", "Product")
-        aggregation_function : AggregationType
-            Type of aggregation to perform:
-            - COUNT: Count matching nodes (with optional GROUP BY)
-            - MAX: Maximum value of a field
-            - MIN: Minimum value of a field
-            - AVERAGE: Average value of a field
-            - SORTED_UNIQUE: Distinct values sorted ascending
-        discriminant : str, optional
-            Field to group by when using COUNT. Returns a dictionary mapping
-            each distinct value to its count. Example: ``"status"``
-        aggregated_field : str, optional
-            Field to aggregate. Required for MAX, MIN, AVERAGE, SORTED_UNIQUE.
-            Example: ``"price"``
-        filters : list | dict, optional
-            Query filters to apply before aggregation.
-            Example: ``["==", "active", "status"]``
-        **kwargs
-            Additional options (currently unused)
-
-        Returns
-        -------
-        int | float | list | dict[str, int] | None
-            - COUNT without discriminant: int (total count)
-            - COUNT with discriminant: dict mapping values to counts
-            - MAX/MIN/AVERAGE: numeric value or None if no data
-            - SORTED_UNIQUE: list of distinct values
-
-        Raises
-        ------
-        ValueError
-            If aggregated_field is missing for non-COUNT aggregations,
-            or if an unsupported aggregation type is specified.
-
-        Examples
-        --------
-        Count all Person nodes::
-
-            count = db.aggregate("Person", AggregationType.COUNT)
-            # Returns: 42
-
-        Count by status (GROUP BY)::
-
-            by_status = db.aggregate(
-                "Product",
-                AggregationType.COUNT,
-                discriminant="status"
-            )
-            # Returns: {"active": 100, "inactive": 25, "draft": 5}
-
-        Get maximum price::
-
-            max_price = db.aggregate(
-                "Product",
-                AggregationType.MAX,
-                aggregated_field="price"
-            )
-            # Returns: 999.99
-
-        Get distinct categories::
-
-            categories = db.aggregate(
-                "Product",
-                AggregationType.SORTED_UNIQUE,
-                aggregated_field="category"
-            )
-            # Returns: ["electronics", "furniture", "toys"]
+        Raises:
+            ValueError: If *aggregated_field* is missing where it is required.
         """
-        if self.conn is None:
-            raise RuntimeError("Connection is closed")
-
-        # Build filter clause
+        function = check_aggregation(aggregation_function, aggregated_field)
         filter_clause = ""
         params = BoundParams(self.expression_flavor())
         if filters is not None:
@@ -1601,40 +1534,17 @@ class MemgraphConnection(Connection):
             filter_str = ff(doc_name="n", kind=params.kind, params=params)
             filter_clause = f" WHERE {filter_str}"
 
-        q = f"MATCH (n:{cypher_name(class_name)}){filter_clause}"
-        if aggregation_function != AggregationType.COUNT and not aggregated_field:
-            raise ValueError(f"aggregated_field is required for {aggregation_function}")
-        field = cypher_name(aggregated_field) if aggregated_field else ""
-
-        if aggregation_function == AggregationType.COUNT:
-            if discriminant:
-                q += f" RETURN n.{cypher_name(discriminant)} AS key, count(*) AS count"
-                cursor = self.conn.cursor()
-                cursor.execute(q, params.values)
-                rows = cursor.fetchall()
-                cursor.close()
-                return {row[0]: row[1] for row in rows}
-            else:
-                q += " RETURN count(n)"
-        elif aggregation_function == AggregationType.MAX:
-            q += f" RETURN max(n.{field})"
-        elif aggregation_function == AggregationType.MIN:
-            q += f" RETURN min(n.{field})"
-        elif aggregation_function == AggregationType.AVERAGE:
-            q += f" RETURN avg(n.{field})"
-        elif aggregation_function == AggregationType.SORTED_UNIQUE:
-            q += f" RETURN DISTINCT n.{field} ORDER BY n.{field}"
-        else:
-            raise ValueError(f"Unsupported aggregation type: {aggregation_function}")
-
+        value = f"n.{cypher_name(aggregated_field)}" if aggregated_field else None
+        key = f"n.{cypher_name(discriminant)}" if discriminant else None
+        q = f"MATCH (n:{cypher_name(class_name)}){filter_clause} " + (
+            cypher_aggregation_return(function, value, key)
+        )
         cursor = self.conn.cursor()
         cursor.execute(q, params.values)
         rows = cursor.fetchall()
         cursor.close()
-
-        if aggregation_function == AggregationType.SORTED_UNIQUE:
-            return [row[0] for row in rows]
-        return rows[0][0] if rows else None
+        pairs = [(row[0], row[1]) if key else (None, row[0]) for row in rows]
+        return aggregation_result(function, pairs, grouped=key is not None)
 
     def define_schema(self, schema: Schema):
         """Define collections based on schema.

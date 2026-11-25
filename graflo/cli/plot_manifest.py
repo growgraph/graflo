@@ -101,16 +101,16 @@ FIGURES = ("vc2vc", "vc2fields", "resources", "source2vc", "source2vc_detailed")
     ),
 )
 def plot_manifest(
-    manifest_path,
-    figure_output_path,
-    prune_low_degree_nodes,
-    group_vc_by_level,
-    color_vc_by_level,
-    include_all_vertices,
-    output_format,
-    output_dpi,
-    only,
-):
+    manifest_path: str,
+    figure_output_path: str,
+    prune_low_degree_nodes: bool,
+    group_vc_by_level: bool,
+    color_vc_by_level: bool,
+    include_all_vertices: bool,
+    output_format: str,
+    output_dpi: int,
+    only: tuple[str, ...],
+) -> None:
     """Generate visualizations of the graph database manifest.
 
     This command creates multiple visualizations of the manifest:

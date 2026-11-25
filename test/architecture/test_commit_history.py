@@ -416,3 +416,23 @@ def test_rehash_trees_leaves_a_root_without_a_base_alone() -> None:
 
     assert skipped == [root.id]
     assert rehashed.require(root.id).tree == root.tree[::-1]
+
+
+def test_a_revert_the_head_refuses_is_a_commit_error() -> None:
+    """The inverse of an older commit may no longer apply; that is not a crash."""
+    from graflo.architecture.evolution.commit import build_revert_commit
+    from graflo.architecture.evolution.ops import RenameVertexPropertiesOp
+
+    base = _manifest(["id"])
+    first = build_commit(base, [_add("y")], label="add y")
+    after_first = apply_evolution(
+        base, list(first.ops), bump_version=False, finish_init=False
+    )
+    rename = RenameVertexPropertiesOp(renames={"a": {"y": "w"}})
+    second = build_commit(after_first, [rename], parents=[first.id], label="y to w")
+    head = apply_evolution(
+        after_first, list(second.ops), bump_version=False, finish_init=False
+    )
+
+    with pytest.raises(CommitError, match="cannot be reverted onto this head"):
+        build_revert_commit(head, first, before=base, parents=[second.id])

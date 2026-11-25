@@ -170,7 +170,8 @@ passed as `before=`; `checkout_parent(base, history, commit_id)` rebuilds it
 from the base. The inverses are then applied to the head. Inversion is exact
 or it fails: a commit holding an op with no inverse is refused, and so is one
 whose inverses no longer apply to the head because a later commit changed what
-they touch. Checking out the parent commit is always exact.
+they touch. Both raise `CommitError`, which `graflo revert` reports with the
+reason. Checking out the parent commit is always exact.
 
 | Reversible | Irreversible |
 |---|---|
@@ -359,7 +360,7 @@ against the removal keeps the removed type.
 | Inputs | two descendants of a common ancestor | two unrelated manifests |
 | Names | expected to agree; a disagreement is a conflict | expected to differ; declared equivalences reconcile them |
 | Function and command | `merge_three_way`, `graflo merge3` | `merge_manifests`, `graflo merge` |
-| Order of the sides | significant: the commit's ops are the diff from the first parent | significant in six fields only; see below |
+| Order of the sides | significant: the commit's ops are the diff from the first parent | significant in five fields only; see below |
 
 Both produce commits with several parents. The stored commit `kind` and the
 CLI verb spell the three-way merge `merge3` so that the two stay apart.
@@ -490,11 +491,18 @@ know what to compare against.
   2003, and *Associativity and Commutativity in Generic Merge*, LNCS 5600, 2009.
   Their Merge is the operator this page calls a union, and those papers study
   its commutativity. GraFlo's union is commutative except in the five preserved
-  fields above. The three-way merge is symmetric in its two sides (the same
-  conflicts, or the same content hash), and a clean result is each side's
-  change applied on top of the other; both properties are checked over
-  generated inputs for the structural ops. Associativity across three branches
-  is not claimed.
+  fields above: with the sides swapped, and the sides of every equivalence and
+  canonical map with them, it is refused in both orders or neither, and
+  otherwise has the same content hash once those five fields are put in one
+  order. That is checked over generated inputs under `name_conflict` `error`
+  and `union_right`; `prefix_right` renames only the right side, so it depends
+  on the order by definition. The three-way merge is symmetric in its two
+  sides (the same conflicts, or the same content hash), and a clean result is
+  each side's change applied on top of the other. Three branches off one base
+  also associate: merging the first two and then the third is clean exactly
+  when merging the last two into the first is, and the two clean results have
+  the same content hash. These properties are checked over generated inputs
+  for the structural ops, not proved.
 - Edwards, Petricek: *Baseline: Operation-Based Evolution and Versioning of
   Data*, 2025; Deshpande: *Living Databases*, 2026. Operation-based versioning of
   data, where the operations are the diff: the same design, applied to data

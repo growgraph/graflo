@@ -28,6 +28,7 @@ from graflo.architecture.schema.vertex import (
     field_type_value,
     is_list_field_type,
 )
+from graflo.db.aggregation import aggregation_result, check_aggregation
 from graflo.db.conn import (
     DEFAULT_DELETE_CHUNK_SIZE,
     NamespaceNotFoundError,
@@ -194,13 +195,13 @@ def vertex_table_name(vertex_name: str) -> str:
     return vertex_name
 
 
-#: SQL aggregate per graflo ``AggregationType``. ``SORTED_UNIQUE`` has no plain
-#: aggregate equivalent and is deliberately absent rather than silently mapped.
+#: SQL aggregate per graflo ``AggregationType``; ``{}`` is the quoted column.
 _PG_AGGREGATIONS: dict[AggregationType, str] = {
-    AggregationType.COUNT: "COUNT",
-    AggregationType.MAX: "MAX",
-    AggregationType.MIN: "MIN",
-    AggregationType.AVERAGE: "AVG",
+    AggregationType.COUNT: "COUNT(*)",
+    AggregationType.MAX: "MAX({})",
+    AggregationType.MIN: "MIN({})",
+    AggregationType.AVERAGE: "AVG({})",
+    AggregationType.SORTED_UNIQUE: "ARRAY_AGG(DISTINCT {})",
 }
 
 
@@ -1480,32 +1481,21 @@ class PostgresTargetWriteMixin:
         filters: FilterExpression | list | dict | None = None,
         *,
         timeout_s: float | None = None,
-    ) -> int | float | list[dict[str, Any]] | dict[str, int | float] | None:
-        """Aggregate over a vertex table, optionally grouped by *discriminant*.
+    ) -> Any:
+        """Aggregate over a vertex table; the result is shaped as in :mod:`graflo.db.aggregation`.
 
-        Mirrors the shape the other backends return: a list of
-        ``{discriminant, _value}`` rows when grouping, otherwise a single
-        ``{_value}`` row. *timeout_s* is the ``statement_timeout`` of the read.
+        *timeout_s* is the ``statement_timeout`` of the read.
+
+        Raises:
+            ValueError: If *aggregated_field* is missing where it is required.
         """
+        function = check_aggregation(aggregation_function, aggregated_field)
         pg_schema = _pg_schema_name(self.config)
         table = vertex_table_name(class_name)
         qualified = f"{_quote_ident(pg_schema)}.{_quote_ident(table)}"
-
-        sql_function = _PG_AGGREGATIONS.get(aggregation_function)
-        if sql_function is None:
-            raise ValueError(
-                f"Aggregation {aggregation_function!r} is not supported on PostgreSQL; "
-                f"supported: {sorted(a.value for a in _PG_AGGREGATIONS)}"
-            )
-
-        if aggregation_function == AggregationType.COUNT and aggregated_field is None:
-            expression = "COUNT(*)"
-        elif aggregated_field is None:
-            raise ValueError(
-                f"Aggregation {aggregation_function!r} requires aggregated_field"
-            )
-        else:
-            expression = f"{sql_function}({_quote_ident(aggregated_field)})"
+        expression = _PG_AGGREGATIONS[function].format(
+            _quote_ident(aggregated_field) if aggregated_field else ""
+        )
 
         where_clause = ""
         params = BoundParams(ExpressionFlavor.SQL)
@@ -1519,15 +1509,19 @@ class PostgresTargetWriteMixin:
                 where_clause = f" WHERE {rendered}"
 
         if discriminant is None:
-            q = f"SELECT {expression} AS _value FROM {qualified}{where_clause}"
+            q = f"SELECT {expression} AS agg_value FROM {qualified}{where_clause}"
         else:
             column = _quote_ident(discriminant)
             q = (
-                f"SELECT {column} AS {_quote_ident(discriminant)}, "
-                f"{expression} AS _value FROM {qualified}{where_clause} "
-                f"GROUP BY {column}"
+                f"SELECT {column} AS group_key, {expression} AS agg_value "
+                f"FROM {qualified}{where_clause} GROUP BY {column}"
             )
-        return self.read(q, params.values or None, **timeout_kwargs(timeout_s))
+        rows = self.read(q, params.values or None, **timeout_kwargs(timeout_s))
+        return aggregation_result(
+            function,
+            [(row.get("group_key"), row["agg_value"]) for row in rows],
+            grouped=discriminant is not None,
+        )
 
     def keep_absent_documents(
         self,

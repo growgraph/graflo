@@ -41,6 +41,7 @@ from pydantic import model_validator
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.contract.manifest import GraphManifest
+from graflo.architecture.refusal import Refusal
 
 from .codec import RevisionOp, ops_from_dicts, ops_to_dicts
 from .hashing import manifest_hash
@@ -525,14 +526,20 @@ def build_revert_commit(
             + ". Check out its parent instead."
         )
 
-    return build_commit(
-        current,
-        inverses,
-        parents=list(parents),
-        kind="revert",
-        label=label or f"revert {commit.short()}",
-        created_at=created_at,
-    )
+    try:
+        return build_commit(
+            current,
+            inverses,
+            parents=list(parents),
+            kind="revert",
+            label=label or f"revert {commit.short()}",
+            created_at=created_at,
+        )
+    except Refusal as refused:
+        raise CommitError(
+            f"commit '{commit.short()}' cannot be reverted onto this head -- "
+            f"{refused}. Check out its parent instead."
+        ) from refused
 
 
 __all__ = [

@@ -11,9 +11,10 @@ partitions read left to right:
   dark edge for a declared equivalence, a blue one for a vocabulary rename, a
   thin grey one for a name kept as it is, a dotted one for a mapping a later
   declaration overrode.
-* ``identity`` -- how a record is keyed: raw fields, the branches a record
-  tries in order (``#1``, ``#2``, ...), and the key they feed. An edge into a
-  branch is labelled with the transform or the tag it reads with.
+* ``identity`` -- how a record is keyed: raw fields and member keys, the
+  branches a record tries in order (``#1``, ``#2``, ...), drawn as one column,
+  and the key they feed. An edge into a branch is labelled with the transform
+  or the tag it reads with.
 * ``lookups`` -- each member's own key, kept on the merged type as a lookup;
   the edge is labelled with the key space.
 
@@ -32,7 +33,6 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from fnmatch import fnmatch
-from itertools import pairwise
 from pathlib import Path
 from typing import Any, Literal
 
@@ -93,8 +93,9 @@ CAPTION: dict[View, str] = {
     ),
     "identity": (
         "Identity. The raw fields each branch reads, labelled with the transform "
-        "or the tag; a record tries the branches in order, #1 first, and the "
-        "first it completes keys it."
+        "or the tag, and the member key each own-key branch reads; a record "
+        "tries the branches in order, #1 on top, and the first it completes "
+        "keys it."
     ),
     "lookups": (
         "Lookups. Each member's own key, kept on the merged type as a lookup "
@@ -297,11 +298,8 @@ def _identity(preview: MergePreview, cluster: PreviewCluster) -> _Figure | None:
             color="#B9770E",
         )
         (derive_node if branch.position == 0 else branch_node)[branch.id] = node
-    # One rank, chained by invisible edges, so the branches read #1 first.
+    # One column, #1 first: drawn as one record (see `_columns`).
     fig.ranks.append(list(branch_node.values()))
-    order = list(branch_node.values())
-    for upper, lower in pairwise(order):
-        fig.graph.add_edge(upper, lower, style="invis", kind="order")
 
     # Raw fields into derived branches, in branch order so each
     # resource lists its fields the way the branches read them.
@@ -341,6 +339,16 @@ def _identity(preview: MergePreview, cluster: PreviewCluster) -> _Figure | None:
                 if own is None or f"{owner}.{own}" not in nodes:
                     continue
                 tail = _attribute(fig, nodes, f"{owner}.{own}")
+                fig.edge(tail, branch_node[branch.id], "source")
+
+    # An own-key branch reads each member's own key, kept under its key space.
+    for branch in identity.branches:
+        if branch.kind != "own_key":
+            continue
+        for demotion, own, merged in _demoted(preview, cluster):
+            source_id = f"{demotion.side}:{demotion.member}.{own}"
+            if merged in branch.fields and source_id in nodes:
+                tail = _attribute(fig, nodes, source_id)
                 fig.edge(tail, branch_node[branch.id], "source")
 
     # Branches into the key: the digest of a funnel, or the attribute itself.
@@ -439,8 +447,8 @@ def build_equivalence_view(
 
     Every node carries the preview id it stands for as ``preview_id``, and
     every edge its style as ``kind``. The ``boxes`` graph attribute maps a
-    box id to ``(label, side, [node, ...])``; ``ranks`` lists node groups
-    drawn in one rank, in order.
+    box id to ``(label, side, [node, ...])``; ``ranks`` lists node groups,
+    each drawn as one column in the order given, first on top.
 
     Args:
         preview: The whole preview, from ``preview_merge`` or ``declared_preview``.
@@ -458,9 +466,7 @@ def build_equivalence_view(
     return fig.graph
 
 
-def _groups(boxes: dict[str, Any], ranks: list[list[str]], dot: Any) -> None:
-    for number, members in enumerate(ranks):
-        dot.add_subgraph(members, name=f"rank_{number}", rank="same")
+def _groups(boxes: dict[str, Any], dot: Any) -> None:
     for box, (label, side, members) in boxes.items():
         dot.add_subgraph(
             members,
@@ -473,6 +479,54 @@ def _groups(boxes: dict[str, Any], ranks: list[list[str]], dot: Any) -> None:
         )
 
 
+def _record(text: str) -> str:
+    """*text* (already a plain DOT label) as one field of a record label."""
+    return re.sub(r"([{}|<>])", r"\\\1", text)
+
+
+def _columns(graph: nx.MultiDiGraph, ranks: list[list[str]]) -> nx.MultiDiGraph:
+    """*graph* with each rank drawn as one record, a field per node, in rank order.
+
+    Graphviz does not keep the order of nodes within a rank once clusters pull
+    the layout around; the fields of one record always keep theirs. Edges move
+    to the field's port.
+    """
+    port: dict[str, tuple[str, str]] = {}
+    out = nx.MultiDiGraph()
+    out.graph.update(graph.graph)
+    for number, members in enumerate(ranks):
+        if not members:
+            continue
+        column = f"column_{number}"
+        first = graph.nodes[members[0]]
+        out.add_node(
+            column,
+            label="|".join(
+                f"<f{i}> {_record(graph.nodes[m]['label'])}"
+                for i, m in enumerate(members)
+            ),
+            shape="Mrecord",
+            style="filled",
+            fillcolor=first.get("fillcolor", "white"),
+            color=first.get("color", _INK),
+        )
+        port.update({m: (column, f"f{i}") for i, m in enumerate(members)})
+    for node, attrs in graph.nodes(data=True):
+        if node not in port:
+            out.add_node(node, **attrs)
+    for tail, head, attrs in graph.edges(data=True):
+        attrs = dict(attrs)
+        back = attrs.get("dir") == "back"
+        if tail in port:
+            tail, field_port = port[tail]
+            attrs["tailport"] = field_port if back else f"{field_port}:e"
+        if head in port:
+            head, field_port = port[head]
+            attrs["headport"] = field_port if back else f"{field_port}:w"
+        out.add_edge(tail, head, **attrs)
+    return out
+
+
 def _draw(
     graph: nx.MultiDiGraph,
     path: Path,
@@ -482,11 +536,11 @@ def _draw(
     dpi: int | None,
 ) -> Path:
     # Boxes and ranks are drawing data, not Graphviz attributes: keep them out of DOT.
-    boxes = graph.graph.pop("boxes", {})
-    ranks = graph.graph.pop("ranks", [])
-    dot = to_dot(graph)
-    graph.graph.update(boxes=boxes, ranks=ranks)
-    _groups(boxes, ranks, dot)
+    drawn = _columns(graph, graph.graph.get("ranks", []))
+    boxes = drawn.graph.pop("boxes", {})
+    drawn.graph.pop("ranks", None)
+    dot = to_dot(drawn)
+    _groups(boxes, dot)
     return draw(dot, path, output_format=output_format, prog=prog, dpi=dpi)
 
 

@@ -19,8 +19,10 @@ Example:
 
 import logging
 import os
+from collections.abc import Iterable
 from itertools import pairwise, product
 from pathlib import Path
+from typing import Any, overload
 
 import networkx as nx
 from suthing import FileHandle
@@ -216,7 +218,9 @@ def _group_order(group: str) -> tuple[int, str]:
     return (1 << 30, group)
 
 
-def get_auxnode_id(ntype: AuxNodeType, label=False, vfield=False, **kwargs):
+def get_auxnode_id(
+    ntype: AuxNodeType, label: bool = False, vfield: bool = False, **kwargs: Any
+) -> str:
     """Generate a unique identifier for an auxiliary node.
 
     Args:
@@ -274,18 +278,18 @@ def get_auxnode_id(ntype: AuxNodeType, label=False, vfield=False, **kwargs):
     return s
 
 
-def shortest_unique_prefix_map(strings):
+def shortest_unique_prefix_map(strings: Iterable[str]) -> dict[str, str]:
     """Create a dictionary of string prefixes for shortening labels.
 
     Args:
-        strings: List of strings to process
+        strings: Strings to process; duplicates are ignored
 
     Returns:
-        dict: Mapping of shortened prefixes to original prefixes
+        dict: Mapping of each string to its shortest unique prefix
 
     Example:
-        >>> lto_dict(["user", "user_profile", "user_settings"])
-        {'user': 'user', 'user_p': 'user_', 'user_s': 'user_'}
+        >>> shortest_unique_prefix_map(["user", "user_profile", "user_settings"])
+        {'user': 'user', 'user_profile': 'user_p', 'user_settings': 'user_s'}
     """
     strings = list(set(strings))
     d = {"": strings}
@@ -313,9 +317,27 @@ def shortest_unique_prefix_map(strings):
     return r
 
 
-def lto_dict(strings):
+def lto_dict(strings: Iterable[str]) -> dict[str, str]:
     """Backward-compatible alias for shortest_unique_prefix_map."""
     return shortest_unique_prefix_map(strings)
+
+
+@overload
+def assemble_tree(
+    aw: ActorWrapper,
+    fig_path: None = None,
+    output_format: str = "pdf",
+    output_dpi: int | None = None,
+) -> nx.MultiDiGraph: ...
+
+
+@overload
+def assemble_tree(
+    aw: ActorWrapper,
+    fig_path: Path | str,
+    output_format: str = "pdf",
+    output_dpi: int | None = None,
+) -> None: ...
 
 
 def assemble_tree(
@@ -323,7 +345,7 @@ def assemble_tree(
     fig_path: Path | str | None = None,
     output_format: str = "pdf",
     output_dpi: int | None = None,
-):
+) -> nx.MultiDiGraph | None:
     """Assemble a tree visualization from an actor wrapper.
 
     Args:
@@ -771,7 +793,7 @@ class ManifestPlotter:
             [v for v in self.schema.core_schema.vertex_config.vertex_set]
         )
 
-        kwargs = {"vfield": True, "vertex_sh": vertex_prefix_dict}
+        kwargs: dict[str, Any] = {"vfield": True, "vertex_sh": vertex_prefix_dict}
         for k in vconf.vertex_set:
             index_fields = vconf.identity_fields(k)
             fields = vconf.property_names(k)

@@ -34,6 +34,7 @@ from urllib.parse import urlparse
 from falkordb import FalkorDB
 from falkordb.graph import Graph
 from falkordb.helpers import stringify_param_value
+from falkordb.query_result import QueryResult
 from redis.exceptions import ResponseError
 
 from graflo.architecture.graph_types import EdgeDirection, GraphContainer, Index
@@ -47,6 +48,11 @@ from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import VertexConfig
 from graflo.connections.bulk import BulkConfig
 from graflo.connections.onto import FalkordbConfig
+from graflo.db.aggregation import (
+    aggregation_result,
+    check_aggregation,
+    cypher_aggregation_return,
+)
 from graflo.db.bulk import BulkCounts, BulkEdgeChunk, BulkPlan, BulkVertexChunk
 from graflo.db.conn import (
     DEFAULT_DELETE_CHUNK_SIZE,
@@ -189,7 +195,7 @@ class FalkordbConnection(Connection):
         self.graph = self.client.select_graph(graph_name)
         self._graph_name = graph_name
 
-    def execute(self, query: str, **kwargs):
+    def execute(self, query: str, **kwargs: Any) -> QueryResult:
         """Execute a raw OpenCypher query against the graph.
 
         Args:
@@ -1106,15 +1112,15 @@ class FalkordbConnection(Connection):
 
     def fetch_docs(
         self,
-        class_name,
+        class_name: str,
         filters: list | dict | None = None,
         limit: int | None = None,
         return_keys: list | None = None,
         unset_keys: list | None = None,
         *,
         timeout_s: float | None = None,
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> list[dict[str, Any]]:
         """Fetch nodes from a label.
 
         Args:
@@ -1204,8 +1210,8 @@ class FalkordbConnection(Connection):
         from_key: str = "id",
         to_key: str = "id",
         timeout_s: float | None = None,
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> list[dict[str, Any]]:
         """Fetch edges from FalkorDB using Cypher.
 
         Relationships are held in adjacency matrices stored alongside their
@@ -1533,106 +1539,38 @@ class FalkordbConnection(Connection):
 
     def aggregate(
         self,
-        class_name,
+        class_name: str,
         aggregation_function: AggregationType,
         discriminant: str | None = None,
         aggregated_field: str | None = None,
-        filters: FilterExpression | list | dict | None = None,
+        filters: FilterExpression | list[Any] | dict[str, Any] | None = None,
         *,
         timeout_s: float | None = None,
-    ):
-        """Perform aggregation on nodes.
+    ) -> Any:
+        """Aggregate over nodes of a label; the result is shaped as in :mod:`graflo.db.aggregation`.
 
-        Args:
-            class_name: Label to aggregate
-            aggregation_function: Type of aggregation to perform
-            discriminant: Field to group by
-            aggregated_field: Field to aggregate
-            filters: Query filters
-            timeout_s: Query timeout the server enforces; ``None`` for none.
-
-        Returns:
-            Aggregation results (dict for grouped aggregations, int/float for single value)
+        Raises:
+            ValueError: If *aggregated_field* is missing where it is required.
         """
-        # Build filter clause
+        function = check_aggregation(aggregation_function, aggregated_field)
         params = BoundParams(self.expression_flavor())
         if filters is not None:
             ff = parse_filter_expression(filters)
-            filter_clause = f"WHERE {ff(doc_name='n', kind=params.kind, params=params)}"
+            filter_clause = (
+                f" WHERE {ff(doc_name='n', kind=params.kind, params=params)}"
+            )
         else:
             filter_clause = ""
-        label = cypher_name(class_name)
-
-        # Build aggregation query based on function type
-        if aggregation_function == AggregationType.COUNT:
-            if discriminant:
-                q = f"""
-                    MATCH (n:{label})
-                    {filter_clause}
-                    RETURN n.{cypher_name(discriminant)} AS key, count(*) AS count
-                """
-                result = _read(self, q, params.values, timeout_s)
-                return {row[0]: row[1] for row in result.result_set}
-            else:
-                q = f"""
-                    MATCH (n:{label})
-                    {filter_clause}
-                    RETURN count(*) AS count
-                """
-                result = _read(self, q, params.values, timeout_s)
-                return result.result_set[0][0] if result.result_set else 0
-
-        elif aggregation_function == AggregationType.MAX:
-            if not aggregated_field:
-                raise ValueError("aggregated_field is required for MAX aggregation")
-            q = f"""
-                MATCH (n:{label})
-                {filter_clause}
-                RETURN max(n.{cypher_name(aggregated_field)}) AS max_value
-            """
-            result = _read(self, q, params.values, timeout_s)
-            return result.result_set[0][0] if result.result_set else None
-
-        elif aggregation_function == AggregationType.MIN:
-            if not aggregated_field:
-                raise ValueError("aggregated_field is required for MIN aggregation")
-            q = f"""
-                MATCH (n:{label})
-                {filter_clause}
-                RETURN min(n.{cypher_name(aggregated_field)}) AS min_value
-            """
-            result = _read(self, q, params.values, timeout_s)
-            return result.result_set[0][0] if result.result_set else None
-
-        elif aggregation_function == AggregationType.AVERAGE:
-            if not aggregated_field:
-                raise ValueError("aggregated_field is required for AVERAGE aggregation")
-            q = f"""
-                MATCH (n:{label})
-                {filter_clause}
-                RETURN avg(n.{cypher_name(aggregated_field)}) AS avg_value
-            """
-            result = _read(self, q, params.values, timeout_s)
-            return result.result_set[0][0] if result.result_set else None
-
-        elif aggregation_function == AggregationType.SORTED_UNIQUE:
-            if not aggregated_field:
-                raise ValueError(
-                    "aggregated_field is required for SORTED_UNIQUE aggregation"
-                )
-            q = f"""
-                MATCH (n:{label})
-                {filter_clause}
-                RETURN DISTINCT n.{cypher_name(aggregated_field)} AS value
-                ORDER BY value
-            """
-            result = _read(self, q, params.values, timeout_s)
-            return [row[0] for row in result.result_set]
-
-        else:
-            raise ValueError(
-                f"Unsupported aggregation function: {aggregation_function}"
-            )
+        value = f"n.{cypher_name(aggregated_field)}" if aggregated_field else None
+        key = f"n.{cypher_name(discriminant)}" if discriminant else None
+        q = f"MATCH (n:{cypher_name(class_name)}){filter_clause} " + (
+            cypher_aggregation_return(function, value, key)
+        )
+        result = _read(self, q, params.values, timeout_s)
+        pairs = [
+            (row[0], row[1]) if key else (None, row[0]) for row in result.result_set
+        ]
+        return aggregation_result(function, pairs, grouped=key is not None)
 
     def keep_absent_documents(
         self,

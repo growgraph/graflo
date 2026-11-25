@@ -37,6 +37,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   another entry folds into it.
 - `op_slots(op, base)` takes the manifest the op applies to: a type, relation or property
   removal, rename or merge also writes the resources its cascade rewrites and their bindings.
+- **Breaking:** `Connection.aggregate` returns one shape on every backend (`graflo.db.aggregation`):
+  COUNT an `int`, MAX/MIN a value or `None`, AVERAGE a `float` or `None`, SORTED_UNIQUE a sorted
+  list; with a `discriminant`, `{group value: that result}` for every function. ArangoDB,
+  PostgreSQL and TigerGraph no longer return `[{"_value": ...}]` rows; TigerGraph raises
+  `NotImplementedError` for anything but an unfiltered, ungrouped COUNT instead of returning `[]`.
 - A three-way merge now reports as conflicts what it used to merge into a result that did not
   apply or depended on the side order: two cascades trimming one pipeline, a database profile or
   `sanitize` beside a change to what they name or an index added, `set_bindings` beside the
@@ -55,6 +60,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The equivalence identity figure draws its branches as one column in funnel order, `#1` on
+  top, and draws the member key each own-key branch reads.
+- A commit that clears a field's declared type records: the op payload keeps `type: null`.
+- `build_revert_commit` raises `CommitError` when the inverses are refused at the head, so
+  `graflo revert` reports it instead of a traceback.
 - `remove_edges` by relation clears `emit_inverse` on steps that mirrored into a removed relation.
 - `diff_manifests` output replays where it was refused partway: a property a lookup key names, an
   index the property removal pruned, a relation changing direction or endpoints, an edge parent
@@ -72,6 +82,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A vertex without an explicit identity takes its declared properties as identity; secondary
   identity fields no longer join it. A secondary identity equal to the implied primary, or with no
   primary at all, is refused on a standalone `Vertex` and in a `VertexConfig` alike.
+- `aggregate` with a `discriminant` groups MAX, MIN, AVERAGE and SORTED_UNIQUE on Neo4j,
+  Memgraph, FalkorDB and NebulaGraph instead of ignoring the grouping; PostgreSQL serves
+  SORTED_UNIQUE.
+- `graph_time` reads the newest value as a scalar on ArangoDB and PostgreSQL.
+- `sorted_dicts` returns a list that is not made of flat dicts unchanged instead of raising.
 
 ## [1.27.5]
 

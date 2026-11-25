@@ -95,7 +95,9 @@ class SQLInferenceManager:
         )
 
     def infer_schema(
-        self, introspection_result, schema_name: str | None = None
+        self,
+        introspection_result: SchemaIntrospectionResult,
+        schema_name: str | None = None,
     ) -> Schema:
         """Infer graflo Schema from PostgreSQL introspection result.
 
@@ -111,7 +113,7 @@ class SQLInferenceManager:
         )
 
     def create_resources(
-        self, introspection_result, schema: Schema
+        self, introspection_result: SchemaIntrospectionResult, schema: Schema
     ) -> list["Resource"]:
         """Create Resources from PostgreSQL introspection result.
 

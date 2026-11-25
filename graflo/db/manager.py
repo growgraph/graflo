@@ -23,6 +23,7 @@ Example:
     ...     conn.execute("FOR doc IN vertex_class RETURN doc")
 """
 
+from types import TracebackType
 from typing import Any, cast
 
 from graflo.connections.onto import TARGET_DATABASES, DBConfig
@@ -152,8 +153,8 @@ class ConnectionManager:
     def __init__(
         self,
         connection_config: DBConfig,
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> None:
         """Initialize the connection manager.
 
         Args:
@@ -164,7 +165,7 @@ class ConnectionManager:
         self.working_db = kwargs.pop("working_db", None)
         self.conn = None
 
-    def __enter__(self):
+    def __enter__(self) -> Any:
         """Enter the context manager.
 
         Creates and returns a new database connection.
@@ -198,7 +199,12 @@ class ConnectionManager:
         if self.conn is not None:
             self.conn.close()
 
-    def __exit__(self, exc_type, exc_value, exc_traceback):
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        exc_traceback: TracebackType | None,
+    ) -> None:
         """Exit the context manager.
 
         Ensures the connection is properly closed when exiting the context.
